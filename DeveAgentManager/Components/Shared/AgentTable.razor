@@ -79,7 +79,22 @@ else
     [Parameter]
     public RenderFragment? EmptyContent { get; set; }
 
-    private Task StartAsync(Agent agent, bool restart) => RunAsync(agent, () => AgentService.StartAsync(agent.Id), $"{(restart ? "Restarted" : "Started")} '{agent.Name}'");
+    private async Task StartAsync(Agent agent, bool restart)
+    {
+        if (restart && agent.State is AgentState.Running or AgentState.Starting && !await ConfirmRestartAsync(Dialogs, agent.Name))
+        {
+            return;
+        }
+
+        await RunAsync(agent, () => AgentService.StartAsync(agent.Id, restart), $"{(restart ? "Restarted" : "Started")} '{agent.Name}'");
+    }
+
+    /// <summary>Restarting stops a running harness, and with it any tool call it is in the middle of.</summary>
+    public static async Task<bool> ConfirmRestartAsync(IDialogService dialogs, string agentName) =>
+        await dialogs.ShowMessageBoxAsync(
+            $"Restart '{agentName}'?",
+            "The harness is stopped (it gets 10 seconds to exit) and started again. Anything it is doing right now, like a running command, is cancelled. The conversation is resumed.",
+            yesText: "Restart", cancelText: "Cancel") == true;
 
     private Task StopAsync(Agent agent) => RunAsync(agent, () => AgentService.StopAsync(agent.Id), $"Stopped '{agent.Name}'");
 

@@ -134,7 +134,7 @@ public sealed partial class AgentService(
 
         try
         {
-            await LaunchAsync(runner, agent, cancellationToken);
+            await LaunchAsync(runner, agent, restart: false, cancellationToken);
             agent.State = AgentState.Running;
         }
         catch (Exception ex)
@@ -153,13 +153,17 @@ public sealed partial class AgentService(
         return agent;
     }
 
-    /// <summary>Starts the agent again (or restarts it when its process exited). The harness resumes the same conversation.</summary>
-    public async Task StartAsync(Guid agentId, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Starts the agent when its harness is not running. The harness resumes the same conversation.
+    /// A harness that is still running is left alone, unless <paramref name="restart"/> is set: then it is asked to exit
+    /// (SIGTERM, then killed after a grace period) and started again. Killing it outright would lose the tool call it is running.
+    /// </summary>
+    public async Task StartAsync(Guid agentId, bool restart = false, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         var runner = RequireReady(agent.Runner!);
-        await LaunchAsync(runner, agent, cancellationToken);
+        await LaunchAsync(runner, agent, restart, cancellationToken);
         agent.State = AgentState.Running;
         agent.StateMessage = null;
         agent.ExitCode = null;
@@ -311,7 +315,7 @@ public sealed partial class AgentService(
         }
     }
 
-    private async Task LaunchAsync(Runner runner, Agent agent, CancellationToken cancellationToken)
+    private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken)
     {
         var harness = GetHarness(agent.HarnessId);
         var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory));
@@ -324,17 +328,49 @@ public sealed partial class AgentService(
         // The session starts with a shell, remain-on-exit is switched on, and only then the harness replaces the shell,
         // so even a harness that exits immediately leaves its output behind. Targets need the trailing ':' (session:window).
         var target = ShellQuote.Quote("=" + agent.TmuxSession + ":");
-        var script = $"""
-            set -e
-            if ! tmux has-session -t {session} 2>/dev/null; then
-              tmux -u new-session -d -s {ShellQuote.Quote(agent.TmuxSession)} -x 200 -y 50 -c {directory}
-            fi
-            tmux set-option -t {target} remain-on-exit on
-            tmux respawn-pane -k -t {target} -c {directory} {ShellQuote.Quote(launch)}
-            """;
-        logger.LogInformation("Starting agent {Agent} on {Runner}", agent.Name, runner.Name);
-        (await shell.RunAsync(runner, script, cancellationToken: cancellationToken)).EnsureSuccess($"Starting {harness.DisplayName}");
+        var script = BuildLaunchScript(session, ShellQuote.Quote(agent.TmuxSession), target, directory, ShellQuote.Quote(launch), restart);
+        logger.LogInformation("{Action} agent {Agent} on {Runner}", restart ? "Restarting" : "Starting", agent.Name, runner.Name);
+        var result = await shell.RunAsync(runner, script, TimeSpan.FromMinutes(1), cancellationToken);
+        result.EnsureSuccess($"Starting {harness.DisplayName}");
+        if (result.Output.Contains(AlreadyRunningMarker, StringComparison.Ordinal))
+        {
+            logger.LogInformation("Agent {Agent} on {Runner} was already running; left it alone", agent.Name, runner.Name);
+        }
     }
+
+    internal const string AlreadyRunningMarker = "DAM_ALREADY_RUNNING";
+
+    /// <summary>Seconds a running harness gets to exit after SIGTERM before a restart kills it.</summary>
+    internal const int GracefulStopSeconds = 10;
+
+    /// <summary>
+    /// The script that starts the harness in the agent's tmux pane. The pane of a session created here runs a plain shell,
+    /// which is replaced. A pane whose harness is still running is only replaced when restarting (a start leaves it alone),
+    /// and then the harness first gets SIGTERM and a grace period, so it can shut down instead of dying with its terminal.
+    /// </summary>
+    internal static string BuildLaunchScript(string session, string sessionName, string target, string directory, string launch, bool restart) => $$"""
+        set -e
+        created=0
+        if ! tmux has-session -t {{session}} 2>/dev/null; then
+          tmux -u new-session -d -s {{sessionName}} -x 200 -y 50 -c {{directory}}
+          created=1
+        fi
+        tmux set-option -t {{target}} remain-on-exit on
+        if [ "$created" = 0 ] && [ "$(tmux display-message -p -t {{target}} '#{pane_dead}')" != 1 ]; then
+          if [ {{(restart ? 1 : 0)}} = 0 ]; then
+            echo {{AlreadyRunningMarker}}
+            exit 0
+          fi
+          pid=$(tmux display-message -p -t {{target}} '#{pane_pid}')
+          kill -TERM "$pid" 2>/dev/null || true
+          i=0
+          while [ $i -lt {{GracefulStopSeconds * 2}} ] && [ "$(tmux display-message -p -t {{target}} '#{pane_dead}')" != 1 ]; do
+            sleep 0.5
+            i=$((i + 1))
+          done
+        fi
+        tmux respawn-pane -k -t {{target}} -c {{directory}} {{launch}}
+        """;
 
     private IHarness GetHarness(string harnessId) =>
         _harnesses.GetValueOrDefault(harnessId) ?? throw new ArgumentException($"Unknown harness '{harnessId}'.");

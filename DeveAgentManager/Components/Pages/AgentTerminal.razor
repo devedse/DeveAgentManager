@@ -4,6 +4,7 @@
 @inject AgentService AgentService
 @inject SessionService Sessions
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>@(_agent?.Name ?? "Agent") · DeveAgentManager</PageTitle>
 
@@ -107,7 +108,15 @@
 
     private Task StartAsync() => RunAsync(() => AgentService.StartAsync(AgentId), reconnect: true);
 
-    private Task RestartAsync() => RunAsync(() => AgentService.StartAsync(AgentId), reconnect: true);
+    private async Task RestartAsync()
+    {
+        if (_agent is null || !await AgentTable.ConfirmRestartAsync(Dialogs, _agent.Name))
+        {
+            return;
+        }
+
+        await RunAsync(() => AgentService.StartAsync(AgentId, restart: true), reconnect: true);
+    }
 
     private Task StopAsync() => RunAsync(() => AgentService.StopAsync(AgentId), reconnect: false);
 
