@@ -32,6 +32,12 @@ public sealed class SettingsStore(
     {
         profile.EnvironmentVariables = profile.EnvironmentVariables.Where(v => !string.IsNullOrWhiteSpace(v.Name)).ToList();
         profile.Files = profile.Files.Where(f => !string.IsNullOrWhiteSpace(f.Path)).ToList();
+        foreach (var config in profile.Harnesses.Values)
+        {
+            config.Validate();
+            config.Packages = config.CleanPackages().ToList();
+        }
+
         await SetRawAsync(SetupProfileKey, protector.Protect(JsonSerializer.Serialize(profile)), cancellationToken);
     }
 

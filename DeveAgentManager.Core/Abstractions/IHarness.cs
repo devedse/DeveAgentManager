@@ -27,6 +27,30 @@ public interface IHarness
     /// into the Setup Profile from these, so every new Runner gets it.
     /// </summary>
     IReadOnlyList<string> ConfigFiles { get; }
+
+    /// <summary>Packages, default model and settings from the Setup Profile; null when the harness doesn't support that.</summary>
+    HarnessConfigSupport? ConfigSupport => null;
+
+    /// <summary>
+    /// Idempotent bash script that applies the configuration: installs the packages, removes packages it installed before
+    /// that are no longer listed, and merges the settings. Only called when <see cref="ConfigSupport"/> is set.
+    /// </summary>
+    string BuildConfigureScript(Setup.HarnessConfig config) => throw new NotSupportedException();
 }
+
+/// <summary>How the Portal presents a harness's configuration.</summary>
+/// <param name="PackageExample">Placeholder for a package source.</param>
+/// <param name="SuggestedPackages">Offered as one-click additions.</param>
+/// <param name="SettingsFile">Where the settings end up on the Runner.</param>
+/// <param name="ThinkingLevels">Choices for the default thinking level.</param>
+/// <param name="DocsUrl">Where packages and settings are documented.</param>
+public sealed record HarnessConfigSupport(
+    string PackageExample,
+    IReadOnlyList<SuggestedPackage> SuggestedPackages,
+    string SettingsFile,
+    IReadOnlyList<string> ThinkingLevels,
+    string DocsUrl);
+
+public sealed record SuggestedPackage(string Source, string Description);
 
 public sealed record HarnessLaunch(string SessionId, string DisplayName, string WorkingDirectory);

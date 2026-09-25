@@ -1346,6 +1346,21 @@ a {
     touch-action: none;
 }
 
+/* ---------- Harness configuration ---------- */
+
+.package-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+    font-size: 0.85rem;
+}
+
+.thinking-select {
+    max-width: 200px;
+}
+
 /* ---------- Login ---------- */
 
 .login-page {

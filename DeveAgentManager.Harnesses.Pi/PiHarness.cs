@@ -1,4 +1,5 @@
 using DeveAgentManager.Core.Abstractions;
+using DeveAgentManager.Core.Setup;
 using DeveAgentManager.Core.Ssh;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -39,6 +40,85 @@ public sealed class PiHarness : IHarness
         $"pi --session-id {ShellQuote.Quote(launch.SessionId)} --name {ShellQuote.Quote(launch.DisplayName)}";
 
     public IReadOnlyList<string> ConfigFiles { get; } = ["~/.pi/agent/auth.json", "~/.pi/agent/settings.json"];
+
+    public HarnessConfigSupport ConfigSupport { get; } = new(
+        PackageExample: "npm:pi-web-access",
+        SuggestedPackages:
+        [
+            new("npm:pi-mcp-adapter", "MCP servers as tools"),
+            new("npm:pi-web-access", "Web search, fetching pages, GitHub, PDFs"),
+            new("npm:pi-subagents", "Delegating to sub-agents"),
+            new("npm:pi-effort", "Thinking effort aliases"),
+            new("npm:pi-plugin-manager", "Manage plugins from inside pi"),
+            new("npm:pi-archimedes", "Parallel agents, task lists, MCP, polished terminal (suite)"),
+        ],
+        SettingsFile: "~/.pi/agent/settings.json",
+        ThinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+        DocsUrl: "https://pi.dev/packages");
+
+    /// <summary>List of the packages the Manager installed, so packages removed from the Setup Profile can be removed.</summary>
+    public const string ManagedPackagesFile = "$HOME/.deveagentmanager/pi-packages";
+
+    public string BuildConfigureScript(HarnessConfig config)
+    {
+        config.Validate();
+        var packages = Base64(string.Join("\n", config.CleanPackages()));
+        var settings = Base64(config.BuildSettings().ToJsonString());
+        return $$"""
+            set -euo pipefail
+            agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+            managed="{{ManagedPackagesFile}}"
+            wanted="$(printf %s {{packages}} | base64 -d)"
+            mkdir -p "$agent_dir" "$(dirname "$managed")"
+
+            if [ -f "$managed" ]; then
+              while IFS= read -r source; do
+                if [ -n "$source" ] && ! printf '%s\n' "$wanted" | grep -qxF -- "$source"; then
+                  echo "==> Removing pi package $source"
+                  pi remove "$source" || echo "Could not remove $source (already gone?)"
+                fi
+              done < "$managed"
+            fi
+
+            failed=""
+            while IFS= read -r source; do
+              [ -n "$source" ] || continue
+              echo "==> Installing pi package $source"
+              if ! pi install "$source"; then
+                failed="$failed $source"
+              fi
+            done <<< "$wanted"
+            printf '%s\n' "$wanted" > "$managed"
+
+            echo "==> Writing pi settings"
+            node - "$agent_dir/settings.json" {{settings}} <<'DAM_MERGE'
+            const fs = require("fs");
+            const [file, encoded] = process.argv.slice(2);
+            const extra = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+            // Packages are installed with pi install above, not written directly.
+            delete extra.packages;
+            let current = {};
+            if (fs.existsSync(file)) {
+              current = JSON.parse(fs.readFileSync(file, "utf8"));
+            }
+            const isObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
+            const merge = (target, source) => {
+              for (const [key, value] of Object.entries(source)) {
+                target[key] = isObject(value) && isObject(target[key]) ? merge(target[key], value) : value;
+              }
+              return target;
+            };
+            fs.writeFileSync(file, JSON.stringify(merge(current, extra), null, 2) + "\n");
+            DAM_MERGE
+
+            if [ -n "$failed" ]; then
+              echo "Could not install:$failed" >&2
+              exit 1
+            fi
+            """;
+    }
+
+    private static string Base64(string value) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(value));
 }
 
 public static class PiServiceCollectionExtensions

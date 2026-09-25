@@ -109,6 +109,12 @@ public sealed partial class RunnerSetupService(
             }
 
             await RunScriptAsync(runner, log, $"Installing {harness.DisplayName}", harness.InstallScript, TimeSpan.FromMinutes(15), cancellationToken);
+            if (harness.ConfigSupport is not null)
+            {
+                // Also with an empty configuration: that removes packages installed by an earlier setup.
+                await RunScriptAsync(runner, log, $"Configuring {harness.DisplayName} (packages, model, settings)",
+                    harness.BuildConfigureScript(profile.GetHarness(harness.Id)), TimeSpan.FromMinutes(15), cancellationToken);
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(profile.Script))
@@ -121,6 +127,23 @@ public sealed partial class RunnerSetupService(
         runner.SetupVersion = SetupVersion;
         runner.LastSetupAt = DateTime.UtcNow;
         log.Success($"Setup finished: {runner.InstalledVersions}");
+    }
+
+    /// <summary>
+    /// Applies a harness's configuration from the Setup Profile to a Runner without the rest of the setup, e.g. after the
+    /// package list changed. Running agents pick up the packages after a restart (pi: or <c>/reload</c>).
+    /// </summary>
+    public async Task ApplyHarnessConfigAsync(Runner runner, string harnessId, IRunnerLog log, CancellationToken cancellationToken = default)
+    {
+        var harness = _harnesses.GetValueOrDefault(harnessId) ?? throw new ArgumentException($"Unknown harness '{harnessId}'.");
+        if (harness.ConfigSupport is null)
+        {
+            throw new InvalidOperationException($"{harness.DisplayName} has no packages or settings to apply.");
+        }
+
+        var profile = await settings.GetSetupProfileAsync(cancellationToken);
+        await RunScriptAsync(runner, log, $"Configuring {harness.DisplayName} (packages, model, settings)",
+            harness.BuildConfigureScript(profile.GetHarness(harness.Id)), TimeSpan.FromMinutes(15), cancellationToken);
     }
 
     public async Task<string> ReadVersionsAsync(Runner runner, CancellationToken cancellationToken)

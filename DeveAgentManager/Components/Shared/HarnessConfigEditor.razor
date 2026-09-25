@@ -1,0 +1,87 @@
+@* Packages, default model and extra settings for one harness (Setup Profile). *@
+
+<div class="settings-section">
+    <MudText Typo="Typo.subtitle1" Class="section-title">Packages</MudText>
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
+        Installed on every Runner with <code>@(Harness.Id) install</code>: extensions, skills, prompt templates and themes.
+        Packages you remove here are removed from the Runners too. Browse packages on <a href="@Support.DocsUrl" target="_blank" rel="noopener">@Support.DocsUrl.Replace("https://", "")</a>.
+        Running agents load new packages after a restart (or <code>/reload</code> in pi).
+    </MudText>
+
+    @for (var i = 0; i < Config.Packages.Count; i++)
+    {
+        var index = i;
+        <div class="form-row form-row-center">
+            <MudTextField T="string" Value="Config.Packages[index]" ValueChanged="value => Config.Packages[index] = value" Placeholder="@Support.PackageExample"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" />
+            <MudIconButton Icon="@Icons.Material.Rounded.Close" Size="Size.Small" OnClick="() => Config.Packages.RemoveAt(index)" aria-label="Remove" />
+        </div>
+    }
+    <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Rounded.Add" Size="Size.Small" OnClick="() => Config.Packages.Add(string.Empty)">Add package</MudButton>
+
+    @if (Support.SuggestedPackages.Where(p => !Config.Packages.Contains(p.Source)).ToList() is { Count: > 0 } suggestions)
+    {
+        <div class="package-suggestions">
+            <span class="mud-text-secondary">Add:</span>
+            @foreach (var suggestion in suggestions)
+            {
+                <MudTooltip Text="@suggestion.Description">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Rounded.Add" OnClick="() => Config.Packages.Add(suggestion.Source)">
+                        <span class="mono">@suggestion.Source</span>
+                    </MudChip>
+                </MudTooltip>
+            }
+        </div>
+    }
+</div>
+
+<div class="settings-section">
+    <MudText Typo="Typo.subtitle1" Class="section-title">Default model</MudText>
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">What new agents start with. Leave empty to keep @(Harness.DisplayName)'s own choice. You can still switch in a session (pi: <code>/model</code>).</MudText>
+    <div class="form-row">
+        <MudTextField @bind-Value="Config.DefaultProvider" Label="Provider" Placeholder="anthropic" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" />
+        <MudTextField @bind-Value="Config.DefaultModel" Label="Model" Placeholder="claude-sonnet-4-5" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" />
+        <MudSelect T="string" @bind-Value="Config.DefaultThinkingLevel" Label="Thinking level" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Class="thinking-select">
+            @foreach (var level in Support.ThinkingLevels)
+            {
+                <MudSelectItem Value="level">@level</MudSelectItem>
+            }
+        </MudSelect>
+    </div>
+</div>
+
+<div class="settings-section">
+    <MudText Typo="Typo.subtitle1" Class="section-title">Extra settings</MudText>
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
+        JSON merged into <code>@Support.SettingsFile</code> on every Runner: objects are merged, other values replaced, settings you don't list are kept.
+        For example <code>{ "enabledModels": ["anthropic/*"], "hideThinkingBlock": true }</code> or a package's own settings.
+    </MudText>
+    <MudTextField @bind-Value="Config.Settings" Variant="Variant.Outlined" Lines="5" MaxLines="30" Placeholder="{ }" Class="mono-input"
+                  Error="@(SettingsError is not null)" ErrorText="@SettingsError" Immediate="true" DebounceInterval="400" />
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public IHarness Harness { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public HarnessConfig Config { get; set; } = default!;
+
+    private HarnessConfigSupport Support => Harness.ConfigSupport!;
+
+    private string? SettingsError
+    {
+        get
+        {
+            try
+            {
+                new HarnessConfig { Settings = Config.Settings }.Validate();
+                return null;
+            }
+            catch (ArgumentException ex)
+            {
+                return ex.Message;
+            }
+        }
+    }
+}

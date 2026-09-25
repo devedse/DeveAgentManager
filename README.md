@@ -10,6 +10,9 @@ when you close the tab.
 - **Session**: an agent's conversation. The Manager keeps a copy in a harness-neutral format, so it survives the agent
   and its Runner and can be continued on another Runner.
 - **Setup Profile**: what every Runner gets during setup: git identity, API keys, login and settings files, and a script.
+  Per harness (**Settings → pi**): packages (pi extensions, skills, themes, e.g. `npm:pi-web-access`), the default
+  model and thinking level, and extra settings merged into `~/.pi/agent/settings.json`. **Save and apply to Runners**
+  updates the ready Runners right away. Packages removed from the list are removed from the Runners.
 
 See [PLAN.md](PLAN.md) for where this is going (Claude Code and Codex, sessions you can move between harnesses, Jobs API).
 

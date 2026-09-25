@@ -7,6 +7,7 @@
 @inject ManagerOptions Options
 @inject ISnackbar Snackbar
 @inject IJSRuntime JS
+@inject RunnerLogStore Logs
 
 <PageTitle>Settings · DeveAgentManager</PageTitle>
 
@@ -69,7 +70,7 @@
                 @if (_profile is not null)
                 {
                     <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
-                        Applied to every Runner when it is set up, and again when you use <b>Re-run setup</b>: git identity, API keys, login and settings files (pi plugins), and a script.
+                        Applied to every Runner when it is set up, and again when you use <b>Re-run setup</b>: git identity, API keys, login and settings files, and a script. Packages and the default model are on the harness's own tab (e.g. <b>pi</b>).
                     </MudText>
 
                     <div class="settings-section">
@@ -100,7 +101,7 @@
                     <div class="settings-section">
                         <MudText Typo="Typo.subtitle1" Class="section-title">Files</MudText>
                         <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
-                            Written to every Runner, e.g. <code>~/.pi/agent/settings.json</code> with your pi packages or <code>~/.pi/agent/AGENTS.md</code> with your instructions.
+                            Written to every Runner before the harnesses are configured, e.g. <code>~/.pi/agent/AGENTS.md</code> with your instructions or <code>~/.pi/agent/keybindings.json</code>.
                         </MudText>
 
                         <div class="import-box">
@@ -142,7 +143,7 @@
 
                     <div class="settings-section">
                         <MudText Typo="Typo.subtitle1" Class="section-title">Script</MudText>
-                        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">Bash, run as the Runner Account at the end of setup. For example <code>pi install npm:some-package</code> or <code>sudo apt-get install -y dotnet-sdk-10.0</code>.</MudText>
+                        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">Bash, run as the Runner Account at the end of setup. For example <code>sudo apt-get install -y dotnet-sdk-10.0</code>.</MudText>
                         <MudTextField @bind-Value="_profile.Script" Variant="Variant.Outlined" Lines="6" MaxLines="30" Placeholder="#!/usr/bin/env bash" Class="mono-input" />
                     </div>
 
@@ -151,6 +152,43 @@
                     </div>
                 }
             </MudTabPanel>
+
+            @foreach (var harness in Agents.Harnesses.Where(h => h.ConfigSupport is not null))
+            {
+                <MudTabPanel Text="@harness.DisplayName" Icon="@Icons.Material.Rounded.Extension">
+                    @if (_profile is not null)
+                    {
+                        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
+                            Part of the Setup Profile: applied to every Runner with @harness.DisplayName when it is set up. Use <b>Save and apply</b> to update the Runners now.
+                        </MudText>
+
+                        <HarnessConfigEditor Harness="harness" Config="_profile.GetHarness(harness.Id)" />
+
+                        @if (_applyResults.TryGetValue(harness.Id, out var results))
+                        {
+                            <div class="check-list">
+                                @foreach (var result in results)
+                                {
+                                    <div class="check check-@(result.Status.ToString().ToLowerInvariant())">
+                                        <MudIcon Size="Size.Small" Icon="@(result.Status switch { CheckStatus.Ok => Icons.Material.Rounded.CheckCircle, CheckStatus.Warning => Icons.Material.Rounded.HourglassTop, _ => Icons.Material.Rounded.Cancel })" />
+                                        <div>
+                                            <div class="check-name">@result.Name</div>
+                                            <div class="check-message">@result.Message</div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        <div class="settings-actions sticky-actions">
+                            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Save" Disabled="_saving || _applying" OnClick="SaveProfileAsync">Save</MudButton>
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PublishedWithChanges" Disabled="_saving || _applying" OnClick="() => SaveAndApplyAsync(harness)">
+                                @(_applying ? "Applying..." : "Save and apply to Runners")
+                            </MudButton>
+                        </div>
+                    }
+                </MudTabPanel>
+            }
 
             <MudTabPanel Text="GitHub" Icon="@Icons.Custom.Brands.GitHub">
                 <div class="settings-section">
@@ -248,19 +286,84 @@
         }
     }
 
-    private async Task SaveProfileAsync()
+    private async Task SaveProfileAsync() => await TrySaveProfileAsync(announce: true);
+
+    private async Task<bool> TrySaveProfileAsync(bool announce)
     {
         _saving = true;
         try
         {
             await Settings.SaveSetupProfileAsync(_profile!);
             _profile = await Settings.GetSetupProfileAsync();
-            Snackbar.Add("Setup Profile saved. It is applied the next time a Runner is set up.", Severity.Success);
+            if (announce)
+            {
+                Snackbar.Add("Setup Profile saved. It is applied the next time a Runner is set up.", Severity.Success);
+            }
+
+            return true;
+        }
+        catch (ArgumentException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+            return false;
         }
         finally
         {
             _saving = false;
         }
+    }
+
+    private readonly Dictionary<string, List<ProviderCheck>> _applyResults = [];
+    private bool _applying;
+
+    /// <summary>Saves the profile, then applies the harness's configuration on every ready Runner that has the harness.</summary>
+    private async Task SaveAndApplyAsync(IHarness harness)
+    {
+        if (!await TrySaveProfileAsync(announce: false))
+        {
+            return;
+        }
+
+        var runners = (await Runners.ListAsync()).Where(r => r.State == RunnerState.Ready && r.HarnessIds.Contains(harness.Id)).ToList();
+        if (runners.Count == 0)
+        {
+            Snackbar.Add($"Saved. No ready Runner has {harness.DisplayName}; it is applied when one is set up.", Severity.Info);
+            return;
+        }
+
+        _applying = true;
+        var results = runners.Select(r => new ProviderCheck(r.Name, CheckStatus.Warning, "Applying...")).ToList();
+        _applyResults[harness.Id] = results;
+        StateHasChanged();
+        try
+        {
+            await Task.WhenAll(runners.Select(async (runner, index) =>
+            {
+                ProviderCheck result;
+                try
+                {
+                    await Setup.ApplyHarnessConfigAsync(runner, harness.Id, Logs.For(runner.Id));
+                    result = new ProviderCheck(runner.Name, CheckStatus.Ok, "Applied. Restart running agents (or /reload) to load new packages.");
+                }
+                catch (Exception ex)
+                {
+                    result = new ProviderCheck(runner.Name, CheckStatus.Failed, $"{ex.Message} The Runner's log has the details.");
+                }
+
+                await InvokeAsync(() =>
+                {
+                    results[index] = result;
+                    StateHasChanged();
+                });
+            }));
+        }
+        finally
+        {
+            _applying = false;
+        }
+
+        var failed = results.Count(r => r.Status == CheckStatus.Failed);
+        Snackbar.Add(failed == 0 ? $"Applied to {results.Count} Runner(s)." : $"Failed on {failed} of {results.Count} Runner(s).", failed == 0 ? Severity.Success : Severity.Error);
     }
 
     private async Task ImportAsync()
