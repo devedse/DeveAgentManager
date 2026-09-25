@@ -59,13 +59,46 @@ Put the token in the compose file: `PROXMOX_TOKEN_ID=deveagentmanager@pve!manage
 Adjust the storage and SDN zone names to yours. Without `SDN.Use` on the zone, cloning fails with a 403 on
 `/sdn/zones/...`.
 
+#### The same in the web UI
+
+Everything is under **Datacenter → Permissions**. Do the steps in this order, because the pool and the role have to
+exist before you can pick them.
+
+1. **Pools** (a sub-item under *Permissions*) → **Create**. Name `deveagents`, comment `DeveAgentManager runners`.
+2. **Roles** → **Create**. Name `DeveAgentManager`. In *Privileges*, type to filter and tick each of these:
+   `VM.Allocate`, `VM.Clone`, `VM.Audit`, `VM.PowerMgmt`, `VM.Config.CPU`, `VM.Config.Memory`, `VM.Config.Disk`,
+   `VM.Config.Network`, `VM.Config.Options`, `VM.Config.Cloudinit`, `VM.GuestAgent.Audit`, `Datastore.AllocateSpace`,
+   `Datastore.Audit`, `SDN.Use`, `Sys.Audit`, `Pool.Audit`.
+   On Proxmox VE 8, pick `VM.Monitor` instead of `VM.GuestAgent.Audit`.
+3. **Users** → **Add**. User name `deveagentmanager`, Realm *Proxmox VE authentication server*. The UI asks for a
+   password: use a long random one, the Manager never uses it.
+4. **API Tokens** → **Add**. User `deveagentmanager@pve`, Token ID `manager`, and **untick Privilege Separation**, so
+   the token gets the user's permissions. Copy the secret now; it is only shown once.
+5. The permissions themselves are on **Permissions** (the top item, not a sub-item) → **Add → User Permission**. Add one
+   entry per path, each with User `deveagentmanager@pve`, Role `DeveAgentManager` and *Propagate* ticked:
+
+   | Path | Why |
+   |---|---|
+   | `/pool/deveagents` | create, change, start/stop and delete Runners |
+   | `/vms/10100` | clone the headless template |
+   | `/vms/10120` | clone the desktop template |
+   | `/storage/ReplicatedPool_2` | create the Runners' disks |
+   | `/sdn/zones/localnetwork` | connect Runners to the network |
+
+   The path is a dropdown. The pool only shows up after step 1, and the SDN zone only if you use SDN (otherwise skip
+   that line).
+
+The permissions list should now show five lines for `deveagentmanager@pve`. The token has no permission lines of its own;
+that's expected with Privilege Separation off.
+
 ### Template requirements
 
 Runners are full clones of `TEMPLATE_HEADLESS_VMID` (and `TEMPLATE_DESKTOP_VMID`). The template needs:
 
-- **A cloud-init drive** (Hardware → Add → CloudInit Drive). The Manager sets the Runner Account (`RUNNER_USERNAME` /
-  `RUNNER_PASSWORD`), its own SSH key, DHCP and the hostname through it.
-- **qemu-guest-agent installed** and the *QEMU Guest Agent* option on. The Manager reads the Runner's IP from it.
+- **A cloud-init drive**: on the template, **Hardware → Add → CloudInit Drive**. The Manager sets the Runner Account
+  (`RUNNER_USERNAME` / `RUNNER_PASSWORD`), its own SSH key, DHCP and the hostname through it.
+- **qemu-guest-agent installed** and **Options → QEMU Guest Agent** set to *Enabled*. The Manager reads the Runner's IP
+  from it.
   Debian cloud images don't include it; add it to the image before importing it:
   ```bash
   apt install libguestfs-tools
