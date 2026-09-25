@@ -43,22 +43,7 @@
                         <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Stop" Disabled="!ready" OnClick="StopAsync">Stop</MudButton>
                     }
                 }
-                @foreach (var harnessId in _runner.HarnessIds)
-                {
-                    var harness = Setup.GetHarness(harnessId);
-                    <MudTooltip Text="@($"Install the latest {harness.DisplayName}, update its packages and apply Settings → {harness.DisplayName}")">
-                        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Upgrade" Disabled="!ready" OnClick="() => UpdateHarnessAsync(harness)">Update @harness.DisplayName</MudButton>
-                    </MudTooltip>
-                }
-                <MudTooltip Text="Run the whole setup again: tools, tmux and git config, the Setup Profile, harnesses and their packages. Safe to repeat.">
-                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Build" Disabled="operation is not null || _runner.State == RunnerState.Stopped" OnClick="RerunSetupAsync">Re-run setup</MudButton>
-                </MudTooltip>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" Disabled="!ready" OnClick="NewAgentAsync">New agent</MudButton>
-                <MudMenu Icon="@Icons.Material.Rounded.MoreVert" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
-                    <MudMenuItem Icon="@Icons.Material.Rounded.Key" Disabled="_runner.HostKeyFingerprint is null" OnClick="ForgetHostKeyAsync">Forget SSH host key</MudMenuItem>
-                    <MudDivider />
-                    <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="operation is not null" OnClick="DeleteAsync">Delete Runner</MudMenuItem>
-                </MudMenu>
             </Actions>
         </PageHeader>
 
@@ -67,7 +52,7 @@
             <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-4">
                 <div class="alert-title">Something went wrong</div>
                 <div>@_runner.StateMessage</div>
-                <div class="alert-hint">Check the setup log below, then use <b>Re-run setup</b> (or <b>Start</b>) to try again.</div>
+                <div class="alert-hint">Check the setup log, then use <b>Re-run setup</b> under Operations (or <b>Start</b>) to try again.</div>
             </MudAlert>
         }
         else if (operation is not null || StateStyles.For(_runner.State).Busy)
@@ -87,7 +72,7 @@
         else if (_runner.State == RunnerState.Ready && _runner.SetupVersion < RunnerSetupService.SetupVersion)
         {
             <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4" Dense="true">
-                This Runner was set up with an older setup script. Use <b>Re-run setup</b> to update it.
+                This Runner was set up with an older setup script. Use <b>Re-run setup</b> under Operations to update it.
             </MudAlert>
         }
 
@@ -125,7 +110,7 @@
                         <UsageBars Status="status" />
                     </div>
                 }
-                <div class="panel">
+                <div class="panel mb-4">
                     <div class="panel-header">
                         <MudText Typo="Typo.h6">Details</MudText>
                     </div>
@@ -161,6 +146,51 @@
                             <dd class="mono small-break">@_runner.HostKeyFingerprint</dd>
                         }
                     </dl>
+                </div>
+
+                @* Maintenance, out of the header: each operation says what it does. Progress shows in the banner and the setup log. *@
+                <div class="panel">
+                    <div class="panel-header">
+                        <MudText Typo="Typo.h6">Operations</MudText>
+                    </div>
+                    <div class="operation-list">
+                        @foreach (var harnessId in _runner.HarnessIds)
+                        {
+                            var harness = Setup.GetHarness(harnessId);
+                            <div class="operation">
+                                <MudIcon Icon="@Icons.Material.Rounded.Upgrade" Class="operation-icon" />
+                                <div class="operation-text">
+                                    <div class="operation-name">Update @harness.DisplayName</div>
+                                    <div class="operation-description">The latest @harness.DisplayName and its packages, then Settings → @harness.DisplayName (packages, model, settings).</div>
+                                </div>
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => UpdateHarnessAsync(harness)">Update</MudButton>
+                            </div>
+                        }
+                        <div class="operation">
+                            <MudIcon Icon="@Icons.Material.Rounded.Build" Class="operation-icon" />
+                            <div class="operation-text">
+                                <div class="operation-name">Re-run setup</div>
+                                <div class="operation-description">Everything again: tools, tmux and git config, the Setup Profile, harnesses and their packages. Safe to repeat.</div>
+                            </div>
+                            <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="operation is not null || _runner.State == RunnerState.Stopped" OnClick="RerunSetupAsync">Run</MudButton>
+                        </div>
+                        <div class="operation">
+                            <MudIcon Icon="@Icons.Material.Rounded.Key" Class="operation-icon" />
+                            <div class="operation-text">
+                                <div class="operation-name">Forget SSH host key</div>
+                                <div class="operation-description">After the machine was reinstalled and its key changed. The next connection trusts the key it sees.</div>
+                            </div>
+                            <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_runner.HostKeyFingerprint is null" OnClick="ForgetHostKeyAsync">Forget</MudButton>
+                        </div>
+                        <div class="operation operation-danger">
+                            <MudIcon Icon="@Icons.Material.Rounded.Delete" Class="operation-icon" />
+                            <div class="operation-text">
+                                <div class="operation-name">Delete Runner</div>
+                                <div class="operation-description">Stops its agents and removes it from the Manager@(provider?.Capabilities.CanDestroy == true ? ", optionally with the VM" : ""). Conversations are kept.</div>
+                            </div>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" Disabled="operation is not null" OnClick="DeleteAsync">Delete</MudButton>
+                        </div>
+                    </div>
                 </div>
             </MudItem>
         </MudGrid>

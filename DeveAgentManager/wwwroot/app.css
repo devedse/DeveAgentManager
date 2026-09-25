@@ -1347,6 +1347,51 @@ a {
     touch-action: none;
 }
 
+/* ---------- Runner operations ---------- */
+
+.operation-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.operation {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-top: 1px solid var(--dam-border);
+}
+
+    .operation:first-child {
+        border-top: none;
+        padding-top: 0;
+    }
+
+.operation-icon {
+    color: var(--dam-muted);
+    flex-shrink: 0;
+}
+
+.operation-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.operation-name {
+    font-weight: 600;
+}
+
+.operation-description {
+    color: var(--dam-muted);
+    font-size: 0.8rem;
+    line-height: 1.35;
+}
+
+.operation-danger .operation-icon,
+.operation-danger .operation-name {
+    color: var(--mud-palette-error);
+}
+
 /* ---------- Harness configuration ---------- */
 
 .package-suggestions {
