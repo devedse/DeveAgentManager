@@ -50,6 +50,9 @@ public sealed class HarnessConfig
     /// <summary>A JSON object merged into the harness's settings file (objects merge, other values replace).</summary>
     public string? Settings { get; set; }
 
+    /// <summary>A JSON object merged into the harness's keybindings file (pi: ~/.pi/agent/keybindings.json).</summary>
+    public string? Keybindings { get; set; }
+
     /// <summary>Package sources without blanks and duplicates, in order.</summary>
     public IReadOnlyList<string> CleanPackages() =>
         Packages.Select(p => p.Trim()).Where(p => p.Length > 0).Distinct(StringComparer.Ordinal).ToList();
@@ -65,21 +68,35 @@ public sealed class HarnessConfig
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(Settings))
+        ValidateJsonObject(Settings, "Extra settings", "{ \"hideThinkingBlock\": true }");
+        ValidateJsonObject(Keybindings, "Keybindings", "{ \"app.clipboard.pasteImage\": [] }");
+    }
+
+    private static void ValidateJsonObject(string? json, string what, string example)
+    {
+        if (string.IsNullOrWhiteSpace(json))
         {
-            try
+            return;
+        }
+
+        try
+        {
+            if (System.Text.Json.Nodes.JsonNode.Parse(json) is not System.Text.Json.Nodes.JsonObject)
             {
-                if (System.Text.Json.Nodes.JsonNode.Parse(Settings) is not System.Text.Json.Nodes.JsonObject)
-                {
-                    throw new ArgumentException("Extra settings must be a JSON object, like { \"hideThinkingBlock\": true }.");
-                }
-            }
-            catch (System.Text.Json.JsonException ex)
-            {
-                throw new ArgumentException($"Extra settings are not valid JSON: {ex.Message}");
+                throw new ArgumentException($"{what} must be a JSON object, like {example}.");
             }
         }
+        catch (System.Text.Json.JsonException ex)
+        {
+            throw new ArgumentException($"{what} are not valid JSON: {ex.Message}");
+        }
     }
+
+    /// <summary>The keybindings to merge (empty object when none are set).</summary>
+    public System.Text.Json.Nodes.JsonObject BuildKeybindings() =>
+        string.IsNullOrWhiteSpace(Keybindings)
+            ? new System.Text.Json.Nodes.JsonObject()
+            : (System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse(Keybindings)!;
 
     /// <summary>The settings to merge: the extra settings plus the default model fields that are filled in.</summary>
     public System.Text.Json.Nodes.JsonObject BuildSettings()

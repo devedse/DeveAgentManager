@@ -42,12 +42,14 @@ public interface IHarness
 /// <param name="PackageExample">Placeholder for a package source.</param>
 /// <param name="SuggestedPackages">Offered as one-click additions.</param>
 /// <param name="SettingsFile">Where the settings end up on the Runner.</param>
+/// <param name="KeybindingsFile">Where the keybindings end up on the Runner.</param>
 /// <param name="ThinkingLevels">Choices for the default thinking level.</param>
 /// <param name="DocsUrl">Where packages and settings are documented.</param>
 public sealed record HarnessConfigSupport(
     string PackageExample,
     IReadOnlyList<SuggestedPackage> SuggestedPackages,
     string SettingsFile,
+    string KeybindingsFile,
     IReadOnlyList<string> ThinkingLevels,
     string DocsUrl);
 

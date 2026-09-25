@@ -1,5 +1,6 @@
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Setup;
+using System.Text.Json.Nodes;
 using DeveAgentManager.Core.Ssh;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -50,9 +51,12 @@ public sealed class PiHarness : IHarness
             new("npm:pi-subagents", "Delegating to sub-agents"),
             new("npm:pi-effort", "Thinking effort aliases"),
             new("npm:pi-plugin-manager", "Manage plugins from inside pi"),
+            new("npm:@dietrichgebert/ponytail", "Lazy senior dev mode: the best code is the code you never wrote"),
+            new("npm:@pi-archimedes/image-paste", "Image paste with preview (reads the Runner's clipboard: in the browser terminal, use Ctrl+V or 📎)"),
             new("npm:pi-archimedes", "Parallel agents, task lists, MCP, polished terminal (suite)"),
         ],
         SettingsFile: "~/.pi/agent/settings.json",
+        KeybindingsFile: "~/.pi/agent/keybindings.json",
         ThinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
         DocsUrl: "https://pi.dev/packages");
 
@@ -64,6 +68,11 @@ public sealed class PiHarness : IHarness
         config.Validate();
         var packages = Base64(string.Join("\n", config.CleanPackages()));
         var settings = Base64(config.BuildSettings().ToJsonString());
+        var keybindings = BuildKeybindings(config);
+        var keybindingsStep = keybindings.Count == 0 ? "" : $"""
+            echo "==> Writing pi keybindings"
+            node "$merge" "$agent_dir/keybindings.json" {Base64(keybindings.ToJsonString())}
+            """;
         return $$"""
             set -euo pipefail
             agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
@@ -90,13 +99,17 @@ public sealed class PiHarness : IHarness
             done <<< "$wanted"
             printf '%s\n' "$wanted" > "$managed"
 
-            echo "==> Writing pi settings"
-            node - "$agent_dir/settings.json" {{settings}} <<'DAM_MERGE'
+            # Merges a JSON object (base64) into a JSON file: objects merge, other values replace.
+            merge="$(mktemp)"
+            trap 'rm -f "$merge"' EXIT
+            cat > "$merge" <<'DAM_MERGE'
             const fs = require("fs");
             const [file, encoded] = process.argv.slice(2);
             const extra = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
             // Packages are installed with pi install above, not written directly.
-            delete extra.packages;
+            if (file.endsWith("settings.json")) {
+              delete extra.packages;
+            }
             let current = {};
             if (fs.existsSync(file)) {
               current = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -111,11 +124,45 @@ public sealed class PiHarness : IHarness
             fs.writeFileSync(file, JSON.stringify(merge(current, extra), null, 2) + "\n");
             DAM_MERGE
 
+            echo "==> Writing pi settings"
+            node "$merge" "$agent_dir/settings.json" {{settings}}
+            {{keybindingsStep}}
+
             if [ -n "$failed" ]; then
               echo "Could not install:$failed" >&2
               exit 1
             fi
             """;
+    }
+
+    /// <summary>
+    /// The keybindings to merge. <c>@pi-archimedes/image-paste</c> (also in the <c>pi-archimedes</c> suite) takes over
+    /// pi's image paste key and asks to clear pi's own binding (otherwise both fire, and it asks on the first start of
+    /// every Runner): that is done here, unless the Setup Profile sets that binding itself.
+    /// </summary>
+    internal static JsonObject BuildKeybindings(HarnessConfig config)
+    {
+        var keybindings = config.BuildKeybindings();
+        if (config.CleanPackages().Any(p => PackageName(p) is "@pi-archimedes/image-paste" or "pi-archimedes")
+            && !keybindings.ContainsKey("app.clipboard.pasteImage"))
+        {
+            keybindings["app.clipboard.pasteImage"] = new JsonArray();
+        }
+
+        return keybindings;
+    }
+
+    /// <summary>"npm:@scope/name@1.2.3" → "@scope/name"; other sources are returned as they are.</summary>
+    public static string PackageName(string source)
+    {
+        if (!source.StartsWith("npm:", StringComparison.Ordinal))
+        {
+            return source;
+        }
+
+        var name = source[4..];
+        var version = name.LastIndexOf('@');
+        return version > 0 ? name[..version] : name;
     }
 
     private static string Base64(string value) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(value));

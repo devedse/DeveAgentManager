@@ -7,7 +7,6 @@
 @inject ManagerOptions Options
 @inject ISnackbar Snackbar
 @inject IJSRuntime JS
-@inject RunnerLogStore Logs
 
 <PageTitle>Settings · DeveAgentManager</PageTitle>
 
@@ -342,12 +341,15 @@
                 ProviderCheck result;
                 try
                 {
-                    await Setup.ApplyHarnessConfigAsync(runner, harness.Id, Logs.For(runner.Id));
-                    result = new ProviderCheck(runner.Name, CheckStatus.Ok, "Applied. Restart running agents (or /reload) to load new packages.");
+                    // A Runner operation: shows on the Runner's page and can't run at the same time as a setup.
+                    var error = await Runners.ApplyHarnessConfig(runner.Id, harness.Id);
+                    result = error is null
+                        ? new ProviderCheck(runner.Name, CheckStatus.Ok, "Applied. Restart running agents (or /reload) to load new packages.")
+                        : new ProviderCheck(runner.Name, CheckStatus.Failed, $"{error} The Runner's setup log has the details.");
                 }
                 catch (Exception ex)
                 {
-                    result = new ProviderCheck(runner.Name, CheckStatus.Failed, $"{ex.Message} The Runner's log has the details.");
+                    result = new ProviderCheck(runner.Name, CheckStatus.Failed, ex.Message);
                 }
 
                 await InvokeAsync(() =>

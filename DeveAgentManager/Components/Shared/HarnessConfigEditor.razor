@@ -60,6 +60,16 @@
                   Error="@(SettingsError is not null)" ErrorText="@SettingsError" Immediate="true" DebounceInterval="400" />
 </div>
 
+<div class="settings-section">
+    <MudText Typo="Typo.subtitle1" Class="section-title">Keybindings</MudText>
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
+        JSON merged into <code>@Support.KeybindingsFile</code>, like <code>{ "app.clipboard.pasteImage": [] }</code>.
+        With <code>@@pi-archimedes/image-paste</code> in the packages, pi's own image paste binding is cleared automatically (as that package asks), unless you set it here.
+    </MudText>
+    <MudTextField @bind-Value="Config.Keybindings" Variant="Variant.Outlined" Lines="3" MaxLines="20" Placeholder="{ }" Class="mono-input"
+                  Error="@(KeybindingsError is not null)" ErrorText="@KeybindingsError" Immediate="true" DebounceInterval="400" />
+</div>
+
 @code {
     [Parameter, EditorRequired]
     public IHarness Harness { get; set; } = default!;
@@ -69,19 +79,20 @@
 
     private HarnessConfigSupport Support => Harness.ConfigSupport!;
 
-    private string? SettingsError
+    private string? SettingsError => Check(new HarnessConfig { Settings = Config.Settings });
+
+    private string? KeybindingsError => Check(new HarnessConfig { Keybindings = Config.Keybindings });
+
+    private static string? Check(HarnessConfig config)
     {
-        get
+        try
         {
-            try
-            {
-                new HarnessConfig { Settings = Config.Settings }.Validate();
-                return null;
-            }
-            catch (ArgumentException ex)
-            {
-                return ex.Message;
-            }
+            config.Validate();
+            return null;
+        }
+        catch (ArgumentException ex)
+        {
+            return ex.Message;
         }
     }
 }

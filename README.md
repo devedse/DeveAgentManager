@@ -13,6 +13,9 @@ when you close the tab.
   Per harness (**Settings → pi**): packages (pi extensions, skills, themes, e.g. `npm:pi-web-access`), the default
   model and thinking level, and extra settings merged into `~/.pi/agent/settings.json`. **Save and apply to Runners**
   updates the ready Runners right away. Packages removed from the list are removed from the Runners.
+- On a Runner's page, **Re-run setup** runs the whole setup again, and **Update pi** only installs the latest pi,
+  updates its packages and applies Settings → pi. Every step is idempotent, so both are safe to repeat. Running agents
+  keep running and use the new versions after a restart.
 
 See [PLAN.md](PLAN.md) for where this is going (Claude Code and Codex, sessions you can move between harnesses, Jobs API).
 

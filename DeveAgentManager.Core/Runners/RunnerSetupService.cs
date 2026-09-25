@@ -129,13 +129,43 @@ public sealed partial class RunnerSetupService(
         log.Success($"Setup finished: {runner.InstalledVersions}");
     }
 
+    public IHarness GetHarness(string harnessId) =>
+        _harnesses.GetValueOrDefault(harnessId) ?? throw new ArgumentException($"Unknown harness '{harnessId}'.");
+
+    /// <summary>
+    /// Installs the latest version of a harness and its packages (its install script is idempotent and updates), then
+    /// applies its configuration and refreshes the versions shown for the Runner.
+    /// </summary>
+    public async Task UpdateHarnessAsync(Runner runner, string harnessId, IRunnerLog log, CancellationToken cancellationToken = default)
+    {
+        var harness = GetHarness(harnessId);
+        if (!runner.HarnessIds.Contains(harnessId))
+        {
+            throw new InvalidOperationException($"{harness.DisplayName} is not installed on '{runner.Name}'.");
+        }
+
+        var profile = await settings.GetSetupProfileAsync(cancellationToken);
+        var before = runner.InstalledVersions;
+        await RunScriptAsync(runner, log, $"Installing the latest {harness.DisplayName} and updating its packages", harness.InstallScript, TimeSpan.FromMinutes(15), cancellationToken);
+        if (harness.ConfigSupport is not null)
+        {
+            await RunScriptAsync(runner, log, $"Configuring {harness.DisplayName} (packages, model, settings)",
+                harness.BuildConfigureScript(profile.GetHarness(harness.Id)), TimeSpan.FromMinutes(15), cancellationToken);
+        }
+
+        runner.InstalledVersions = await ReadVersionsAsync(runner, cancellationToken);
+        log.Success(before == runner.InstalledVersions
+            ? $"{harness.DisplayName} is up to date: {runner.InstalledVersions}"
+            : $"{harness.DisplayName} updated: {runner.InstalledVersions}. Restart running agents to use it.");
+    }
+
     /// <summary>
     /// Applies a harness's configuration from the Setup Profile to a Runner without the rest of the setup, e.g. after the
     /// package list changed. Running agents pick up the packages after a restart (pi: or <c>/reload</c>).
     /// </summary>
     public async Task ApplyHarnessConfigAsync(Runner runner, string harnessId, IRunnerLog log, CancellationToken cancellationToken = default)
     {
-        var harness = _harnesses.GetValueOrDefault(harnessId) ?? throw new ArgumentException($"Unknown harness '{harnessId}'.");
+        var harness = GetHarness(harnessId);
         if (harness.ConfigSupport is null)
         {
             throw new InvalidOperationException($"{harness.DisplayName} has no packages or settings to apply.");

@@ -78,6 +78,39 @@ public sealed class PiConfigureTests : IDisposable
         Assert.Equal(["install npm:broken", "install npm:fine"], Log());
     }
 
+    [Fact]
+    public void ImagePastePackage_ClearsPisOwnBinding_UnlessSetInTheProfile()
+    {
+        if (!HasTools())
+        {
+            return;
+        }
+
+        var keybindingsFile = Path.Combine(_home, ".pi", "agent", "keybindings.json");
+
+        // Without keybindings to write, the file is not created.
+        Assert.Equal(0, Run(new HarnessConfig { Packages = ["npm:pi-effort"] }));
+        Assert.False(File.Exists(keybindingsFile));
+
+        File.WriteAllText(keybindingsFile, """{ "app.editor.submit": ["enter"] }""");
+        Assert.Equal(0, Run(new HarnessConfig { Packages = ["npm:@pi-archimedes/image-paste@2.8.0"] }));
+        var keybindings = JsonNode.Parse(File.ReadAllText(keybindingsFile))!;
+        Assert.Empty(keybindings["app.clipboard.pasteImage"]!.AsArray());
+        Assert.Equal("enter", (string?)keybindings["app.editor.submit"]![0]);
+
+        Assert.Equal(0, Run(new HarnessConfig { Packages = ["npm:pi-archimedes"], Keybindings = """{ "app.clipboard.pasteImage": ["alt+v"] }""" }));
+        keybindings = JsonNode.Parse(File.ReadAllText(keybindingsFile))!;
+        Assert.Equal("alt+v", (string?)keybindings["app.clipboard.pasteImage"]![0]);
+    }
+
+    [Theory]
+    [InlineData("npm:@pi-archimedes/image-paste", "@pi-archimedes/image-paste")]
+    [InlineData("npm:@pi-archimedes/image-paste@2.8.0", "@pi-archimedes/image-paste")]
+    [InlineData("npm:pi-archimedes@1", "pi-archimedes")]
+    [InlineData("npm:pi-effort", "pi-effort")]
+    [InlineData("git:github.com/owner/repo@v1", "git:github.com/owner/repo@v1")]
+    public void PackageName_StripsSourceAndVersion(string source, string name) => Assert.Equal(name, PiHarness.PackageName(source));
+
     [Theory]
     [InlineData("[1, 2]")]
     [InlineData("{ not json")]

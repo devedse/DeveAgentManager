@@ -5,6 +5,7 @@
 @inject IDialogService Dialogs
 @inject ISnackbar Snackbar
 @inject NavigationManager Navigation
+@inject RunnerSetupService Setup
 
 <PageTitle>@(_runner?.Name ?? "Runner") · DeveAgentManager</PageTitle>
 
@@ -42,9 +43,18 @@
                         <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Stop" Disabled="!ready" OnClick="StopAsync">Stop</MudButton>
                     }
                 }
+                @foreach (var harnessId in _runner.HarnessIds)
+                {
+                    var harness = Setup.GetHarness(harnessId);
+                    <MudTooltip Text="@($"Install the latest {harness.DisplayName}, update its packages and apply Settings → {harness.DisplayName}")">
+                        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Upgrade" Disabled="!ready" OnClick="() => UpdateHarnessAsync(harness)">Update @harness.DisplayName</MudButton>
+                    </MudTooltip>
+                }
+                <MudTooltip Text="Run the whole setup again: tools, tmux and git config, the Setup Profile, harnesses and their packages. Safe to repeat.">
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Build" Disabled="operation is not null || _runner.State == RunnerState.Stopped" OnClick="RerunSetupAsync">Re-run setup</MudButton>
+                </MudTooltip>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" Disabled="!ready" OnClick="NewAgentAsync">New agent</MudButton>
                 <MudMenu Icon="@Icons.Material.Rounded.MoreVert" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
-                    <MudMenuItem Icon="@Icons.Material.Rounded.Build" Disabled="operation is not null || _runner.State == RunnerState.Stopped" OnClick="() => Run(() => Runners.RerunSetup(_runner.Id))">Re-run setup</MudMenuItem>
                     <MudMenuItem Icon="@Icons.Material.Rounded.Key" Disabled="_runner.HostKeyFingerprint is null" OnClick="ForgetHostKeyAsync">Forget SSH host key</MudMenuItem>
                     <MudDivider />
                     <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="operation is not null" OnClick="DeleteAsync">Delete Runner</MudMenuItem>
@@ -194,6 +204,50 @@
         {
             Snackbar.Add(ex.Message, Severity.Error);
         }
+    }
+
+    private async Task RerunSetupAsync()
+    {
+        var running = _runner!.Agents.Count(a => a.State == AgentState.Running);
+        var confirmed = await Dialogs.ShowMessageBoxAsync(
+            $"Re-run setup on '{_runner.Name}'?",
+            "Everything is installed and configured again: base packages, tmux and git config, the Setup Profile (variables, files, script), the harnesses in their latest version and their packages. Each step is safe to repeat."
+            + (running > 0 ? $" The {running} running {(running == 1 ? "agent keeps" : "agents keep")} running; restart {(running == 1 ? "it" : "them")} afterwards to use updated harnesses and packages." : ""),
+            yesText: "Re-run setup", cancelText: "Cancel");
+        if (confirmed == true)
+        {
+            Run(() => Runners.RerunSetup(RunnerId));
+        }
+    }
+
+    private async Task UpdateHarnessAsync(IHarness harness)
+    {
+        var running = _runner!.Agents.Count(a => a.State == AgentState.Running && a.HarnessId == harness.Id);
+        var confirmed = await Dialogs.ShowMessageBoxAsync(
+            $"Update {harness.DisplayName} on '{_runner.Name}'?",
+            $"Installs the latest {harness.DisplayName}, updates its packages, and applies Settings → {harness.DisplayName} (packages added and removed, model, settings, keybindings). The rest of the setup is skipped."
+            + (running > 0 ? $" The {running} running {(running == 1 ? "agent keeps" : "agents keep")} the old version until {(running == 1 ? "it is" : "they are")} restarted." : ""),
+            yesText: "Update", cancelText: "Cancel");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        Task<string?> update;
+        try
+        {
+            update = Runners.UpdateHarness(RunnerId, harness.Id);
+            _tab = 1;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+            return;
+        }
+
+        var error = await update;
+        Snackbar.Add(error is null ? $"{harness.DisplayName} updated on '{_runner.Name}'." : $"Updating {harness.DisplayName} failed: {error}",
+            error is null ? Severity.Success : Severity.Error);
     }
 
     private async Task NewAgentAsync() =>

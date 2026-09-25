@@ -49,19 +49,47 @@ public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactor
     /// </summary>
     public async Task<string> UploadImageAsync(Guid? agentId, Guid? runnerId, string contentType, byte[] bytes, CancellationToken cancellationToken)
     {
-        if (!ImageExtensions.TryGetValue(contentType, out var extension))
-        {
-            throw new ArgumentException($"Only PNG, JPEG, WebP and GIF images can be pasted (this is {(string.IsNullOrEmpty(contentType) ? "an unknown type" : contentType)}).");
-        }
-
         if (bytes.Length == 0 || bytes.Length > MaxImageBytes)
         {
             throw new ArgumentException($"Images can be up to {MaxImageBytes / 1024 / 1024} MB.");
         }
 
+        // The type the browser reports can be wrong (Android pickers call screenshots image/jpeg): the content decides.
+        var detected = DetectImageType(bytes);
+        if (detected is null || !ImageExtensions.TryGetValue(detected, out var extension))
+        {
+            throw new ArgumentException($"Only PNG, JPEG, WebP and GIF images can be pasted (this is {(string.IsNullOrEmpty(contentType) ? "an unknown type" : contentType)}).");
+        }
+
         var runner = await FindRunnerAsync(agentId, runnerId, cancellationToken);
         var name = $"{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..8]}.{extension}";
         return await shell.UploadAsync(runner, $"{UploadFolder}/{name}", bytes, "600", cancellationToken);
+    }
+
+    /// <summary>The image type from the file's signature, or null when it isn't one of the supported types.</summary>
+    internal static string? DetectImageType(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.StartsWith((ReadOnlySpan<byte>)[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))
+        {
+            return "image/png";
+        }
+
+        if (bytes.StartsWith((ReadOnlySpan<byte>)[0xFF, 0xD8, 0xFF]))
+        {
+            return "image/jpeg";
+        }
+
+        if (bytes.StartsWith("GIF87a"u8) || bytes.StartsWith("GIF89a"u8))
+        {
+            return "image/gif";
+        }
+
+        if (bytes.Length >= 12 && bytes.StartsWith("RIFF"u8) && bytes[8..12].SequenceEqual("WEBP"u8))
+        {
+            return "image/webp";
+        }
+
+        return null;
     }
 
     private async Task<Runner> FindRunnerAsync(Guid? agentId, Guid? runnerId, CancellationToken cancellationToken)

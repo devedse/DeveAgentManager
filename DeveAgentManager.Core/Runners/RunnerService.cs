@@ -142,7 +142,7 @@ public sealed partial class RunnerService(
         await db.SaveChangesAsync(cancellationToken);
         events.RunnerChanged(runner.Id);
 
-        StartOperation(runner.Id, "Creating", async (op, cancellation) =>
+        _ = StartOperation(runner.Id, "Creating", async (op, cancellation) =>
         {
             op.Log.Step($"Creating Runner '{runner.Name}' with {provider.DisplayName}");
             var request2 = new MachineCreateRequest(
@@ -182,6 +182,36 @@ public sealed partial class RunnerService(
         var provider = GetProvider(op.Runner);
         await BringOnlineAsync(op, provider, runSetup: true, cancellation);
     });
+
+    /// <summary>
+    /// Updates one harness without the rest of the setup: installs its latest version, updates its packages, then applies
+    /// its configuration from the Setup Profile (packages added and removed, model, settings). The Runner stays usable;
+    /// running agents keep the old version until they are restarted. Returns the error, or null when it worked.
+    /// </summary>
+    public Task<string?> UpdateHarness(Guid runnerId, string harnessId) =>
+        StartOperation(runnerId, $"Updating {setup.GetHarness(harnessId).DisplayName}", async (op, cancellation) =>
+        {
+            RequireReady(op.Runner);
+            await setup.UpdateHarnessAsync(op.Runner, harnessId, op.Log, cancellation);
+            await op.SaveAsync();
+        }, markFailed: false);
+
+    /// <summary>Applies a harness's configuration from the Setup Profile (after it changed). Returns the error, or null.</summary>
+    public Task<string?> ApplyHarnessConfig(Guid runnerId, string harnessId) =>
+        StartOperation(runnerId, $"Configuring {setup.GetHarness(harnessId).DisplayName}", async (op, cancellation) =>
+        {
+            RequireReady(op.Runner);
+            await setup.ApplyHarnessConfigAsync(op.Runner, harnessId, op.Log, cancellation);
+            op.Log.Success($"{setup.GetHarness(harnessId).DisplayName} configured");
+        }, markFailed: false);
+
+    private static void RequireReady(Runner runner)
+    {
+        if (runner.State != RunnerState.Ready)
+        {
+            throw new InvalidOperationException($"Runner '{runner.Name}' is not ready ({runner.State}).");
+        }
+    }
 
     public void Stop(Guid runnerId) => StartOperation(runnerId, "Stopping", async (op, cancellation) =>
     {
@@ -348,7 +378,10 @@ public sealed partial class RunnerService(
         FindProvider(runner.ProviderId) ?? throw new InvalidOperationException($"The provider '{runner.ProviderId}' of this Runner is not available.");
 
     /// <param name="replaceRunning">Cancel the operation that is running (if any) and run this one after it stopped. Used by Delete.</param>
-    private void StartOperation(Guid runnerId, string name, Func<RunnerOperation, CancellationToken, Task> work, bool deleting = false, bool replaceRunning = false)
+    /// <param name="markFailed">Put the Runner in the Error state when the operation fails. Off for operations that leave it usable.</param>
+    /// <returns>Completes when the operation is done: its error message, or null when it worked.</returns>
+    private Task<string?> StartOperation(Guid runnerId, string name, Func<RunnerOperation, CancellationToken, Task> work, bool deleting = false, bool replaceRunning = false,
+        bool markFailed = true)
     {
         var operation = new Operation(name, CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping));
         Operation? previous = null;
@@ -387,17 +420,26 @@ public sealed partial class RunnerService(
             catch (OperationCanceledException) when (lifetime.ApplicationStopping.IsCancellationRequested)
             {
                 log.Warning("Interrupted because the Manager is shutting down.");
+                operation.Error = "Interrupted because the Manager is shutting down.";
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
             {
                 log.Warning($"{name} was cancelled.");
-                await MarkFailedAsync(runnerId, $"{name} was cancelled.");
+                operation.Error = $"{name} was cancelled.";
+                if (markFailed)
+                {
+                    await MarkFailedAsync(runnerId, operation.Error);
+                }
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "{Operation} failed for runner {RunnerId}", name, runnerId);
                 log.Error(ex.Message);
-                await MarkFailedAsync(runnerId, deleting ? $"Delete failed: {ex.Message}" : ex.Message);
+                operation.Error = ex.Message;
+                if (markFailed)
+                {
+                    await MarkFailedAsync(runnerId, deleting ? $"Delete failed: {ex.Message}" : ex.Message);
+                }
             }
             finally
             {
@@ -407,6 +449,7 @@ public sealed partial class RunnerService(
                 events.RunnerChanged(runnerId);
             }
         }, CancellationToken.None);
+        return operation.Completion.ContinueWith(_ => operation.Error, TaskScheduler.Default);
     }
 
     private async Task MarkFailedAsync(Guid runnerId, string message)
@@ -435,6 +478,8 @@ public sealed partial class RunnerService(
         public CancellationTokenSource Cancellation { get; } = cancellation;
 
         public Task? Completion { get; set; }
+
+        public string? Error { get; set; }
     }
 
     private sealed class RunnerOperation(ManagerDbContext db, Runner runner, IRunnerLog log, ManagerEvents events)
