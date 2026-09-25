@@ -303,12 +303,16 @@ public sealed partial class AgentService(
         var directory = ShellQuote.Quote(agent.WorkingDirectory);
 
         // Keep the pane after the harness exits, so its last output stays visible and it can be restarted in place.
+        // The session starts with a shell, remain-on-exit is switched on, and only then the harness replaces the shell,
+        // so even a harness that exits immediately leaves its output behind. Targets need the trailing ':' (session:window).
+        var target = ShellQuote.Quote("=" + agent.TmuxSession + ":");
         var script = $"""
-            if tmux has-session -t {session} 2>/dev/null; then
-              tmux respawn-pane -k -t {ShellQuote.Quote("=" + agent.TmuxSession + ":")} -c {directory} {ShellQuote.Quote(launch)}
-            else
-              tmux -u new-session -d -s {ShellQuote.Quote(agent.TmuxSession)} -x 200 -y 50 -c {directory} {ShellQuote.Quote(launch)} \; set-option -t {session} remain-on-exit on
+            set -e
+            if ! tmux has-session -t {session} 2>/dev/null; then
+              tmux -u new-session -d -s {ShellQuote.Quote(agent.TmuxSession)} -x 200 -y 50 -c {directory}
             fi
+            tmux set-option -t {target} remain-on-exit on
+            tmux respawn-pane -k -t {target} -c {directory} {ShellQuote.Quote(launch)}
             """;
         logger.LogInformation("Starting agent {Agent} on {Runner}", agent.Name, runner.Name);
         (await shell.RunAsync(runner, script, cancellationToken: cancellationToken)).EnsureSuccess($"Starting {harness.DisplayName}");
