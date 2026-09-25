@@ -1,0 +1,28 @@
+@page "/Error"
+@layout EmptyLayout
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@using System.Diagnostics
+
+<PageTitle>Error · DeveAgentManager</PageTitle>
+
+<div class="login-page">
+    <div class="login-card">
+        <div class="login-title">Something went wrong</div>
+        <p class="login-subtitle">An error occurred while processing your request. The Manager's log has the details.</p>
+        @if (RequestId is not null)
+        {
+            <p class="login-subtitle">Request ID: <code>@RequestId</code></p>
+        }
+        <a class="login-button" href="">Back to the dashboard</a>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+
+    protected override void OnInitialized() => RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

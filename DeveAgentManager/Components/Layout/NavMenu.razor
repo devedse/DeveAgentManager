@@ -1,0 +1,51 @@
+@using System.Reflection
+@inherits LiveComponent
+@inject RunnerService Runners
+
+<div class="nav-wrapper">
+    <MudNavMenu Class="app-nav" Rounded="true" Margin="Margin.Dense" Color="Color.Primary">
+        <div class="nav-section">Overview</div>
+        <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Rounded.SpaceDashboard">Dashboard</MudNavLink>
+        <div class="nav-section">Work</div>
+        <MudNavLink Href="agents" Icon="@Icons.Material.Rounded.SmartToy">
+            <div class="nav-link-row">
+                <span>Agents</span>
+                @if (_runningAgents > 0)
+                {
+                    <span class="nav-badge nav-badge-live">@_runningAgents</span>
+                }
+            </div>
+        </MudNavLink>
+        <MudNavLink Href="runners" Icon="@Icons.Material.Rounded.Dns">
+            <div class="nav-link-row">
+                <span>Runners</span>
+                @if (_readyRunners > 0)
+                {
+                    <span class="nav-badge">@_readyRunners</span>
+                }
+            </div>
+        </MudNavLink>
+        <div class="nav-section">Manage</div>
+        <MudNavLink Href="settings" Icon="@Icons.Material.Rounded.Tune">Settings</MudNavLink>
+    </MudNavMenu>
+
+    <div class="nav-footer">
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">DeveAgentManager @Version</MudText>
+    </div>
+</div>
+
+@code {
+    private static readonly string Version = (Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "dev").Split('+')[0];
+
+    private int _runningAgents;
+    private int _readyRunners;
+
+    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.Kind != ManagerEventKind.SettingsChanged;
+
+    protected override async Task LoadAsync()
+    {
+        var runners = await Runners.ListAsync();
+        _readyRunners = runners.Count(r => r.State == RunnerState.Ready);
+        _runningAgents = runners.SelectMany(r => r.Agents).Count(a => a.State is AgentState.Running or AgentState.Starting);
+    }
+}

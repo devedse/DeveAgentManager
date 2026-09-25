@@ -1,0 +1,221 @@
+@using System.Text
+@implements IAsyncDisposable
+@inject TerminalService Terminals
+@inject IJSRuntime JS
+@inject ILogger<TerminalView> Logger
+
+<div class="terminal-frame">
+    <div class="terminal-host">
+        <Xterm @ref="_xterm" Options="_options" Addons="_addons" Class="terminal-xterm"
+               OnFirstRender="OnFirstRenderAsync" OnData="OnData" OnBinary="OnBinary" OnResize="OnResize" OnTitleChange="OnTitleChange" />
+    </div>
+
+    @if (_overlay is not null)
+    {
+        <div class="terminal-overlay">
+            <div class="terminal-overlay-card">
+                @if (_connecting)
+                {
+                    <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
+                }
+                else
+                {
+                    <MudIcon Icon="@(_error ? Icons.Material.Rounded.ErrorOutline : Icons.Material.Rounded.LinkOff)" Color="@(_error ? Color.Error : Color.Default)" />
+                }
+                <MudText Typo="Typo.body2">@_overlay</MudText>
+                @if (!_connecting)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Refresh" OnClick="ReconnectAsync">Reconnect</MudButton>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+<div class="terminal-keys">
+    @foreach (var (label, sequence) in Keys)
+    {
+        <button type="button" class="terminal-key" @onclick="() => SendAsync(sequence)" @onclick:preventDefault="true">@label</button>
+    }
+</div>
+
+@code {
+    // On-screen keys for phones and tablets, where these are hard or impossible to type.
+    private static readonly (string Label, string Sequence)[] Keys =
+    [
+        ("Esc", "\u001b"), ("Tab", "\t"), ("Ctrl+C", "\u0003"), ("↑", "\u001b[A"), ("↓", "\u001b[B"),
+        ("←", "\u001b[D"), ("→", "\u001b[C"), ("⇧Enter", "\u001b[13;2u"), ("Enter", "\r"),
+    ];
+
+    private readonly HashSet<string> _addons = ["addon-fit", "addon-web-links"];
+    private readonly TerminalOptions _options = new()
+    {
+        CursorBlink = true,
+        CursorStyle = CursorStyle.Bar,
+        FontFamily = AppTheme.MonoFont,
+        FontSize = 14,
+        Scrollback = 10000,
+        AllowProposedApi = true,
+        MacOptionIsMeta = true,
+        Theme = new Theme
+        {
+            Background = "#0a0d13",
+            Foreground = "#d8dee9",
+            Cursor = "#8b7dff",
+            CursorAccent = "#0a0d13",
+            SelectionBackground = "#8b7dff55",
+            Black = "#1b2130", BrightBlack = "#4b5467",
+            Red = "#f87171", BrightRed = "#fca5a5",
+            Green = "#34d399", BrightGreen = "#6ee7b7",
+            Yellow = "#fbbf24", BrightYellow = "#fcd34d",
+            Blue = "#60a5fa", BrightBlue = "#93c5fd",
+            Magenta = "#c084fc", BrightMagenta = "#d8b4fe",
+            Cyan = "#2dd4bf", BrightCyan = "#5eead4",
+            White = "#d8dee9", BrightWhite = "#f8fafc",
+        },
+    };
+
+    private Xterm _xterm = default!;
+    private TerminalConnection? _connection;
+    private CancellationTokenSource _lifetime = new();
+    private string? _overlay = "Connecting...";
+    private bool _connecting = true;
+    private bool _error;
+
+    /// <summary>Attach to this agent's tmux session.</summary>
+    [Parameter]
+    public Guid? AgentId { get; set; }
+
+    /// <summary>Or open a plain shell on this Runner.</summary>
+    [Parameter]
+    public Guid? RunnerId { get; set; }
+
+    [Parameter]
+    public EventCallback<string> TitleChanged { get; set; }
+
+    [Parameter]
+    public EventCallback Disconnected { get; set; }
+
+    public async Task SendAsync(string data)
+    {
+        _connection?.Write(Encoding.UTF8.GetBytes(data));
+        await _xterm.Focus();
+    }
+
+    public async Task ReconnectAsync()
+    {
+        CloseConnection();
+        await _xterm.Reset();
+        await ConnectAsync();
+    }
+
+    private async Task OnFirstRenderAsync()
+    {
+        await JS.InvokeVoidAsync("damTerminal.init", _xterm.Id);
+        await ConnectAsync();
+    }
+
+    private async Task ConnectAsync()
+    {
+        _overlay = "Connecting...";
+        _connecting = true;
+        _error = false;
+        StateHasChanged();
+
+        try
+        {
+            await JS.InvokeVoidAsync("damTerminal.fit", _xterm.Id);
+            var columns = Math.Max(20, await _xterm.GetColumns());
+            var rows = Math.Max(5, await _xterm.GetRows());
+            var token = _lifetime.Token;
+            _connection = AgentId is { } agentId
+                ? await Terminals.OpenAgentAsync(agentId, columns, rows, token)
+                : await Terminals.OpenShellAsync(RunnerId ?? throw new InvalidOperationException("Set AgentId or RunnerId."), columns, rows, token);
+
+            _overlay = null;
+            _connecting = false;
+            var connection = _connection;
+            _ = Task.Factory.StartNew(() => PumpAsync(connection, token), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
+            await _xterm.Focus();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogInformation(ex, "Could not open terminal");
+            _overlay = ex.Message;
+            _connecting = false;
+            _error = true;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task PumpAsync(TerminalConnection connection, CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                var data = connection.Read();
+                if (data.Length == 0)
+                {
+                    break;
+                }
+
+                await InvokeAsync(async () => await _xterm.Write(data));
+            }
+        }
+        catch (Exception ex) when (!token.IsCancellationRequested)
+        {
+            Logger.LogDebug(ex, "Terminal output stopped");
+        }
+
+        if (token.IsCancellationRequested || !ReferenceEquals(connection, _connection))
+        {
+            return;
+        }
+
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                _overlay = AgentId is null ? "The shell was closed." : "Disconnected from the agent. It keeps running on the Runner.";
+                StateHasChanged();
+                await Disconnected.InvokeAsync();
+            });
+        }
+        catch (ObjectDisposedException)
+        {
+            // The page was closed.
+        }
+    }
+
+    private void OnData(string data) => _connection?.Write(Encoding.UTF8.GetBytes(data));
+
+    private void OnBinary(string data) => _connection?.Write(Encoding.Latin1.GetBytes(data));
+
+    private void OnResize(ResizeEventArgs size) => _connection?.Resize(size.Columns, size.Rows);
+
+    private Task OnTitleChange(string title) => TitleChanged.InvokeAsync(title);
+
+    private void CloseConnection()
+    {
+        var connection = _connection;
+        _connection = null;
+        connection?.Dispose();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _lifetime.CancelAsync();
+        CloseConnection();
+        _lifetime.Dispose();
+        try
+        {
+            await JS.InvokeVoidAsync("damTerminal.dispose", _xterm.Id);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser is already gone.
+        }
+    }
+}

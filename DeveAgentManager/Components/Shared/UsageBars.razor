@@ -1,0 +1,30 @@
+<div class="usage @(Compact ? "usage-compact" : "")">
+    <div class="usage-item">
+        <span class="usage-label">CPU</span>
+        <div class="usage-track"><div class="usage-fill usage-cpu" style="width:@Percent(Cpu)%"></div></div>
+        <span class="usage-value">@Cpu.ToString("0")%</span>
+    </div>
+    <div class="usage-item">
+        <span class="usage-label">RAM</span>
+        <div class="usage-track"><div class="usage-fill usage-memory" style="width:@Percent(Memory)%"></div></div>
+        <span class="usage-value">@(Compact ? $"{Memory:0}%" : MemoryText)</span>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public MachineStatus Status { get; set; } = default!;
+
+    [Parameter]
+    public bool Compact { get; set; }
+
+    private double Cpu => Status.CpuUsage ?? 0;
+
+    private double Memory => Status is { MemoryUsedBytes: { } used, MemoryTotalBytes: > 0 and var total } ? used * 100.0 / total : 0;
+
+    private string MemoryText => Status is { MemoryUsedBytes: { } used, MemoryTotalBytes: { } total }
+        ? $"{used / 1024.0 / 1024 / 1024:0.0} / {total / 1024.0 / 1024 / 1024:0.#} GB"
+        : "-";
+
+    private static string Percent(double value) => Math.Clamp(value, 0, 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+}

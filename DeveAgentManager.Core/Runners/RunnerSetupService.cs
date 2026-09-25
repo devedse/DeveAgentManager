@@ -1,0 +1,247 @@
+using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
+using DeveAgentManager.Core.Abstractions;
+using DeveAgentManager.Core.Data;
+using DeveAgentManager.Core.Setup;
+using DeveAgentManager.Core.Ssh;
+using Polly;
+using Polly.Retry;
+using Polly.Timeout;
+using Renci.SshNet.Common;
+
+namespace DeveAgentManager.Core.Runners;
+
+/// <summary>
+/// Sets up a Runner over SSH: base packages, tmux and git config, the Setup Profile and the selected harnesses.
+/// </summary>
+public sealed partial class RunnerSetupService(
+    RunnerShell shell,
+    ManagerSshKey sshKey,
+    SettingsStore settings,
+    IEnumerable<IHarness> harnesses)
+{
+    /// <summary>Bump when runner-setup.sh changes, so the Portal can show that a Runner's setup is outdated.</summary>
+    public const int SetupVersion = 1;
+
+    private static readonly Lazy<string> SetupScript = new(() => ReadResource("runner-setup.sh"));
+
+    private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
+
+    /// <summary>Waits until SSH answers (a fresh VM needs a moment after it got its IP).</summary>
+    public async Task WaitForSshAsync(Runner runner, IRunnerLog log, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        log.Step($"Connecting over SSH to {runner.Username}@{runner.Host}:{runner.SshPort}");
+        var attempt = 0;
+        var pipeline = new ResiliencePipelineBuilder()
+            .AddTimeout(timeout)
+            .AddRetry(new RetryStrategyOptions
+            {
+                ShouldHandle = new PredicateBuilder().Handle<Exception>(e => e is not HostKeyMismatchException and not OperationCanceledException),
+                MaxRetryAttempts = int.MaxValue,
+                Delay = TimeSpan.FromSeconds(5),
+                BackoffType = DelayBackoffType.Constant,
+                OnRetry = args =>
+                {
+                    if (++attempt % 3 == 1)
+                    {
+                        log.Info($"SSH not ready yet ({args.Outcome.Exception?.Message}), retrying...");
+                    }
+
+                    shell.Invalidate(runner.Id);
+                    return ValueTask.CompletedTask;
+                },
+            })
+            .Build();
+
+        try
+        {
+            await pipeline.ExecuteAsync(async ct => (await shell.RunAsync(runner, "true", TimeSpan.FromSeconds(30), ct)).EnsureSuccess("SSH test"), cancellationToken);
+        }
+        catch (TimeoutRejectedException)
+        {
+            throw new TimeoutException($"SSH on {runner.Host}:{runner.SshPort} did not become available within {timeout.TotalMinutes:0} minutes.");
+        }
+
+        log.Success($"Connected (host key {runner.HostKeyFingerprint})");
+    }
+
+    public async Task RunAsync(Runner runner, IRunnerLog log, CancellationToken cancellationToken)
+    {
+        var profile = await settings.GetSetupProfileAsync(cancellationToken);
+        var pat = await settings.GetGitHubPatAsync(cancellationToken);
+
+        log.Step("Authorizing the Manager's SSH key");
+        var quotedKey = ShellQuote.Quote(sshKey.PublicKey);
+        (await shell.RunAsync(runner,
+            $"mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && (grep -qxF {quotedKey} ~/.ssh/authorized_keys || echo {quotedKey} >> ~/.ssh/authorized_keys)",
+            cancellationToken: cancellationToken)).EnsureSuccess("Authorizing SSH key");
+
+        runner.HomeDirectory = (await shell.RunAsync(runner, "printf %s \"$HOME\"", cancellationToken: cancellationToken)).EnsureSuccess("Reading home directory").Output.Trim();
+
+        log.Step("Uploading setup files");
+        await shell.UploadAsync(runner, "~/.deveagentmanager/setup-vars.sh", BuildSetupVars(profile), "600", cancellationToken);
+        await shell.UploadAsync(runner, "~/.deveagentmanager/agent-env.sh", BuildAgentEnv(profile), "600", cancellationToken);
+        await shell.UploadAsync(runner, "~/.deveagentmanager/runner-setup.sh", SetupScript.Value, "700", cancellationToken);
+        if (!string.IsNullOrEmpty(pat))
+        {
+            await shell.UploadAsync(runner, "~/.git-credentials", $"https://x-access-token:{pat}@github.com\n", "600", cancellationToken);
+        }
+        else
+        {
+            await shell.RunAsync(runner, "rm -f ~/.git-credentials", cancellationToken: cancellationToken);
+        }
+
+        await RunScriptAsync(runner, log, "Base setup", "bash ~/.deveagentmanager/runner-setup.sh", TimeSpan.FromMinutes(30), cancellationToken);
+
+        foreach (var file in profile.Files)
+        {
+            log.Info($"Writing {file.Path}");
+            await shell.UploadAsync(runner, file.Path, file.Content.ReplaceLineEndings("\n"), NormalizeMode(file.Mode), cancellationToken);
+        }
+
+        foreach (var harnessId in runner.HarnessIds)
+        {
+            if (!_harnesses.TryGetValue(harnessId, out var harness))
+            {
+                log.Warning($"Unknown harness '{harnessId}', skipped.");
+                continue;
+            }
+
+            await RunScriptAsync(runner, log, $"Installing {harness.DisplayName}", harness.InstallScript, TimeSpan.FromMinutes(15), cancellationToken);
+        }
+
+        if (!string.IsNullOrWhiteSpace(profile.Script))
+        {
+            await shell.UploadAsync(runner, "~/.deveagentmanager/profile-script.sh", profile.Script.ReplaceLineEndings("\n"), "700", cancellationToken);
+            await RunScriptAsync(runner, log, "Running the Setup Profile script", "bash -e ~/.deveagentmanager/profile-script.sh", TimeSpan.FromMinutes(30), cancellationToken);
+        }
+
+        runner.InstalledVersions = await ReadVersionsAsync(runner, cancellationToken);
+        runner.SetupVersion = SetupVersion;
+        runner.LastSetupAt = DateTime.UtcNow;
+        log.Success($"Setup finished: {runner.InstalledVersions}");
+    }
+
+    public async Task<string> ReadVersionsAsync(Runner runner, CancellationToken cancellationToken)
+    {
+        var commands = new List<(string Name, string Command)>();
+        foreach (var harnessId in runner.HarnessIds)
+        {
+            if (_harnesses.TryGetValue(harnessId, out var harness))
+            {
+                commands.Add((harness.DisplayName, harness.VersionCommand));
+            }
+        }
+
+        commands.Add(("node", "node --version"));
+        commands.Add(("tmux", "tmux -V | cut -d' ' -f2"));
+
+        var script = string.Join("\n", commands.Select(c => $"echo \"{c.Name}=$({c.Command} 2>/dev/null | head -n1)\""));
+        var result = await shell.RunAsync(runner, script, cancellationToken: cancellationToken);
+        return string.Join(" · ", result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.Split('=', 2))
+            .Where(p => p.Length == 2 && p[1].Trim().Length > 0)
+            .Select(p => $"{p[0]} {p[1].Trim()}"));
+    }
+
+    /// <summary>
+    /// Copies a harness's login and settings files from a Runner into the Setup Profile, so every Runner set up afterwards
+    /// gets them. Returns the files that were found.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ImportHarnessFilesAsync(Runner runner, string harnessId, CancellationToken cancellationToken = default)
+    {
+        var harness = _harnesses.GetValueOrDefault(harnessId) ?? throw new ArgumentException($"Unknown harness '{harnessId}'.");
+        var profile = await settings.GetSetupProfileAsync(cancellationToken);
+        var imported = new List<string>();
+        foreach (var path in harness.ConfigFiles)
+        {
+            var content = await shell.DownloadAsync(runner, path, cancellationToken);
+            if (content is null)
+            {
+                continue;
+            }
+
+            profile.Files.RemoveAll(f => f.Path == path);
+            profile.Files.Add(new SetupFile { Path = path, Content = content, Mode = "600" });
+            imported.Add(path);
+        }
+
+        if (imported.Count > 0)
+        {
+            await settings.SaveSetupProfileAsync(profile, cancellationToken);
+        }
+
+        return imported;
+    }
+
+    private async Task RunScriptAsync(Runner runner, IRunnerLog log, string title, string script, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        log.Step(title);
+        var exitCode = await shell.RunStreamingAsync(runner, script, line =>
+        {
+            if (line.StartsWith("==> ", StringComparison.Ordinal))
+            {
+                log.Step(line[4..]);
+            }
+            else if (line.Length > 0)
+            {
+                log.Output(line);
+            }
+        }, timeout, cancellationToken);
+
+        if (exitCode != 0)
+        {
+            throw new RunnerCommandException($"{title} failed with exit code {exitCode}. See the setup log for details.");
+        }
+    }
+
+    internal static string BuildSetupVars(SetupProfile profile)
+    {
+        var builder = new StringBuilder("# Managed by DeveAgentManager\n");
+        if (!string.IsNullOrWhiteSpace(profile.GitUserName))
+        {
+            builder.Append("GIT_USER_NAME=").Append(ShellQuote.Quote(profile.GitUserName.Trim())).Append('\n');
+        }
+
+        if (!string.IsNullOrWhiteSpace(profile.GitUserEmail))
+        {
+            builder.Append("GIT_USER_EMAIL=").Append(ShellQuote.Quote(profile.GitUserEmail.Trim())).Append('\n');
+        }
+
+        return builder.ToString();
+    }
+
+    internal static string BuildAgentEnv(SetupProfile profile)
+    {
+        var builder = new StringBuilder("# Managed by DeveAgentManager: environment variables from the Setup Profile\n");
+        foreach (var variable in profile.EnvironmentVariables)
+        {
+            var name = variable.Name.Trim();
+            if (!EnvironmentVariableName().IsMatch(name))
+            {
+                continue;
+            }
+
+            builder.Append("export ").Append(name).Append('=').Append(ShellQuote.Quote(variable.Value)).Append('\n');
+        }
+
+        return builder.ToString();
+    }
+
+    private static string NormalizeMode(string? mode) =>
+        mode is not null && Regex.IsMatch(mode.Trim(), "^[0-7]{3,4}$") ? mode.Trim() : "600";
+
+    private static string ReadResource(string name)
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var resource = assembly.GetManifestResourceNames().Single(n => n.EndsWith(name, StringComparison.Ordinal));
+        using var stream = assembly.GetManifestResourceStream(resource)!;
+        using var reader = new StreamReader(stream);
+        // Scripts must have Unix line endings, even when the repo was checked out on Windows.
+        return reader.ReadToEnd().ReplaceLineEndings("\n");
+    }
+
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
+    private static partial Regex EnvironmentVariableName();
+}

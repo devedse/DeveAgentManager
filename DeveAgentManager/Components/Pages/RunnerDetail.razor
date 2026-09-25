@@ -1,0 +1,245 @@
+@page "/runners/{RunnerId:guid}"
+@inherits LiveComponent
+@inject RunnerService Runners
+@inject RunnerStatusCache Statuses
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>@(_runner?.Name ?? "Runner") · DeveAgentManager</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page">
+    @if (_runner is null)
+    {
+        @if (Loaded)
+        {
+            <EmptyState Icon="@Icons.Material.Rounded.SearchOff" Title="Runner not found" Text="It may have been deleted.">
+                <MudButton Href="runners" Variant="Variant.Outlined">Back to Runners</MudButton>
+            </EmptyState>
+        }
+    }
+    else
+    {
+        var operation = Runners.CurrentOperation(_runner.Id);
+        var provider = Runners.FindProvider(_runner.ProviderId);
+        var status = Statuses.Get(_runner.Id);
+        var ready = _runner.State == RunnerState.Ready && operation is null;
+
+        <PageHeader Title="@_runner.Name" Overline="Runner" BackHref="runners">
+            <TitleContent>
+                <StatusPill Style="StateStyles.For(_runner.State)" Text="@operation" />
+            </TitleContent>
+            <Actions>
+                <MudButton Href="@($"runners/{_runner.Id}/shell")" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Terminal" Disabled="!ready">Shell</MudButton>
+                @if (provider?.Capabilities.CanStartStop == true)
+                {
+                    @if (_runner.State is RunnerState.Stopped or RunnerState.Error)
+                    {
+                        <MudButton Variant="Variant.Outlined" Color="Color.Success" StartIcon="@Icons.Material.Rounded.PlayArrow" Disabled="operation is not null" OnClick="() => Run(() => Runners.Start(_runner.Id))">Start</MudButton>
+                    }
+                    else
+                    {
+                        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Stop" Disabled="!ready" OnClick="StopAsync">Stop</MudButton>
+                    }
+                }
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" Disabled="!ready" OnClick="NewAgentAsync">New agent</MudButton>
+                <MudMenu Icon="@Icons.Material.Rounded.MoreVert" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+                    <MudMenuItem Icon="@Icons.Material.Rounded.Build" Disabled="operation is not null || _runner.State == RunnerState.Stopped" OnClick="() => Run(() => Runners.RerunSetup(_runner.Id))">Re-run setup</MudMenuItem>
+                    <MudMenuItem Icon="@Icons.Material.Rounded.Key" Disabled="_runner.HostKeyFingerprint is null" OnClick="ForgetHostKeyAsync">Forget SSH host key</MudMenuItem>
+                    <MudDivider />
+                    <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="operation is not null" OnClick="DeleteAsync">Delete Runner</MudMenuItem>
+                </MudMenu>
+            </Actions>
+        </PageHeader>
+
+        @if (_runner.State == RunnerState.Error && _runner.StateMessage is not null && operation is null)
+        {
+            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-4">
+                <div class="alert-title">Something went wrong</div>
+                <div>@_runner.StateMessage</div>
+                <div class="alert-hint">Check the setup log below, then use <b>Re-run setup</b> (or <b>Start</b>) to try again.</div>
+            </MudAlert>
+        }
+        else if (operation is not null || StateStyles.For(_runner.State).Busy)
+        {
+            <div class="progress-banner mb-4">
+                <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
+                <div class="flex-grow-1">
+                    <div class="progress-title">@(operation ?? StateStyles.For(_runner.State).Text)...</div>
+                    <div class="progress-text">@(_runner.StateMessage ?? "Working")</div>
+                </div>
+                @if (operation is not null && operation != "Deleting")
+                {
+                    <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => Runners.Cancel(RunnerId)">Cancel</MudButton>
+                }
+            </div>
+        }
+        else if (_runner.State == RunnerState.Ready && _runner.SetupVersion < RunnerSetupService.SetupVersion)
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4" Dense="true">
+                This Runner was set up with an older setup script. Use <b>Re-run setup</b> to update it.
+            </MudAlert>
+        }
+
+        <MudGrid Spacing="4">
+            <MudItem xs="12" lg="8">
+                <div class="panel panel-flush">
+                    <MudTabs @bind-ActivePanelIndex="_tab" Elevation="0" ApplyEffectsToContainer="true" Class="panel-tabs" TabPanelsClass="panel-tab-content">
+                        <MudTabPanel Text="Agents" Icon="@Icons.Material.Rounded.SmartToy" BadgeData="@(_runner.Agents.Count > 0 ? _runner.Agents.Count : null)" BadgeColor="Color.Primary">
+                            <AgentTable Agents="_runner.Agents" EmptyText="@(ready ? "Start an agent to work on a repository on this Runner." : "Agents can start once the Runner is ready.")">
+                                <EmptyContent>
+                                    @if (ready)
+                                    {
+                                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
+                                    }
+                                </EmptyContent>
+                            </AgentTable>
+                        </MudTabPanel>
+                        <MudTabPanel Text="Setup log" Icon="@Icons.Material.Rounded.Notes">
+                            <RunnerLogView RunnerId="_runner.Id" Height="560px" />
+                        </MudTabPanel>
+                    </MudTabs>
+                </div>
+            </MudItem>
+            <MudItem xs="12" lg="4">
+                @if (_runner.State == RunnerState.Ready && status is { CpuUsage: not null })
+                {
+                    <div class="panel mb-4">
+                        <div class="panel-header">
+                            <MudText Typo="Typo.h6">Resources</MudText>
+                            @if (status.Uptime is { } uptime)
+                            {
+                                <span class="mud-text-secondary text-small">up @uptime.Humanize(2)</span>
+                            }
+                        </div>
+                        <UsageBars Status="status" />
+                    </div>
+                }
+                <div class="panel">
+                    <div class="panel-header">
+                        <MudText Typo="Typo.h6">Details</MudText>
+                    </div>
+                    <dl class="details">
+                        <dt>Provider</dt>
+                        <dd>@(provider?.DisplayName ?? _runner.ProviderId)</dd>
+                        @if (_runner.MachineId is not null && _runner.ProviderId != "existing")
+                        {
+                            <dt>Machine</dt>
+                            <dd class="mono">VM @_runner.MachineId</dd>
+                        }
+                        @if (_runner.TemplateId is not null)
+                        {
+                            <dt>Template</dt>
+                            <dd>@_runner.TemplateId</dd>
+                        }
+                        <dt>Address</dt>
+                        <dd class="mono">@(_runner.Host is null ? "-" : $"{_runner.Username}@{_runner.Host}{(_runner.SshPort == 22 ? "" : $":{_runner.SshPort}")}")</dd>
+                        @if (_runner.Cores > 0)
+                        {
+                            <dt>Size</dt>
+                            <dd>@_runner.Cores CPU · @(_runner.MemoryMb / 1024.0) GB RAM · @_runner.DiskGb GB disk</dd>
+                        }
+                        <dt>Software</dt>
+                        <dd>@(_runner.InstalledVersions ?? "-")</dd>
+                        <dt>Last setup</dt>
+                        <dd>@(_runner.LastSetupAt?.Humanize() ?? "never")</dd>
+                        <dt>Created</dt>
+                        <dd>@_runner.CreatedAt.Humanize()</dd>
+                        @if (_runner.HostKeyFingerprint is not null)
+                        {
+                            <dt>Host key</dt>
+                            <dd class="mono small-break">@_runner.HostKeyFingerprint</dd>
+                        }
+                    </dl>
+                </div>
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+@code {
+    [Parameter]
+    public Guid RunnerId { get; set; }
+
+    private Runner? _runner;
+    private int _tab;
+    private bool _tabChosen;
+
+    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.RunnerId == RunnerId;
+
+    protected override async Task LoadAsync()
+    {
+        _runner = await Runners.GetAsync(RunnerId);
+        if (_runner is not null && !_tabChosen)
+        {
+            // Show the log while a Runner is being set up, and the agents afterwards.
+            _tab = _runner.Agents.Count == 0 && _runner.State != RunnerState.Ready ? 1 : 0;
+            _tabChosen = true;
+        }
+
+        foreach (var agent in _runner?.Agents ?? [])
+        {
+            agent.Runner = _runner;
+        }
+    }
+
+    private void Run(Action action)
+    {
+        try
+        {
+            action();
+            _tab = 1;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task NewAgentAsync() =>
+        await Dialogs.ShowAsync<NewAgentDialog>("New agent", new DialogParameters<NewAgentDialog> { { d => d.RunnerId, RunnerId } });
+
+    private async Task StopAsync()
+    {
+        var running = _runner!.Agents.Count(a => a.State == AgentState.Running);
+        var confirmed = await Dialogs.ShowMessageBoxAsync(
+            $"Stop '{_runner.Name}'?",
+            running > 0 ? $"The VM is shut down, which stops {running} running {(running == 1 ? "agent" : "agents")}. Their conversations can be resumed later." : "The VM is shut down. You can start it again later.",
+            yesText: "Stop", cancelText: "Cancel");
+        if (confirmed == true)
+        {
+            Run(() => Runners.Stop(RunnerId));
+        }
+    }
+
+    private async Task ForgetHostKeyAsync()
+    {
+        await Runners.ForgetHostKeyAsync(RunnerId);
+        Snackbar.Add("Host key forgotten. The next connection trusts the key it sees.", Severity.Info);
+    }
+
+    private async Task DeleteAsync()
+    {
+        var provider = Runners.FindProvider(_runner!.ProviderId);
+        var destroys = provider?.Capabilities.CanDestroy == true && _runner.MachineId is not null;
+        var message = destroys
+            ? $"This deletes VM {_runner.MachineId} and its disks on {provider!.DisplayName}, including every agent and all work on it that was not pushed."
+            : "The Runner is removed from the Manager and its agents are stopped. The machine itself is left alone.";
+        var confirmed = await Dialogs.ShowMessageBoxAsync($"Delete '{_runner.Name}'?", message, yesText: destroys ? "Delete VM" : "Remove", cancelText: "Cancel");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        try
+        {
+            Runners.Delete(RunnerId, destroyMachine: true);
+            Snackbar.Add($"Deleting '{_runner.Name}'...", Severity.Info);
+            Navigation.NavigateTo("runners");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+}

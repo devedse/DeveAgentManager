@@ -1,0 +1,51 @@
+@page "/login"
+@layout EmptyLayout
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@inject ManagerOptions Options
+
+<PageTitle>Sign in · DeveAgentManager</PageTitle>
+
+<div class="login-page">
+    <div class="login-glow"></div>
+    <form method="post" action="account/login" class="login-card">
+        <div class="login-brand">
+            <img src="favicon.svg" alt="" width="44" height="44" />
+            <div>
+                <div class="login-title">Deve<span class="brand-accent">AgentManager</span></div>
+                <div class="login-subtitle">Coding agents on your own machines</div>
+            </div>
+        </div>
+
+        @if (Failed)
+        {
+            <div class="login-error">Wrong username or password.</div>
+        }
+
+        <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+        <label class="login-label" for="username">Username</label>
+        <input class="login-input" id="username" name="username" autocomplete="username" value="@Options.AdminUsername" required />
+        <label class="login-label" for="password">Password</label>
+        <input class="login-input" id="password" name="password" type="password" autocomplete="current-password" autofocus required />
+        <label class="login-remember">
+            <input type="checkbox" name="remember" checked />
+            <span>Keep me signed in</span>
+        </label>
+        <button type="submit" class="login-button">Sign in</button>
+
+        @if (Options.UsesDefaultAdminPassword)
+        {
+            <div class="login-hint">No ADMIN_PASSWORD is set, so the password is <code>@ManagerOptions.DefaultAdminPassword</code>. Set one in the compose file.</div>
+        }
+    </form>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "failed")]
+    private string? FailedValue { get; set; }
+
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    private string? ReturnUrl { get; set; }
+
+    private bool Failed => FailedValue == "1";
+}

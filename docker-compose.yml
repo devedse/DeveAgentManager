@@ -1,0 +1,53 @@
+# DeveAgentManager: one file to run the Manager.
+# 1. Create the Proxmox API token (see README.md, "Proxmox setup").
+# 2. Fill in the values marked CHANGE ME.
+# 3. docker compose up -d, then open http://<this-host>:8080
+services:
+  deveagentmanager:
+    image: devedse/deveagentmanager:latest
+    container_name: deveagentmanager
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Database, encryption keys and the Manager's SSH key. Back this up.
+      - deveagentmanager-data:/data
+    environment:
+      TZ: Europe/Amsterdam
+
+      # Portal login
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: change-me # CHANGE ME
+
+      # Proxmox API (token from README.md)
+      PROXMOX_URL: https://proxmox1:8006 # CHANGE ME
+      PROXMOX_TOKEN_ID: deveagentmanager@pve!manager
+      PROXMOX_TOKEN_SECRET: 00000000-0000-0000-0000-000000000000 # CHANGE ME
+      PROXMOX_VERIFY_TLS: "false" # Proxmox uses a self-signed certificate by default
+      PROXMOX_POOL: deveagents
+      PROXMOX_STORAGE: ReplicatedPool_2 # disk storage for new Runners; empty = the template's storage
+      PROXMOX_VMID_RANGE: 30000-30999 # Runners only get VMIDs from this range
+      # PROXMOX_NODE: proxmox1       # empty = the node the template is on
+      # PROXMOX_BRIDGE: vmbr0        # empty = keep the template's network
+      # PROXMOX_FULL_CLONE: "true"
+
+      # Runner Templates (Proxmox template VMIDs)
+      TEMPLATE_HEADLESS_VMID: "10100"
+      TEMPLATE_DESKTOP_VMID: "10120"
+
+      # Runner Account, created on every new VM through cloud-init
+      RUNNER_USERNAME: remoteman
+      RUNNER_PASSWORD: remoteman
+
+      # Default size of new Runners (can be changed per Runner)
+      RUNNER_DEFAULT_CORES: "4"
+      RUNNER_DEFAULT_MEMORY_MB: "8192"
+      RUNNER_DEFAULT_DISK_GB: "64"
+
+      # Optional: set here, or in the Portal under Settings
+      # GITHUB_PAT: github_pat_...
+      # GIT_USER_NAME: Your Name
+      # GIT_USER_EMAIL: you@example.com
+
+volumes:
+  deveagentmanager-data:

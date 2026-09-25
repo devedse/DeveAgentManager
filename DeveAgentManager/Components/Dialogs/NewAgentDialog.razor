@@ -1,0 +1,215 @@
+@using System.Text.RegularExpressions
+@inject RunnerService Runners
+@inject AgentService Agents
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<MudDialog>
+    <TitleContent>
+        <div class="dialog-title">
+            <MudIcon Icon="@Icons.Material.Rounded.SmartToy" Color="Color.Primary" />
+            <span>New agent</span>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        @if (_runners.Count == 0)
+        {
+            <EmptyState Icon="@Icons.Material.Rounded.Dns" Title="No Runner is ready" Text="Agents run on Runners. Create one first; it takes a few minutes to set up.">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="NewRunnerInstead">New Runner</MudButton>
+            </EmptyState>
+        }
+        else
+        {
+            <MudForm @ref="_form" Class="dialog-form">
+                <div class="form-row">
+                    <MudSelect T="Guid" Value="_runnerId" ValueChanged="SelectRunner" Label="Runner" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1">
+                        @foreach (var runner in _runners)
+                        {
+                            <MudSelectItem Value="runner.Id">@runner.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="string" @bind-Value="_harnessId" Label="Harness" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1">
+                        @foreach (var harness in _availableHarnesses)
+                        {
+                            <MudSelectItem Value="harness.Id">@harness.DisplayName</MudSelectItem>
+                        }
+                    </MudSelect>
+                </div>
+
+                <MudText Typo="Typo.overline" Class="mud-text-secondary mt-4 d-block">Workspace</MudText>
+                <div class="choice-grid choice-grid-3">
+                    <button type="button" class="choice-card @(_mode == AgentWorkspaceMode.CloneRepository ? "selected" : "")" @onclick="() => _mode = AgentWorkspaceMode.CloneRepository">
+                        <MudIcon Icon="@Icons.Custom.Brands.GitHub" />
+                        <div><div class="choice-title">Clone a repository</div><div class="choice-text">GitHub or any git URL</div></div>
+                    </button>
+                    <button type="button" class="choice-card @(_mode == AgentWorkspaceMode.EmptyFolder ? "selected" : "")" @onclick="() => _mode = AgentWorkspaceMode.EmptyFolder">
+                        <MudIcon Icon="@Icons.Material.Rounded.CreateNewFolder" />
+                        <div><div class="choice-title">Empty folder</div><div class="choice-text">Start from scratch</div></div>
+                    </button>
+                    <button type="button" class="choice-card @(_mode == AgentWorkspaceMode.ExistingFolder ? "selected" : "")" @onclick="() => _mode = AgentWorkspaceMode.ExistingFolder">
+                        <MudIcon Icon="@Icons.Material.Rounded.FolderOpen" />
+                        <div><div class="choice-title">Existing folder</div><div class="choice-text">Already on the Runner</div></div>
+                    </button>
+                </div>
+
+                @if (_mode == AgentWorkspaceMode.CloneRepository)
+                {
+                    <div class="form-row mt-3">
+                        <MudTextField T="string" Value="_repositoryUrl" ValueChanged="RepositoryChanged" Immediate="true" Label="Repository" Placeholder="github.com/devedse/DeveMazeGeneratorCore"
+                                      Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" RequiredError="Enter the repository" Class="flex-grow-1" />
+                        <MudTextField @bind-Value="_branch" Label="Branch" Placeholder="default" Variant="Variant.Outlined" Margin="Margin.Dense" Class="branch-field" />
+                    </div>
+                }
+                else if (_mode == AgentWorkspaceMode.ExistingFolder)
+                {
+                    <MudTextField @bind-Value="_existingPath" Label="Folder on the Runner" Placeholder="~/work/my-project" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  Required="true" RequiredError="Enter the folder" Class="mt-3" />
+                }
+
+                <MudTextField T="string" Value="_name" ValueChanged="NameChanged" Label="Agent name" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-3"
+                              HelperText="@NameHelp" Required="true" RequiredError="Enter a name" />
+            </MudForm>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        @if (_runners.Count > 0)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || _harnessId is null" OnClick="CreateAsync" StartIcon="@Icons.Material.Rounded.PlayArrow">
+                @(_busy ? (_mode == AgentWorkspaceMode.CloneRepository ? "Cloning..." : "Starting...") : "Start agent")
+            </MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Inject]
+    private IDialogService Dialogs { get; set; } = default!;
+
+    /// <summary>Preselects a Runner.</summary>
+    [Parameter]
+    public Guid? RunnerId { get; set; }
+
+    private MudForm? _form;
+    private List<Runner> _runners = [];
+    private List<IHarness> _availableHarnesses = [];
+    private Guid _runnerId;
+    private string? _harnessId;
+    private AgentWorkspaceMode _mode = AgentWorkspaceMode.CloneRepository;
+    private string _repositoryUrl = "";
+    private string? _branch;
+    private string? _existingPath;
+    private string _name = "";
+    private bool _nameEdited;
+    private bool _busy;
+
+    private string NameHelp => _runners.FirstOrDefault(r => r.Id == _runnerId) is { } runner && _mode != AgentWorkspaceMode.ExistingFolder
+        ? $"Works in ~/work/{(_name.Length > 0 ? _name : "<name>")} on {runner.Name}."
+        : "Lowercase letters, digits and dashes.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _runners = (await Runners.ListAsync()).Where(r => r.State == RunnerState.Ready).ToList();
+        if (_runners.Count > 0)
+        {
+            await SelectRunner(_runners.FirstOrDefault(r => r.Id == RunnerId)?.Id ?? _runners[0].Id);
+        }
+    }
+
+    private Task SelectRunner(Guid runnerId)
+    {
+        _runnerId = runnerId;
+        var runner = _runners.First(r => r.Id == runnerId);
+        _availableHarnesses = Agents.Harnesses.Where(h => runner.HarnessIds.Contains(h.Id)).ToList();
+        _harnessId = _availableHarnesses.FirstOrDefault(h => h.Id == _harnessId)?.Id ?? _availableHarnesses.FirstOrDefault()?.Id;
+        if (!_nameEdited)
+        {
+            _name = SuggestName(runner);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void RepositoryChanged(string value)
+    {
+        _repositoryUrl = value;
+        if (!_nameEdited)
+        {
+            _name = SuggestName(_runners.First(r => r.Id == _runnerId));
+        }
+    }
+
+    private void NameChanged(string value)
+    {
+        _name = value;
+        _nameEdited = true;
+    }
+
+    /// <summary>Derives a free agent name from the repository ("DeveMazeGeneratorCore" becomes "devemazegeneratorcore").</summary>
+    private string SuggestName(Runner runner)
+    {
+        var baseName = "agent";
+        var repository = _repositoryUrl.Trim().TrimEnd('/');
+        if (repository.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            repository = repository[..^4];
+        }
+
+        var lastSegment = repository.Split('/', ':').LastOrDefault(s => s.Length > 0);
+        if (lastSegment is not null)
+        {
+            var cleaned = Regex.Replace(lastSegment.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
+            if (cleaned.Length > 0)
+            {
+                baseName = cleaned.Length > 32 ? cleaned[..32].TrimEnd('-') : cleaned;
+            }
+        }
+
+        var existing = runner.Agents.Select(a => a.Name).ToHashSet();
+        if (!existing.Contains(baseName) && baseName != "agent")
+        {
+            return baseName;
+        }
+
+        return Enumerable.Range(1, 999).Select(i => $"{baseName}-{i}").First(n => !existing.Contains(n));
+    }
+
+    private async Task NewRunnerInstead()
+    {
+        MudDialog.Cancel();
+        await Dialogs.ShowAsync<NewRunnerDialog>();
+    }
+
+    private async Task CreateAsync()
+    {
+        if (_form is null || _harnessId is null)
+        {
+            return;
+        }
+
+        await _form.ValidateAsync();
+        if (!_form.IsValid)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var agent = await Agents.CreateAsync(new CreateAgentRequest(_runnerId, _name, _harnessId, _mode, _repositoryUrl, _branch, _existingPath));
+            MudDialog.Close(DialogResult.Ok(agent.Id));
+            Navigation.NavigateTo($"agents/{agent.Id}");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

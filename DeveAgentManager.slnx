@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="DeveAgentManager.Core/DeveAgentManager.Core.csproj" />
+  <Project Path="DeveAgentManager.Harnesses.Pi/DeveAgentManager.Harnesses.Pi.csproj" />
+  <Project Path="DeveAgentManager.Providers.Proxmox/DeveAgentManager.Providers.Proxmox.csproj" />
+  <Project Path="DeveAgentManager.Tests/DeveAgentManager.Tests.csproj" />
+  <Project Path="DeveAgentManager/DeveAgentManager.csproj" />
+</Solution>

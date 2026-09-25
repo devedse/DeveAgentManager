@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+**/data/
+**/*.db
+.git/
+.vs/
+.vscode/
+*.md
+!README.md
+prompts.jsonl
+2026-*.txt
+Dockerfile
+docker-compose*.yml

@@ -1,0 +1,126 @@
+@page "/agents/{AgentId:guid}"
+@layout TerminalLayout
+@inherits LiveComponent
+@inject AgentService AgentService
+@inject ISnackbar Snackbar
+
+<PageTitle>@(_agent?.Name ?? "Agent") · DeveAgentManager</PageTitle>
+
+<div class="terminal-page">
+    <div class="terminal-toolbar">
+        <MudIconButton Href="@(_agent is null ? "agents" : $"runners/{_agent.RunnerId}")" Icon="@Icons.Material.Rounded.ArrowBack" Size="Size.Small" aria-label="Back" />
+        @if (_agent is not null)
+        {
+            <div class="terminal-title">
+                <span class="terminal-name">@_agent.Name</span>
+                <span class="terminal-context">@_agent.HarnessId · @_agent.Runner?.Name · <span class="mono">@(_agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
+            </div>
+            <StatusPill Style="StateStyles.For(_agent.State)" Title="@_agent.StateMessage" />
+            <MudSpacer />
+            <span class="terminal-hint d-none d-md-inline">Shift+drag selects · Ctrl+C copies a selection</span>
+            @if (_agent.State is AgentState.Running or AgentState.Starting)
+            {
+                <MudTooltip Text="Restart the harness (resumes the conversation)">
+                    <MudIconButton Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" Disabled="_busy" OnClick="RestartAsync" />
+                </MudTooltip>
+                <MudTooltip Text="Stop the agent">
+                    <MudIconButton Icon="@Icons.Material.Rounded.Stop" Size="Size.Small" Disabled="_busy" OnClick="StopAsync" />
+                </MudTooltip>
+            }
+        }
+    </div>
+
+    @if (_agent is null)
+    {
+        @if (Loaded)
+        {
+            <EmptyState Icon="@Icons.Material.Rounded.SearchOff" Title="Agent not found" Text="It may have been deleted.">
+                <MudButton Href="agents" Variant="Variant.Outlined">Back to agents</MudButton>
+            </EmptyState>
+        }
+    }
+    else if (_agent.State is AgentState.Running or AgentState.Starting)
+    {
+        <TerminalView @ref="_terminal" @key="_connectionKey" AgentId="_agent.Id" Disconnected="OnDisconnectedAsync" />
+    }
+    else
+    {
+        <div class="terminal-stopped">
+            <EmptyState Icon="@Icons.Material.Rounded.PauseCircle" Title="@($"'{_agent.Name}' is not running")"
+                        Text="@(_agent.StateMessage ?? "Start it to continue. The harness resumes the same conversation.")">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" Disabled="_busy || _agent.Runner?.State != RunnerState.Ready" OnClick="StartAsync">
+                    @(_agent.Runner?.State == RunnerState.Ready ? "Start agent" : $"Runner is {_agent.Runner?.State.ToString().ToLowerInvariant()}")
+                </MudButton>
+            </EmptyState>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public Guid AgentId { get; set; }
+
+    private Agent? _agent;
+    private TerminalView? _terminal;
+    private int _connectionKey;
+    private bool _busy;
+
+    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.AgentId == AgentId || managerEvent.Kind == ManagerEventKind.RunnerChanged;
+
+    protected override async Task LoadAsync()
+    {
+        var previous = _agent?.State;
+        _agent = await AgentService.GetAsync(AgentId);
+        if (previous is not null && previous != AgentState.Running && _agent?.State == AgentState.Running)
+        {
+            // It was (re)started: attach a fresh terminal.
+            _connectionKey++;
+        }
+    }
+
+    private async Task OnDisconnectedAsync()
+    {
+        // The harness may have exited: refresh its state so the page shows it.
+        if (_agent?.Runner is { } runner)
+        {
+            try
+            {
+                await AgentService.RefreshRunnerAsync(runner);
+            }
+            catch
+            {
+                // The monitor will catch up.
+            }
+        }
+
+        await ReloadAsync();
+    }
+
+    private Task StartAsync() => RunAsync(() => AgentService.StartAsync(AgentId), reconnect: true);
+
+    private Task RestartAsync() => RunAsync(() => AgentService.StartAsync(AgentId), reconnect: true);
+
+    private Task StopAsync() => RunAsync(() => AgentService.StopAsync(AgentId), reconnect: false);
+
+    private async Task RunAsync(Func<Task> action, bool reconnect)
+    {
+        _busy = true;
+        try
+        {
+            await action();
+            await LoadAsync();
+            if (reconnect)
+            {
+                _connectionKey++;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

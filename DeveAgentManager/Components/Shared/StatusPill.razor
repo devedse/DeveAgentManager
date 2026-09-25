@@ -1,0 +1,16 @@
+<span class="status-pill status-@Style.Tone.CssClass() @(Style.Busy ? "status-busy" : "")" title="@Title">
+    <span class="status-dot"></span>
+    <span>@(Text ?? Style.Text)</span>
+</span>
+
+@code {
+    [Parameter, EditorRequired]
+    public StateStyle Style { get; set; } = default!;
+
+    /// <summary>Overrides the state text, e.g. with the operation that is running.</summary>
+    [Parameter]
+    public string? Text { get; set; }
+
+    [Parameter]
+    public string? Title { get; set; }
+}
