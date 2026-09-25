@@ -30,13 +30,70 @@
         update();
     })();
 
+    // On touch devices the terminal keeps its rows when the frame only gets shorter, which is the on-screen keyboard
+    // opening. Fewer rows would resize tmux's pane, and pi then redraws its whole screen, so the history streams by every
+    // time the keyboard opens or closes. Instead the terminal keeps its full height in the (clipped) frame, positioned
+    // so the cursor stays in view. A change in width (rotating) or a taller frame fits the terminal again.
+    const layouts = new Map();
+
     function fit(id) {
         try {
+            const terminal = XtermBlazor.getTerminalById(id);
             const addon = XtermBlazor.getTerminalObjectById(id).addons.get("addon-fit");
-            addon.fit();
+            const host = terminal.element?.closest(".terminal-host");
+            const frame = host?.parentElement;
+            if (!host || !frame || !isTouch()) {
+                addon.fit();
+                return;
+            }
+
+            const width = frame.clientWidth;
+            const height = frame.clientHeight;
+            const layout = layouts.get(id);
+            if (!layout || layout.width !== width || height >= layout.height) {
+                layouts.set(id, { width, height, offset: 0 });
+                host.style.height = "";
+                host.style.top = "";
+                addon.fit();
+                return;
+            }
+
+            host.style.height = `${layout.height}px`;
+            followCursor(id, true);
         } catch {
             // The terminal is not rendered (yet) or was disposed.
         }
+    }
+
+    // While the frame is shorter than the terminal: shift the terminal so the cursor (pi's prompt) is visible, with a
+    // little room below it. It only moves when the cursor leaves the visible part, so output doesn't make it jump.
+    function followCursor(id, force = false) {
+        const layout = layouts.get(id);
+        const terminal = getTerminal(id);
+        const host = terminal?.element?.closest(".terminal-host");
+        const frame = host?.parentElement;
+        if (!layout || !host || !frame || !host.style.height) {
+            return;
+        }
+
+        const visible = frame.clientHeight;
+        const hidden = Math.max(0, layout.height - visible);
+        const screen = terminal.element.querySelector(".xterm-screen");
+        const rowHeight = (screen?.clientHeight ?? 0) / Math.max(1, terminal.rows);
+        const top = (screen?.getBoundingClientRect().top ?? 0) - host.getBoundingClientRect().top;
+        const cursorTop = top + terminal.buffer.active.cursorY * rowHeight;
+        const cursorBottom = cursorTop + rowHeight;
+
+        const shown = cursorTop >= layout.offset && cursorBottom <= layout.offset + visible;
+        if (force || !shown) {
+            // As low as possible (the latest output), but with the cursor and two rows below it in view.
+            layout.offset = Math.min(hidden, Math.max(0, cursorBottom + 2 * rowHeight - visible));
+        }
+
+        layout.offset = Math.min(layout.offset, hidden);
+        host.style.top = `${-layout.offset}px`;
+        // Focusing or typing can scroll a clipped frame on its own; the position above is the only scrolling.
+        frame.scrollTop = 0;
     }
 
     // Phones and tablets: the primary pointer is a finger.
@@ -306,8 +363,15 @@
                     cancelAnimationFrame(frame);
                     frame = requestAnimationFrame(() => fit(id));
                 });
-                observer.observe(host);
+                // The frame: on touch devices the host keeps its height while the keyboard is open.
+                observer.observe(host.parentElement ?? host);
                 observers.set(id, observer);
+
+                let cursorFrame = 0;
+                terminal.onCursorMove(() => {
+                    cancelAnimationFrame(cursorFrame);
+                    cursorFrame = requestAnimationFrame(() => followCursor(id));
+                });
             }
 
             if (xtermElement && !touchInputs.has(id)) {
@@ -379,6 +443,7 @@
             observers.get(id)?.disconnect();
             observers.delete(id);
             touchInputs.delete(id);
+            layouts.delete(id);
         },
     };
 

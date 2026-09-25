@@ -1321,9 +1321,10 @@ a {
 
 /* The phone keyboard types into this (terminal-touch-input.js). Invisible: what you type shows up in the terminal. */
 .dam-touch-input {
-    position: absolute;
+    /* Fixed: always "in view", so typing never makes the browser scroll the clipped terminal frame to show it. */
+    position: fixed;
     left: 0;
-    bottom: 0;
+    top: 0;
     width: 100%;
     height: 2em;
     margin: 0;
