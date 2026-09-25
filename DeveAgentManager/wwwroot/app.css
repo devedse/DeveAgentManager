@@ -1228,6 +1228,8 @@ a {
     position: relative;
     flex: 1;
     min-height: 0;
+    /* Until the terminal is re-fitted to a smaller frame (keyboard opening), it must not draw over the controls below. */
+    overflow: hidden;
 }
 
 .terminal-host {

@@ -194,7 +194,8 @@
             });
             terminal.attachCustomWheelEventHandler(() => true);
 
-            const element = document.getElementById(id);
+            // XtermBlazor's id is Blazor's element reference, not an HTML id: find the element through the terminal.
+            const element = terminal.element?.parentElement ?? document.getElementById(id);
             const xtermElement = terminal.element ?? element;
             if (xtermElement && !xtermElement.dataset.touchScroll) {
                 xtermElement.dataset.touchScroll = "true";
