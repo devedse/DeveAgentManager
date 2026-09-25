@@ -126,9 +126,12 @@ public sealed class RunnerShell(
         return command.ExitStatus ?? -1;
     }
 
-    public async Task UploadAsync(Runner runner, string remotePath, string content, string mode = "600", CancellationToken cancellationToken = default)
+    public Task UploadAsync(Runner runner, string remotePath, string content, string mode = "600", CancellationToken cancellationToken = default) =>
+        UploadAsync(runner, remotePath, Encoding.UTF8.GetBytes(content), mode, cancellationToken);
+
+    /// <summary>Writes a file on the Runner (creating its folder) and returns its absolute path there.</summary>
+    public async Task<string> UploadAsync(Runner runner, string remotePath, byte[] bytes, string mode = "600", CancellationToken cancellationToken = default)
     {
-        var bytes = Encoding.UTF8.GetBytes(content);
         var directory = remotePath.Contains('/') ? remotePath[..remotePath.LastIndexOf('/')] : "";
         if (directory.Length > 0)
         {
@@ -149,6 +152,7 @@ public sealed class RunnerShell(
         }
 
         (await RunAsync(runner, $"chmod {mode} {ShellQuote.Path(remotePath)}", cancellationToken: cancellationToken)).EnsureSuccess($"chmod {remotePath}");
+        return sftpPath;
     }
 
     public async Task<string?> DownloadAsync(Runner runner, string remotePath, CancellationToken cancellationToken = default)

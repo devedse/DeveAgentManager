@@ -3,6 +3,7 @@
 @inject TerminalService Terminals
 @inject IJSRuntime JS
 @inject ILogger<TerminalView> Logger
+@inject ISnackbar Snackbar
 
 <div class="terminal-frame">
     <div class="terminal-host">
@@ -36,6 +37,8 @@
     <button type="button" class="terminal-key @(_touchInput ? "terminal-key-on" : "")"
             title="Phone keyboard fix: autocorrect, swipe typing and Backspace work as in other apps. Switch off to type straight into the terminal."
             @onclick="ToggleTouchInputAsync" @onclick:preventDefault="true">⌨ @(_touchInput ? "fix on" : "fix off")</button>
+    @* Opened in the browser (terminal.js), so the file picker runs in the tap itself: browsers only open it for a user action. *@
+    <button type="button" class="terminal-key" data-dam-action="image" title="Send an image (screenshot, photo) to the terminal">📎 Image</button>
     @foreach (var (label, sequence) in Keys)
     {
         <button type="button" class="terminal-key" @onclick="() => SendAsync(sequence)" @onclick:preventDefault="true">@label</button>
@@ -80,6 +83,7 @@
 
     private Xterm _xterm = default!;
     private bool _touchInput;
+    private DotNetObjectReference<TerminalView>? _self;
     private TerminalConnection? _connection;
     private CancellationTokenSource _lifetime = new();
     private string? _overlay = "Connecting...";
@@ -120,7 +124,8 @@
 
     private async Task OnFirstRenderAsync()
     {
-        _touchInput = await JS.InvokeAsync<bool>("damTerminal.init", _xterm.Id);
+        _self = DotNetObjectReference.Create(this);
+        _touchInput = await JS.InvokeAsync<bool>("damTerminal.init", _xterm.Id, _self);
         StateHasChanged();
         await ConnectAsync();
     }
@@ -199,6 +204,47 @@
         }
     }
 
+    /// <summary>
+    /// An image was pasted, dropped or picked in the browser: store it on the Runner and return its path, which the browser
+    /// then pastes into the terminal. Null when it failed (the reason is shown).
+    /// </summary>
+    [JSInvokable]
+    public async Task<string?> UploadImageAsync(string fileName, string contentType, long size, IJSStreamReference data)
+    {
+        if (size > TerminalService.MaxImageBytes)
+        {
+            Snackbar.Add($"'{fileName}' is too big: images can be up to {TerminalService.MaxImageBytes / 1024 / 1024} MB.", Severity.Error);
+            return null;
+        }
+
+        var progress = Snackbar.Add($"Uploading {DescribeImage(fileName, size)}...", Severity.Info, options => options.VisibleStateDuration = 60_000);
+        try
+        {
+            await using var stream = await data.OpenReadStreamAsync(TerminalService.MaxImageBytes, _lifetime.Token);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer, _lifetime.Token);
+            var path = await Terminals.UploadImageAsync(AgentId, RunnerId, contentType, buffer.ToArray(), _lifetime.Token);
+            Logger.LogInformation("Pasted image {File} ({Bytes} bytes) as {Path}", fileName, size, path);
+            return path;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogInformation(ex, "Could not upload image {File}", fileName);
+            Snackbar.Add($"Could not send the image: {ex.Message}", Severity.Error);
+            return null;
+        }
+        finally
+        {
+            if (progress is not null)
+            {
+                Snackbar.Remove(progress);
+            }
+        }
+    }
+
+    private static string DescribeImage(string fileName, long size) =>
+        $"{(string.IsNullOrWhiteSpace(fileName) ? "image" : fileName)} ({(size >= 1024 * 1024 ? $"{size / 1024.0 / 1024.0:0.0} MB" : $"{Math.Max(1, size / 1024)} KB")})";
+
     private void OnData(string data) => _connection?.Write(Encoding.UTF8.GetBytes(data));
 
     private void OnBinary(string data) => _connection?.Write(Encoding.Latin1.GetBytes(data));
@@ -219,6 +265,7 @@
         await _lifetime.CancelAsync();
         CloseConnection();
         _lifetime.Dispose();
+        _self?.Dispose();
         try
         {
             await JS.InvokeVoidAsync("damTerminal.dispose", _xterm.Id);

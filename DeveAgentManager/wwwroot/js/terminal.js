@@ -169,6 +169,84 @@
         }, { capture: true, passive: true });
     }
 
+    // Images into the terminal: pasted (Ctrl+V), dropped, or picked with the "📎 Image" key (phones: gallery, camera,
+    // screenshots). The Manager stores them on the Runner and returns the path, which is pasted into the terminal as
+    // text, like pi's own Ctrl+V does with an image from the local clipboard. The harness sends the file to the model.
+    const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+    function imageFiles(dataTransfer) {
+        return Array.from(dataTransfer?.files ?? []).filter(file => file.type.startsWith("image/"));
+    }
+
+    async function sendImages(terminal, dotnet, files, afterPaste) {
+        const paths = [];
+        for (const file of files) {
+            // Unsupported types are refused by the Manager, which says which types work.
+            const path = await dotnet.invokeMethodAsync("UploadImageAsync", file.name || "", file.type, file.size, DotNet.createJSStreamReference(file));
+            if (path) {
+                paths.push(path);
+            }
+        }
+
+        if (paths.length > 0) {
+            afterPaste();
+            // A space after each, so text typed next doesn't run into the path.
+            terminal.paste(paths.join(" ") + " ");
+            terminal.focus();
+        }
+    }
+
+    function enableImagePaste(terminal, element, dotnet, afterPaste) {
+        // Capture phase: before xterm.js (and the phone keyboard input) handle the paste as text.
+        element.addEventListener("paste", event => {
+            const files = imageFiles(event.clipboardData);
+            // Text wins when there is some: copying from a spreadsheet or a web page puts a picture next to it too.
+            const text = event.clipboardData?.getData("text/plain") ?? "";
+            if (files.length === 0 || text.trim().length > 0) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            sendImages(terminal, dotnet, files, afterPaste);
+        }, { capture: true });
+
+        element.addEventListener("dragover", event => {
+            if (Array.from(event.dataTransfer?.items ?? []).some(item => item.kind === "file")) {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "copy";
+            }
+        });
+
+        element.addEventListener("drop", event => {
+            const files = imageFiles(event.dataTransfer);
+            if (files.length === 0) {
+                return;
+            }
+
+            event.preventDefault();
+            sendImages(terminal, dotnet, files, afterPaste);
+        });
+
+        return () => {
+            const picker = document.createElement("input");
+            picker.type = "file";
+            picker.accept = IMAGE_TYPES.join(",");
+            picker.multiple = true;
+            // In the page while it is open: some browsers (iOS Safari) don't open a picker for a detached input.
+            picker.style.display = "none";
+            document.body.appendChild(picker);
+            const done = () => picker.remove();
+            picker.addEventListener("change", () => {
+                const files = Array.from(picker.files ?? []);
+                done();
+                sendImages(terminal, dotnet, files, afterPaste);
+            });
+            picker.addEventListener("cancel", done);
+            picker.click();
+        };
+    }
+
     function getTerminal(id) {
         try {
             return XtermBlazor.getTerminalById(id);
@@ -179,7 +257,7 @@
 
     window.damTerminal = {
         // Returns whether the phone keyboard input is on.
-        init(id) {
+        init(id, dotnet) {
             const terminal = XtermBlazor.getTerminalById(id);
             hardenInput(terminal);
 
@@ -191,6 +269,14 @@
                     if (event.type === "keydown") {
                         terminal.input("\x1b[13;2u", true);
                     }
+                    return false;
+                }
+
+                // Ctrl+V (Ctrl+Shift+V, Shift+Insert) pastes from this computer's clipboard. xterm.js would send ^V instead,
+                // which asks the program to read the clipboard of the Runner, which has none. Returning false leaves the key
+                // to the browser, which pastes: text through xterm.js, images through enableImagePaste.
+                const key = event.key.toLowerCase();
+                if ((event.ctrlKey && !event.altKey && !event.metaKey && key === "v") || (event.shiftKey && event.key === "Insert")) {
                     return false;
                 }
 
@@ -230,6 +316,12 @@
                 touchInputs.set(id, input);
             }
 
+            let pickImage = null;
+            if (xtermElement && dotnet && !xtermElement.dataset.imagePaste) {
+                xtermElement.dataset.imagePaste = "true";
+                pickImage = enableImagePaste(terminal, xtermElement, dotnet, () => touchInputs.get(id)?.reset());
+            }
+
             // The on-screen keys must not take the focus: that would close the phone keyboard after every key.
             const keys = element?.closest(".terminal-frame")?.parentElement?.querySelector(".terminal-keys");
             if (keys && !keys.dataset.keepFocus) {
@@ -239,6 +331,7 @@
                         event.preventDefault();
                     }
                 });
+                keys.querySelector('[data-dam-action="image"]')?.addEventListener("click", () => pickImage?.());
             }
 
             fit(id);

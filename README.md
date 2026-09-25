@@ -170,6 +170,11 @@ keys that decrypt stored secrets (Setup Profile, GitHub token). Losing the keys 
   touch devices the keyboard types into a hidden field that keeps the current line, and only the differences are sent:
   Backspaces, arrows and new text. Autocorrect, swipe typing and Backspace then behave as in other apps. The
   **⌨ fix** key switches this off.
+- **Pasting** into a terminal uses your computer's clipboard. Ctrl+V (or Ctrl+Shift+V, Shift+Insert) pastes text, and
+  also images such as screenshots. Images can be dropped on the terminal too, or picked with the **📎 Image** key
+  (on phones: gallery, camera, screenshots). Images are stored on the Runner in `~/.deveagentmanager/uploads`, and their
+  path is pasted into the terminal, like pi's own Ctrl+V does locally. The harness sends the image to the model.
+  PNG, JPEG, WebP and GIF images, up to 25 MB.
 
 ## Development
 
