@@ -1,0 +1,62 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Design;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+
+namespace DeveAgentManager.Core.Data;
+
+public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbContext(options)
+{
+    public DbSet<Runner> Runners => Set<Runner>();
+
+    public DbSet<Agent> Agents => Set<Agent>();
+
+    public DbSet<SettingEntry> Settings => Set<SettingEntry>();
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        // SQLite has no date type: store UTC and give values back as UTC.
+        configurationBuilder.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>();
+        configurationBuilder.Properties<DateTime?>().HaveConversion<NullableUtcDateTimeConverter>();
+    }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Runner>(runner =>
+        {
+            runner.HasKey(r => r.Id);
+            runner.HasIndex(r => r.Name).IsUnique();
+            runner.Property(r => r.Name).HasMaxLength(63);
+            runner.Property(r => r.State).HasConversion<string>().HasMaxLength(32);
+            runner.Property(r => r.Kind).HasConversion<string>().HasMaxLength(32);
+            runner.Ignore(r => r.HarnessIds);
+            runner.HasMany(r => r.Agents).WithOne(a => a.Runner).HasForeignKey(a => a.RunnerId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Agent>(agent =>
+        {
+            agent.HasKey(a => a.Id);
+            agent.HasIndex(a => new { a.RunnerId, a.Name }).IsUnique();
+            agent.Property(a => a.State).HasConversion<string>().HasMaxLength(32);
+        });
+
+        modelBuilder.Entity<SettingEntry>(setting =>
+        {
+            setting.HasKey(s => s.Key);
+        });
+    }
+
+    private sealed class UtcDateTimeConverter() : ValueConverter<DateTime, DateTime>(
+        v => v.Kind == DateTimeKind.Utc ? v : v.ToUniversalTime(),
+        v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+
+    private sealed class NullableUtcDateTimeConverter() : ValueConverter<DateTime?, DateTime?>(
+        v => v.HasValue ? (v.Value.Kind == DateTimeKind.Utc ? v.Value : v.Value.ToUniversalTime()) : v,
+        v => v.HasValue ? DateTime.SpecifyKind(v.Value, DateTimeKind.Utc) : v);
+}
+
+/// <summary>Used by `dotnet ef` to create migrations.</summary>
+public sealed class ManagerDbContextDesignTimeFactory : IDesignTimeDbContextFactory<ManagerDbContext>
+{
+    public ManagerDbContext CreateDbContext(string[] args) =>
+        new(new DbContextOptionsBuilder<ManagerDbContext>().UseSqlite("Data Source=design-time.db").Options);
+}

@@ -431,7 +431,6 @@ FodyWeavers.xsd
 # DeveAgentManager
 # Local data folder used by `dotnet run` (database, keys, SSH key)
 /DeveAgentManager/data/
-data/
 *.db
 *.db-shm
 *.db-wal
