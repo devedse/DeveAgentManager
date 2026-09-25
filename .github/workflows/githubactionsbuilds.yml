@@ -1,12 +1,23 @@
 name: GitHubActionsBuilds
 
-on: push
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner to use'
+        required: false
+        default: 'github-hosted'
+        type: choice
+        options:
+          - github-hosted
+          - self-hosted
 
 jobs:
   generate_version_number:
     permissions:
       contents: write
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "medium"]') || 'ubuntu-latest' }}
     outputs:
       build_number: ${{ github.ref == 'refs/heads/master' && steps.buildnumber.outputs.build_number || 1 }}
     steps:
@@ -18,73 +29,89 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
 
   build_and_test:
-    runs-on: ubuntu-latest
+    needs: generate_version_number
+    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "medium"]') || 'ubuntu-latest' }}
     steps:
-    - uses: actions/checkout@v5
-    - uses: actions/setup-dotnet@v5
+    - uses: actions/checkout@v6
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v5
       with:
         dotnet-version: 10.0.x
-    - name: Build
-      run: dotnet build DeveAgentManager.slnx -c Release
-    - name: Test
-      run: dotnet test --solution DeveAgentManager.slnx -c Release --no-build
+    - name: dotnet restore
+      run: dotnet restore DeveAgentManager.slnx
+    - name: dotnet build
+      run: dotnet build DeveAgentManager.slnx -c Release --no-restore /p:Version=1.0.${{ needs.generate_version_number.outputs.build_number }}
+    - name: dotnet test
+      run: dotnet test --solution DeveAgentManager.slnx -c Release --no-build --verbosity normal
 
   build_docker:
     needs: [generate_version_number, build_and_test]
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "xlarge"]') || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      packages: write
     steps:
-    - uses: actions/checkout@v5
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
+    - uses: actions/checkout@v6
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v4
       with:
-        username: devedse
-        password: ${{ secrets.DOCKERHUBTOKEN }}
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+      uses: docker/setup-qemu-action@v4
       with:
         image: tonistiigi/binfmt:latest
         platforms: all
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-    - name: Set Image Tags
-      id: tags
-      run: |
-        VERSION=1.0.${{ needs.generate_version_number.outputs.build_number }}
-        BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/} | sed 's/\//-/g')
-        echo "Version: $VERSION, branch: $BRANCH_NAME"
-        echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-
-        if [[ "${{ github.ref }}" == 'refs/heads/master' ]]; then
-          echo "TAGS=-t devedse/deveagentmanager:${VERSION} -t devedse/deveagentmanager:latest -t devedse/deveagentmanager:beta_nightly" >> $GITHUB_OUTPUT
-        elif [[ "${{ github.actor }}" == 'dependabot[bot]' ]]; then
-          echo "TAGS=-t devedse/deveagentmanager:beta_${BRANCH_NAME}" >> $GITHUB_OUTPUT
-        else
-          echo "TAGS=-t devedse/deveagentmanager:beta_${BRANCH_NAME} -t devedse/deveagentmanager:beta_nightly" >> $GITHUB_OUTPUT
-        fi
-    - name: Build and push
-      run: |
-        docker buildx build -f Dockerfile \
-          --build-arg BUILD_VERSION=${{ steps.tags.outputs.VERSION }} \
-          --platform linux/arm64,linux/amd64 \
-          ${{ steps.tags.outputs.TAGS }} \
-          ${{ (github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '--push' || '' }} .
+      uses: docker/setup-buildx-action@v4
+    - name: Extract Docker metadata
+      id: meta
+      uses: docker/metadata-action@v6
+      with:
+        images: ghcr.io/devedse/deveagentmanager
+        tags: |
+          type=raw,value=1.0.${{ needs.generate_version_number.outputs.build_number }},enable=${{ github.ref == 'refs/heads/master' }}
+          type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
+          type=raw,value=beta_nightly,enable=${{ github.actor != 'dependabot[bot]' }}
+          type=raw,value=beta_${{ github.ref_name }},enable=${{ github.ref != 'refs/heads/master' }}
+        labels: |
+          maintainer=${{ github.actor }}
+          org.opencontainers.image.description=DeveAgentManager - run coding agents on Proxmox VMs from your browser
+      env:
+        DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        annotations: ${{ steps.meta.outputs.annotations }}
+        build-args: |
+          BUILD_VERSION=1.0.${{ needs.generate_version_number.outputs.build_number }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        provenance: false
+        sbom: false
 
   release_github:
     permissions:
       contents: write
-    needs: [generate_version_number, build_docker]
+    needs: [generate_version_number, build_and_test, build_docker]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master'
     steps:
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       with:
         tag_name: 1.0.${{ needs.generate_version_number.outputs.build_number }}
         name: 1.0.${{ needs.generate_version_number.outputs.build_number }}
         body: |
           ${{ github.event.head_commit.message }}
 
-          Docker image: `devedse/deveagentmanager:1.0.${{ needs.generate_version_number.outputs.build_number }}`
+          Docker image: `ghcr.io/devedse/deveagentmanager:1.0.${{ needs.generate_version_number.outputs.build_number }}`
         make_latest: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,10 +1,12 @@
 # DeveAgentManager: one file to run the Manager.
 # 1. Create the Proxmox API token (see README.md, "Proxmox setup").
 # 2. Fill in the values marked CHANGE ME.
-# 3. docker compose up -d, then open http://<this-host>:8080
+# 3. The image is private (like the repo): log in once with a GitHub token that has read:packages:
+#      echo <token> | docker login ghcr.io -u devedse --password-stdin
+# 4. docker compose up -d, then open http://<this-host>:8080
 services:
   deveagentmanager:
-    image: devedse/deveagentmanager:latest
+    image: ghcr.io/devedse/deveagentmanager:latest
     container_name: deveagentmanager
     restart: unless-stopped
     ports:

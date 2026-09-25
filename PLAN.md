@@ -99,7 +99,7 @@ A single file. Everything below is config, with no code changes needed:
 ```yaml
 services:
   deveagentmanager:
-    image: devedse/deveagentmanager:latest
+    image: ghcr.io/devedse/deveagentmanager:latest
     ports: ["8080:8080"]
     volumes:
       - ./data:/data                 # DB, sessions, secrets, SSH keys

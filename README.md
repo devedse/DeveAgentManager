@@ -15,10 +15,13 @@ See [PLAN.md](PLAN.md) for where this is going (Claude Code and Codex, sessions 
 
 1. Create a Proxmox API token and check the template (below).
 2. Copy [`docker-compose.yml`](docker-compose.yml) to the Docker host and fill in the values marked `CHANGE ME`.
-3. Run `docker compose up -d` and open `http://<docker-host>:8080`.
-4. In **Settings → Providers**, click **Test connection**. Every check should be green.
-5. **New Runner** → Headless → Create. Watch the setup log (about 3 to 5 minutes).
-6. **New agent** → clone a repository → pi opens in the browser.
+3. Log in to the GitHub Container Registry once (the image is private, like the repo). Use a
+   [personal access token](https://github.com/settings/tokens) with `read:packages`:
+   `echo <token> | docker login ghcr.io -u devedse --password-stdin`
+4. Run `docker compose up -d` and open `http://<docker-host>:8080`.
+5. In **Settings → Providers**, click **Test connection**. Every check should be green.
+6. **New Runner** → Headless → Create. Watch the setup log (about 3 to 5 minutes).
+7. **New agent** → clone a repository → pi opens in the browser.
 
 pi needs a model provider. Either add an API key (e.g. `ANTHROPIC_API_KEY`) under **Settings → Setup Profile →
 Environment variables**, or run `/login` inside an agent's terminal once and then use **Import a login from a
@@ -139,5 +142,7 @@ docker run -d --name fake-runner -p 2222:22 debian:trixie bash -c "apt-get updat
 
 Then add it as an existing machine at `127.0.0.1`, port `2222` (from the Manager container: `host.docker.internal`).
 
-Pushes build and test on GitHub Actions; `master` publishes `devedse/deveagentmanager:latest` (amd64 and arm64) to
-Docker Hub using the `DOCKERHUBTOKEN` secret.
+Every push builds and tests on GitHub Actions and publishes a multi-arch (amd64, arm64) image to
+`ghcr.io/devedse/deveagentmanager`: `latest` and `1.0.<build>` from `master`, `beta_<branch>` from other branches.
+No secrets are needed; the workflow uses the built-in `GITHUB_TOKEN`. Run it manually (workflow_dispatch) to pick a
+self-hosted runner.
