@@ -2,6 +2,7 @@
 @layout TerminalLayout
 @inherits LiveComponent
 @inject AgentService AgentService
+@inject SessionService Sessions
 @inject ISnackbar Snackbar
 
 <PageTitle>@(_agent?.Name ?? "Agent") · DeveAgentManager</PageTitle>
@@ -18,6 +19,12 @@
             <StatusPill Style="StateStyles.For(_agent.State)" Title="@_agent.StateMessage" />
             <MudSpacer />
             <span class="terminal-hint d-none d-md-inline">Shift+drag selects · Ctrl+C copies a selection</span>
+            @if (_sessionId is { } sessionId)
+            {
+                <MudTooltip Text="Conversation">
+                    <MudIconButton Href="@($"sessions/{sessionId}")" Icon="@Icons.Material.Rounded.Forum" Size="Size.Small" />
+                </MudTooltip>
+            }
             @if (_agent.State is AgentState.Running or AgentState.Starting)
             {
                 <MudTooltip Text="Restart the harness (resumes the conversation)">
@@ -61,6 +68,7 @@
     public Guid AgentId { get; set; }
 
     private Agent? _agent;
+    private Guid? _sessionId;
     private TerminalView? _terminal;
     private int _connectionKey;
     private bool _busy;
@@ -71,6 +79,7 @@
     {
         var previous = _agent?.State;
         _agent = await AgentService.GetAsync(AgentId);
+        _sessionId ??= (await Sessions.GetForAgentAsync(AgentId))?.Id;
         if (previous is not null && previous != AgentState.Running && _agent?.State == AgentState.Running)
         {
             // It was (re)started: attach a fresh terminal.

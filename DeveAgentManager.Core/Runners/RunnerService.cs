@@ -6,6 +6,7 @@ using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Security;
+using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Ssh;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -32,6 +33,7 @@ public sealed partial class RunnerService(
     IEnumerable<IRunnerProvider> providers,
     RunnerSetupService setup,
     AgentService agents,
+    SessionService sessions,
     RunnerShell shell,
     RunnerLogStore logs,
     ManagerEvents events,
@@ -189,6 +191,11 @@ public sealed partial class RunnerService(
             throw new InvalidOperationException($"{provider.DisplayName} Runners can't be stopped from the Manager.");
         }
 
+        if (op.Runner.State == RunnerState.Ready)
+        {
+            await sessions.TrySyncRunnerAsync(op.Runner, cancellation);
+        }
+
         await op.SetStateAsync(RunnerState.Stopping, "Shutting down");
         shell.Invalidate(op.Runner.Id);
         await provider.StopMachineAsync(op.Runner.ToMachine(), op.Log, cancellation);
@@ -201,6 +208,13 @@ public sealed partial class RunnerService(
     public void Delete(Guid runnerId, bool destroyMachine) => StartOperation(runnerId, "Deleting", async (op, cancellation) =>
     {
         var provider = FindProvider(op.Runner.ProviderId);
+        if (op.Runner.State == RunnerState.Ready)
+        {
+            // The conversations outlive the Runner: take the latest copy first.
+            op.Log.Info("Saving the agents' conversations");
+            await sessions.TrySyncRunnerAsync(op.Runner, cancellation);
+        }
+
         await op.SetStateAsync(RunnerState.Deleting, "Deleting");
 
         if (destroyMachine && provider is { Capabilities.CanDestroy: true } && op.Runner.MachineId is not null)

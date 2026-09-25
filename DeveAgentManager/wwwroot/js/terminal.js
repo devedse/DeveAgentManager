@@ -89,5 +89,19 @@
         async copy(text) {
             await navigator.clipboard.writeText(text);
         },
+
+        async download(fileName, contentType, streamReference) {
+            const buffer = await streamReference.arrayBuffer();
+            const url = URL.createObjectURL(new Blob([buffer], { type: contentType }));
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = fileName;
+            link.click();
+            URL.revokeObjectURL(url);
+        },
+
+        scrollPageToEnd() {
+            window.scrollTo(0, document.body.scrollHeight);
+        },
     };
 })();

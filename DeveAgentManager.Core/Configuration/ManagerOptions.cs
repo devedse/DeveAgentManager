@@ -44,6 +44,8 @@ public sealed class ManagerOptions
 
     public string LogsDirectory => Path.Combine(DataDirectory, "logs");
 
+    public string SessionsDirectory => Path.Combine(DataDirectory, "sessions");
+
     public static ManagerOptions FromConfiguration(IConfiguration configuration, string contentRootPath)
     {
         var dataDirectory = Value(configuration, "DATA_DIR");

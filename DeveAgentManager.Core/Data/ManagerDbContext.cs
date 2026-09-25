@@ -12,6 +12,8 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
 
     public DbSet<SettingEntry> Settings => Set<SettingEntry>();
 
+    public DbSet<StoredSession> Sessions => Set<StoredSession>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // SQLite has no date type: store UTC and give values back as UTC.
@@ -37,6 +39,13 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
             agent.HasKey(a => a.Id);
             agent.HasIndex(a => new { a.RunnerId, a.Name }).IsUnique();
             agent.Property(a => a.State).HasConversion<string>().HasMaxLength(32);
+        });
+
+        modelBuilder.Entity<StoredSession>(session =>
+        {
+            session.HasKey(s => s.Id);
+            session.HasIndex(s => s.AgentId);
+            session.HasOne(s => s.Agent).WithMany().HasForeignKey(s => s.AgentId).OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<SettingEntry>(setting =>

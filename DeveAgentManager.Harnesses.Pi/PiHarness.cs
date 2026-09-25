@@ -44,5 +44,5 @@ public sealed class PiHarness : IHarness
 public static class PiServiceCollectionExtensions
 {
     public static IServiceCollection AddPiHarness(this IServiceCollection services) =>
-        services.AddSingleton<IHarness, PiHarness>();
+        services.AddSingleton<IHarness, PiHarness>().AddSingleton<ISessionFormat, PiSessionFormat>();
 }

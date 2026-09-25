@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
+using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Ssh;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -22,7 +23,8 @@ public sealed record CreateAgentRequest(
     AgentWorkspaceMode Mode,
     string? RepositoryUrl = null,
     string? Branch = null,
-    string? ExistingPath = null);
+    string? ExistingPath = null,
+    Guid? ContinueSessionId = null);
 
 public sealed class AgentNotRunningException(string message) : Exception(message);
 
@@ -34,6 +36,7 @@ public sealed partial class AgentService(
     IDbContextFactory<ManagerDbContext> dbFactory,
     RunnerShell shell,
     IEnumerable<IHarness> harnesses,
+    SessionService sessions,
     ManagerEvents events,
     ILogger<AgentService> logger)
 {
@@ -115,6 +118,18 @@ public sealed partial class AgentService(
 
         db.Agents.Add(agent);
         await db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            // Registers the conversation; when continuing a stored session, writes it to the Runner before the harness starts.
+            await sessions.AttachToAgentAsync(runner, agent, request.ContinueSessionId, cancellationToken);
+        }
+        catch
+        {
+            db.Agents.Remove(agent);
+            await db.SaveChangesAsync(CancellationToken.None);
+            throw;
+        }
+
         events.AgentChanged(runner.Id, agent.Id);
 
         try
@@ -172,6 +187,8 @@ public sealed partial class AgentService(
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         if (agent.Runner!.State == RunnerState.Ready)
         {
+            // Keep the latest conversation: the session stays in the Manager after the agent is gone.
+            await sessions.TrySyncRunnerAsync(agent.Runner, cancellationToken);
             await shell.RunAsync(agent.Runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: cancellationToken);
         }
 
@@ -298,7 +315,8 @@ public sealed partial class AgentService(
     {
         var harness = GetHarness(agent.HarnessId);
         var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory));
-        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; exec {harnessCommand}");
+        // The browser terminal (xterm.js) and tmux support 24-bit color, but programs inside tmux only use it when told.
+        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; export COLORTERM=truecolor; exec {harnessCommand}");
         var session = ShellQuote.Quote("=" + agent.TmuxSession);
         var directory = ShellQuote.Quote(agent.WorkingDirectory);
 

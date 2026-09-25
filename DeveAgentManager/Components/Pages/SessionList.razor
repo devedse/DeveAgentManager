@@ -1,0 +1,138 @@
+@page "/sessions"
+@inherits LiveComponent
+@inject SessionService Sessions
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>Sessions · DeveAgentManager</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page">
+    <PageHeader Title="Sessions" Subtitle="Every agent's conversation, stored by the Manager. It stays after the agent or its Runner is gone, and can be continued on any Runner.">
+        <Actions>
+            <MudFileUpload T="IBrowserFile" FilesChanged="ImportAsync" Accept=".jsonl,.json" MaximumFileCount="1">
+                <CustomContent Context="upload">
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Upload" Disabled="_importing" OnClick="upload.OpenFilePickerAsync">@(_importing ? "Importing..." : "Import")</MudButton>
+                </CustomContent>
+            </MudFileUpload>
+        </Actions>
+    </PageHeader>
+
+    <div class="panel">
+        @if (_sessions.Count > 0)
+        {
+            <div class="filter-bar">
+                <MudTextField @bind-Value="_search" Immediate="true" Placeholder="Search sessions" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Rounded.Search"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Class="filter-search" />
+            </div>
+        }
+
+        @if (Loaded && _sessions.Count == 0)
+        {
+            <EmptyState Icon="@Icons.Material.Rounded.Forum" Title="No sessions yet"
+                        Text="Sessions appear here when agents start. You can also import a pi session file (.jsonl) or a DeveSession (.deve.json)." />
+        }
+        else
+        {
+            <div class="agent-table">
+                @foreach (var session in Filtered)
+                {
+                    var live = session.Agent is { State: AgentState.Running or AgentState.Starting };
+                    <div class="agent-row">
+                        <a class="agent-row-main" href="sessions/@session.Id">
+                            <div class="list-avatar">@session.HarnessId</div>
+                            <div class="list-main">
+                                <div class="list-title">@session.Title</div>
+                                <div class="list-subtitle">
+                                    @if (session.Agent is { } agent)
+                                    {
+                                        <span>@agent.Name on @agent.Runner?.Name</span>
+                                    }
+                                    else
+                                    {
+                                        <span>No agent@(session.RunnerName is null ? "" : $" · last on {session.RunnerName}")</span>
+                                    }
+                                    @if (session.RepositoryUrl is not null)
+                                    {
+                                        <span class="mono"> · @session.RepositoryUrl</span>
+                                    }
+                                </div>
+                            </div>
+                        </a>
+                        <div class="agent-row-state">
+                            @if (live)
+                            {
+                                <StatusPill Style="StateStyles.For(session.Agent!.State)" />
+                            }
+                            else
+                            {
+                                <span class="session-count">@session.MessageCount messages</span>
+                            }
+                            <span class="list-time">@session.UpdatedAt.Humanize()</span>
+                        </div>
+                        <div class="agent-row-actions">
+                            @if (session.Agent is null)
+                            {
+                                <MudTooltip Text="Continue on a Runner">
+                                    <MudIconButton Icon="@Icons.Material.Rounded.PlayArrow" Color="Color.Success" Size="Size.Small" OnClick="() => ContinueAsync(session)" />
+                                </MudTooltip>
+                            }
+                            else
+                            {
+                                <MudTooltip Text="Open the agent">
+                                    <MudIconButton Href="@($"agents/{session.AgentId}")" Icon="@Icons.Material.Rounded.Terminal" Color="Color.Primary" Size="Size.Small" />
+                                </MudTooltip>
+                            }
+                            <SessionExportMenu SessionId="session.Id" Icon="true" />
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</MudContainer>
+
+@code {
+    private List<StoredSession> _sessions = [];
+    private string? _search;
+    private bool _importing;
+
+    private IEnumerable<StoredSession> Filtered => string.IsNullOrWhiteSpace(_search)
+        ? _sessions
+        : _sessions.Where(s => s.Title.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                               || (s.RepositoryUrl?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
+                               || (s.Agent?.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.Kind is ManagerEventKind.SessionChanged or ManagerEventKind.SessionRemoved or ManagerEventKind.AgentChanged or ManagerEventKind.AgentRemoved;
+
+    protected override async Task LoadAsync() => _sessions = await Sessions.ListAsync();
+
+    private async Task ImportAsync(IBrowserFile? file)
+    {
+        if (file is null)
+        {
+            return;
+        }
+
+        _importing = true;
+        try
+        {
+            await using var stream = file.OpenReadStream(maxAllowedSize: 200 * 1024 * 1024);
+            using var reader = new StreamReader(stream);
+            var session = await Sessions.ImportAsync(file.Name, await reader.ReadToEndAsync());
+            Snackbar.Add($"Imported '{session.Title}'.", Severity.Success);
+            Navigation.NavigateTo($"sessions/{session.Id}");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+        }
+    }
+
+    private Task ContinueAsync(StoredSession session) =>
+        Dialogs.ShowAsync<NewAgentDialog>("Continue session", new DialogParameters<NewAgentDialog> { { d => d.ContinueSession, session } });
+}

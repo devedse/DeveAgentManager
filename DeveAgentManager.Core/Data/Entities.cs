@@ -122,6 +122,50 @@ public class Agent
     public DateTime UpdatedAt { get; set; }
 }
 
+/// <summary>
+/// A conversation stored by the Manager (the content is a DeveSession file in /data/sessions). It stays when its agent
+/// or Runner is deleted, and can then be continued on another Runner.
+/// </summary>
+public class StoredSession
+{
+    public Guid Id { get; set; }
+
+    public string Title { get; set; } = "";
+
+    /// <summary>The harness it last ran in, e.g. "pi".</summary>
+    public string HarnessId { get; set; } = "";
+
+    /// <summary>The harness's own session id on the Runner.</summary>
+    public string? HarnessSessionId { get; set; }
+
+    /// <summary>The agent currently running this session; null once the agent (or its Runner) is deleted.</summary>
+    public Guid? AgentId { get; set; }
+
+    public Agent? Agent { get; set; }
+
+    public string? RunnerName { get; set; }
+
+    public string? WorkingDirectory { get; set; }
+
+    public string? RepositoryUrl { get; set; }
+
+    public string? RepositoryBranch { get; set; }
+
+    public int MessageCount { get; set; }
+
+    /// <summary>Path and size of the harness's session file on the Runner at the last sync.</summary>
+    public string? SourcePath { get; set; }
+
+    public long SourceSize { get; set; }
+
+    public DateTime CreatedAt { get; set; }
+
+    /// <summary>Last activity in the conversation.</summary>
+    public DateTime UpdatedAt { get; set; }
+
+    public DateTime? LastSyncedAt { get; set; }
+}
+
 public class SettingEntry
 {
     public string Key { get; set; } = "";

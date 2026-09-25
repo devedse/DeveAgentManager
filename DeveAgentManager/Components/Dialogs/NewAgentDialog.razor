@@ -1,6 +1,7 @@
 @using System.Text.RegularExpressions
 @inject RunnerService Runners
 @inject AgentService Agents
+@inject SessionService Sessions
 @inject ISnackbar Snackbar
 @inject NavigationManager Navigation
 
@@ -8,7 +9,7 @@
     <TitleContent>
         <div class="dialog-title">
             <MudIcon Icon="@Icons.Material.Rounded.SmartToy" Color="Color.Primary" />
-            <span>New agent</span>
+            <span>@(ContinueSession is null ? "New agent" : "Continue session")</span>
         </div>
     </TitleContent>
     <DialogContent>
@@ -21,6 +22,16 @@
         else
         {
             <MudForm @ref="_form" Class="dialog-form">
+                @if (ContinueSession is { } continued)
+                {
+                    <div class="continue-banner">
+                        <MudIcon Icon="@Icons.Material.Rounded.Forum" Size="Size.Small" />
+                        <div>
+                            <div class="continue-title">@continued.Title</div>
+                            <div class="continue-text">@continued.MessageCount messages. A new agent starts with this conversation loaded.</div>
+                        </div>
+                    </div>
+                }
                 <div class="form-row">
                     <MudSelect T="Guid" Value="_runnerId" ValueChanged="SelectRunner" Label="Runner" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1">
                         @foreach (var runner in _runners)
@@ -76,7 +87,7 @@
         @if (_runners.Count > 0)
         {
             <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || _harnessId is null" OnClick="CreateAsync" StartIcon="@Icons.Material.Rounded.PlayArrow">
-                @(_busy ? (_mode == AgentWorkspaceMode.CloneRepository ? "Cloning..." : "Starting...") : "Start agent")
+                @(_busy ? (_mode == AgentWorkspaceMode.CloneRepository ? "Cloning..." : "Starting...") : ContinueSession is null ? "Start agent" : "Continue")
             </MudButton>
         }
     </DialogActions>
@@ -92,6 +103,10 @@
     /// <summary>Preselects a Runner.</summary>
     [Parameter]
     public Guid? RunnerId { get; set; }
+
+    /// <summary>Start the agent with this stored conversation loaded.</summary>
+    [Parameter]
+    public StoredSession? ContinueSession { get; set; }
 
     private MudForm? _form;
     private List<Runner> _runners = [];
@@ -113,6 +128,14 @@
     protected override async Task OnInitializedAsync()
     {
         _runners = (await Runners.ListAsync()).Where(r => r.State == RunnerState.Ready).ToList();
+        if (ContinueSession is { } continued)
+        {
+            // Same repository as before; without one, a fresh folder (the files didn't travel with the conversation).
+            _mode = continued.RepositoryUrl is null ? AgentWorkspaceMode.EmptyFolder : AgentWorkspaceMode.CloneRepository;
+            _repositoryUrl = continued.RepositoryUrl ?? "";
+            _branch = continued.RepositoryBranch;
+        }
+
         if (_runners.Count > 0)
         {
             await SelectRunner(_runners.FirstOrDefault(r => r.Id == RunnerId)?.Id ?? _runners[0].Id);
@@ -123,7 +146,7 @@
     {
         _runnerId = runnerId;
         var runner = _runners.First(r => r.Id == runnerId);
-        _availableHarnesses = Agents.Harnesses.Where(h => runner.HarnessIds.Contains(h.Id)).ToList();
+        _availableHarnesses = Agents.Harnesses.Where(h => runner.HarnessIds.Contains(h.Id) && (ContinueSession is null || Sessions.SupportsHarness(h.Id))).ToList();
         _harnessId = _availableHarnesses.FirstOrDefault(h => h.Id == _harnessId)?.Id ?? _availableHarnesses.FirstOrDefault()?.Id;
         if (!_nameEdited)
         {
@@ -199,7 +222,7 @@
         _busy = true;
         try
         {
-            var agent = await Agents.CreateAsync(new CreateAgentRequest(_runnerId, _name, _harnessId, _mode, _repositoryUrl, _branch, _existingPath));
+            var agent = await Agents.CreateAsync(new CreateAgentRequest(_runnerId, _name, _harnessId, _mode, _repositoryUrl, _branch, _existingPath, ContinueSession?.Id));
             MudDialog.Close(DialogResult.Ok(agent.Id));
             Navigation.NavigateTo($"agents/{agent.Id}");
         }

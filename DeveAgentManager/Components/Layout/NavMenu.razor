@@ -16,6 +16,17 @@
                 }
             </div>
         </MudNavLink>
+        @foreach (var agent in _liveAgents)
+        {
+            <MudNavLink Href="@($"agents/{agent.Id}")" Match="NavLinkMatch.All" Class="nav-agent">
+                <div class="nav-agent-row">
+                    <span class="nav-agent-dot @(agent.State == AgentState.Running ? "live" : "")"></span>
+                    <span class="nav-agent-name">@agent.Name</span>
+                    <span class="nav-agent-meta">@agent.Runner?.Name</span>
+                </div>
+            </MudNavLink>
+        }
+        <MudNavLink Href="sessions" Icon="@Icons.Material.Rounded.Forum">Sessions</MudNavLink>
         <MudNavLink Href="runners" Icon="@Icons.Material.Rounded.Dns">
             <div class="nav-link-row">
                 <span>Runners</span>
@@ -39,6 +50,7 @@
 
     private int _runningAgents;
     private int _readyRunners;
+    private List<Agent> _liveAgents = [];
 
     protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.Kind != ManagerEventKind.SettingsChanged;
 
@@ -46,6 +58,14 @@
     {
         var runners = await Runners.ListAsync();
         _readyRunners = runners.Count(r => r.State == RunnerState.Ready);
-        _runningAgents = runners.SelectMany(r => r.Agents).Count(a => a.State is AgentState.Running or AgentState.Starting);
+        _liveAgents = runners.SelectMany(r => r.Agents.Select(a =>
+            {
+                a.Runner = r;
+                return a;
+            }))
+            .Where(a => a.State is AgentState.Running or AgentState.Starting)
+            .OrderBy(a => a.Name)
+            .ToList();
+        _runningAgents = _liveAgents.Count;
     }
 }

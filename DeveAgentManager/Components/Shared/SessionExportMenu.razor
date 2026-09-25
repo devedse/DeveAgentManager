@@ -1,0 +1,39 @@
+@inject SessionService Sessions
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+<MudMenu Icon="@(Icon ? Icons.Material.Rounded.Download : null)" Label="@(Icon ? null : "Export")" StartIcon="@(Icon ? null : Icons.Material.Rounded.Download)"
+         Variant="@(Icon ? Variant.Text : Variant.Outlined)" Size="@(Icon ? Size.Small : Size.Medium)" Dense="true"
+         AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+    <MudMenuItem OnClick="() => DownloadAsync(DeveFormat)">DeveSession (.deve.json)</MudMenuItem>
+    @if (Sessions.SupportsHarness("pi"))
+    {
+        <MudMenuItem OnClick="@(() => DownloadAsync("pi"))">pi session (.jsonl)</MudMenuItem>
+    }
+</MudMenu>
+
+@code {
+    private const string DeveFormat = "deve";
+
+    [Parameter, EditorRequired]
+    public Guid SessionId { get; set; }
+
+    /// <summary>Show as an icon button (in lists) instead of a labelled button.</summary>
+    [Parameter]
+    public bool Icon { get; set; }
+
+    private async Task DownloadAsync(string format)
+    {
+        try
+        {
+            var export = await Sessions.ExportAsync(SessionId, format);
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(export.Content));
+            using var reference = new DotNetStreamReference(stream);
+            await JS.InvokeVoidAsync("damUi.download", export.FileName, export.ContentType, reference);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+}

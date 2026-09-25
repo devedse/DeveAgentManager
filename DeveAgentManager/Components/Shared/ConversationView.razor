@@ -1,0 +1,221 @@
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using DeveAgentManager.Core.Sessions
+
+@if (_path.Count == 0)
+{
+    <EmptyState Icon="@Icons.Material.Rounded.Forum" Title="No conversation yet" Text="Messages show up here a few seconds after the agent writes them." />
+}
+else
+{
+    <div class="conversation">
+        @foreach (var entry in _path)
+        {
+            switch (entry)
+            {
+                case { Kind: DeveEntryKind.Message, Role: DeveRole.System }:
+                    <details class="conv-system">
+                        <summary><MudIcon Icon="@Icons.Material.Rounded.Settings" Size="Size.Small" /> System prompt and tools</summary>
+                        <pre>@entry.PlainText()</pre>
+                    </details>
+                    break;
+
+                case { Kind: DeveEntryKind.Message, Role: DeveRole.User }:
+                    <div class="conv-user">
+                        <div class="conv-user-bubble">
+                            @foreach (var block in entry.Content ?? [])
+                            {
+                                @if (block.Type == "image" && block.Data is not null)
+                                {
+                                    <img class="conv-image" src="@($"data:{block.MimeType};base64,{block.Data}")" alt="Attached image" />
+                                }
+                                else if (block.Type == "text")
+                                {
+                                    <div class="markdown">@MarkdownRenderer.ToHtml(block.Text)</div>
+                                }
+                            }
+                        </div>
+                        <div class="conv-meta">@Time(entry)</div>
+                    </div>
+                    break;
+
+                case { Kind: DeveEntryKind.Message, Role: DeveRole.Assistant }:
+                    <div class="conv-assistant">
+                        @foreach (var block in entry.Content ?? [])
+                        {
+                            @switch (block.Type)
+                            {
+                                case "thinking":
+                                    <details class="conv-thinking">
+                                        <summary>@(string.IsNullOrWhiteSpace(block.Text) ? "Thinking (not readable)" : "Thinking")</summary>
+                                        @if (!string.IsNullOrWhiteSpace(block.Text))
+                                        {
+                                            <div class="markdown">@MarkdownRenderer.ToHtml(block.Text)</div>
+                                        }
+                                    </details>
+                                    break;
+                                case "text":
+                                    <div class="markdown">@MarkdownRenderer.ToHtml(block.Text)</div>
+                                    break;
+                                case "toolCall":
+                                    var result = block.Id is null ? null : _results.GetValueOrDefault(block.Id);
+                                    <details class="conv-tool @(result?.IsError == true ? "conv-tool-error" : "")">
+                                        <summary>
+                                            <MudIcon Icon="@ToolIcon(block.ToolKind)" Size="Size.Small" />
+                                            <span class="conv-tool-name">@block.Name</span>
+                                            <span class="conv-tool-summary">@ToolSummary(block)</span>
+                                            @if (result is null)
+                                            {
+                                                <span class="conv-tool-state">no result</span>
+                                            }
+                                            else if (result.IsError == true)
+                                            {
+                                                <span class="conv-tool-state error">failed</span>
+                                            }
+                                        </summary>
+                                        <div class="conv-tool-body">
+                                            <div class="conv-tool-label">Arguments</div>
+                                            <pre>@Pretty(block.Arguments)</pre>
+                                            @if (result is not null)
+                                            {
+                                                <div class="conv-tool-label">Result</div>
+                                                <pre>@Truncate(Text(result.Content), 12000)</pre>
+                                            }
+                                        </div>
+                                    </details>
+                                    break;
+                            }
+                        }
+                        @if (entry.Error is not null)
+                        {
+                            <div class="conv-error">@entry.Error</div>
+                        }
+                        <div class="conv-meta">
+                            @Time(entry)
+                            @if (entry.Model?.Id is { } model)
+                            {
+                                <span> · @model</span>
+                            }
+                            @if (entry.Usage is { } usage && usage.Output > 0)
+                            {
+                                <span> · @(usage.Input + usage.CacheRead + usage.CacheWrite) in / @usage.Output out</span>
+                            }
+                        </div>
+                    </div>
+                    break;
+
+                case { Kind: DeveEntryKind.Message, Role: DeveRole.Tool }:
+                    // Results are shown with their tool call; only show results whose call is not on this path.
+                    @foreach (var block in (entry.Content ?? []).Where(b => b.ToolCallId is null || !_calls.Contains(b.ToolCallId)))
+                    {
+                        <details class="conv-tool">
+                            <summary><MudIcon Icon="@Icons.Material.Rounded.Output" Size="Size.Small" /><span class="conv-tool-name">@block.ToolName result</span></summary>
+                            <div class="conv-tool-body"><pre>@Truncate(Text(block.Content), 12000)</pre></div>
+                        </details>
+                    }
+                    break;
+
+                case { Kind: DeveEntryKind.Summary }:
+                    <details class="conv-summary">
+                        <summary>
+                            <MudIcon Icon="@Icons.Material.Rounded.Compress" Size="Size.Small" />
+                            @(entry.SummaryKind == "branch" ? "Summary of an abandoned branch" : "Earlier messages were compacted")
+                        </summary>
+                        <div class="markdown">@MarkdownRenderer.ToHtml(entry.Text)</div>
+                    </details>
+                    break;
+
+                case { Kind: DeveEntryKind.Event, Event: "shell" }:
+                    <details class="conv-tool">
+                        <summary><MudIcon Icon="@Icons.Material.Rounded.Terminal" Size="Size.Small" /><span class="conv-tool-name">!</span><span class="conv-tool-summary">@entry.Text</span></summary>
+                        <div class="conv-tool-body"><pre>@Truncate(entry.Data?["output"]?.ToString(), 12000)</pre></div>
+                    </details>
+                    break;
+
+                case { Kind: DeveEntryKind.Event }:
+                    <div class="conv-event">@EventText(entry)</div>
+                    break;
+            }
+        }
+    </div>
+}
+
+@code {
+    private List<DeveEntry> _path = [];
+    private Dictionary<string, DeveBlock> _results = [];
+    private HashSet<string> _calls = [];
+
+    [Parameter, EditorRequired]
+    public DeveSession Session { get; set; } = default!;
+
+    protected override void OnParametersSet()
+    {
+        _path = Session.ActivePath();
+        _results = [];
+        _calls = [];
+        foreach (var block in _path.Where(e => e.Content is not null).SelectMany(e => e.Content!))
+        {
+            if (block is { Type: "toolResult", ToolCallId: { } resultId })
+            {
+                _results[resultId] = block;
+            }
+            else if (block is { Type: "toolCall", Id: { } callId })
+            {
+                _calls.Add(callId);
+            }
+        }
+    }
+
+    private static string Time(DeveEntry entry) => entry.Timestamp.ToLocalTime().ToString("HH:mm");
+
+    private static string ToolIcon(string? kind) => kind switch
+    {
+        ToolKinds.Shell => Icons.Material.Rounded.Terminal,
+        ToolKinds.Read => Icons.Material.Rounded.Description,
+        ToolKinds.Write => Icons.Material.Rounded.NoteAdd,
+        ToolKinds.Edit => Icons.Material.Rounded.Edit,
+        ToolKinds.Search => Icons.Material.Rounded.Search,
+        ToolKinds.Web => Icons.Material.Rounded.Public,
+        _ => Icons.Material.Rounded.Extension,
+    };
+
+    /// <summary>The one argument that says what a call does: the command, the file, the query...</summary>
+    private static string? ToolSummary(DeveBlock call)
+    {
+        if (call.Arguments is not JsonObject arguments)
+        {
+            return null;
+        }
+
+        foreach (var name in new[] { "command", "cmd", "path", "file_path", "pattern", "query", "url", "description" })
+        {
+            if (arguments[name] is JsonValue value && value.GetValueKind() == JsonValueKind.String)
+            {
+                var text = value.GetValue<string>().ReplaceLineEndings(" ");
+                return text.Length > 140 ? text[..140] + "…" : text;
+            }
+        }
+
+        return null;
+    }
+
+    private static string EventText(DeveEntry entry) => entry.Event switch
+    {
+        "model_change" => $"Switched model to {entry.Text}",
+        "thinking_level" => $"Thinking level: {entry.Text}",
+        "title" => $"Named \"{entry.Text}\"",
+        "label" => $"Label: {entry.Text}",
+        "extension_message" => $"Extension message: {Truncate(entry.Text, 200)}",
+        _ => entry.Event ?? "",
+    };
+
+    private static readonly JsonSerializerOptions PrettyOptions = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    private static string Pretty(JsonNode? node) => node is null ? "" : Truncate(node.ToJsonString(PrettyOptions), 12000) ?? "";
+
+    private static string Text(List<DeveBlock>? blocks) =>
+        string.Join("\n", (blocks ?? []).Select(b => b.Type == "image" ? "[image]" : b.Text).Where(t => !string.IsNullOrEmpty(t)));
+
+    private static string? Truncate(string? text, int length) =>
+        text is null || text.Length <= length ? text : text[..length] + $"\n… ({text.Length - length:N0} more characters)";
+}

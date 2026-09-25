@@ -7,6 +7,8 @@ when you close the tab.
 - **Manager**: this app, one Docker container with the web portal.
 - **Runner**: a machine that hosts agents. Proxmox Runners are full clones of a template VM.
 - **Agent**: a harness (currently [pi](https://pi.dev)) running in its own tmux session and working folder on a Runner.
+- **Session**: an agent's conversation. The Manager keeps a copy in a harness-neutral format, so it survives the agent
+  and its Runner and can be continued on another Runner.
 - **Setup Profile**: what every Runner gets during setup: git identity, API keys, login and settings files, and a script.
 
 See [PLAN.md](PLAN.md) for where this is going (Claude Code and Codex, sessions you can move between harnesses, Jobs API).
@@ -156,6 +158,11 @@ keys that decrypt stored secrets (Setup Profile, GitHub token). Losing the keys 
   setup log. Run it again any time with **Re-run setup**.
 - **Agents** run as `tmux` sessions named `dam-<name>` in `~/work/<name>`. The harness is started with a fixed session
   id, so **Start** after a stop or reboot resumes the same conversation.
+- **Sessions** are synced from the Runners every 15 seconds (only files that changed) and stored as a
+  [DeveSession](docs/session-formats.md) in `/data/sessions`. **Continue on a Runner** writes the conversation back in
+  the harness's own format, in the new agent's folder, before the harness starts. Sessions can be exported (DeveSession
+  or pi `.jsonl`) and imported. See [docs/session-formats.md](docs/session-formats.md) for the pi, Claude Code and Codex
+  formats and how they map.
 - **Terminals** are xterm.js in the browser, connected through the Manager to an SSH session on the Runner. The Runner
   never needs to be reachable from your browser.
 

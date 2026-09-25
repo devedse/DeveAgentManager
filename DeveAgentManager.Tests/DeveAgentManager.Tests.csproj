@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -19,6 +19,7 @@
     <ProjectReference Include="..\DeveAgentManager.Core\DeveAgentManager.Core.csproj" />
     <ProjectReference Include="..\DeveAgentManager.Providers.Proxmox\DeveAgentManager.Providers.Proxmox.csproj" />
     <ProjectReference Include="..\DeveAgentManager.Harnesses.Pi\DeveAgentManager.Harnesses.Pi.csproj" />
+    <ProjectReference Include="..\DeveAgentManager\DeveAgentManager.csproj" />
   </ItemGroup>
 
 </Project>

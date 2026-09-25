@@ -6,6 +6,7 @@ using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Providers.ExistingMachine;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Security;
+using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Setup;
 using DeveAgentManager.Core.Ssh;
 using Microsoft.AspNetCore.DataProtection;
@@ -34,6 +35,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RunnerShell>();
         services.AddSingleton<SettingsStore>();
         services.AddSingleton<RunnerSetupService>();
+        services.AddSingleton<SessionService>();
         services.AddSingleton<AgentService>();
         services.AddSingleton<RunnerService>();
         services.AddSingleton<RunnerStatusCache>();

@@ -3,6 +3,7 @@ using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
+using DeveAgentManager.Core.Sessions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -21,11 +22,13 @@ public sealed class RunnerStatusCache
 }
 
 /// <summary>
-/// Polls providers and Runners in the background: power state and resources from the provider, agent state from tmux.
+/// Polls providers and Runners in the background: power state and resources from the provider, agent state from tmux,
+/// and copies changed conversations into the session store.
 /// </summary>
 public sealed class RunnerMonitor(
     RunnerService runners,
     AgentService agents,
+    SessionService sessions,
     RunnerStatusCache statusCache,
     ManagerEvents events,
     ILogger<RunnerMonitor> logger) : BackgroundService
@@ -79,6 +82,7 @@ public sealed class RunnerMonitor(
                 if (runner.State == RunnerState.Ready && runner.Agents.Count > 0)
                 {
                     await agents.RefreshRunnerAsync(runner, ct);
+                    await sessions.SyncRunnerAsync(runner, ct);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
