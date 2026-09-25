@@ -101,6 +101,8 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
             return checks;
         }
 
+        checks.Add(await CheckPermissionsAsync(client));
+
         foreach (var template in GetTemplates())
         {
             checks.Add(await CheckTemplateAsync(client, vms, template));
@@ -163,7 +165,9 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
         var client = CreateClient();
         var vms = await GetVmsAsync(client);
         var template = vms.FirstOrDefault(v => v.VmId == templateVmId)
-            ?? throw new InvalidOperationException($"Template VM {templateVmId} was not found (or the token has no VM.Audit on it).");
+            ?? throw new InvalidOperationException(vms.Count == 0
+                ? $"The API token can't see any VM, so template {templateVmId} can't be cloned. {PrivilegeSeparationHint}"
+                : $"Template VM {templateVmId} was not found, or the token has no permissions on /vms/{templateVmId}.");
         var targetNode = options.Node ?? template.Node;
 
         int vmId;
@@ -411,6 +415,41 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
         var parts = rawDefinition.Split(',').Where(p => !p.StartsWith("bridge=", StringComparison.Ordinal)).ToList();
         parts.Insert(Math.Min(1, parts.Count), $"bridge={bridge}");
         return string.Join(',', parts);
+    }
+
+    private const string PrivilegeSeparationHint =
+        "Most likely Privilege Separation is on for the token (Datacenter > Permissions > API Tokens > Edit > untick it), " +
+        "or the permissions for the user are missing (Datacenter > Permissions should list /pool/..., /vms/<template>, /storage/... and /sdn/zones/...).";
+
+    /// <summary>Shows which paths the token has privileges on, which is the quickest way to spot a permission mistake.</summary>
+    private static async Task<ProviderCheck> CheckPermissionsAsync(PveClient client)
+    {
+        const string name = "Token permissions";
+        try
+        {
+            var result = await client.Access.Permissions.Permissions();
+            EnsureSuccess(result, "Reading the token's permissions");
+            var paths = new List<string>();
+            if (result.ToData() is IDictionary<string, object> data)
+            {
+                foreach (var (path, privileges) in data)
+                {
+                    var granted = privileges is IDictionary<string, object> map ? map.Count(p => Convert.ToInt32(p.Value) == 1) : 0;
+                    if (granted > 0)
+                    {
+                        paths.Add($"{path} ({granted})");
+                    }
+                }
+            }
+
+            return paths.Count == 0
+                ? new ProviderCheck(name, CheckStatus.Failed, $"The token has no permissions at all. {PrivilegeSeparationHint}")
+                : new ProviderCheck(name, CheckStatus.Ok, $"Privileges on {string.Join(", ", paths.Order())}.");
+        }
+        catch (Exception ex)
+        {
+            return new ProviderCheck(name, CheckStatus.Warning, ex.Message);
+        }
     }
 
     private async Task<ProviderCheck> CheckTemplateAsync(PveClient client, List<ClusterResource> vms, RunnerTemplate template)
