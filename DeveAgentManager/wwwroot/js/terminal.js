@@ -8,6 +8,28 @@
 
     const observers = new Map();
 
+    // Tracks the visible part of the screen. A phone's on-screen keyboard covers the page without resizing it
+    // (iOS Safari, and Chrome on Android by default), so the full-screen terminal page sizes itself to this instead.
+    (function trackVisualViewport() {
+        const viewport = window.visualViewport;
+        if (!viewport) {
+            return;
+        }
+
+        const root = document.documentElement;
+        let frame = 0;
+        const update = () => {
+            cancelAnimationFrame(frame);
+            frame = requestAnimationFrame(() => {
+                root.style.setProperty("--dam-vv-height", `${Math.round(viewport.height)}px`);
+                root.style.setProperty("--dam-vv-top", `${Math.round(viewport.offsetTop)}px`);
+            });
+        };
+        viewport.addEventListener("resize", update);
+        viewport.addEventListener("scroll", update);
+        update();
+    })();
+
     function fit(id) {
         try {
             const addon = XtermBlazor.getTerminalObjectById(id).addons.get("addon-fit");
@@ -219,7 +241,7 @@
             }
 
             if (focus) {
-                box.focus();
+                box.focus({ preventScroll: true });
             }
         },
 
@@ -243,7 +265,7 @@
 
             box.value = "";
             box.dispatchEvent(new Event("input"));
-            box.focus();
+            box.focus({ preventScroll: true });
         },
 
         dispose(id) {

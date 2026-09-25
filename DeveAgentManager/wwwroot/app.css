@@ -1167,9 +1167,17 @@ a {
 
 /* ---------- Terminal ---------- */
 
+/* Sized to the visible part of the screen (terminal.js keeps --dam-vv-* up to date), so the text box and the key row
+   sit right above a phone's on-screen keyboard instead of behind it. */
 .terminal-layout {
+    position: fixed;
+    top: var(--dam-vv-top, 0px);
+    left: 0;
+    right: 0;
     height: 100vh;
     height: 100dvh;
+    height: var(--dam-vv-height, 100dvh);
+    overflow: hidden;
     background: #0a0d13;
 }
 
