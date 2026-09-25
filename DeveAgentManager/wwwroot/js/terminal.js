@@ -39,7 +39,18 @@
         }
     }
 
-    const isTouch = () => window.matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
+    // Phones and tablets: the primary pointer is a finger.
+    const isTouch = () => window.matchMedia("(pointer: coarse)").matches;
+
+    // Per terminal: the phone keyboard input (terminal-touch-input.js).
+    const touchInputs = new Map();
+    const TOUCH_INPUT_KEY = "dam.touchInput";
+
+    // On by default on touch devices; the "⌨" key switches it, and the choice is remembered in this browser.
+    function touchInputWanted() {
+        const stored = localStorage.getItem(TOUCH_INPUT_KEY);
+        return stored === null ? isTouch() : stored === "on";
+    }
 
     // Phone keyboards rewrite text they already typed (autocorrect, predictions, swipe typing). xterm.js has already
     // sent those keys, so the terminal ends up with garbled text. Ask the browser not to do that in xterm's input.
@@ -167,7 +178,7 @@
     }
 
     window.damTerminal = {
-        // Returns whether this is a touch device, which gets the text box for typing.
+        // Returns whether the phone keyboard input is on.
         init(id) {
             const terminal = XtermBlazor.getTerminalById(id);
             hardenInput(terminal);
@@ -213,65 +224,68 @@
                 observers.set(id, observer);
             }
 
+            if (xtermElement && !touchInputs.has(id)) {
+                const input = DamTouchInput.attach(terminal, xtermElement, data => terminal.input(data, true));
+                input.setEnabled(touchInputWanted());
+                touchInputs.set(id, input);
+            }
+
+            // The on-screen keys must not take the focus: that would close the phone keyboard after every key.
+            const keys = element?.closest(".terminal-frame")?.parentElement?.querySelector(".terminal-keys");
+            if (keys && !keys.dataset.keepFocus) {
+                keys.dataset.keepFocus = "true";
+                keys.addEventListener("pointerdown", event => {
+                    if (event.target.closest("button")) {
+                        event.preventDefault();
+                    }
+                });
+            }
+
             fit(id);
-            return isTouch();
+            return touchInputs.get(id)?.enabled ?? false;
         },
 
         fit,
 
-        // Sets up the text box that phones type into. Enter adds a new line, Ctrl/Cmd+Enter sends.
-        initCompose(id, box, focus) {
-            if (!box) {
+        // Sends an on-screen key. The phone keyboard input forgets its line, which the key may have changed.
+        sendKey(id, sequence) {
+            const terminal = getTerminal(id);
+            if (!terminal) {
                 return;
             }
 
-            if (!box.dataset.wired) {
-                box.dataset.wired = "true";
-                const grow = () => {
-                    box.style.height = "auto";
-                    box.style.height = `${Math.min(box.scrollHeight, 160)}px`;
-                };
-                box.addEventListener("input", grow);
-                box.addEventListener("keydown", event => {
-                    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-                        event.preventDefault();
-                        this.sendCompose(id, box, true);
-                    }
-                });
-                grow();
-            }
-
-            if (focus) {
-                box.focus({ preventScroll: true });
-            }
+            const input = touchInputs.get(id);
+            input?.reset();
+            terminal.input(sequence, true);
         },
 
-        // Sends the text box's text as one paste (bracketed when the program asks for it, so a multi-line text stays
-        // one input instead of every line being submitted), then Enter when submitting.
-        sendCompose(id, box, submit) {
-            const terminal = getTerminal(id);
-            if (!terminal || !box) {
-                return;
+        // Switches the phone keyboard input on or off and returns the new state.
+        toggleTouchInput(id) {
+            const input = touchInputs.get(id);
+            if (!input) {
+                return false;
             }
 
-            const text = box.value.replace(/\r\n?/g, "\n");
-            if (text.length > 0) {
-                terminal.paste(text);
-            }
+            const enabled = !input.enabled;
+            localStorage.setItem(TOUCH_INPUT_KEY, enabled ? "on" : "off");
+            input.setEnabled(enabled);
+            input.focus();
+            return enabled;
+        },
 
-            if (submit) {
-                // After the paste, so the program sees the whole text before Enter.
-                terminal.input("\r", true);
+        focus(id) {
+            const input = touchInputs.get(id);
+            if (input) {
+                input.focus();
+            } else {
+                getTerminal(id)?.focus();
             }
-
-            box.value = "";
-            box.dispatchEvent(new Event("input"));
-            box.focus({ preventScroll: true });
         },
 
         dispose(id) {
             observers.get(id)?.disconnect();
             observers.delete(id);
+            touchInputs.delete(id);
         },
     };
 

@@ -1319,44 +1319,27 @@ a {
     border-color: var(--dam-primary);
 }
 
-.terminal-key-primary {
-    background: var(--dam-primary);
-    border-color: var(--dam-primary);
-    color: #fff;
-}
-
-/* Text box for typing on phones: sent to the terminal in one go. */
-.terminal-compose {
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    padding: 6px 8px;
-    background: var(--dam-surface);
-    border-top: 1px solid var(--dam-border);
-    flex-shrink: 0;
-}
-
-.terminal-compose-input {
-    flex: 1;
-    min-width: 0;
-    min-height: 36px;
-    max-height: 160px;
-    resize: none;
-    padding: 8px 10px;
-    border-radius: 8px;
-    border: 1px solid var(--dam-border-strong);
-    background: var(--dam-surface-2);
-    color: var(--dam-text);
-    font-family: var(--dam-mono);
-    /* 16px keeps iOS from zooming the page when the box gets focus. */
-    font-size: 16px;
-    line-height: 1.3;
+/* The phone keyboard types into this (terminal-touch-input.js). Invisible: what you type shows up in the terminal. */
+.dam-touch-input {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 2em;
+    margin: 0;
+    padding: 0;
+    border: 0;
     outline: none;
+    resize: none;
+    overflow: hidden;
+    opacity: 0;
+    color: transparent;
+    caret-color: transparent;
+    background: transparent;
+    pointer-events: none;
+    /* 16px keeps iOS from zooming the page when it gets focus. */
+    font-size: 16px;
 }
-
-    .terminal-compose-input:focus {
-        border-color: var(--dam-primary);
-    }
 
 /* Swipes on the terminal are handled in terminal.js (scrolling), not by the browser. */
 .terminal-xterm .xterm-screen {

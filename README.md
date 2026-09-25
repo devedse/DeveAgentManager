@@ -165,9 +165,11 @@ keys that decrypt stored secrets (Setup Profile, GitHub token). Losing the keys 
   or pi `.jsonl`) and imported. See [docs/session-formats.md](docs/session-formats.md) for the pi, Claude Code and Codex
   formats and how they map.
 - **Terminals** are xterm.js in the browser, connected through the Manager to an SSH session on the Runner. The Runner
-  never needs to be reachable from your browser. On phones there is a row of extra keys, and a text box that the
-  keyboard types into normally (autocorrect, swipe typing). The text is sent as one paste, so multi-line text stays
-  together. Swiping scrolls, through tmux's mouse mode.
+  never needs to be reachable from your browser. On phones there is a row of extra keys, and swiping scrolls
+  (through tmux's mouse mode). Phone keyboards garble text typed straight into xterm.js (xterm.js issue #3600). So on
+  touch devices the keyboard types into a hidden field that keeps the current line, and only the differences are sent:
+  Backspaces, arrows and new text. Autocorrect, swipe typing and Backspace then behave as in other apps. The
+  **⌨ fix** key switches this off.
 
 ## Development
 

@@ -32,24 +32,10 @@
     }
 </div>
 
-@if (_showCompose)
-{
-    @* Typing into xterm.js directly is unreliable with phone keyboards (autocorrect, predictions and swipe typing
-       rewrite text the terminal already sent), worst when the input spans several lines. This is a normal text box:
-       the keyboard works as usual, and the text is sent in one go as a paste. *@
-    <div class="terminal-compose">
-        <textarea @ref="_composeBox" class="terminal-compose-input" rows="1" placeholder="Type here, then Send"
-                  enterkeyhint="enter" autocapitalize="sentences" spellcheck="true"></textarea>
-        <button type="button" class="terminal-key" title="Put the text in the prompt without pressing Enter"
-                @onclick="() => SendComposeAsync(false)" @onclick:preventDefault="true">Insert</button>
-        <button type="button" class="terminal-key terminal-key-primary" title="Send the text and press Enter (Ctrl+Enter)"
-                @onclick="() => SendComposeAsync(true)" @onclick:preventDefault="true">Send</button>
-    </div>
-}
-
 <div class="terminal-keys">
-    <button type="button" class="terminal-key @(_showCompose ? "terminal-key-on" : "")" title="Show or hide the text box"
-            @onclick="ToggleComposeAsync" @onclick:preventDefault="true">✎ Text</button>
+    <button type="button" class="terminal-key @(_touchInput ? "terminal-key-on" : "")"
+            title="Phone keyboard fix: autocorrect, swipe typing and Backspace work as in other apps. Switch off to type straight into the terminal."
+            @onclick="ToggleTouchInputAsync" @onclick:preventDefault="true">⌨ @(_touchInput ? "fix on" : "fix off")</button>
     @foreach (var (label, sequence) in Keys)
     {
         <button type="button" class="terminal-key" @onclick="() => SendAsync(sequence)" @onclick:preventDefault="true">@label</button>
@@ -93,8 +79,7 @@
     };
 
     private Xterm _xterm = default!;
-    private ElementReference _composeBox;
-    private bool _showCompose;
+    private bool _touchInput;
     private TerminalConnection? _connection;
     private CancellationTokenSource _lifetime = new();
     private string? _overlay = "Connecting...";
@@ -117,28 +102,13 @@
 
     public async Task SendAsync(string data)
     {
-        _connection?.Write(Encoding.UTF8.GetBytes(data));
-        if (!_showCompose)
-        {
-            // With the text box open, keep the phone keyboard on it.
-            await _xterm.Focus();
-        }
+        // Through the browser, so the phone keyboard input knows the line changed; it arrives back in OnData.
+        await JS.InvokeVoidAsync("damTerminal.sendKey", _xterm.Id, data);
     }
 
-    private async Task SendComposeAsync(bool submit)
+    private async Task ToggleTouchInputAsync()
     {
-        // The text is read and cleared in the browser, so the keyboard's composition is never round-tripped through the server.
-        await JS.InvokeVoidAsync("damTerminal.sendCompose", _xterm.Id, _composeBox, submit);
-    }
-
-    private async Task ToggleComposeAsync()
-    {
-        _showCompose = !_showCompose;
-        _focusCompose = _showCompose;
-        if (!_showCompose)
-        {
-            await _xterm.Focus();
-        }
+        _touchInput = await JS.InvokeAsync<bool>("damTerminal.toggleTouchInput", _xterm.Id);
     }
 
     public async Task ReconnectAsync()
@@ -150,24 +120,10 @@
 
     private async Task OnFirstRenderAsync()
     {
-        // Phones and tablets get the text box by default.
-        _showCompose = await JS.InvokeAsync<bool>("damTerminal.init", _xterm.Id);
+        _touchInput = await JS.InvokeAsync<bool>("damTerminal.init", _xterm.Id);
         StateHasChanged();
         await ConnectAsync();
     }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (_showCompose)
-        {
-            // Wires up the text box once (it is re-created every time it is shown); focuses it when just opened.
-            var focus = _focusCompose;
-            _focusCompose = false;
-            await JS.InvokeVoidAsync("damTerminal.initCompose", _xterm.Id, _composeBox, focus);
-        }
-    }
-
-    private bool _focusCompose;
 
     private async Task ConnectAsync()
     {
@@ -190,7 +146,7 @@
             _connecting = false;
             var connection = _connection;
             _ = Task.Factory.StartNew(() => PumpAsync(connection, token), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
-            await _xterm.Focus();
+            await JS.InvokeVoidAsync("damTerminal.focus", _xterm.Id);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
