@@ -61,10 +61,11 @@ Adjust the storage and SDN zone names to yours. Without `SDN.Use` on the zone, c
 
 #### The same in the web UI
 
-Everything is under **Datacenter → Permissions**. Do the steps in this order, because the pool and the role have to
-exist before you can pick them.
+Everything is under **Datacenter → Permissions**. Click the ▸ arrow next to *Permissions* to expand it: Users,
+API Tokens, Groups, **Pools**, Roles and Realms are sub-items. Do the steps in this order, because the pool and the
+role have to exist before you can pick them.
 
-1. **Pools** (a sub-item under *Permissions*) → **Create**. Name `deveagents`, comment `DeveAgentManager runners`.
+1. **Pools** → **Create**. Name `deveagents`, comment `DeveAgentManager runners`.
 2. **Roles** → **Create**. Name `DeveAgentManager`. In *Privileges*, type to filter and tick each of these:
    `VM.Allocate`, `VM.Clone`, `VM.Audit`, `VM.PowerMgmt`, `VM.Config.CPU`, `VM.Config.Memory`, `VM.Config.Disk`,
    `VM.Config.Network`, `VM.Config.Options`, `VM.Config.Cloudinit`, `VM.GuestAgent.Audit`, `Datastore.AllocateSpace`,
