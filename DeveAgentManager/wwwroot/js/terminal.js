@@ -31,7 +31,7 @@
     })();
 
     // On touch devices the terminal keeps its rows when the frame only gets shorter, which is the on-screen keyboard
-    // opening. Fewer rows would resize tmux's pane, and pi then redraws its whole screen, so the history streams by every
+    // opening, or a little taller (the address bar hiding). Fewer rows would resize tmux's pane, and pi then redraws its whole screen, so the history streams by every
     // time the keyboard opens or closes. Instead the terminal keeps its full height in the (clipped) frame, positioned
     // so the cursor stays in view. A change in width (rotating) or a taller frame fits the terminal again.
     const layouts = new Map();
@@ -50,7 +50,12 @@
             const width = frame.clientWidth;
             const height = frame.clientHeight;
             const layout = layouts.get(id);
-            if (!layout || layout.width !== width || height >= layout.height) {
+            const screen = terminal.element.querySelector(".xterm-screen");
+            const rowHeight = (screen?.clientHeight ?? 0) / Math.max(1, terminal.rows) || 16;
+            // Growing by a few rows is the browser's address bar hiding (or the keyboard's suggestion strip): not worth
+            // a resize, which makes pi redraw everything. The terminal keeps its rows and a strip stays unused.
+            const grewALot = layout && height >= layout.height + 4 * rowHeight;
+            if (!layout || layout.width !== width || grewALot) {
                 layouts.set(id, { width, height, offset: 0 });
                 host.style.height = "";
                 host.style.top = "";
