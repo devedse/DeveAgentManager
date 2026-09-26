@@ -165,7 +165,8 @@
                             Part of the Setup Profile: applied to every Runner with @harness.DisplayName when it is set up. Use <b>Save and apply</b> to update the Runners now.
                         </MudText>
 
-                        <HarnessConfigEditor Harness="harness" Config="_profile.GetHarness(harness.Id)" />
+                        <HarnessConfigEditor Harness="harness" Config="_profile.GetHarness(harness.Id)"
+                                             Models="@(_models.GetValueOrDefault(harness.Id) ?? [])" ModelsLoading="@_modelsLoading.Contains(harness.Id)" />
 
                         @if (_applyResults.TryGetValue(harness.Id, out var results))
                         {
@@ -269,6 +270,7 @@
         _readyRunners = (await Runners.ListAsync()).Where(r => r.State == RunnerState.Ready).ToList();
         _importRunnerId = _readyRunners.FirstOrDefault()?.Id;
         _importHarnessId = Agents.Harnesses.FirstOrDefault()?.Id;
+        await LoadModelsAsync();
     }
 
     private async Task CheckAsync(IRunnerProvider provider)
@@ -317,6 +319,37 @@
     }
 
     private readonly Dictionary<string, List<ProviderCheck>> _applyResults = [];
+    private readonly Dictionary<string, IReadOnlyList<ModelChoice>> _models = [];
+    private readonly HashSet<string> _modelsLoading = [];
+
+    /// <summary>Asks the harnesses on a ready Runner which models they offer, for the model fields. In the background.</summary>
+    private async Task LoadModelsAsync()
+    {
+        var runners = await Runners.ListAsync();
+        foreach (var harness in Agents.Harnesses.Where(h => h.ConfigSupport is not null && h.ModelsCommand is not null))
+        {
+            _modelsLoading.Add(harness.Id);
+            _ = Task.Run(async () =>
+            {
+                IReadOnlyList<ModelChoice> models = [];
+                try
+                {
+                    models = await Setup.ListModelsAsync(harness.Id, runners);
+                }
+                catch (Exception)
+                {
+                    // No Runner could tell; the field still takes any model name.
+                }
+
+                await InvokeAsync(() =>
+                {
+                    _models[harness.Id] = models;
+                    _modelsLoading.Remove(harness.Id);
+                    StateHasChanged();
+                });
+            });
+        }
+    }
     private bool _applying;
 
     /// <summary>Saves the profile, then applies the harness's configuration on every ready Runner that has the harness.</summary>

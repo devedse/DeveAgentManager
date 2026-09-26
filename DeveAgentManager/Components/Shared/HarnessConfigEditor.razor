@@ -1,5 +1,7 @@
-@* Packages, default model and extra settings for one harness (Setup Profile). *@
+@* Packages, default model and extra settings for one harness (Setup Profile). Sections a harness doesn't have are left out. *@
 
+@if (Support.HasPackages)
+{
 <div class="settings-section">
     <MudText Typo="Typo.subtitle1" Class="section-title">Packages</MudText>
     <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
@@ -35,31 +37,60 @@
     }
 </div>
 
+}
+
 <div class="settings-section">
     <MudText Typo="Typo.subtitle1" Class="section-title">Default model</MudText>
-    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">What new agents start with. Leave empty to keep @(Harness.DisplayName)'s own choice. You can still switch in a session (pi: <code>/model</code>).</MudText>
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
+        What new agents start with. <b>Leave empty to let @Harness.DisplayName choose</b>: it picks what fits your plan and moves on to new models by itself.
+        @if (Support.ModelSuggestions is { Count: > 0 })
+        {
+            <span>Aliases like <code>@Support.ModelSuggestions[0]</code> always mean the latest model of that family.</span>
+        }
+        You can still switch in a session (<code>/model</code>).
+    </MudText>
     <div class="form-row">
-        <MudTextField @bind-Value="Config.DefaultProvider" Label="Provider" Placeholder="anthropic" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" />
-        <MudTextField @bind-Value="Config.DefaultModel" Label="Model" Placeholder="claude-sonnet-4-5" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" />
-        <MudSelect T="string" @bind-Value="Config.DefaultThinkingLevel" Label="Thinking level" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Class="thinking-select">
-            @foreach (var level in Support.ThinkingLevels)
+        @if (Support.HasProvider)
+        {
+            <MudTextField @bind-Value="Config.DefaultProvider" Label="Provider" Placeholder="anthropic" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" />
+        }
+        <MudAutocomplete T="string" @bind-Value="Config.DefaultModel" Label="Model" Placeholder="@($"{Harness.DisplayName} chooses")" SearchFunc="SearchModelsAsync"
+                         CoerceValue="true" CoerceText="false" Clearable="true" ResetValueOnEmptyText="true" MaxItems="50" Strict="false"
+                         Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input"
+                         HelperText="@(ModelsLoading ? "Loading the models from a Runner..." : Models.Count > 0 ? $"{Models.Count} models offered by {Harness.DisplayName} on your Runner, or type any name." : null)">
+            <ItemTemplate Context="model">
+                <span class="mono">@model</span>
+                @if (Models.FirstOrDefault(m => m.Id == model) is { } choice && choice.Name != model)
+                {
+                    <span class="mud-text-secondary"> · @choice.Name</span>
+                }
+            </ItemTemplate>
+        </MudAutocomplete>
+        <MudSelect T="string" @bind-Value="Config.DefaultThinkingLevel" Label="@Support.EffortName" Placeholder="Default" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Class="thinking-select">
+            @foreach (var level in EffortLevels)
             {
-                <MudSelectItem Value="level">@level</MudSelectItem>
+                <MudSelectItem Value="level">@level@(SelectedModel?.DefaultEffort == level ? " (model default)" : "")</MudSelectItem>
             }
         </MudSelect>
     </div>
 </div>
 
+@if (Support.HasExtraSettings)
+{
 <div class="settings-section">
     <MudText Typo="Typo.subtitle1" Class="section-title">Extra settings</MudText>
     <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
         JSON merged into <code>@Support.SettingsFile</code> on every Runner: objects are merged, other values replaced, settings you don't list are kept.
-        For example <code>{ "enabledModels": ["anthropic/*"], "hideThinkingBlock": true }</code> or a package's own settings.
+        For example <code>@Support.SettingsExample</code>@(Support.HasPackages ? " or a package's own settings" : "").
     </MudText>
     <MudTextField @bind-Value="Config.Settings" Variant="Variant.Outlined" Lines="5" MaxLines="30" Placeholder="{ }" Class="mono-input"
                   Error="@(SettingsError is not null)" ErrorText="@SettingsError" Immediate="true" DebounceInterval="400" />
 </div>
 
+}
+
+@if (Support.HasKeybindings)
+{
 <div class="settings-section">
     <MudText Typo="Typo.subtitle1" Class="section-title">Keybindings</MudText>
     <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
@@ -70,6 +101,8 @@
                   Error="@(KeybindingsError is not null)" ErrorText="@KeybindingsError" Immediate="true" DebounceInterval="400" />
 </div>
 
+}
+
 @code {
     [Parameter, EditorRequired]
     public IHarness Harness { get; set; } = default!;
@@ -78,6 +111,23 @@
     public HarnessConfig Config { get; set; } = default!;
 
     private HarnessConfigSupport Support => Harness.ConfigSupport!;
+
+    /// <summary>The models the harness offers (its catalog on a Runner), besides <see cref="HarnessConfigSupport.ModelSuggestions"/>.</summary>
+    [Parameter]
+    public IReadOnlyList<ModelChoice> Models { get; set; } = [];
+
+    [Parameter]
+    public bool ModelsLoading { get; set; }
+
+    private ModelChoice? SelectedModel => Models.FirstOrDefault(m => m.Id == Config.DefaultModel);
+
+    private IReadOnlyList<string> EffortLevels => SelectedModel is { Efforts.Count: > 0 } model ? model.Efforts : Support.ThinkingLevels;
+
+    private Task<IEnumerable<string>> SearchModelsAsync(string? text, CancellationToken cancellationToken)
+    {
+        var all = (Support.ModelSuggestions ?? []).Concat(Models.Select(m => m.Id)).Distinct();
+        return Task.FromResult(string.IsNullOrWhiteSpace(text) ? all : all.Where(m => m.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase)));
+    }
 
     private string? SettingsError => Check(new HarnessConfig { Settings = Config.Settings });
 

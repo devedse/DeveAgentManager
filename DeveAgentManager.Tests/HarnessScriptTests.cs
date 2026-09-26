@@ -97,6 +97,69 @@ public sealed class HarnessScriptTests : IDisposable
         Assert.Contains("trust_level = \"trusted\"", config);
     }
 
+    [Fact]
+    public void Claude_Configure_SetsAndClearsTheModel()
+    {
+        if (!HasTools())
+        {
+            return;
+        }
+
+        var harness = new ClaudeHarness();
+        var settings = Path.Combine(_home, ".claude", "settings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(settings)!);
+        File.WriteAllText(settings, """{ "skipDangerousModePermissionPrompt": true, "env": { "A": "1" } }""");
+
+        Run(harness.BuildConfigureScript(new Core.Setup.HarnessConfig { DefaultModel = "opus", DefaultThinkingLevel = "high", Settings = """{ "env": { "B": "2" } }""" }));
+        var data = JsonNode.Parse(File.ReadAllText(settings))!;
+        Assert.Equal(("opus", "high"), ((string?)data["model"], (string?)data["effortLevel"]));
+        Assert.Equal(("1", "2"), ((string?)data["env"]!["A"], (string?)data["env"]!["B"]));
+        Assert.True((bool)data["skipDangerousModePermissionPrompt"]!);
+
+        // Empty: Claude Code chooses again.
+        Run(harness.BuildConfigureScript(new Core.Setup.HarnessConfig()));
+        data = JsonNode.Parse(File.ReadAllText(settings))!;
+        Assert.Null(data["model"]);
+        Assert.Null(data["effortLevel"]);
+        Assert.True((bool)data["skipDangerousModePermissionPrompt"]!);
+    }
+
+    [Fact]
+    public void Codex_Configure_PutsTheModelAboveTheTables()
+    {
+        if (!HasTools())
+        {
+            return;
+        }
+
+        var harness = new CodexHarness();
+        var config = Path.Combine(_home, ".codex", "config.toml");
+        Directory.CreateDirectory(Path.GetDirectoryName(config)!);
+        File.WriteAllText(config, "model = \"old\"\n[tui]\nscreen_reader_detection_done = true\n\n[projects.\"/w\"]\ntrust_level = \"trusted\"\n");
+
+        Run(harness.BuildConfigureScript(new Core.Setup.HarnessConfig { DefaultModel = "gpt-6-sol", DefaultThinkingLevel = "high" }));
+        var lines = File.ReadAllLines(config);
+        Assert.Equal("model = \"gpt-6-sol\"", lines[0]);
+        Assert.Equal("model_reasoning_effort = \"high\"", lines[1]);
+        Assert.Single(lines, l => l.StartsWith("model ", StringComparison.Ordinal));
+        Assert.Contains("[projects.\"/w\"]", lines);
+        Assert.True(Array.IndexOf(lines, "[tui]") > 1);
+
+        Run(harness.BuildConfigureScript(new Core.Setup.HarnessConfig()));
+        var text = File.ReadAllText(config);
+        Assert.DoesNotContain("model", text);
+        Assert.Contains("trust_level = \"trusted\"", text);
+    }
+
+    [Fact]
+    public void Codex_ParseModels_ReadsTheCatalog()
+    {
+        var output = "warning: something\n" + """{"models":[{"slug":"gpt-6-sol","display_name":"GPT-6-Sol","visibility":"list","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"ultra"}]},{"slug":"codex-auto-review","display_name":"Codex Auto Review","visibility":"hide"}]}""";
+        var model = Assert.Single(new CodexHarness().ParseModels(output));
+        Assert.Equal(("gpt-6-sol", "GPT-6-Sol", "medium"), (model.Id, model.Name, model.DefaultEffort));
+        Assert.Equal(["low", "medium", "ultra"], model.Efforts);
+    }
+
     private void Run(string script)
     {
         var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true, RedirectStandardError = true };

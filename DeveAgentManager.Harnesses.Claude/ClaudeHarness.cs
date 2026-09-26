@@ -1,5 +1,6 @@
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
+using DeveAgentManager.Core.Setup;
 using DeveAgentManager.Core.Ssh;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -86,6 +87,68 @@ public sealed class ClaudeHarness : IHarness
     }
 
     public IReadOnlyList<string> ConfigFiles { get; } = ["~/.claude/settings.json", "~/.claude/CLAUDE.md"];
+
+    /// <summary>Settings → Claude Code: the default model and effort (empty: Claude Code chooses), and extra settings.</summary>
+    public HarnessConfigSupport ConfigSupport { get; } = new(
+        PackageExample: "",
+        SuggestedPackages: [],
+        SettingsFile: "~/.claude/settings.json",
+        KeybindingsFile: "",
+        // What settings.json can hold; "max" is only for a session (--effort).
+        ThinkingLevels: ["low", "medium", "high", "xhigh"],
+        DocsUrl: "https://code.claude.com/docs/en/settings",
+        HasPackages: false,
+        HasProvider: false,
+        HasKeybindings: false,
+        HasExtraSettings: true,
+        // Aliases always mean the latest model of that family.
+        ModelSuggestions: ["opus", "sonnet", "haiku", "fable"],
+        EffortName: "Effort",
+        SettingsExample: "{ \"includeCoAuthoredBy\": false, \"cleanupPeriodDays\": 60 }");
+
+    /// <summary>
+    /// Writes the model and effort into ~/.claude/settings.json (removing them when empty, so Claude Code chooses again)
+    /// and merges the extra settings.
+    /// </summary>
+    public string BuildConfigureScript(HarnessConfig config)
+    {
+        config.Validate();
+        var wanted = new System.Text.Json.Nodes.JsonObject
+        {
+            ["model"] = Blank(config.DefaultModel),
+            ["effortLevel"] = Blank(config.DefaultThinkingLevel),
+            ["extra"] = string.IsNullOrWhiteSpace(config.Settings) ? new System.Text.Json.Nodes.JsonObject() : System.Text.Json.Nodes.JsonNode.Parse(config.Settings),
+        };
+        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(wanted.ToJsonString()));
+        return $$"""
+            set -euo pipefail
+            echo "==> Writing Claude Code settings"
+            node - {{encoded}} <<'DAM_SETTINGS'
+            const fs = require("fs");
+            const os = require("os");
+            const path = require("path");
+            const wanted = JSON.parse(Buffer.from(process.argv[2], "base64").toString("utf8"));
+            const file = path.join(os.homedir(), ".claude", "settings.json");
+            let data = {};
+            try { data = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+            const isObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
+            const merge = (target, source) => {
+              for (const [key, value] of Object.entries(source)) {
+                target[key] = isObject(value) && isObject(target[key]) ? merge(target[key], value) : value;
+              }
+              return target;
+            };
+            merge(data, wanted.extra ?? {});
+            for (const key of ["model", "effortLevel"]) {
+              if (wanted[key]) data[key] = wanted[key]; else delete data[key];
+            }
+            fs.mkdirSync(path.dirname(file), { recursive: true });
+            fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
+            DAM_SETTINGS
+            """;
+    }
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
     /// A subscription logs in with <c>claude setup-token</c>: a token valid for a year that works on every Runner, so

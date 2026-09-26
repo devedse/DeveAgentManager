@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
+using DeveAgentManager.Core.Setup;
 using DeveAgentManager.Core.Ssh;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -95,6 +96,75 @@ public sealed class CodexHarness : IHarness
     }
 
     public IReadOnlyList<string> ConfigFiles { get; } = ["~/.codex/config.toml", "~/.codex/AGENTS.md"];
+
+    /// <summary>Settings → Codex: the default model and reasoning effort (empty: Codex chooses).</summary>
+    public HarnessConfigSupport ConfigSupport { get; } = new(
+        PackageExample: "",
+        SuggestedPackages: [],
+        SettingsFile: "~/.codex/config.toml",
+        KeybindingsFile: "",
+        ThinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+        DocsUrl: "https://developers.openai.com/codex/config-reference",
+        HasPackages: false,
+        HasProvider: false,
+        HasKeybindings: false,
+        HasExtraSettings: false,
+        EffortName: "Reasoning effort");
+
+    /// <summary>Codex's own model catalog: the models it offers the logged-in account, with their effort levels.</summary>
+    public string ModelsCommand => "CODEX_HOME=\"$(mktemp -d)\" codex debug models 2>/dev/null";
+
+    public IReadOnlyList<ModelChoice> ParseModels(string output)
+    {
+        var start = output.IndexOf('{');
+        if (start < 0 || JsonNode.Parse(output[start..]) is not JsonObject catalog || catalog["models"] is not JsonArray models)
+        {
+            return [];
+        }
+
+        return models.OfType<JsonObject>()
+            .Where(m => (string?)m["visibility"] != "hide" && m["slug"] is JsonValue)
+            .Select(m => new ModelChoice(
+                (string)m["slug"]!,
+                (string?)m["display_name"] ?? (string)m["slug"]!,
+                (m["supported_reasoning_levels"] as JsonArray ?? []).OfType<JsonObject>().Select(l => (string?)l["effort"]).OfType<string>().ToList(),
+                (string?)m["default_reasoning_level"]))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Sets <c>model</c> and <c>model_reasoning_effort</c> at the top of ~/.codex/config.toml (removed when empty, so
+    /// Codex chooses again). Top-level keys must come before the first table, e.g. the trusted projects.
+    /// </summary>
+    public string BuildConfigureScript(HarnessConfig config)
+    {
+        config.Validate();
+        var wanted = new JsonObject { ["model"] = Blank(config.DefaultModel), ["model_reasoning_effort"] = Blank(config.DefaultThinkingLevel) };
+        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(wanted.ToJsonString()));
+        return $$"""
+            set -euo pipefail
+            echo "==> Writing Codex settings"
+            mkdir -p "$HOME/.codex"
+            node - {{encoded}} <<'DAM_SETTINGS'
+            const fs = require("fs");
+            const os = require("os");
+            const path = require("path");
+            const wanted = JSON.parse(Buffer.from(process.argv[2], "base64").toString("utf8"));
+            const file = path.join(os.homedir(), ".codex", "config.toml");
+            let text = "";
+            try { text = fs.readFileSync(file, "utf8"); } catch {}
+            const lines = text.split("\n");
+            let end = lines.findIndex(line => /^\s*\[/.test(line));
+            if (end < 0) end = lines.length;
+            const keys = Object.keys(wanted);
+            const top = lines.slice(0, end).filter(line => !keys.some(key => new RegExp(`^\\s*${key}\\s*=`).test(line)));
+            const set = keys.filter(key => wanted[key]).map(key => `${key} = ${JSON.stringify(wanted[key])}`);
+            fs.writeFileSync(file, [...set, ...top, ...lines.slice(end)].join("\n").replace(/^\n+/, ""));
+            DAM_SETTINGS
+            """;
+    }
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
     /// A subscription logs in with <c>codex login --device-auth</c> into an empty folder; its auth.json is the account.

@@ -40,6 +40,12 @@ public interface IHarness
     /// </summary>
     string BuildConfigureScript(Setup.HarnessConfig config) => throw new NotSupportedException();
 
+    /// <summary>Bash that prints the models the installed harness offers (see <see cref="ParseModels"/>); null when it can't.</summary>
+    string? ModelsCommand => null;
+
+    /// <summary>The models in <see cref="ModelsCommand"/>'s output.</summary>
+    IReadOnlyList<ModelChoice> ParseModels(string output) => [];
+
     /// <summary>How accounts (subscriptions, API keys) log in; null when the harness logs in on its own (pi: /login).</summary>
     HarnessAccountSupport? AccountSupport => null;
 
@@ -82,13 +88,30 @@ public sealed record HarnessAccountSetup(IReadOnlyList<(string Path, string Cont
 /// <param name="KeybindingsFile">Where the keybindings end up on the Runner.</param>
 /// <param name="ThinkingLevels">Choices for the default thinking level.</param>
 /// <param name="DocsUrl">Where packages and settings are documented.</param>
+/// <param name="HasPackages">Offers packages (pi).</param>
+/// <param name="HasProvider">The model is chosen together with a provider (pi).</param>
+/// <param name="HasKeybindings">Offers keybindings (pi).</param>
+/// <param name="HasExtraSettings">Offers extra settings as JSON (merged into <see cref="SettingsFile"/>).</param>
+/// <param name="ModelSuggestions">Offered in the model field besides what <see cref="IHarness.ModelsCommand"/> lists.</param>
+/// <param name="EffortName">What the harness calls the thinking level ("Effort" for Claude Code and Codex).</param>
 public sealed record HarnessConfigSupport(
     string PackageExample,
     IReadOnlyList<SuggestedPackage> SuggestedPackages,
     string SettingsFile,
     string KeybindingsFile,
     IReadOnlyList<string> ThinkingLevels,
-    string DocsUrl);
+    string DocsUrl,
+    bool HasPackages = true,
+    bool HasProvider = true,
+    bool HasKeybindings = true,
+    bool HasExtraSettings = true,
+    IReadOnlyList<string>? ModelSuggestions = null,
+    string EffortName = "Thinking level",
+    string SettingsExample = "{ \"enabledModels\": [\"anthropic/*\"], \"hideThinkingBlock\": true }");
+
+/// <param name="Id">What the harness takes as its model setting.</param>
+/// <param name="Efforts">The effort levels this model supports (empty: the harness's usual ones).</param>
+public sealed record ModelChoice(string Id, string Name, IReadOnlyList<string> Efforts, string? DefaultEffort = null);
 
 public sealed record SuggestedPackage(string Source, string Description);
 

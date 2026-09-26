@@ -129,6 +129,38 @@ public sealed partial class RunnerSetupService(
         log.Success($"Setup finished: {runner.InstalledVersions}");
     }
 
+    /// <summary>
+    /// The models a harness offers, from its own catalog on one of these Runners (the first that answers). Empty when the
+    /// harness has no catalog or no Runner has it.
+    /// </summary>
+    public async Task<IReadOnlyList<ModelChoice>> ListModelsAsync(string harnessId, IEnumerable<Runner> runners, CancellationToken cancellationToken = default)
+    {
+        var harness = GetHarness(harnessId);
+        if (harness.ModelsCommand is not { } command)
+        {
+            return [];
+        }
+
+        foreach (var runner in runners.Where(r => r.State == RunnerState.Ready && r.HarnessIds.Contains(harnessId)))
+        {
+            try
+            {
+                var result = await shell.RunAsync(runner, command, TimeSpan.FromSeconds(60), cancellationToken);
+                if (result.Succeeded && harness.ParseModels(result.Output) is { Count: > 0 } models)
+                {
+                    return models;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Try the next Runner.
+                _ = ex;
+            }
+        }
+
+        return [];
+    }
+
     public IHarness GetHarness(string harnessId) =>
         _harnesses.GetValueOrDefault(harnessId) ?? throw new ArgumentException($"Unknown harness '{harnessId}'.");
 

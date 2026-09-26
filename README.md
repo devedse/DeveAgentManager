@@ -20,6 +20,9 @@ when you close the tab.
   Per harness (**Settings → pi**): packages (pi extensions, skills, themes, e.g. `npm:pi-web-access`), the default
   model and thinking level, and extra settings merged into `~/.pi/agent/settings.json`. **Save and apply to Runners**
   updates the ready Runners right away. Packages removed from the list are removed from the Runners.
+  **Settings → Claude Code / Codex**: the default model and effort for new agents. Empty (the default) lets the
+  harness choose, which follows new models by itself. Claude takes aliases like `opus`, and Codex lists the models its
+  catalog offers on your Runner.
 - On a Runner's page, **Re-run setup** runs the whole setup again, and **Update pi** only installs the latest pi,
   updates its packages and applies Settings → pi. Every step is idempotent, so both are safe to repeat. Running agents
   keep running and use the new versions after a restart.
