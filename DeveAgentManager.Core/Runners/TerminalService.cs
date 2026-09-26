@@ -21,6 +21,21 @@ public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactor
         return await OpenAsync(runner, null, columns, rows, cancellationToken);
     }
 
+    /// <summary>A terminal that runs one command on a Runner (e.g. a login), instead of a shell.</summary>
+    public async Task<TerminalConnection> OpenCommandAsync(Guid runnerId, string command, int columns, int rows, CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var runner = await db.Runners.AsNoTracking().FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken)
+            ?? throw new ArgumentException("Runner not found.");
+        if (runner.State != RunnerState.Ready)
+        {
+            throw new InvalidOperationException($"Runner '{runner.Name}' is not ready ({runner.State}).");
+        }
+
+        // Through a login shell (the Manager's env.sh), so the harness is on the PATH.
+        return await OpenAsync(runner, "bash -lc " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\" 2>/dev/null; {command}"), columns, rows, cancellationToken);
+    }
+
     public async Task<TerminalConnection> OpenAgentAsync(Guid agentId, int columns, int rows, CancellationToken cancellationToken)
     {
         var (runner, command) = await agents.GetAttachCommandAsync(agentId, cancellationToken);

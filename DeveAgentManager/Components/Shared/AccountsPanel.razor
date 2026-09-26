@@ -1,0 +1,113 @@
+@using DeveAgentManager.Core.Accounts
+@inject AccountService Accounts
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+@* Settings → Accounts: the subscriptions and API keys harnesses run with. *@
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
+    Log in once here and every Runner can use the account; nothing to set up per Runner. A harness can have several
+    accounts: when one runs out, switch the agent to another one (or to another harness) from its terminal.
+</MudText>
+
+@foreach (var harness in Accounts.Harnesses)
+{
+    var accounts = _accounts.Where(a => a.HarnessId == harness.Id).ToList();
+    <div class="settings-section">
+        <div class="section-title-row">
+            <MudText Typo="Typo.subtitle1" Class="section-title">@harness.DisplayName</MudText>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => ConnectAsync(harness, null)">Connect account</MudButton>
+        </div>
+
+        @if (accounts.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">No account yet. Connect your @harness.AccountSupport!.SubscriptionName, or an API key.</MudText>
+        }
+
+        @foreach (var account in accounts)
+        {
+            <div class="account-row">
+                <MudIcon Icon="@(account.Kind == AccountKind.Subscription ? Icons.Material.Rounded.WorkspacePremium : Icons.Material.Rounded.Key)" Class="account-icon" />
+                <div class="account-text">
+                    <div class="account-name">
+                        @account.Name
+                        @if (account.IsDefault)
+                        {
+                            <span class="account-badge">default</span>
+                        }
+                    </div>
+                    <div class="account-meta">
+                        @(account.Kind == AccountKind.Subscription ? "Subscription" : "API key") · connected @account.UpdatedAt.Humanize()
+                        @if (_usage.GetValueOrDefault(account.Id) is > 0 and var count)
+                        {
+                            <span> · @count @(count == 1 ? "agent" : "agents")</span>
+                        }
+                    </div>
+                </div>
+                @if (!account.IsDefault)
+                {
+                    <MudTooltip Text="Agents that don't pick an account use the default">
+                        <MudIconButton Icon="@Icons.Material.Rounded.StarOutline" Size="Size.Small" OnClick="() => SetDefaultAsync(account)" aria-label="Make default" />
+                    </MudTooltip>
+                }
+                <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+                    <MudMenuItem Icon="@Icons.Material.Rounded.Login" OnClick="() => ConnectAsync(harness, account)">Reconnect (log in again)</MudMenuItem>
+                    <MudMenuItem Icon="@Icons.Material.Rounded.Edit" OnClick="() => RenameAsync(account)">Rename</MudMenuItem>
+                    <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" OnClick="() => DeleteAsync(account)">Remove</MudMenuItem>
+                </MudMenu>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private List<Account> _accounts = [];
+    private Dictionary<Guid, int> _usage = [];
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _accounts = await Accounts.ListAsync();
+        _usage = await Accounts.CountAgentsAsync();
+    }
+
+    private async Task ConnectAsync(IHarness harness, Account? existing)
+    {
+        var dialog = await Dialogs.ShowAsync<AccountLoginDialog>(existing is null ? $"Connect {harness.DisplayName}" : "Reconnect",
+            new DialogParameters<AccountLoginDialog> { { d => d.HarnessId, harness.Id }, { d => d.Existing, existing } },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        await dialog.Result;
+        await LoadAsync();
+    }
+
+    private async Task SetDefaultAsync(Account account)
+    {
+        await Accounts.SetDefaultAsync(account.Id);
+        await LoadAsync();
+    }
+
+    private async Task RenameAsync(Account account)
+    {
+        var parameters = new DialogParameters<TextPromptDialog> { { d => d.Label, "Name" }, { d => d.Value, account.Name } };
+        var result = await (await Dialogs.ShowAsync<TextPromptDialog>("Rename account", parameters)).Result;
+        if (result is { Canceled: false, Data: string name })
+        {
+            await Accounts.RenameAsync(account.Id, name);
+            await LoadAsync();
+        }
+    }
+
+    private async Task DeleteAsync(Account account)
+    {
+        var count = _usage.GetValueOrDefault(account.Id);
+        var confirmed = await Dialogs.ShowMessageBoxAsync($"Remove '{account.Name}'?",
+            "The login is deleted from the Manager and from the Runners." + (count > 0 ? $" {count} {(count == 1 ? "agent uses" : "agents use")} it and will use the default account from their next start." : ""),
+            yesText: "Remove", cancelText: "Cancel");
+        if (confirmed == true)
+        {
+            await Accounts.DeleteAsync(account.Id);
+            Snackbar.Add($"Removed '{account.Name}'.", Severity.Info);
+            await LoadAsync();
+        }
+    }
+}

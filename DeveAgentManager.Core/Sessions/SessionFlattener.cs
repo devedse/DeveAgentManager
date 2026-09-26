@@ -95,8 +95,16 @@ public static class SessionFlattener
         return flat;
     }
 
+    /// <summary>Lines this class added in an earlier move: replaced by the new note, so they don't pile up.</summary>
+    private static readonly string[] OwnNotes = ["(This conversation was moved from ", "earlier messages were left out to fit; the Manager keeps the full conversation.)"];
+
     private static void Add(List<Turn> turns, DeveRole role, DeveEntry entry, string text, List<DeveBlock> images)
     {
+        if (role == DeveRole.User)
+        {
+            text = string.Join('\n', text.Split('\n').Where(line => !OwnNotes.Any(note => line.Contains(note, StringComparison.Ordinal))));
+        }
+
         if (text.Trim().Length == 0 && images.Count == 0)
         {
             return;

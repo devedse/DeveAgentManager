@@ -103,6 +103,18 @@
     [Parameter]
     public Guid? RunnerId { get; set; }
 
+    /// <summary>With <see cref="RunnerId"/>: run this command instead of a shell (e.g. a harness's login).</summary>
+    [Parameter]
+    public string? Command { get; set; }
+
+    /// <summary>Tell the program when the terminal is resized. Off for programs that were given a size of their own.</summary>
+    [Parameter]
+    public bool ForwardResize { get; set; } = true;
+
+    /// <summary>Everything the program prints, as text (with its escape sequences).</summary>
+    [Parameter]
+    public EventCallback<string> OutputReceived { get; set; }
+
     [Parameter]
     public EventCallback<string> TitleChanged { get; set; }
 
@@ -172,7 +184,9 @@
             var token = _lifetime.Token;
             _connection = AgentId is { } agentId
                 ? await Terminals.OpenAgentAsync(agentId, columns, rows, token)
-                : await Terminals.OpenShellAsync(RunnerId ?? throw new InvalidOperationException("Set AgentId or RunnerId."), columns, rows, token);
+                : Command is { } command
+                    ? await Terminals.OpenCommandAsync(RunnerId ?? throw new InvalidOperationException("Set RunnerId."), command, columns, rows, token)
+                    : await Terminals.OpenShellAsync(RunnerId ?? throw new InvalidOperationException("Set AgentId or RunnerId."), columns, rows, token);
 
             _overlay = null;
             _connecting = false;
@@ -223,7 +237,14 @@
                     await InvokeAsync(() => Connected.InvokeAsync());
                 }
 
-                await InvokeAsync(async () => await _xterm.Write(data));
+                await InvokeAsync(async () =>
+                {
+                    await _xterm.Write(data);
+                    if (OutputReceived.HasDelegate)
+                    {
+                        await OutputReceived.InvokeAsync(Encoding.UTF8.GetString(data));
+                    }
+                });
             }
         }
         catch (Exception ex) when (!token.IsCancellationRequested)
@@ -240,7 +261,7 @@
         {
             await InvokeAsync(async () =>
             {
-                _overlay = AgentId is null ? "The shell was closed."
+                _overlay = AgentId is null ? (Command is null ? "The shell was closed." : "Finished.")
                     : _kicked ? "Another screen disconnected this one. The agent keeps running; reconnect to continue here."
                     : _detachedElsewhere ? "Opened in another window or on another device. Reconnect to continue here."
                     : "Disconnected from the agent. It keeps running on the Runner.";
@@ -299,7 +320,13 @@
 
     private void OnBinary(string data) => _connection?.Write(Encoding.Latin1.GetBytes(data));
 
-    private void OnResize(ResizeEventArgs size) => _connection?.Resize(size.Columns, size.Rows);
+    private void OnResize(ResizeEventArgs size)
+    {
+        if (ForwardResize)
+        {
+            _connection?.Resize(size.Columns, size.Rows);
+        }
+    }
 
     private Task OnTitleChange(string title) => TitleChanged.InvokeAsync(title);
 

@@ -1,0 +1,31 @@
+@* Asks for one line of text, e.g. a new name. Returns it as the dialog's data. *@
+<MudDialog>
+    <DialogContent>
+        <MudTextField @bind-Value="Value" Label="@Label" Variant="Variant.Outlined" Margin="Margin.Dense" AutoFocus="true" Immediate="true" OnKeyUp="OnKeyUp" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="string.IsNullOrWhiteSpace(Value)" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public string Label { get; set; } = "";
+
+    [Parameter]
+    public string? Value { get; set; }
+
+    private void Save() => MudDialog.Close(DialogResult.Ok(Value!.Trim()));
+
+    private void OnKeyUp(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter" && !string.IsNullOrWhiteSpace(Value))
+        {
+            Save();
+        }
+    }
+}

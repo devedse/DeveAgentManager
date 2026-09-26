@@ -152,6 +152,10 @@
                 }
             </MudTabPanel>
 
+            <MudTabPanel Text="Accounts" Icon="@Icons.Material.Rounded.ManageAccounts">
+                <AccountsPanel />
+            </MudTabPanel>
+
             @foreach (var harness in Agents.Harnesses.Where(h => h.ConfigSupport is not null))
             {
                 <MudTabPanel Text="@harness.DisplayName" Icon="@Icons.Material.Rounded.Extension">

@@ -196,6 +196,21 @@ public sealed partial class RunnerService(
             await op.SaveAsync();
         }, markFailed: false);
 
+    /// <summary>Installs a harness on a Runner that was set up without it (e.g. Claude Code on a Runner made for pi).</summary>
+    public Task<string?> InstallHarness(Guid runnerId, string harnessId) =>
+        StartOperation(runnerId, $"Installing {setup.GetHarness(harnessId).DisplayName}", async (op, cancellation) =>
+        {
+            RequireReady(op.Runner);
+            if (!op.Runner.HarnessIds.Contains(harnessId))
+            {
+                op.Runner.Harnesses = string.Join(',', op.Runner.HarnessIds.Append(harnessId));
+                await op.SaveAsync();
+            }
+
+            await setup.UpdateHarnessAsync(op.Runner, harnessId, op.Log, cancellation);
+            await op.SaveAsync();
+        }, markFailed: false);
+
     /// <summary>Applies a harness's configuration from the Setup Profile (after it changed). Returns the error, or null.</summary>
     public Task<string?> ApplyHarnessConfig(Guid runnerId, string harnessId) =>
         StartOperation(runnerId, $"Configuring {setup.GetHarness(harnessId).DisplayName}", async (op, cancellation) =>

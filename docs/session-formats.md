@@ -124,9 +124,27 @@ Content blocks: `text`, `image` (`mimeType`, base64 `data`), `thinking` (`text`,
 4. **Unknown lines are kept, not dropped.** Lines without a neutral meaning (UI state, extension data) become
    `kind: "native"` entries. They go back into their own harness and are skipped for others.
 
-## Moving between harnesses (not implemented yet)
+## Moving between harnesses
 
-What carries over, and what can't:
+**Continue with…** in an agent's terminal, or continuing a stored session with another harness, uses
+**conversation as text** (`SessionFlattener`):
+
+- The active branch becomes alternating user and assistant messages with **text and images only**. Tool calls become
+  short lines like ▸ ran `dotnet test` or ▸ edited `src/Maze.cs`, with their output trimmed to about 1200 characters.
+  Summaries become a user message ("Summary of the earlier conversation"), and pi's `!` shell runs are included.
+- **Thinking stays behind**: signatures (Anthropic) and encrypted reasoning (OpenAI) only work for the provider that
+  made them.
+- The first message says where the conversation came from. Conversations longer than about 400k characters keep
+  their most recent part, with a note saying how many messages were left out.
+- The target harness gets it as its own session file under a new id, which it resumes: `claude --resume`,
+  `codex resume` (the Manager writes Codex's `session_meta` header itself), and pi's `--session-id`. The stored
+  conversation before the move is kept next to it in `/data/sessions` (`<id>.<time>.<harness>.json`).
+  `HarnessTrail` records the way it went, e.g. `pi,codex,claude`.
+
+Why text and not translated tool calls: providers reject tool calls and results that don't pair up exactly, and a
+model can't be handed calls to tools it doesn't have. Text is what every harness resumes reliably.
+
+Reference for a later, fuller translation. What carries over, and what can't:
 
 | | pi | Claude Code | Codex |
 |---|---|---|---|

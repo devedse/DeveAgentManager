@@ -20,6 +20,7 @@ public sealed class SessionService(
     IDbContextFactory<ManagerDbContext> dbFactory,
     RunnerShell shell,
     IEnumerable<ISessionFormat> formats,
+    IEnumerable<IHarness> harnesses,
     ManagerOptions options,
     ManagerEvents events,
     ILogger<SessionService> logger)
@@ -27,6 +28,7 @@ public sealed class SessionService(
     private const string LocateMarker = "__DAM_SESSION__";
 
     private readonly Dictionary<string, ISessionFormat> _formats = formats.ToDictionary(f => f.HarnessId);
+    private readonly Dictionary<string, string> harnessDisplayNames = harnesses.ToDictionary(h => h.Id, h => h.DisplayName);
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
     public bool SupportsHarness(string harnessId) => _formats.ContainsKey(harnessId);
@@ -74,12 +76,7 @@ public sealed class SessionService(
                 throw new InvalidOperationException("This session already belongs to a running agent. Open that agent instead.");
             }
 
-            var format = _formats.GetValueOrDefault(agent.HarnessId) ?? throw new InvalidOperationException($"Sessions can't be continued in '{agent.HarnessId}' yet.");
-            var session = await LoadAsync(stored.Id, cancellationToken);
-            var path = format.GetPath(agent.HarnessSessionId, agent.WorkingDirectory, DateTime.UtcNow);
-            await shell.UploadAsync(runner, path, format.Write(session, agent.HarnessSessionId, agent.WorkingDirectory), "600", cancellationToken);
-            stored.SourcePath = null;
-            stored.SourceSize = 0;
+            await WriteForHarnessAsync(runner, stored, agent.HarnessId, agent.HarnessSessionId, agent.WorkingDirectory, cancellationToken);
         }
         else
         {
@@ -88,6 +85,7 @@ public sealed class SessionService(
         }
 
         stored.AgentId = agent.Id;
+        stored.HarnessTrail ??= agent.HarnessId;
         stored.HarnessId = agent.HarnessId;
         stored.HarnessSessionId = agent.HarnessSessionId;
         stored.RunnerName = runner.Name;
@@ -97,6 +95,59 @@ public sealed class SessionService(
         await db.SaveChangesAsync(cancellationToken);
         events.SessionChanged(stored.Id, agent.Id);
     }
+
+    /// <summary>
+    /// Moves an agent's conversation to another harness, on the same Runner and in the same folder: the stored
+    /// conversation is converted (as text, see <see cref="SessionFlattener"/>) and written as the new harness's own
+    /// session under <paramref name="harnessSessionId"/>, which the harness then resumes. The conversation as it was
+    /// before is kept next to it in /data/sessions. Sync the Runner first, so the latest messages move along.
+    /// </summary>
+    public async Task MoveToHarnessAsync(Runner runner, Agent agent, string harnessId, string harnessSessionId, CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var stored = await db.Sessions.FirstOrDefaultAsync(s => s.AgentId == agent.Id, cancellationToken)
+            ?? throw new InvalidOperationException("This agent has no stored conversation to move.");
+        var before = PathFor(stored.Id);
+        if (File.Exists(before))
+        {
+            File.Copy(before, Path.Combine(options.SessionsDirectory, $"{stored.Id:N}.{DateTime.UtcNow:yyyyMMdd-HHmmss}.{stored.HarnessId}.json"), overwrite: true);
+        }
+
+        await WriteForHarnessAsync(runner, stored, harnessId, harnessSessionId, agent.WorkingDirectory, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        events.SessionChanged(stored.Id, agent.Id);
+    }
+
+    /// <summary>
+    /// Writes a stored conversation to a Runner in a harness's format. Its own harness gets it unchanged; another harness
+    /// gets it as text. Updates the stored session to point at the new file (the next sync reads it).
+    /// </summary>
+    private async Task WriteForHarnessAsync(Runner runner, StoredSession stored, string harnessId, string harnessSessionId, string workingDirectory, CancellationToken cancellationToken)
+    {
+        var format = _formats.GetValueOrDefault(harnessId) ?? throw new InvalidOperationException($"Conversations can't be continued in '{harnessId}' yet.");
+        var session = await LoadAsync(stored.Id, cancellationToken);
+        var from = session.Sources.LastOrDefault()?.Harness ?? session.Entries.LastOrDefault(e => e.Harness is not null)?.Harness ?? stored.HarnessId;
+        if (session.Entries.Count > 0 && from != harnessId)
+        {
+            session = SessionFlattener.Flatten(session, DisplayName(from), DisplayName(harnessId));
+        }
+
+        var path = format.GetPath(harnessSessionId, workingDirectory, DateTime.UtcNow);
+        await shell.UploadAsync(runner, path, format.Write(session, harnessSessionId, workingDirectory), "600", cancellationToken);
+        var trail = (stored.HarnessTrail ?? stored.HarnessId).Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+        if (trail.Count == 0 || trail[^1] != harnessId)
+        {
+            trail.Add(harnessId);
+        }
+
+        stored.HarnessTrail = string.Join(',', trail);
+        stored.HarnessId = harnessId;
+        stored.HarnessSessionId = harnessSessionId;
+        stored.SourcePath = null;
+        stored.SourceSize = 0;
+    }
+
+    private string DisplayName(string harnessId) => harnessDisplayNames.GetValueOrDefault(harnessId, harnessId);
 
     /// <summary>Copies the session files of all agents on a Runner that changed since the last sync. One SSH command when nothing changed.</summary>
     public async Task SyncRunnerAsync(Runner runner, CancellationToken cancellationToken = default)

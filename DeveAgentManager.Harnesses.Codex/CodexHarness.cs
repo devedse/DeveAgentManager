@@ -1,4 +1,6 @@
+using System.Text.Json.Nodes;
 using DeveAgentManager.Core.Abstractions;
+using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Ssh;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -93,6 +95,42 @@ public sealed class CodexHarness : IHarness
     }
 
     public IReadOnlyList<string> ConfigFiles { get; } = ["~/.codex/config.toml", "~/.codex/AGENTS.md"];
+
+    /// <summary>
+    /// A subscription logs in with <c>codex login --device-auth</c> into an empty folder; its auth.json is the account.
+    /// Each account runs with its own CODEX_HOME (holding that auth.json), which links to the shared sessions folder
+    /// and config.toml, so a conversation can switch accounts and keep going.
+    /// </summary>
+    public HarnessAccountSupport AccountSupport { get; } = new(
+        SubscriptionName: "ChatGPT subscription (Plus, Pro, Business)",
+        LoginCommand: "CODEX_HOME=\"$DAM_LOGIN_DIR\" codex login --device-auth",
+        LoginHelp: "Open the link below on any device (your phone works), sign in to ChatGPT and enter the code shown here. When Codex says you are logged in, the Manager keeps the login. If ChatGPT says device codes are turned off, turn on device code login for Codex in ChatGPT's settings (Security) and try again.",
+        TokenPattern: null,
+        LoginFile: "auth.json",
+        ApiKeyName: "OPENAI_API_KEY",
+        PasteHint: null);
+
+    public HarnessAccountSetup BuildAccountSetup(string accountFolder, AccountKind kind, string secret)
+    {
+        var auth = kind == AccountKind.Subscription
+            ? secret
+            : new JsonObject { ["auth_mode"] = "apikey", ["OPENAI_API_KEY"] = secret.Trim() }.ToJsonString();
+        var home = $"{accountFolder}/codex";
+        return new HarnessAccountSetup(
+            [("codex/auth.json", auth, "600")],
+            $"export CODEX_HOME=\"{home}\"\nunset OPENAI_API_KEY\n",
+            $"""
+            mkdir -p "$HOME/.codex/sessions" "$HOME/.codex/packages" "{home}"
+            touch "$HOME/.codex/config.toml"
+            ln -sfn "$HOME/.codex/sessions" "{home}/sessions"
+            # Codex installs a helper daemon into packages on its first start: once, not per account.
+            ln -sfn "$HOME/.codex/packages" "{home}/packages"
+            ln -sf "$HOME/.codex/config.toml" "{home}/config.toml"
+            for f in AGENTS.md skills; do
+              if [ -e "$HOME/.codex/$f" ]; then ln -sfn "$HOME/.codex/$f" "{home}/$f"; fi
+            done
+            """);
+    }
 }
 
 public static class CodexServiceCollectionExtensions

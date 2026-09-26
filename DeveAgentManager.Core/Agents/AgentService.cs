@@ -24,7 +24,8 @@ public sealed record CreateAgentRequest(
     string? RepositoryUrl = null,
     string? Branch = null,
     string? ExistingPath = null,
-    Guid? ContinueSessionId = null);
+    Guid? ContinueSessionId = null,
+    Guid? AccountId = null);
 
 public sealed class AgentNotRunningException(string message) : Exception(message);
 
@@ -37,6 +38,7 @@ public sealed partial class AgentService(
     RunnerShell shell,
     IEnumerable<IHarness> harnesses,
     SessionService sessions,
+    Accounts.AccountService accounts,
     ManagerEvents events,
     ILogger<AgentService> logger)
 {
@@ -59,7 +61,7 @@ public sealed partial class AgentService(
     public async Task<Agent?> GetAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.Agents.AsNoTracking().Include(a => a.Runner).FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken);
+        return await db.Agents.AsNoTracking().Include(a => a.Runner).Include(a => a.Account).FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken);
     }
 
     public async Task<Agent> CreateAsync(CreateAgentRequest request, CancellationToken cancellationToken = default)
@@ -109,6 +111,7 @@ public sealed partial class AgentService(
             RepositoryBranch = request.Mode == AgentWorkspaceMode.CloneRepository && !string.IsNullOrWhiteSpace(request.Branch) ? request.Branch.Trim() : null,
             TmuxSession = $"dam-{name}",
             HarnessSessionId = harness.NewSessionId(agentId),
+            AccountId = request.AccountId,
             State = AgentState.Starting,
             CreatedAt = now,
             UpdatedAt = now,
@@ -171,6 +174,74 @@ public sealed partial class AgentService(
         await db.SaveChangesAsync(cancellationToken);
         events.AgentChanged(runner.Id, agent.Id);
     }
+
+    /// <summary>
+    /// Continues the agent in another harness and/or with another account, in the same folder on the same Runner (e.g.
+    /// when a subscription ran out). The harness is stopped gracefully and the conversation synced. For another harness
+    /// the conversation moves as text (tool calls become short descriptions; thinking stays behind); for another account
+    /// of the same harness the conversation simply resumes. <paramref name="accountId"/> null means the default account.
+    /// </summary>
+    public async Task SwitchAsync(Guid agentId, string harnessId, Guid? accountId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
+        var runner = RequireReady(agent.Runner!);
+        var target = GetHarness(harnessId);
+        if (!runner.HarnessIds.Contains(harnessId))
+        {
+            throw new InvalidOperationException($"{target.DisplayName} is not installed on '{runner.Name}'. Install it first (Runner → Operations).");
+        }
+
+        var changesHarness = harnessId != agent.HarnessId;
+        if (!changesHarness && accountId == agent.AccountId)
+        {
+            return;
+        }
+
+        logger.LogInformation("Switching agent {Agent} from {From} to {To} (account {Account})", agent.Name, agent.HarnessId, harnessId, accountId);
+        (await shell.RunAsync(runner, BuildStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), cancellationToken))
+            .EnsureSuccess("Stopping the harness");
+
+        if (changesHarness)
+        {
+            // The latest messages first, then the conversation moves to the new harness's own format.
+            await sessions.SyncRunnerAsync(runner, cancellationToken);
+            var sessionId = target.NewSessionId(agent.Id);
+            await sessions.MoveToHarnessAsync(runner, agent, harnessId, sessionId, cancellationToken);
+            agent.HarnessId = harnessId;
+            agent.HarnessSessionId = sessionId;
+        }
+
+        agent.AccountId = accountId;
+        agent.State = AgentState.Starting;
+        agent.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        events.AgentChanged(runner.Id, agent.Id);
+
+        await LaunchAsync(runner, agent, restart: true, cancellationToken);
+        agent.State = AgentState.Running;
+        agent.StateMessage = null;
+        agent.ExitCode = null;
+        agent.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        events.AgentChanged(runner.Id, agent.Id);
+    }
+
+    /// <summary>Asks the harness in the agent's pane to exit (SIGTERM, then killed after the grace period). The pane stays.</summary>
+    internal static string BuildStopScript(string target) => $$"""
+        if tmux has-session -t {{target}} 2>/dev/null && [ "$(tmux display-message -p -t {{target}} '#{pane_dead}')" != 1 ]; then
+          kill -TERM "$(tmux display-message -p -t {{target}} '#{pane_pid}')" 2>/dev/null || true
+          i=0
+          while [ $i -lt {{GracefulStopSeconds * 2}} ] && [ "$(tmux display-message -p -t {{target}} '#{pane_dead}')" != 1 ]; do
+            sleep 0.5
+            i=$((i + 1))
+          done
+          if [ "$(tmux display-message -p -t {{target}} '#{pane_dead}')" != 1 ]; then
+            kill -KILL "$(tmux display-message -p -t {{target}} '#{pane_pid}')" 2>/dev/null || true
+            sleep 0.5
+          fi
+        fi
+        """;
 
     public async Task StopAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
@@ -389,8 +460,18 @@ public sealed partial class AgentService(
     {
         var harness = GetHarness(agent.HarnessId);
         var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory));
+
+        // The account's environment comes after the Setup Profile's, so e.g. a subscription wins over an API key meant for pi.
+        var account = await accounts.ResolveAsync(agent, cancellationToken);
+        var accountEnvironment = "";
+        if (account is not null)
+        {
+            await accounts.EnsureOnRunnerAsync(runner, account, cancellationToken);
+            accountEnvironment = $". \"{Accounts.AccountService.EnvironmentFile(account.Id)}\"; ";
+        }
+
         // The browser terminal (xterm.js) and tmux support 24-bit color, but programs inside tmux only use it when told.
-        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; export COLORTERM=truecolor; exec {harnessCommand}");
+        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; {accountEnvironment}export COLORTERM=truecolor; exec {harnessCommand}");
         var session = ShellQuote.Quote("=" + agent.TmuxSession);
         var directory = ShellQuote.Quote(agent.WorkingDirectory);
 

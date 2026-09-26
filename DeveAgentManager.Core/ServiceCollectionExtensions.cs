@@ -36,6 +36,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SettingsStore>();
         services.AddSingleton<RunnerSetupService>();
         services.AddSingleton<SessionService>();
+        services.AddSingleton<Accounts.AccountService>();
         services.AddSingleton<AgentService>();
         services.AddSingleton<RunnerService>();
         services.AddSingleton<RunnerStatusCache>();

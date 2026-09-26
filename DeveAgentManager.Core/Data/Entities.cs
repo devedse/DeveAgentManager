@@ -111,6 +111,11 @@ public class Agent
     /// <summary>The harness's own session id, so a restart resumes the same conversation.</summary>
     public string HarnessSessionId { get; set; } = "";
 
+    /// <summary>The account the harness runs with; null uses the harness's default account (or the Runner's own login).</summary>
+    public Guid? AccountId { get; set; }
+
+    public Account? Account { get; set; }
+
     public AgentState State { get; set; }
 
     public string? StateMessage { get; set; }
@@ -137,6 +142,9 @@ public class StoredSession
 
     /// <summary>The harness's own session id on the Runner.</summary>
     public string? HarnessSessionId { get; set; }
+
+    /// <summary>The harnesses the conversation went through, oldest first, e.g. "pi,codex,claude".</summary>
+    public string? HarnessTrail { get; set; }
 
     /// <summary>The agent currently running this session; null once the agent (or its Runner) is deleted.</summary>
     public Guid? AgentId { get; set; }
@@ -174,3 +182,42 @@ public class SettingEntry
 
     public DateTime UpdatedAt { get; set; }
 }
+
+/// <summary>How an account logs in.</summary>
+public enum AccountKind
+{
+    /// <summary>A subscription (Claude Pro/Max, ChatGPT Plus/Pro), logged in once in a terminal.</summary>
+    Subscription,
+
+    /// <summary>An API key, billed per use.</summary>
+    ApiKey,
+}
+
+/// <summary>
+/// A login for a harness (e.g. a Claude subscription), stored encrypted in the Manager and copied to Runners when an
+/// agent uses it. A harness can have several (e.g. two Claude subscriptions, to switch when one hits its limit).
+/// </summary>
+public class Account
+{
+    public Guid Id { get; set; }
+
+    public string HarnessId { get; set; } = "";
+
+    public string Name { get; set; } = "";
+
+    public AccountKind Kind { get; set; }
+
+    /// <summary>The credential (a token, an API key or a harness's login file), encrypted.</summary>
+    public string ProtectedSecret { get; set; } = "";
+
+    /// <summary>Used by agents that don't pick an account.</summary>
+    public bool IsDefault { get; set; }
+
+    /// <summary>Goes up when the credential is replaced (a new login), so Runners take the new one.</summary>
+    public int Version { get; set; } = 1;
+
+    public DateTime CreatedAt { get; set; }
+
+    public DateTime UpdatedAt { get; set; }
+}
+

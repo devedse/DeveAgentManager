@@ -1,4 +1,5 @@
 using DeveAgentManager.Core.Abstractions;
+using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Ssh;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -47,6 +48,16 @@ public sealed class ClaudeHarness : IHarness
           const cwd = process.cwd();
           data.projects[cwd] = { ...(data.projects[cwd] ?? {}), hasTrustDialogAccepted: true };
         });
+        const apiKey = process.env.ANTHROPIC_API_KEY;
+        if (apiKey) {
+          // Claude Code asks once whether to use an API key from the environment; the account is the answer.
+          update(path.join(os.homedir(), ".claude.json"), data => {
+            data.customApiKeyResponses ??= { approved: [], rejected: [] };
+            const suffix = apiKey.slice(-20);
+            if (!data.customApiKeyResponses.approved.includes(suffix)) data.customApiKeyResponses.approved.push(suffix);
+            data.customApiKeyResponses.rejected = (data.customApiKeyResponses.rejected ?? []).filter(s => s !== suffix);
+          });
+        }
         update(path.join(os.homedir(), ".claude", "settings.json"), data => {
           // The warning that --dangerously-skip-permissions shows once, on every new Runner.
           data.skipDangerousModePermissionPrompt = true;
@@ -75,6 +86,27 @@ public sealed class ClaudeHarness : IHarness
     }
 
     public IReadOnlyList<string> ConfigFiles { get; } = ["~/.claude/settings.json", "~/.claude/CLAUDE.md"];
+
+    /// <summary>
+    /// A subscription logs in with <c>claude setup-token</c>: a token valid for a year that works on every Runner, so
+    /// Runners never need a login of their own. The terminal is made very wide, so the token is printed on one line.
+    /// </summary>
+    public HarnessAccountSupport AccountSupport { get; } = new(
+        SubscriptionName: "Claude subscription (Pro, Max)",
+        LoginCommand: "stty cols 500 2>/dev/null; claude setup-token",
+        LoginHelp: "Open the link below (tap it, or select and copy it), sign in with your Claude account and approve. Copy the code Claude shows, paste it here (Ctrl+V, or long-press on a phone) and press Enter. The token Claude prints at the end is picked up automatically: it is valid for a year and works on every Runner.",
+        TokenPattern: @"sk-ant-oat01-[A-Za-z0-9_\-]{20,}",
+        LoginFile: null,
+        ApiKeyName: "ANTHROPIC_API_KEY",
+        PasteHint: "Already have a token? Run claude setup-token anywhere and paste the token it prints (sk-ant-oat01-…).");
+
+    public HarnessAccountSetup BuildAccountSetup(string accountFolder, AccountKind kind, string secret) => new(
+        [],
+        kind == AccountKind.Subscription
+            // A key from the Setup Profile (for pi) would win over the subscription: this agent uses the subscription.
+            ? $"unset ANTHROPIC_API_KEY\nexport CLAUDE_CODE_OAUTH_TOKEN={ShellQuote.Quote(secret.Trim())}\n"
+            : $"unset CLAUDE_CODE_OAUTH_TOKEN\nexport ANTHROPIC_API_KEY={ShellQuote.Quote(secret.Trim())}\n",
+        null);
 }
 
 public static class ClaudeServiceCollectionExtensions

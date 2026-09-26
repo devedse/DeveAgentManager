@@ -1425,6 +1425,136 @@ a {
     border-top: 1px solid var(--dam-border);
 }
 
+/* ---------- Accounts ---------- */
+
+.account-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--dam-border);
+}
+
+.account-icon {
+    color: var(--dam-muted);
+    flex-shrink: 0;
+}
+
+.account-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.account-name {
+    font-weight: 600;
+}
+
+.account-badge {
+    margin-left: 6px;
+    padding: 1px 8px;
+    border-radius: 10px;
+    background: var(--dam-primary-soft);
+    color: var(--mud-palette-primary);
+    font-size: 0.7rem;
+    font-weight: 700;
+}
+
+.account-meta {
+    color: var(--dam-muted);
+    font-size: 0.8rem;
+}
+
+/* The login terminal in the account dialog. */
+.login-terminal {
+    position: relative;
+    height: min(420px, 55vh);
+    display: flex;
+    flex-direction: column;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #0a0d13;
+}
+
+    .login-terminal .terminal-keys {
+        display: none;
+    }
+
+/* ---------- Switching harness / account (terminal toolbar) ---------- */
+
+.switch-chip {
+    height: 28px;
+    border-radius: 14px !important;
+    text-transform: none !important;
+    max-width: 240px;
+}
+
+.switch-chip-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+    .switch-chip-label {
+        display: none;
+    }
+
+    .switch-chip {
+        min-width: 0 !important;
+        padding: 0 8px !important;
+    }
+}
+
+.switch-menu {
+    width: min(340px, 90vw);
+    padding: 8px 12px;
+}
+
+.switch-harness {
+    margin-top: 10px;
+    color: var(--dam-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.switch-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--dam-text);
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+    .switch-option:hover:not(:disabled) {
+        background: var(--dam-surface-2);
+    }
+
+.switch-current {
+    color: var(--mud-palette-primary);
+    cursor: default;
+}
+
+.switch-note {
+    margin-left: auto;
+    color: var(--dam-muted);
+    font-size: 0.75rem;
+}
+
+.switch-connect {
+    color: var(--mud-palette-primary);
+    font-size: 0.85rem;
+}
+
 /* ---------- Runner operations ---------- */
 
 .operation-list {

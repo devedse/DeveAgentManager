@@ -39,7 +39,41 @@ public interface IHarness
     /// that are no longer listed, and merges the settings. Only called when <see cref="ConfigSupport"/> is set.
     /// </summary>
     string BuildConfigureScript(Setup.HarnessConfig config) => throw new NotSupportedException();
+
+    /// <summary>How accounts (subscriptions, API keys) log in; null when the harness logs in on its own (pi: /login).</summary>
+    HarnessAccountSupport? AccountSupport => null;
+
+    /// <summary>
+    /// What makes an account usable on a Runner: files under the account's folder, the environment an agent runs with,
+    /// and a script run after the files are written. Only called when <see cref="AccountSupport"/> is set.
+    /// </summary>
+    HarnessAccountSetup BuildAccountSetup(string accountFolder, Data.AccountKind kind, string secret) => throw new NotSupportedException();
 }
+
+/// <summary>How a harness's accounts log in.</summary>
+/// <param name="SubscriptionName">E.g. "Claude subscription (Pro, Max)".</param>
+/// <param name="LoginCommand">
+/// Bash run in a browser terminal on a Runner to log in with a subscription. <c>$DAM_LOGIN_DIR</c> is an empty folder
+/// for files the login writes.
+/// </param>
+/// <param name="LoginHelp">Shown above that terminal: what to do.</param>
+/// <param name="TokenPattern">When set, the credential is the text in the terminal's output that matches this regex.</param>
+/// <param name="LoginFile">When set, the credential is this file in <c>$DAM_LOGIN_DIR</c>, read after the login succeeded.</param>
+/// <param name="ApiKeyName">The environment variable of an API key, e.g. ANTHROPIC_API_KEY.</param>
+/// <param name="PasteHint">When set, a subscription token made elsewhere can be pasted; describes how to make one.</param>
+public sealed record HarnessAccountSupport(
+    string SubscriptionName,
+    string LoginCommand,
+    string LoginHelp,
+    string? TokenPattern,
+    string? LoginFile,
+    string ApiKeyName,
+    string? PasteHint);
+
+/// <param name="Files">Paths relative to the account folder, with their content and mode.</param>
+/// <param name="Environment">Bash that sets up an agent's environment (exports), sourced before the harness starts.</param>
+/// <param name="Script">Bash run after the files are written (e.g. links to shared folders).</param>
+public sealed record HarnessAccountSetup(IReadOnlyList<(string Path, string Content, string Mode)> Files, string Environment, string? Script);
 
 /// <summary>How the Portal presents a harness's configuration.</summary>
 /// <param name="PackageExample">Placeholder for a package source.</param>

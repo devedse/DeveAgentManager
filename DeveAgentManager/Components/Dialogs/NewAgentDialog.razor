@@ -2,6 +2,7 @@
 @inject RunnerService Runners
 @inject AgentService Agents
 @inject SessionService Sessions
+@inject DeveAgentManager.Core.Accounts.AccountService Accounts
 @inject ISnackbar Snackbar
 @inject NavigationManager Navigation
 
@@ -39,13 +40,33 @@
                             <MudSelectItem Value="runner.Id">@runner.Name</MudSelectItem>
                         }
                     </MudSelect>
-                    <MudSelect T="string" @bind-Value="_harnessId" Label="Harness" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1">
+                    <MudSelect T="string" Value="_harnessId" ValueChanged="SelectHarness" Label="Harness" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1">
                         @foreach (var harness in _availableHarnesses)
                         {
                             <MudSelectItem Value="harness.Id">@harness.DisplayName</MudSelectItem>
                         }
                     </MudSelect>
                 </div>
+                @if (SelectedHarness?.AccountSupport is not null)
+                {
+                    @if (_harnessAccounts.Count > 0)
+                    {
+                        <MudSelect T="Guid?" @bind-Value="_accountId" Label="Account" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-3"
+                                   HelperText="You can switch the account later, from the agent's terminal.">
+                            @foreach (var account in _harnessAccounts)
+                            {
+                                <MudSelectItem T="Guid?" Value="account.Id">@account.Name@(account.IsDefault ? " (default)" : "")</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+                    else
+                    {
+                        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mt-3">
+                            No @SelectedHarness.DisplayName account yet. Connect your subscription under <b>Settings → Accounts</b>
+                            (once, for every Runner), or log in inside the agent.
+                        </MudAlert>
+                    }
+                }
 
                 <MudText Typo="Typo.overline" Class="mud-text-secondary mt-4 d-block">Workspace</MudText>
                 <div class="choice-grid choice-grid-3">
@@ -113,6 +134,11 @@
     private List<IHarness> _availableHarnesses = [];
     private Guid _runnerId;
     private string? _harnessId;
+    private List<Account> _allAccounts = [];
+    private List<Account> _harnessAccounts = [];
+    private Guid? _accountId;
+
+    private IHarness? SelectedHarness => _availableHarnesses.FirstOrDefault(h => h.Id == _harnessId);
     private AgentWorkspaceMode _mode = AgentWorkspaceMode.CloneRepository;
     private string _repositoryUrl = "";
     private string? _branch;
@@ -128,6 +154,7 @@
     protected override async Task OnInitializedAsync()
     {
         _runners = (await Runners.ListAsync()).Where(r => r.State == RunnerState.Ready).ToList();
+        _allAccounts = await Accounts.ListAsync();
         if (ContinueSession is { } continued)
         {
             // Same repository as before; without one, a fresh folder (the files didn't travel with the conversation).
@@ -147,13 +174,20 @@
         _runnerId = runnerId;
         var runner = _runners.First(r => r.Id == runnerId);
         _availableHarnesses = Agents.Harnesses.Where(h => runner.HarnessIds.Contains(h.Id) && (ContinueSession is null || Sessions.SupportsHarness(h.Id))).ToList();
-        _harnessId = _availableHarnesses.FirstOrDefault(h => h.Id == _harnessId)?.Id ?? _availableHarnesses.FirstOrDefault()?.Id;
+        SelectHarness(_availableHarnesses.FirstOrDefault(h => h.Id == _harnessId)?.Id ?? _availableHarnesses.FirstOrDefault()?.Id);
         if (!_nameEdited)
         {
             _name = SuggestName(runner);
         }
 
         return Task.CompletedTask;
+    }
+
+    private void SelectHarness(string? harnessId)
+    {
+        _harnessId = harnessId;
+        _harnessAccounts = _allAccounts.Where(a => a.HarnessId == harnessId).ToList();
+        _accountId = (_harnessAccounts.FirstOrDefault(a => a.IsDefault) ?? _harnessAccounts.FirstOrDefault())?.Id;
     }
 
     private void RepositoryChanged(string value)
@@ -222,7 +256,7 @@
         _busy = true;
         try
         {
-            var agent = await Agents.CreateAsync(new CreateAgentRequest(_runnerId, _name, _harnessId, _mode, _repositoryUrl, _branch, _existingPath, ContinueSession?.Id));
+            var agent = await Agents.CreateAsync(new CreateAgentRequest(_runnerId, _name, _harnessId, _mode, _repositoryUrl, _branch, _existingPath, ContinueSession?.Id, _accountId));
             MudDialog.Close(DialogResult.Ok(agent.Id));
             Navigation.NavigateTo($"agents/{agent.Id}");
         }

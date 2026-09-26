@@ -28,6 +28,7 @@
             }
             @if (_agent.State is AgentState.Running or AgentState.Starting)
             {
+                <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" />
                 <AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" />
                 <MudTooltip Text="Restart the harness (resumes the conversation)">
                     <MudIconButton Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" Disabled="_busy" OnClick="RestartAsync" />
@@ -117,6 +118,12 @@
         }
 
         await RunAsync(() => AgentService.StartAsync(AgentId, restart: true), reconnect: true);
+    }
+
+    private async Task OnSwitchedAsync()
+    {
+        await LoadAsync();
+        _connectionKey++;
     }
 
     private Task StopAsync() => RunAsync(() => AgentService.StopAsync(AgentId), reconnect: false);

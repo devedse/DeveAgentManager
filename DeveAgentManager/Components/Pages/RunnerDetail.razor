@@ -6,6 +6,7 @@
 @inject ISnackbar Snackbar
 @inject NavigationManager Navigation
 @inject RunnerSetupService Setup
+@inject AgentService AgentService
 
 <PageTitle>@(_runner?.Name ?? "Runner") · DeveAgentManager</PageTitle>
 
@@ -166,6 +167,17 @@
                                 <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => UpdateHarnessAsync(harness)">Update</MudButton>
                             </div>
                         }
+                        @foreach (var harness in AgentService.Harnesses.Where(h => !_runner.HarnessIds.Contains(h.Id)))
+                        {
+                            <div class="operation">
+                                <MudIcon Icon="@Icons.Material.Rounded.AddCircleOutline" Class="operation-icon" />
+                                <div class="operation-text">
+                                    <div class="operation-name">Install @harness.DisplayName</div>
+                                    <div class="operation-description">@harness.Description</div>
+                                </div>
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => InstallHarnessAsync(harness)">Install</MudButton>
+                            </div>
+                        }
                         <div class="operation">
                             <MudIcon Icon="@Icons.Material.Rounded.Build" Class="operation-icon" />
                             <div class="operation-text">
@@ -277,6 +289,25 @@
 
         var error = await update;
         Snackbar.Add(error is null ? $"{harness.DisplayName} updated on '{_runner.Name}'." : $"Updating {harness.DisplayName} failed: {error}",
+            error is null ? Severity.Success : Severity.Error);
+    }
+
+    private async Task InstallHarnessAsync(IHarness harness)
+    {
+        Task<string?> install;
+        try
+        {
+            install = Runners.InstallHarness(RunnerId, harness.Id);
+            _tab = 1;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+            return;
+        }
+
+        var error = await install;
+        Snackbar.Add(error is null ? $"{harness.DisplayName} installed on '{_runner!.Name}'." : $"Installing {harness.DisplayName} failed: {error}",
             error is null ? Severity.Success : Severity.Error);
     }
 

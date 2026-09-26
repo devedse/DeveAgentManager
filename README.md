@@ -6,7 +6,14 @@ when you close the tab.
 
 - **Manager**: this app, one Docker container with the web portal.
 - **Runner**: a machine that hosts agents. Proxmox Runners are full clones of a template VM.
-- **Agent**: a harness (currently [pi](https://pi.dev)) running in its own tmux session and working folder on a Runner.
+- **Agent**: a harness ([pi](https://pi.dev), [Claude Code](https://code.claude.com) or
+  [Codex](https://github.com/openai/codex)) running in its own tmux session and working folder on a Runner.
+- **Account** (**Settings → Accounts**): a Claude or ChatGPT subscription, or an API key, connected once in the
+  Manager and used on every Runner. Claude logs in with `claude setup-token` (a token valid for a year). Codex logs in
+  with `codex login --device-auth` (a code you enter on any device). A harness can have several accounts.
+- **Continue with…**: the switch button in an agent's terminal continues the conversation with another account or in
+  another harness, in the same folder, e.g. when a subscription ran out. Another harness gets the conversation as
+  text: messages, answers and what the tools did carry over, and the model's hidden thinking stays behind.
 - **Session**: an agent's conversation. The Manager keeps a copy in a harness-neutral format, so it survives the agent
   and its Runner and can be continued on another Runner.
 - **Setup Profile**: what every Runner gets during setup: git identity, API keys, login and settings files, and a script.
@@ -17,7 +24,7 @@ when you close the tab.
   updates its packages and applies Settings → pi. Every step is idempotent, so both are safe to repeat. Running agents
   keep running and use the new versions after a restart.
 
-See [PLAN.md](PLAN.md) for where this is going (Claude Code and Codex, sessions you can move between harnesses, Jobs API).
+See [PLAN.md](PLAN.md) for where this is going (Jobs API, projects).
 
 ## Quick start
 
@@ -165,6 +172,10 @@ keys that decrypt stored secrets (Setup Profile, GitHub token). Losing the keys 
 - **Agents** run as `tmux` sessions named `dam-<name>` in `~/work/<name>`. The harness is started with a fixed session
   id, so **Start** after a stop or reboot resumes the same conversation. Start leaves a harness that is still running
   alone. **Restart** asks first, sends the harness SIGTERM, and kills it only after 10 seconds.
+  Claude Code and Codex run without permission prompts (`--dangerously-skip-permissions`,
+  `--dangerously-bypass-approvals-and-sandbox`), because Runners are throwaway VMs. Their first-run questions (theme,
+  trusting the folder) are answered by the Manager. A Runner set up without them gets them with **Install …** under
+  Operations.
 - **Sessions** are synced from the Runners every 15 seconds (only files that changed) and stored as a
   [DeveSession](docs/session-formats.md) in `/data/sessions`. **Continue on a Runner** writes the conversation back in
   the harness's own format, in the new agent's folder, before the harness starts. Sessions can be exported (DeveSession

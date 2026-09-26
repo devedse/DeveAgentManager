@@ -1,0 +1,124 @@
+@using DeveAgentManager.Core.Accounts
+@inject AgentService AgentService
+@inject AccountService Accounts
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+@* The agent's harness and account, and switching to another one (e.g. when a subscription ran out). *@
+<MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" @bind-Open="_open" @bind-Open:after="OnOpenChangedAsync">
+    <ActivatorContent>
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Rounded.SwapHoriz" OnClick="@context.ToggleAsync"
+                   Disabled="_busy" Class="switch-chip" title="Continue in another harness or with another account">
+            <span class="switch-chip-label">@(_busy ? "Switching..." : CurrentLabel)</span>
+        </MudButton>
+    </ActivatorContent>
+    <ChildContent>
+        <div class="switch-menu">
+            <div class="viewers-title">Continue with</div>
+            <div class="viewers-hint">Same folder, same conversation. Another harness gets the conversation as text.</div>
+            @foreach (var harness in AgentService.Harnesses.Where(h => Agent.Runner?.HarnessIds.Contains(h.Id) == true))
+            {
+                <div class="switch-harness">@harness.DisplayName</div>
+                @if (harness.AccountSupport is null)
+                {
+                    @Option(harness, null, harness.DisplayName)
+                }
+                else
+                {
+                    var accounts = _accounts.Where(a => a.HarnessId == harness.Id).ToList();
+                    @foreach (var account in accounts)
+                    {
+                        @Option(harness, account, account.Name + (account.IsDefault ? " (default)" : ""))
+                    }
+
+                    @if (accounts.Count == 0)
+                    {
+                        <a class="switch-option switch-connect" href="settings">Connect an account in Settings → Accounts</a>
+                    }
+                }
+            }
+        </div>
+    </ChildContent>
+</MudMenu>
+
+@code {
+    [Parameter, EditorRequired]
+    public Agent Agent { get; set; } = default!;
+
+    /// <summary>Raised after the agent was switched (its terminal should reconnect).</summary>
+    [Parameter]
+    public EventCallback Switched { get; set; }
+
+    private List<Account> _accounts = [];
+    private bool _open;
+    private bool _busy;
+
+    private string CurrentLabel
+    {
+        get
+        {
+            var harness = AgentService.Harnesses.FirstOrDefault(h => h.Id == Agent.HarnessId)?.DisplayName ?? Agent.HarnessId;
+            return CurrentAccount is { } account ? $"{harness} · {account.Name}" : harness;
+        }
+    }
+
+    /// <summary>The account the agent runs with: its own choice, or the harness's default.</summary>
+    private Account? CurrentAccount =>
+        _accounts.FirstOrDefault(a => a.Id == Agent.AccountId) ?? _accounts.FirstOrDefault(a => a.HarnessId == Agent.HarnessId && a.IsDefault);
+
+    protected override async Task OnInitializedAsync() => _accounts = await Accounts.ListAsync();
+
+    private async Task OnOpenChangedAsync()
+    {
+        if (_open)
+        {
+            _accounts = await Accounts.ListAsync();
+        }
+    }
+
+    private RenderFragment Option(IHarness harness, Account? account, string label) => __builder =>
+    {
+        var current = harness.Id == Agent.HarnessId && (account is null || account.Id == CurrentAccount?.Id);
+        <button type="button" class="switch-option @(current ? "switch-current" : "")" disabled="@current" @onclick="() => SwitchAsync(harness, account)">
+            <MudIcon Icon="@(current ? Icons.Material.Rounded.CheckCircle : Icons.Material.Rounded.ArrowForward)" Size="Size.Small" />
+            <span>@label</span>
+            @if (current)
+            {
+                <span class="switch-note">now</span>
+            }
+        </button>
+    };
+
+    private async Task SwitchAsync(IHarness harness, Account? account)
+    {
+        _open = false;
+        var changesHarness = harness.Id != Agent.HarnessId;
+        var target = account is null ? harness.DisplayName : $"{harness.DisplayName} ({account.Name})";
+        var message = changesHarness
+            ? $"The agent's harness is stopped and the conversation moves to {harness.DisplayName}: your messages, the answers and what the tools did carry over as text, "
+              + "the model's hidden thinking stays behind. It keeps working in the same folder, with the files as they are. This takes a few seconds; the full conversation stays in the Manager."
+            : $"{harness.DisplayName} restarts with the account '{account?.Name}' and resumes the conversation.";
+        var confirmed = await Dialogs.ShowMessageBoxAsync($"Continue '{Agent.Name}' with {target}?", message, yesText: "Continue", cancelText: "Cancel");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        _busy = true;
+        StateHasChanged();
+        try
+        {
+            await AgentService.SwitchAsync(Agent.Id, harness.Id, account?.Id);
+            Snackbar.Add($"'{Agent.Name}' continues with {target}.", Severity.Success);
+            await Switched.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

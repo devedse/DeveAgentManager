@@ -141,6 +141,18 @@ public class HarnessFormatTests
     }
 
     [Fact]
+    public void Flatten_Twice_KeepsOneNote()
+    {
+        var once = SessionFlattener.Flatten(new PiSessionFormat().Read(PiSample), "pi", "Codex");
+        var twice = SessionFlattener.Flatten(once, "Codex", "Claude Code");
+
+        var first = twice.Entries[0].PlainText();
+        Assert.Contains("moved from Codex to Claude Code", first);
+        Assert.DoesNotContain("moved from pi to Codex", first);
+        Assert.Contains("Make the maze faster", first);
+    }
+
+    [Fact]
     public void Flatten_KeepsTheMostRecentPart_WhenTooLong()
     {
         var pi = new PiSessionFormat().Read(PiSample);

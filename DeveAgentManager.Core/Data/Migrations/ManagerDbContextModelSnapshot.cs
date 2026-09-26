@@ -17,10 +17,55 @@ namespace DeveAgentManager.Core.Data.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
 
+            modelBuilder.Entity("DeveAgentManager.Core.Data.Account", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("HarnessId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProtectedSecret")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HarnessId");
+
+                    b.ToTable("Accounts");
+                });
+
             modelBuilder.Entity("DeveAgentManager.Core.Data.Agent", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("AccountId")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
@@ -70,6 +115,8 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AccountId");
 
                     b.HasIndex("RunnerId", "Name")
                         .IsUnique();
@@ -204,6 +251,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<string>("HarnessSessionId")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("HarnessTrail")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("LastSyncedAt")
                         .HasColumnType("TEXT");
 
@@ -244,11 +294,18 @@ namespace DeveAgentManager.Core.Data.Migrations
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.Agent", b =>
                 {
+                    b.HasOne("DeveAgentManager.Core.Data.Account", "Account")
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("DeveAgentManager.Core.Data.Runner", "Runner")
                         .WithMany("Agents")
                         .HasForeignKey("RunnerId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("Account");
 
                     b.Navigation("Runner");
                 });
