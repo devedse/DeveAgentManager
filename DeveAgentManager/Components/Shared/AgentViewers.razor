@@ -15,7 +15,8 @@
             @if (Others > 0)
             {
                 <div class="viewers-hint">
-                    The agent's terminal takes the size of the screen used last. Every switch makes @Harness redraw its whole conversation.
+                    All of them see the agent. The size comes from the screen that was typed on last: screens that only
+                    watch don't change it. Switching between screens of a different size makes @Harness redraw its conversation once.
                 </div>
             }
 
@@ -26,7 +27,7 @@
                     <MudIcon Icon="@(self ? Icons.Material.Rounded.PhonelinkRing : Icons.Material.Rounded.Monitor)" Size="Size.Small" Class="viewer-icon" />
                     <div class="viewer-text">
                         <div class="viewer-name">@(self ? "This screen" : "Other screen") <span class="viewer-size">@viewer.Columns×@viewer.Rows</span></div>
-                        <div class="viewer-meta">Connected @viewer.ConnectedAt.Humanize() · last used @viewer.LastActiveAt.Humanize()</div>
+                        <div class="viewer-meta">@(viewer.Watching ? "Watching" : "Sets the size") · connected @viewer.ConnectedAt.Humanize() · last used @viewer.LastActiveAt.Humanize()</div>
                     </div>
                     @if (!self)
                     {

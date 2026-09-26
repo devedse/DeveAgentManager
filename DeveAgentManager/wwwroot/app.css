@@ -1360,8 +1360,8 @@ a {
 }
 
 .viewers-chip-warn {
-    border-color: var(--mud-palette-warning) !important;
-    color: var(--mud-palette-warning) !important;
+    border-color: var(--mud-palette-primary) !important;
+    color: var(--mud-palette-primary) !important;
 }
 
 .viewers-menu {

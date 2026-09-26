@@ -1,6 +1,7 @@
 @using System.Text
 @implements IAsyncDisposable
 @inject TerminalService Terminals
+@inject AgentService AgentService
 @inject IJSRuntime JS
 @inject ILogger<TerminalView> Logger
 @inject ISnackbar Snackbar
@@ -88,6 +89,7 @@
     private bool _detachedElsewhere;
     private bool _kicked;
     private bool _reportedConnected;
+    private bool _sizeClaimed;
     private DotNetObjectReference<TerminalView>? _self;
     private TerminalConnection? _connection;
     private CancellationTokenSource _lifetime = new();
@@ -171,6 +173,7 @@
         _detachedElsewhere = false;
         _kicked = false;
         _reportedConnected = false;
+        _sizeClaimed = false;
         _overlay = "Connecting...";
         _connecting = true;
         _error = false;
@@ -263,7 +266,7 @@
             {
                 _overlay = AgentId is null ? (Command is null ? "The shell was closed." : "Finished.")
                     : _kicked ? "Another screen disconnected this one. The agent keeps running; reconnect to continue here."
-                    : _detachedElsewhere ? "Opened in another window or on another device. Reconnect to continue here."
+                    : _detachedElsewhere ? "This screen was disconnected from the agent (tmux detached it). Reconnect to continue here."
                     : "Disconnected from the agent. It keeps running on the Runner.";
                 StateHasChanged();
                 await Disconnected.InvokeAsync();
@@ -316,7 +319,31 @@
     private static string DescribeImage(string fileName, long size) =>
         $"{(string.IsNullOrWhiteSpace(fileName) ? "image" : fileName)} ({(size >= 1024 * 1024 ? $"{size / 1024.0 / 1024.0:0.0} MB" : $"{Math.Max(1, size / 1024)} KB")})";
 
-    private void OnData(string data) => _connection?.Write(Encoding.UTF8.GetBytes(data));
+    private void OnData(string data)
+    {
+        var connection = _connection;
+        connection?.Write(Encoding.UTF8.GetBytes(data));
+
+        // A terminal that joined while others were attached only watches; typing here makes it set the size.
+        if (AgentId is { } agentId && connection?.Tty is { } tty && !_sizeClaimed && !TerminalInput.IsTerminalReply(data))
+        {
+            _sizeClaimed = true;
+            _ = ClaimSizeAsync(agentId, tty);
+        }
+    }
+
+    private async Task ClaimSizeAsync(Guid agentId, string tty)
+    {
+        try
+        {
+            await AgentService.ClaimSizeAsync(agentId, tty, _lifetime.Token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogDebug(ex, "Could not give terminal {Tty} the size", tty);
+            _sizeClaimed = false;
+        }
+    }
 
     private void OnBinary(string data) => _connection?.Write(Encoding.Latin1.GetBytes(data));
 

@@ -283,9 +283,29 @@ public sealed partial class AgentService(
             throw new AgentNotRunningException($"Agent '{agent.Name}' is not running. Start it first.");
         }
 
-        // -d detaches the agent's other terminals. With several attached (a phone and a PC, old tabs), tmux sizes the
-        // window to whichever was used last, so every switch resizes the pane and pi redraws its whole history.
-        return (runner, $"tmux -u attach-session -d -t {ShellQuote.Quote("=" + agent.TmuxSession)}");
+        // tmux sizes the window to the screen used last (window-size latest), and every resize makes pi redraw its whole
+        // conversation. So a terminal that joins while others are attached joins watching (ignore-size): opening or
+        // refreshing a tab changes nothing. It takes the size once its user types (ClaimSizeAsync).
+        var target = ShellQuote.Quote("=" + agent.TmuxSession);
+        var attach = $"""
+            if [ -n "$(tmux list-clients -t {target} 2>/dev/null)" ]; then exec tmux -u attach-session -f ignore-size -t {target}; fi
+            exec tmux -u attach-session -t {target}
+            """;
+        return (runner, "bash -c " + ShellQuote.Quote(attach));
+    }
+
+    /// <summary>
+    /// The terminal <paramref name="tty"/> becomes the one that sets the agent's terminal size (its user started typing).
+    /// Nothing happens when it already does.
+    /// </summary>
+    public async Task ClaimSizeAsync(Guid agentId, string tty, CancellationToken cancellationToken = default)
+    {
+        var agent = await GetAsync(agentId, cancellationToken) ?? throw new ArgumentException("Agent not found.");
+        var runner = RequireReady(agent.Runner!);
+        var quoted = ShellQuote.Quote(RequireTty(tty));
+        await shell.RunAsync(runner,
+            $"if tmux list-clients -F '#{{client_tty}} #{{client_flags}}' | grep -q \"^{RequireTty(tty)} .*ignore-size\"; then tmux refresh-client -t {quoted} -f '!ignore-size'; fi",
+            TimeSpan.FromSeconds(20), cancellationToken);
     }
 
     /// <summary>What a kicked terminal prints (instead of tmux's own goodbye), so it can say why it was disconnected.</summary>
@@ -297,7 +317,7 @@ public sealed partial class AgentService(
         var agent = await GetAsync(agentId, cancellationToken) ?? throw new ArgumentException("Agent not found.");
         var runner = RequireReady(agent.Runner!);
         var result = await shell.RunAsync(runner,
-            $"tmux list-clients -t {ShellQuote.Quote("=" + agent.TmuxSession)} -F '#{{client_tty}}|#{{client_width}}|#{{client_height}}|#{{client_created}}|#{{client_activity}}' 2>/dev/null || true",
+            $"tmux list-clients -t {ShellQuote.Quote("=" + agent.TmuxSession)} -F '#{{client_tty}}|#{{client_width}}|#{{client_height}}|#{{client_created}}|#{{client_activity}}|#{{client_flags}}' 2>/dev/null || true",
             TimeSpan.FromSeconds(20), cancellationToken);
         return ParseViewers(result.Output);
     }
@@ -344,7 +364,8 @@ public sealed partial class AgentService(
                 continue;
             }
 
-            viewers.Add(new AgentViewer(parts[0], columns, rows, FromUnix(parts[3]), FromUnix(parts[4])));
+            var watching = parts.Length > 5 && parts[5].Split(',').Contains("ignore-size");
+            viewers.Add(new AgentViewer(parts[0], columns, rows, FromUnix(parts[3]), FromUnix(parts[4]), watching));
         }
 
         return viewers.OrderBy(v => v.ConnectedAt).ToList();
@@ -553,4 +574,5 @@ public sealed partial class AgentService(
 
 /// <summary>A terminal attached to an agent's tmux session.</summary>
 /// <param name="Tty">The client's tty on the Runner, e.g. /dev/pts/3.</param>
-public sealed record AgentViewer(string Tty, int Columns, int Rows, DateTime ConnectedAt, DateTime LastActiveAt);
+/// <param name="Watching">Joined while others were attached and hasn't typed yet: doesn't change the terminal's size.</param>
+public sealed record AgentViewer(string Tty, int Columns, int Rows, DateTime ConnectedAt, DateTime LastActiveAt, bool Watching = false);
