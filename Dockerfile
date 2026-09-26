@@ -14,6 +14,8 @@ COPY ["DeveAgentManager/DeveAgentManager.csproj", "DeveAgentManager/"]
 COPY ["DeveAgentManager.Core/DeveAgentManager.Core.csproj", "DeveAgentManager.Core/"]
 COPY ["DeveAgentManager.Providers.Proxmox/DeveAgentManager.Providers.Proxmox.csproj", "DeveAgentManager.Providers.Proxmox/"]
 COPY ["DeveAgentManager.Harnesses.Pi/DeveAgentManager.Harnesses.Pi.csproj", "DeveAgentManager.Harnesses.Pi/"]
+COPY ["DeveAgentManager.Harnesses.Claude/DeveAgentManager.Harnesses.Claude.csproj", "DeveAgentManager.Harnesses.Claude/"]
+COPY ["DeveAgentManager.Harnesses.Codex/DeveAgentManager.Harnesses.Codex.csproj", "DeveAgentManager.Harnesses.Codex/"]
 RUN dotnet restore "DeveAgentManager/DeveAgentManager.csproj"
 COPY . .
 ARG BUILD_VERSION

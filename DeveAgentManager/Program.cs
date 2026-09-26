@@ -5,6 +5,8 @@ using DeveAgentManager.Components;
 using DeveAgentManager.Core;
 using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
+using DeveAgentManager.Harnesses.Claude;
+using DeveAgentManager.Harnesses.Codex;
 using DeveAgentManager.Harnesses.Pi;
 using DeveAgentManager.Providers.Proxmox;
 using Microsoft.AspNetCore.Authentication;
@@ -21,6 +23,8 @@ var managerOptions = ManagerOptions.FromConfiguration(builder.Configuration, bui
 builder.Services.AddDeveAgentManagerCore(managerOptions);
 builder.Services.AddProxmoxProvider(builder.Configuration);
 builder.Services.AddPiHarness();
+builder.Services.AddClaudeHarness();
+builder.Services.AddCodexHarness();
 
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddMudServices(config =>

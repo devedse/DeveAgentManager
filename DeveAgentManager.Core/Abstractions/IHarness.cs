@@ -13,6 +13,9 @@ public interface IHarness
     /// <summary>Idempotent bash script that installs or updates the harness. Runs as the Runner Account with the Manager's env.sh sourced.</summary>
     string InstallScript { get; }
 
+    /// <summary>The harness's own id for a new agent's conversation (pi: 32 hex digits; Claude Code and Codex: a UUID).</summary>
+    string NewSessionId(Guid agentId) => agentId.ToString("N");
+
     /// <summary>Prints the installed version.</summary>
     string VersionCommand { get; }
 

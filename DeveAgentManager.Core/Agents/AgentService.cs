@@ -108,7 +108,7 @@ public sealed partial class AgentService(
             RepositoryUrl = request.Mode == AgentWorkspaceMode.CloneRepository ? request.RepositoryUrl?.Trim() : null,
             RepositoryBranch = request.Mode == AgentWorkspaceMode.CloneRepository && !string.IsNullOrWhiteSpace(request.Branch) ? request.Branch.Trim() : null,
             TmuxSession = $"dam-{name}",
-            HarnessSessionId = agentId.ToString("N"),
+            HarnessSessionId = harness.NewSessionId(agentId),
             State = AgentState.Starting,
             CreatedAt = now,
             UpdatedAt = now,
