@@ -1,6 +1,6 @@
-<span class="status-pill status-@Style.Tone.CssClass() @(Style.Busy ? "status-busy" : "")" title="@Title">
+<span class="status-pill status-@Style.Tone.CssClass() @(Style.Busy ? "status-busy" : "") @Class" title="@(Title ?? Text ?? Style.Text)">
     <span class="status-dot"></span>
-    <span>@(Text ?? Style.Text)</span>
+    <span class="status-text">@(Text ?? Style.Text)</span>
 </span>
 
 @code {
@@ -13,4 +13,7 @@
 
     [Parameter]
     public string? Title { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
 }

@@ -9,33 +9,53 @@
 <PageTitle>@(_agent?.Name ?? "Agent") · DeveAgentManager</PageTitle>
 
 <div class="terminal-page">
+    @* Narrower screens get a more compact header: the state becomes a dot, the name and context are cut off with "…",
+       and on phones the less used actions move into the ⋮ menu (see app.css, "Terminal toolbar"). *@
     <div class="terminal-toolbar">
         <MudIconButton Href="@(_agent is null ? "agents" : $"runners/{_agent.RunnerId}")" Icon="@Icons.Material.Rounded.ArrowBack" Size="Size.Small" aria-label="Back" />
         @if (_agent is not null)
         {
+            var running = _agent.State is AgentState.Running or AgentState.Starting;
             <div class="terminal-title">
-                <span class="terminal-name">@_agent.Name</span>
-                <span class="terminal-context">@_agent.HarnessId · @_agent.Runner?.Name · <span class="mono">@(_agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
+                <div class="terminal-name-row">
+                    <span class="terminal-name" title="@_agent.Name">@_agent.Name</span>
+                    <StatusPill Style="StateStyles.For(_agent.State)" Title="@_agent.StateMessage" Class="terminal-status" />
+                </div>
+                <span class="terminal-context">@_agent.HarnessId@(_agent.Account is { } account ? $" · {account.Name}" : "") · @_agent.Runner?.Name · <span class="mono">@(_agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
             </div>
-            <StatusPill Style="StateStyles.For(_agent.State)" Title="@_agent.StateMessage" />
-            <MudSpacer />
-            <span class="terminal-hint d-none d-md-inline">Shift+drag selects · Ctrl+C copies a selection</span>
+            <span class="terminal-hint">Shift+drag selects · Ctrl+C copies a selection</span>
             @if (_sessionId is { } sessionId)
             {
-                <MudTooltip Text="Conversation">
-                    <MudIconButton Href="@($"sessions/{sessionId}")" Icon="@Icons.Material.Rounded.Forum" Size="Size.Small" />
-                </MudTooltip>
+                <span class="toolbar-wide"><MudTooltip Text="Conversation">
+                    <MudIconButton Href="@($"sessions/{sessionId}")" Icon="@Icons.Material.Rounded.Forum" Size="Size.Small" aria-label="Conversation" />
+                </MudTooltip></span>
             }
-            @if (_agent.State is AgentState.Running or AgentState.Starting)
+            @if (running)
             {
                 <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" />
                 <AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" />
-                <MudTooltip Text="Restart the harness (resumes the conversation)">
-                    <MudIconButton Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" Disabled="_busy" OnClick="RestartAsync" />
-                </MudTooltip>
-                <MudTooltip Text="Stop the agent">
-                    <MudIconButton Icon="@Icons.Material.Rounded.Stop" Size="Size.Small" Disabled="_busy" OnClick="StopAsync" />
-                </MudTooltip>
+                <span class="toolbar-wide"><MudTooltip Text="Restart the harness (resumes the conversation)">
+                    <MudIconButton Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" Disabled="_busy" OnClick="RestartAsync" aria-label="Restart" />
+                </MudTooltip></span>
+                <span class="toolbar-wide"><MudTooltip Text="Stop the agent">
+                    <MudIconButton Icon="@Icons.Material.Rounded.Stop" Size="Size.Small" Disabled="_busy" OnClick="StopAsync" aria-label="Stop" />
+                </MudTooltip></span>
+            }
+            @if (running || _sessionId is not null)
+            {
+                <div class="toolbar-narrow">
+                    <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" aria-label="More">
+                        @if (_sessionId is { } menuSessionId)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{menuSessionId}")">Conversation</MudMenuItem>
+                        }
+                        @if (running)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="_busy" OnClick="RestartAsync">Restart the harness</MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Stop" Disabled="_busy" OnClick="StopAsync">Stop the agent</MudMenuItem>
+                        }
+                    </MudMenu>
+                </div>
             }
         }
     </div>

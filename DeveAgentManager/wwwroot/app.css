@@ -1187,27 +1187,52 @@ a {
     height: 100%;
 }
 
+/* Terminal toolbar. It gets more compact as the screen narrows:
+   wide: everything; below 900px: no hint; below 600px (phones): the state is a dot next to the name, and
+   Conversation, Restart and Stop move into the ⋮ menu. The name and context are cut off with "…" rather than overlap. */
 .terminal-toolbar {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
     height: 52px;
-    padding: 0 10px 0 6px;
-    padding-left: max(6px, env(safe-area-inset-left));
+    padding: 0 8px 0 4px;
+    padding-left: max(4px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
     background: var(--dam-surface);
     border-bottom: 1px solid var(--dam-border);
     flex-shrink: 0;
 }
 
+    .terminal-toolbar > * {
+        flex-shrink: 0;
+    }
+
 .terminal-title {
     display: flex;
     flex-direction: column;
+    flex: 1 1 auto;
+    flex-shrink: 1 !important;
     min-width: 0;
     line-height: 1.25;
 }
 
+.terminal-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
 .terminal-name {
+    min-width: 0;
     font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.terminal-status {
+    flex-shrink: 0;
 }
 
 .terminal-context {
@@ -1221,7 +1246,55 @@ a {
 .terminal-hint {
     color: var(--dam-faint);
     font-size: 0.75rem;
-    margin-right: 8px;
+    margin-right: 4px;
+    white-space: nowrap;
+}
+
+.toolbar-narrow {
+    display: none;
+}
+
+@media (max-width: 900px) {
+    .terminal-hint {
+        display: none;
+    }
+}
+
+@media (max-width: 600px) {
+    .toolbar-wide {
+        display: none !important;
+    }
+
+    .toolbar-narrow {
+        display: block;
+    }
+
+    /* The switch and screens buttons shrink to their icon (and the screen count). */
+    .switch-chip,
+    .viewers-chip {
+        min-width: 0 !important;
+        padding: 0 8px !important;
+    }
+
+        .switch-chip .mud-button-icon-start {
+            margin: 0 !important;
+        }
+
+        .viewers-chip .mud-button-icon-start {
+            margin-left: 0 !important;
+            margin-right: 3px !important;
+        }
+
+    /* Just the dot: the state is in its tooltip, and in the name's colour-coded dot. */
+    .terminal-status {
+        padding: 0 !important;
+        background: transparent !important;
+        border: 0 !important;
+    }
+
+        .terminal-status .status-text {
+            display: none;
+        }
 }
 
 .terminal-frame {
@@ -1281,10 +1354,9 @@ a {
 
 .terminal-keys {
     display: none;
-    gap: 6px;
-    padding: 6px 8px;
-    padding-bottom: max(6px, env(safe-area-inset-bottom));
-    overflow-x: auto;
+    gap: 4px;
+    padding: 5px 6px;
+    padding-bottom: max(5px, env(safe-area-inset-bottom));
     background: var(--dam-surface);
     border-top: 1px solid var(--dam-border);
     flex-shrink: 0;
@@ -1296,15 +1368,24 @@ a {
     }
 }
 
+/* Equal widths, so the whole row fits on the narrowest phone without scrolling. */
 .terminal-key {
-    flex-shrink: 0;
-    padding: 7px 12px;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 72px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     border-radius: 8px;
     border: 1px solid var(--dam-border-strong);
     background: var(--dam-surface-2);
     color: var(--dam-text);
     font-family: var(--dam-mono);
     font-size: 0.8rem;
+    white-space: nowrap;
+    overflow: hidden;
     cursor: pointer;
     touch-action: manipulation;
 }
