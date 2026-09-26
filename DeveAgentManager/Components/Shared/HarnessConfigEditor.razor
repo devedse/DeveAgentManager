@@ -45,7 +45,7 @@
         What new agents start with. <b>Leave empty to let @Harness.DisplayName choose</b>: it picks what fits your plan and moves on to new models by itself.
         @if (Support.ModelSuggestions is { Count: > 0 })
         {
-            <span>Aliases like <code>@Support.ModelSuggestions[0]</code> always mean the latest model of that family.</span>
+            <span>Aliases like <code>@Support.ModelSuggestions[0].Id</code> always mean the latest model of that family, so agents move on to a new one by themselves.</span>
         }
         You can still switch in a session (<code>/model</code>).
     </MudText>
@@ -57,10 +57,10 @@
         <MudAutocomplete T="string" @bind-Value="Config.DefaultModel" Label="Model" Placeholder="@($"{Harness.DisplayName} chooses")" SearchFunc="SearchModelsAsync"
                          CoerceValue="true" CoerceText="false" Clearable="true" ResetValueOnEmptyText="true" MaxItems="50" Strict="false"
                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input"
-                         HelperText="@(ModelsLoading ? "Loading the models from a Runner..." : Models.Count > 0 ? $"{Models.Count} models offered by {Harness.DisplayName} on your Runner, or type any name." : null)">
+                         HelperText="@(ModelsLoading ? "Loading the models from a Runner..." : Models.Count > 0 ? $"{Models.Count} models offered by {Harness.DisplayName} on your Runner, or type any name." : Support.ModelSuggestions is { Count: > 0 } ? "Or type a full name to stay on one model, e.g. claude-opus-5-5." : null)">
             <ItemTemplate Context="model">
                 <span class="mono">@model</span>
-                @if (Models.FirstOrDefault(m => m.Id == model) is { } choice && choice.Name != model)
+                @if (Choices.FirstOrDefault(m => m.Id == model) is { } choice && choice.Name != model)
                 {
                     <span class="mud-text-secondary"> · @choice.Name</span>
                 }
@@ -119,13 +119,16 @@
     [Parameter]
     public bool ModelsLoading { get; set; }
 
+    /// <summary>The suggested aliases and the harness's catalog, for the model field.</summary>
+    private IEnumerable<ModelChoice> Choices => (Support.ModelSuggestions ?? []).Concat(Models);
+
     private ModelChoice? SelectedModel => Models.FirstOrDefault(m => m.Id == Config.DefaultModel);
 
     private IReadOnlyList<string> EffortLevels => SelectedModel is { Efforts.Count: > 0 } model ? model.Efforts : Support.ThinkingLevels;
 
     private Task<IEnumerable<string>> SearchModelsAsync(string? text, CancellationToken cancellationToken)
     {
-        var all = (Support.ModelSuggestions ?? []).Concat(Models.Select(m => m.Id)).Distinct();
+        var all = Choices.Select(m => m.Id).Distinct();
         return Task.FromResult(string.IsNullOrWhiteSpace(text) ? all : all.Where(m => m.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase)));
     }
 

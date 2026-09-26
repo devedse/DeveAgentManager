@@ -105,7 +105,7 @@ public sealed record HarnessConfigSupport(
     bool HasProvider = true,
     bool HasKeybindings = true,
     bool HasExtraSettings = true,
-    IReadOnlyList<string>? ModelSuggestions = null,
+    IReadOnlyList<ModelChoice>? ModelSuggestions = null,
     string EffortName = "Thinking level",
     string SettingsExample = "{ \"enabledModels\": [\"anthropic/*\"], \"hideThinkingBlock\": true }");
 

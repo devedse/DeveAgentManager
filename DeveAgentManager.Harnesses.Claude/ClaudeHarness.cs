@@ -102,7 +102,13 @@ public sealed class ClaudeHarness : IHarness
         HasKeybindings: false,
         HasExtraSettings: true,
         // Aliases always mean the latest model of that family.
-        ModelSuggestions: ["opus", "sonnet", "haiku", "fable"],
+        ModelSuggestions:
+        [
+            new("opus", "latest Opus", []),
+            new("sonnet", "latest Sonnet", []),
+            new("haiku", "latest Haiku", []),
+            new("fable", "latest Fable", []),
+        ],
         EffortName: "Effort",
         SettingsExample: "{ \"includeCoAuthoredBy\": false, \"cleanupPeriodDays\": 60 }");
 
