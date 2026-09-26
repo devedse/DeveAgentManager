@@ -212,7 +212,9 @@ public sealed partial class AgentService(
             throw new AgentNotRunningException($"Agent '{agent.Name}' is not running. Start it first.");
         }
 
-        return (runner, $"tmux -u attach-session -t {ShellQuote.Quote("=" + agent.TmuxSession)}");
+        // -d detaches the agent's other terminals. With several attached (a phone and a PC, old tabs), tmux sizes the
+        // window to whichever was used last, so every switch resizes the pane and pi redraws its whole history.
+        return (runner, $"tmux -u attach-session -d -t {ShellQuote.Quote("=" + agent.TmuxSession)}");
     }
 
     /// <summary>Reads the state of every agent on a Runner from tmux.</summary>

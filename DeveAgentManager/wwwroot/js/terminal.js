@@ -404,6 +404,23 @@
 
         fit,
 
+        // Resolves once the page is visible (right away when it already is).
+        whenVisible() {
+            if (document.visibilityState === "visible") {
+                return Promise.resolve();
+            }
+
+            return new Promise(resolve => {
+                const check = () => {
+                    if (document.visibilityState === "visible") {
+                        document.removeEventListener("visibilitychange", check);
+                        resolve();
+                    }
+                };
+                document.addEventListener("visibilitychange", check);
+            });
+        },
+
         // Sends an on-screen key. The phone keyboard input forgets its line, which the key may have changed.
         sendKey(id, sequence) {
             const terminal = getTerminal(id);

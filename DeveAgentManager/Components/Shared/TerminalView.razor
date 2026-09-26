@@ -83,6 +83,7 @@
 
     private Xterm _xterm = default!;
     private bool _touchInput;
+    private bool _detachedElsewhere;
     private DotNetObjectReference<TerminalView>? _self;
     private TerminalConnection? _connection;
     private CancellationTokenSource _lifetime = new();
@@ -127,11 +128,24 @@
         _self = DotNetObjectReference.Create(this);
         _touchInput = await JS.InvokeAsync<bool>("damTerminal.init", _xterm.Id, _self);
         StateHasChanged();
+        // Connecting to an agent takes it over from its other terminals, so a tab in the background (reloaded after a
+        // Manager restart, say) waits until it is looked at instead of taking the agent away from the screen in use.
+        try
+        {
+            // With a token, not the default one-minute timeout: a tab can stay in the background for hours.
+            await JS.InvokeVoidAsync("damTerminal.whenVisible", _lifetime.Token);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or JSDisconnectedException)
+        {
+            return;
+        }
+
         await ConnectAsync();
     }
 
     private async Task ConnectAsync()
     {
+        _detachedElsewhere = false;
         _overlay = "Connecting...";
         _connecting = true;
         _error = false;
@@ -176,6 +190,9 @@
                     break;
                 }
 
+                // tmux's goodbye when another terminal took over the agent (attach -d).
+                _detachedElsewhere = data.Length < 512 && Encoding.UTF8.GetString(data).Contains("[detached (from session", StringComparison.Ordinal);
+
                 await InvokeAsync(async () => await _xterm.Write(data));
             }
         }
@@ -193,7 +210,9 @@
         {
             await InvokeAsync(async () =>
             {
-                _overlay = AgentId is null ? "The shell was closed." : "Disconnected from the agent. It keeps running on the Runner.";
+                _overlay = AgentId is null ? "The shell was closed."
+                    : _detachedElsewhere ? "Opened in another window or on another device. Reconnect to continue here."
+                    : "Disconnected from the agent. It keeps running on the Runner.";
                 StateHasChanged();
                 await Disconnected.InvokeAsync();
             });
