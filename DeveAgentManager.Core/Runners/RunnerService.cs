@@ -14,16 +14,6 @@ using Microsoft.Extensions.Logging;
 
 namespace DeveAgentManager.Core.Runners;
 
-public sealed record CreateRunnerRequest(
-    string Name,
-    string ProviderId,
-    string? TemplateId,
-    int Cores,
-    int MemoryMb,
-    int DiskGb,
-    IReadOnlyList<string> Harnesses,
-    ConnectionDetails? Connection);
-
 /// <summary>
 /// Creates and manages Runners. Long operations (create, start, setup, delete) run in the background, one at a time
 /// per Runner, and report progress in the Runner's setup log.

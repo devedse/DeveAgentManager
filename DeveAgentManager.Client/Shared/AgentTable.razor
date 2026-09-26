@@ -1,0 +1,130 @@
+@inject ManagerApi Api
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+@if (Agents.Count == 0)
+{
+    <EmptyState Icon="@Icons.Material.Rounded.SmartToy" Title="No agents" Text="@EmptyText">
+        @EmptyContent
+    </EmptyState>
+}
+else
+{
+    <div class="agent-table">
+        @foreach (var agent in Agents)
+        {
+            var busy = _busy.Contains(agent.Id);
+            <div class="agent-row">
+                <a class="agent-row-main" href="agents/@agent.Id">
+                    <div class="list-avatar">@agent.HarnessId</div>
+                    <div class="list-main">
+                        <div class="list-title">@agent.Name</div>
+                        <div class="list-subtitle">
+                            @if (ShowRunner)
+                            {
+                                <span>@agent.RunnerName · </span>
+                            }
+                            <span class="mono">@(agent.RepositoryUrl ?? agent.WorkingDirectory)</span>
+                        </div>
+                    </div>
+                </a>
+                <div class="agent-row-state">
+                    <StatusPill Style="StateStyles.For(agent.State)" Title="@agent.StateMessage" />
+                    <span class="list-time">@agent.CreatedAt.Humanize()</span>
+                </div>
+                <div class="agent-row-actions">
+                    @if (busy)
+                    {
+                        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                    }
+                    else if (agent.State is AgentState.Running or AgentState.Starting)
+                    {
+                        <MudTooltip Text="Open terminal">
+                            <MudIconButton Href="@($"agents/{agent.Id}")" Icon="@Icons.Material.Rounded.Terminal" Color="Color.Primary" Size="Size.Small" />
+                        </MudTooltip>
+                        <MudTooltip Text="Stop">
+                            <MudIconButton Icon="@Icons.Material.Rounded.Stop" Size="Size.Small" OnClick="() => StopAsync(agent)" />
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <MudTooltip Text="@(agent.State == AgentState.Exited ? "Restart (resumes the conversation)" : "Start (resumes the conversation)")">
+                            <MudIconButton Icon="@Icons.Material.Rounded.PlayArrow" Color="Color.Success" Size="Size.Small" Disabled="agent.RunnerState != RunnerState.Ready"
+                                           OnClick="@(() => StartAsync(agent, false))" />
+                        </MudTooltip>
+                    }
+                    <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+                        <MudMenuItem Icon="@Icons.Material.Rounded.Terminal" Href="@($"agents/{agent.Id}")">Open</MudMenuItem>
+                        <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="@(() => StartAsync(agent, true))">Restart</MudMenuItem>
+                        <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem>
+                    </MudMenu>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private readonly HashSet<Guid> _busy = [];
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<AgentDto> Agents { get; set; } = [];
+
+    [Parameter]
+    public bool ShowRunner { get; set; }
+
+    [Parameter]
+    public string EmptyText { get; set; } = "Start an agent to work on a repository.";
+
+    [Parameter]
+    public RenderFragment? EmptyContent { get; set; }
+
+    private async Task StartAsync(AgentDto agent, bool restart)
+    {
+        if (restart && agent.State is AgentState.Running or AgentState.Starting && !await ConfirmRestartAsync(Dialogs, agent.Name))
+        {
+            return;
+        }
+
+        await RunAsync(agent, () => Api.StartAgentAsync(agent.Id, restart), $"{(restart ? "Restarted" : "Started")} '{agent.Name}'");
+    }
+
+    /// <summary>Restarting stops a running harness, and with it any tool call it is in the middle of.</summary>
+    public static async Task<bool> ConfirmRestartAsync(IDialogService dialogs, string agentName) =>
+        await dialogs.ShowMessageBoxAsync(
+            $"Restart '{agentName}'?",
+            "The harness is stopped (it gets 10 seconds to exit) and started again. Anything it is doing right now, like a running command, is cancelled. The conversation is resumed.",
+            yesText: "Restart", cancelText: "Cancel") == true;
+
+    private Task StopAsync(AgentDto agent) => RunAsync(agent, () => Api.StopAgentAsync(agent.Id), $"Stopped '{agent.Name}'");
+
+    private async Task RunAsync(AgentDto agent, Func<Task> action, string success)
+    {
+        _busy.Add(agent.Id);
+        try
+        {
+            await action();
+            Snackbar.Add(success, Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _busy.Remove(agent.Id);
+        }
+    }
+
+    private async Task DeleteAsync(AgentDto agent)
+    {
+        var confirmed = await Dialogs.ShowMessageBoxAsync(
+            $"Delete agent '{agent.Name}'?",
+            (MarkupString)$"The harness is stopped and the agent is removed from the Manager. Its folder <code>{System.Net.WebUtility.HtmlEncode(agent.WorkingDirectory)}</code> and the conversation files stay on the Runner.",
+            yesText: "Delete", cancelText: "Cancel");
+        if (confirmed == true)
+        {
+            await RunAsync(agent, () => Api.DeleteAgentAsync(agent.Id), $"Deleted '{agent.Name}'");
+        }
+    }
+}

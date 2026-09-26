@@ -2207,3 +2207,43 @@ a {
     .markdown th {
         background: var(--dam-surface-2);
     }
+
+/* ---------- Loading screen (while the Portal starts in the browser) ---------- */
+
+.app-loading {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    background: #0d1017;
+}
+
+.app-loading-bar {
+    width: 160px;
+    height: 3px;
+    border-radius: 2px;
+    background: #1e2430;
+    overflow: hidden;
+}
+
+    .app-loading-bar > div {
+        width: 40%;
+        height: 100%;
+        border-radius: 2px;
+        background: #8b7dff;
+        animation: app-loading 1.2s ease-in-out infinite;
+    }
+
+@keyframes app-loading {
+    from {
+        transform: translateX(-100%);
+    }
+
+    to {
+        transform: translateX(250%);
+    }
+}

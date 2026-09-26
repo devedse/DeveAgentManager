@@ -104,6 +104,10 @@
     // Phones and tablets: the primary pointer is a finger.
     const isTouch = () => window.matchMedia("(pointer: coarse)").matches;
 
+    // Per terminal: its WebSocket to the Manager, and the .NET component that shows its state.
+    const sockets = new Map();
+    const dotnets = new Map();
+
     // Per terminal: the phone keyboard input (terminal-touch-input.js).
     const touchInputs = new Map();
     const TOUCH_INPUT_KEY = "dam.touchInput";
@@ -240,16 +244,30 @@
         return Array.from(dataTransfer?.files ?? []).filter(file => file.type.startsWith("image/"));
     }
 
-    async function sendImages(terminal, dotnet, files, afterPaste) {
+    // Uploads images to the terminal's Runner (the Manager stores them) and pastes their paths into the terminal.
+    // `target` is the upload's query string (agentId=... or runnerId=...); progress and errors go to .NET (snackbars).
+    async function sendImages(terminal, dotnet, target, files, afterPaste) {
         const paths = [];
         for (const file of files) {
-            // Unsupported types are refused by the Manager, which says which types work.
-            const path = await dotnet.invokeMethodAsync("UploadImageAsync", file.name || "", file.type, file.size, DotNet.createJSStreamReference(file));
-            if (path) {
-                paths.push(path);
+            dotnet?.invokeMethodAsync("OnImageStatus", "uploading", `${file.name || "image"} (${Math.max(1, Math.round(file.size / 1024))} KB)`);
+            try {
+                const form = new FormData();
+                form.append("file", file, file.name || "image");
+                // The header marks the request as coming from the Manager's own pages (its CSRF check).
+                const response = await fetch(`api/terminals/images?${target}`, { method: "POST", body: form, headers: { "X-DAM-Request": "1" }, credentials: "same-origin" });
+                if (!response.ok) {
+                    const problem = await response.json().catch(() => null);
+                    dotnet?.invokeMethodAsync("OnImageStatus", "error", problem?.detail ?? `The Manager answered ${response.status}.`);
+                    continue;
+                }
+
+                paths.push((await response.json()).path);
+            } catch (error) {
+                dotnet?.invokeMethodAsync("OnImageStatus", "error", String(error));
             }
         }
 
+        dotnet?.invokeMethodAsync("OnImageStatus", "done", "");
         if (paths.length > 0) {
             afterPaste();
             // A space after each, so text typed next doesn't run into the path.
@@ -258,7 +276,7 @@
         }
     }
 
-    function enableImagePaste(terminal, element, dotnet, afterPaste) {
+    function enableImagePaste(terminal, element, dotnet, target, afterPaste) {
         // Capture phase: before xterm.js (and the phone keyboard input) handle the paste as text.
         element.addEventListener("paste", event => {
             const files = imageFiles(event.clipboardData);
@@ -270,7 +288,7 @@
 
             event.preventDefault();
             event.stopPropagation();
-            sendImages(terminal, dotnet, files, afterPaste);
+            sendImages(terminal, dotnet, target, files, afterPaste);
         }, { capture: true });
 
         element.addEventListener("dragover", event => {
@@ -287,7 +305,7 @@
             }
 
             event.preventDefault();
-            sendImages(terminal, dotnet, files, afterPaste);
+            sendImages(terminal, dotnet, target, files, afterPaste);
         });
 
         return () => {
@@ -302,7 +320,7 @@
             picker.addEventListener("change", () => {
                 const files = Array.from(picker.files ?? []);
                 done();
-                sendImages(terminal, dotnet, files, afterPaste);
+                sendImages(terminal, dotnet, target, files, afterPaste);
             });
             picker.addEventListener("cancel", done);
             picker.click();
@@ -319,7 +337,8 @@
 
     window.damTerminal = {
         // Returns whether the phone keyboard input is on.
-        init(id, dotnet) {
+        // Returns whether the phone keyboard input is on. `imageTarget` is where pasted images go (null: nowhere).
+        init(id, dotnet, imageTarget) {
             const terminal = XtermBlazor.getTerminalById(id);
             hardenInput(terminal);
 
@@ -386,9 +405,10 @@
             }
 
             let pickImage = null;
-            if (xtermElement && dotnet && !xtermElement.dataset.imagePaste) {
+            dotnets.set(id, dotnet);
+            if (xtermElement && dotnet && imageTarget && !xtermElement.dataset.imagePaste) {
                 xtermElement.dataset.imagePaste = "true";
-                pickImage = enableImagePaste(terminal, xtermElement, dotnet, () => touchInputs.get(id)?.reset());
+                pickImage = enableImagePaste(terminal, xtermElement, dotnet, imageTarget, () => touchInputs.get(id)?.reset());
             }
 
             // The on-screen keys must not take the focus: that would close the phone keyboard after every key.
@@ -461,11 +481,74 @@
             }
         },
 
+        // Connects the terminal to the Manager's terminal WebSocket: binary frames are the terminal's data both ways,
+        // text frames are JSON control messages (ready, closed, login; resize). Tells .NET when it is ready or closed.
+        connect(id, url) {
+            this.disconnect(id);
+            const terminal = getTerminal(id);
+            const dotnet = dotnets.get(id);
+            if (!terminal) {
+                return;
+            }
+
+            const address = new URL(`${url}&cols=${terminal.cols}&rows=${terminal.rows}`, document.baseURI);
+            address.protocol = address.protocol === "https:" ? "wss:" : "ws:";
+            const socket = new WebSocket(address.href);
+            socket.binaryType = "arraybuffer";
+            const encoder = new TextEncoder();
+            const connection = { socket, subscriptions: [], closed: null };
+            const send = data => {
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(data);
+                }
+            };
+
+            socket.onmessage = event => {
+                if (typeof event.data !== "string") {
+                    terminal.write(new Uint8Array(event.data));
+                    return;
+                }
+
+                const message = JSON.parse(event.data);
+                if (message.type === "ready") {
+                    dotnet?.invokeMethodAsync("OnSocketReady", message.tty ?? "");
+                } else if (message.type === "closed") {
+                    connection.closed = message;
+                } else if (message.type === "login") {
+                    dotnet?.invokeMethodAsync("OnLoginResult", !!message.ok, message.message ?? "");
+                }
+            };
+            socket.onclose = () => {
+                connection.subscriptions.forEach(s => s.dispose());
+                // Only the current connection reports: an old one closing after a reconnect says nothing.
+                if (sockets.get(id) === connection) {
+                    sockets.delete(id);
+                    dotnet?.invokeMethodAsync("OnSocketClosed", connection.closed?.reason ?? null, connection.closed?.message ?? null);
+                }
+            };
+
+            connection.subscriptions.push(terminal.onData(data => send(encoder.encode(data))));
+            connection.subscriptions.push(terminal.onBinary(data => send(Uint8Array.from(data, c => c.charCodeAt(0) & 255))));
+            connection.subscriptions.push(terminal.onResize(size => send(JSON.stringify({ type: "resize", cols: size.cols, rows: size.rows }))));
+            sockets.set(id, connection);
+        },
+
+        disconnect(id) {
+            const connection = sockets.get(id);
+            if (connection) {
+                sockets.delete(id);
+                connection.subscriptions.forEach(s => s.dispose());
+                connection.socket.close();
+            }
+        },
+
         dispose(id) {
+            this.disconnect(id);
             observers.get(id)?.disconnect();
             observers.delete(id);
             touchInputs.delete(id);
             layouts.delete(id);
+            dotnets.delete(id);
         },
     };
 
@@ -493,6 +576,16 @@
             await navigator.clipboard.writeText(text);
         },
 
+        // Downloads a file the Manager serves (e.g. a session export); the login cookie goes along.
+        downloadUrl(url) {
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "";
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        },
+
         async download(fileName, contentType, streamReference) {
             const buffer = await streamReference.arrayBuffer();
             const url = URL.createObjectURL(new Blob([buffer], { type: contentType }));
@@ -501,6 +594,11 @@
             link.download = fileName;
             link.click();
             URL.revokeObjectURL(url);
+        },
+
+        // The Portal runs: remove the loading screen the Manager sent with the page.
+        hideLoading() {
+            document.getElementById("app-loading")?.remove();
         },
 
         scrollPageToEnd() {

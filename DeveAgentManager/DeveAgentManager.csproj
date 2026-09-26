@@ -8,14 +8,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Humanizer.Core" Version="3.0.10" />
-    <PackageReference Include="Markdig" Version="1.4.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.12" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="MudBlazor" Version="9.10.0" />
-    <PackageReference Include="XtermBlazor" Version="2.4.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -23,6 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\DeveAgentManager.Client\DeveAgentManager.Client.csproj" />
     <ProjectReference Include="..\DeveAgentManager.Core\DeveAgentManager.Core.csproj" />
     <ProjectReference Include="..\DeveAgentManager.Providers.Proxmox\DeveAgentManager.Providers.Proxmox.csproj" />
     <ProjectReference Include="..\DeveAgentManager.Harnesses.Pi\DeveAgentManager.Harnesses.Pi.csproj" />

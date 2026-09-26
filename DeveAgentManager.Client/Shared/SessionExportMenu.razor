@@ -1,0 +1,40 @@
+@inject ManagerApi Api
+@inject IJSRuntime JS
+
+<MudMenu Icon="@(Icon ? Icons.Material.Rounded.Download : null)" Label="@(Icon ? null : "Export")" StartIcon="@(Icon ? null : Icons.Material.Rounded.Download)"
+         Variant="@(Icon ? Variant.Text : Variant.Outlined)" Size="@(Icon ? Size.Small : Size.Medium)" Dense="true"
+         AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+    <MudMenuItem OnClick="() => DownloadAsync(DeveFormat)">DeveSession (.deve.json)</MudMenuItem>
+    @foreach (var harness in _formats)
+    {
+        <MudMenuItem OnClick="@(() => DownloadAsync(harness.Id))">@harness.DisplayName session (.jsonl)</MudMenuItem>
+    }
+</MudMenu>
+
+@code {
+    private const string DeveFormat = "deve";
+
+    private List<HarnessDto> _formats = [];
+
+    [Parameter, EditorRequired]
+    public Guid SessionId { get; set; }
+
+    /// <summary>Show as an icon button (in lists) instead of a labelled button.</summary>
+    [Parameter]
+    public bool Icon { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _formats = (await Api.InfoAsync()).Harnesses.Where(h => h.HasSessionFormat).ToList();
+        }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException)
+        {
+            // DeveSession only.
+        }
+    }
+
+    // A plain download: the browser fetches the file with the login cookie; the Manager names it.
+    private Task DownloadAsync(string format) => JS.InvokeVoidAsync("damUi.downloadUrl", ManagerApi.ExportUrl(SessionId, format)).AsTask();
+}

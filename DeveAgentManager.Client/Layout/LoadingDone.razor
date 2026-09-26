@@ -1,0 +1,12 @@
+@inject IJSRuntime JS
+
+@* Removes the Manager's loading screen once the Portal has rendered in the browser. *@
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JS.InvokeVoidAsync("damUi.hideLoading");
+        }
+    }
+}

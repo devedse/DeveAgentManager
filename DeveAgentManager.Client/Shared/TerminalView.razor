@@ -1,0 +1,267 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+@* A terminal on a Runner. xterm.js talks to the Manager's terminal WebSocket (terminal.js), which connects it to an SSH
+   terminal: an agent's tmux session, a shell, or a harness's login. This component shows the overlay and the keys. *@
+<div class="terminal-frame">
+    <div class="terminal-host">
+        <Xterm @ref="_xterm" Options="_options" Addons="_addons" Class="terminal-xterm" OnFirstRender="OnFirstRenderAsync" OnTitleChange="OnTitleChange" />
+    </div>
+
+    @if (_overlay is not null)
+    {
+        <div class="terminal-overlay">
+            <div class="terminal-overlay-card">
+                @if (_connecting)
+                {
+                    <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
+                }
+                else
+                {
+                    <MudIcon Icon="@(_error ? Icons.Material.Rounded.ErrorOutline : Icons.Material.Rounded.LinkOff)" Color="@(_error ? Color.Error : Color.Default)" />
+                }
+                <MudText Typo="Typo.body2">@_overlay</MudText>
+                @if (!_connecting)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Refresh" OnClick="ReconnectAsync">Reconnect</MudButton>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@* On-screen keys for phones and tablets: one row that always fits (no scrolling), the keys pi needs most first. *@
+<div class="terminal-keys">
+    @foreach (var (label, sequence, title) in Keys)
+    {
+        <button type="button" class="terminal-key" title="@title" aria-label="@title" @onclick="() => SendAsync(sequence)" @onclick:preventDefault="true">@label</button>
+    }
+    @* Opened in the browser (terminal.js), so the file picker runs in the tap itself: browsers only open it for a user action. *@
+    <button type="button" class="terminal-key" data-dam-action="image" title="Send an image (screenshot, photo)" aria-label="Send an image">
+        <MudIcon Icon="@Icons.Material.Rounded.AttachFile" Size="Size.Small" />
+    </button>
+    <button type="button" class="terminal-key @(_touchInput ? "terminal-key-on" : "")"
+            title="@(_touchInput ? "Phone keyboard fix is on: autocorrect, swipe typing and Backspace work as in other apps. Tap to type straight into the terminal." : "Phone keyboard fix is off. Tap to turn it on.")"
+            aria-label="Phone keyboard fix" aria-pressed="@(_touchInput ? "true" : "false")"
+            @onclick="ToggleTouchInputAsync" @onclick:preventDefault="true">
+        <MudIcon Icon="@(_touchInput ? Icons.Material.Rounded.Keyboard : Icons.Material.Rounded.KeyboardHide)" Size="Size.Small" />
+    </button>
+</div>
+
+@code {
+    // On-screen keys for phones and tablets, where these are hard or impossible to type.
+    private static readonly (string Label, string Sequence, string Title)[] Keys =
+    [
+        ("Esc", "\u001b", "Escape"), ("Tab", "\t", "Tab"), ("^C", "\u0003", "Ctrl+C"),
+        ("←", "\u001b[D", "Left"), ("↑", "\u001b[A", "Up"), ("↓", "\u001b[B", "Down"), ("→", "\u001b[C", "Right"),
+        ("⇧⏎", "\u001b[13;2u", "New line (Shift+Enter)"), ("⏎", "\r", "Enter"),
+    ];
+
+    private readonly HashSet<string> _addons = ["addon-fit", "addon-web-links"];
+    private readonly TerminalOptions _options = new()
+    {
+        CursorBlink = true,
+        CursorStyle = CursorStyle.Bar,
+        FontFamily = AppTheme.MonoFont,
+        FontSize = 14,
+        Scrollback = 10000,
+        AllowProposedApi = true,
+        MacOptionIsMeta = true,
+        Theme = new Theme
+        {
+            Background = "#0a0d13",
+            Foreground = "#d8dee9",
+            Cursor = "#8b7dff",
+            CursorAccent = "#0a0d13",
+            SelectionBackground = "#8b7dff55",
+            Black = "#1b2130", BrightBlack = "#4b5467",
+            Red = "#f87171", BrightRed = "#fca5a5",
+            Green = "#34d399", BrightGreen = "#6ee7b7",
+            Yellow = "#fbbf24", BrightYellow = "#fcd34d",
+            Blue = "#60a5fa", BrightBlue = "#93c5fd",
+            Magenta = "#c084fc", BrightMagenta = "#d8b4fe",
+            Cyan = "#2dd4bf", BrightCyan = "#5eead4",
+            White = "#d8dee9", BrightWhite = "#f8fafc",
+        },
+    };
+
+    private Xterm _xterm = default!;
+    private bool _touchInput;
+    private Snackbar? _uploading;
+    private int _autoReconnects;
+    private DateTime _readyAt;
+    private DotNetObjectReference<TerminalView>? _self;
+    private string? _overlay = "Connecting...";
+    private bool _connecting = true;
+    private bool _error;
+
+    /// <summary>Attach to this agent's tmux session.</summary>
+    [Parameter]
+    public Guid? AgentId { get; set; }
+
+    /// <summary>Or open a plain shell on this Runner (or, with <see cref="Login"/>, a login on it).</summary>
+    [Parameter]
+    public Guid? RunnerId { get; set; }
+
+    /// <summary>With <see cref="RunnerId"/>: log in to this harness's subscription; the Manager saves the account.</summary>
+    [Parameter]
+    public LoginTerminal? Login { get; set; }
+
+    [Parameter]
+    public EventCallback<string> TitleChanged { get; set; }
+
+    [Parameter]
+    public EventCallback Disconnected { get; set; }
+
+    /// <summary>Raised once the terminal is attached and its <see cref="Tty"/> is known.</summary>
+    [Parameter]
+    public EventCallback Connected { get; set; }
+
+    /// <summary>For logins: the account was saved (true) or the login's result couldn't be saved (false), with a message.</summary>
+    [Parameter]
+    public EventCallback<(bool Ok, string Message)> LoginFinished { get; set; }
+
+    /// <summary>This terminal's tty on the Runner (e.g. /dev/pts/3): tells it apart from the agent's other viewers.</summary>
+    public string? Tty { get; private set; }
+
+    public async Task SendAsync(string data)
+    {
+        // Through the browser, so the phone keyboard input knows the line changed.
+        await JS.InvokeVoidAsync("damTerminal.sendKey", _xterm.Id, data);
+    }
+
+    private async Task ToggleTouchInputAsync()
+    {
+        _touchInput = await JS.InvokeAsync<bool>("damTerminal.toggleTouchInput", _xterm.Id);
+    }
+
+    public async Task ReconnectAsync()
+    {
+        await _xterm.Reset();
+        await ConnectAsync();
+    }
+
+    private async Task OnFirstRenderAsync()
+    {
+        _self = DotNetObjectReference.Create(this);
+        _touchInput = await JS.InvokeAsync<bool>("damTerminal.init", _xterm.Id, _self, ImageTarget());
+        StateHasChanged();
+        // Connecting to an agent makes this screen one of its viewers; a tab in the background waits until it is looked at.
+        await JS.InvokeVoidAsync("damTerminal.whenVisible");
+        await ConnectAsync();
+    }
+
+    /// <summary>Where pasted images go: the agent's or the shell's Runner (query string for the upload).</summary>
+    private string? ImageTarget() => AgentId is { } agentId ? $"agentId={agentId}" : Login is null && RunnerId is { } runnerId ? $"runnerId={runnerId}" : null;
+
+    private async Task ConnectAsync()
+    {
+        _overlay = "Connecting...";
+        _connecting = true;
+        _error = false;
+        Tty = null;
+        StateHasChanged();
+        await JS.InvokeVoidAsync("damTerminal.connect", _xterm.Id, SocketUrl());
+    }
+
+    private string SocketUrl()
+    {
+        var query = AgentId is { } agentId ? $"kind=agent&id={agentId}"
+            : Login is { } login ? $"kind=login&runner={RunnerId}&harness={Uri.EscapeDataString(login.HarnessId)}&account={login.AccountId}&name={Uri.EscapeDataString(login.Name ?? "")}"
+            : $"kind=shell&id={RunnerId}";
+        return $"{TerminalSocket.Path.TrimStart('/')}?{query}";
+    }
+
+    [JSInvokable]
+    public async Task OnSocketReady(string tty)
+    {
+        _readyAt = DateTime.UtcNow;
+        Tty = string.IsNullOrEmpty(tty) ? null : tty;
+        _overlay = null;
+        _connecting = false;
+        StateHasChanged();
+        await Connected.InvokeAsync();
+    }
+
+    [JSInvokable]
+    public async Task OnSocketClosed(string? reason, string? message)
+    {
+        Tty = null;
+        // An agent's terminal that just dropped (a phone that slept, a network blip) connects again by itself, once the
+        // page is visible. Not when another screen took it, tmux detached it, or it can't be opened: that needs the user.
+        if (DateTime.UtcNow - _readyAt > TimeSpan.FromSeconds(10))
+        {
+            _autoReconnects = 0;
+        }
+
+        if (AgentId is not null && reason is null or TerminalSocket.ClosedExited && _readyAt != default && _autoReconnects < 3)
+        {
+            _autoReconnects++;
+            _overlay = "Reconnecting...";
+            _connecting = true;
+            StateHasChanged();
+            await Disconnected.InvokeAsync();
+            await JS.InvokeVoidAsync("damTerminal.whenVisible");
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            await ConnectAsync();
+            return;
+        }
+
+        _connecting = false;
+        _error = reason == TerminalSocket.ClosedError;
+        _overlay = reason switch
+        {
+            TerminalSocket.ClosedError => message ?? "The terminal could not be opened.",
+            TerminalSocket.ClosedKicked => "Another screen disconnected this one. The agent keeps running; reconnect to continue here.",
+            TerminalSocket.ClosedDetached => "This screen was disconnected from the agent (tmux detached it). Reconnect to continue here.",
+            _ when Login is not null => "Finished.",
+            _ when AgentId is null => "The shell was closed.",
+            _ => "Disconnected from the agent. It keeps running on the Runner.",
+        };
+        StateHasChanged();
+        await Disconnected.InvokeAsync();
+    }
+
+    [JSInvokable]
+    public Task OnLoginResult(bool ok, string message) => LoginFinished.InvokeAsync((ok, message));
+
+    /// <summary>Progress of an image pasted into the terminal: "uploading" (with its name), "error" (with why), "done".</summary>
+    [JSInvokable]
+    public void OnImageStatus(string phase, string text)
+    {
+        switch (phase)
+        {
+            case "uploading":
+                _uploading = Snackbar.Add($"Uploading {text}...", Severity.Info, options => options.VisibleStateDuration = 60_000);
+                break;
+            case "error":
+                Snackbar.Add($"Could not send the image: {text}", Severity.Error);
+                break;
+            default:
+                if (_uploading is not null)
+                {
+                    Snackbar.Remove(_uploading);
+                    _uploading = null;
+                }
+
+                break;
+        }
+    }
+
+    private Task OnTitleChange(string title) => TitleChanged.InvokeAsync(title);
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("damTerminal.dispose", _xterm.Id);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The page is gone.
+        }
+
+        _self?.Dispose();
+    }
+}

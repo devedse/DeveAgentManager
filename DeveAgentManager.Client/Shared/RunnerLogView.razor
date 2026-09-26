@@ -1,0 +1,102 @@
+@implements IAsyncDisposable
+@inject LiveUpdates Live
+@inject IJSRuntime JS
+
+<div class="log-view" @ref="_element" style="@(Height is null ? null : $"height:{Height}")">
+    @if (_lines.Count == 0)
+    {
+        <div class="log-empty">No log output yet.</div>
+    }
+    @foreach (var line in _lines)
+    {
+        <div class="log-line log-@line.Level.ToString().ToLowerInvariant()">
+            <span class="log-time">@line.Timestamp.ToLocalTime().ToString("HH:mm:ss")</span>
+            <span class="log-marker">@Marker(line.Level)</span>
+            <span class="log-text">@line.Text</span>
+        </div>
+    }
+</div>
+
+@code {
+    private const int MaxLines = 2000;
+
+    private readonly List<RunnerLogLine> _lines = [];
+    private ElementReference _element;
+    private bool _pendingRender;
+
+    [Parameter, EditorRequired]
+    public Guid RunnerId { get; set; }
+
+    [Parameter]
+    public string? Height { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Live.Log += OnLine;
+        try
+        {
+            _lines.AddRange((await Live.FollowLogAsync(RunnerId)).TakeLast(MaxLines));
+        }
+        catch (Exception)
+        {
+            // Not connected right now; new lines arrive once the live connection is back.
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("damUi.stickToBottom", _element, firstRender);
+    }
+
+    private void OnLine(Guid runnerId, RunnerLogLine line)
+    {
+        if (runnerId != RunnerId)
+        {
+            return;
+        }
+
+        // Runs on the renderer's context, so the list never changes while it is being rendered.
+        _ = InvokeAsync(() =>
+        {
+            _lines.Add(line);
+            if (_lines.Count > MaxLines)
+            {
+                _lines.RemoveRange(0, _lines.Count - MaxLines);
+            }
+
+            // Setup can print hundreds of lines per second: render at most every 150 ms.
+            if (!_pendingRender)
+            {
+                _pendingRender = true;
+                _ = Task.Delay(150).ContinueWith(_ => InvokeAsync(() =>
+                {
+                    _pendingRender = false;
+                    StateHasChanged();
+                }));
+            }
+        });
+    }
+
+    private static string Marker(RunnerLogLevel level) => level switch
+    {
+        RunnerLogLevel.Step => "▸",
+        RunnerLogLevel.Success => "✓",
+        RunnerLogLevel.Warning => "!",
+        RunnerLogLevel.Error => "✕",
+        RunnerLogLevel.Output => "│",
+        _ => "·",
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        Live.Log -= OnLine;
+        try
+        {
+            await Live.UnfollowLogAsync(RunnerId);
+        }
+        catch (Exception)
+        {
+            // The connection is gone anyway.
+        }
+    }
+}

@@ -1,0 +1,169 @@
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+
+@* Connects a harness account: log in with a subscription in a terminal on a Runner, paste a token, or enter an API key. *@
+<MudDialog>
+    <TitleContent>
+        <div class="dialog-title">
+            <MudIcon Icon="@Icons.Material.Rounded.Key" Color="Color.Primary" />
+            <span>@(Existing is null ? $"Connect {Harness.DisplayName}" : $"Reconnect '{Existing.Name}'")</span>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <MudToggleGroup T="string" @bind-Value="_method" Color="Color.Primary" Size="Size.Small" Class="mb-4" CheckMark="false">
+            <MudToggleItem Value="@("login")">Log in (subscription)</MudToggleItem>
+            @if (Support.PasteHint is not null)
+            {
+                <MudToggleItem Value="@("paste")">Paste token</MudToggleItem>
+            }
+            <MudToggleItem Value="@("apikey")">API key</MudToggleItem>
+        </MudToggleGroup>
+
+        @if (Existing is null)
+        {
+            <MudTextField @bind-Value="_name" Label="Name" Placeholder="@(_method == "apikey" ? "API key" : "Personal")" HelperText="To tell accounts apart, e.g. Personal or Work."
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" Immediate="true" />
+        }
+
+        @switch (_method)
+        {
+            case "login":
+                @if (_runners.Count == 0)
+                {
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                        The login runs in a terminal on a Runner with @Harness.DisplayName. Install it on a ready Runner first (Runner → Operations).
+                    </MudAlert>
+                }
+                else if (_login is null)
+                {
+                    <MudText Typo="Typo.body2" Class="mb-3">Logs in with your @Support.SubscriptionName, once. The login is then used on every Runner.</MudText>
+                    <MudSelect T="Guid" @bind-Value="_runnerId" Label="Runner to log in from" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @foreach (var runner in _runners)
+                        {
+                            <MudSelectItem Value="runner.Id">@runner.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                }
+                else
+                {
+                    <MudAlert Severity="@(_captured ? Severity.Success : Severity.Normal)" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+                        @(_captured ? "Logged in. Saving the account..." : Support.LoginHelp)
+                    </MudAlert>
+                    @* The Manager runs the harness's login and saves what it produces; this only shows the terminal. *@
+                    <div class="login-terminal">
+                        <TerminalView RunnerId="_runnerId" Login="_login" LoginFinished="OnLoginFinishedAsync" />
+                    </div>
+                }
+
+                break;
+            case "paste":
+                <MudText Typo="Typo.body2" Class="mb-3">@Support.PasteHint</MudText>
+                <MudTextField @bind-Value="_secret" Label="Token" Variant="Variant.Outlined" Margin="Margin.Dense" InputType="InputType.Password" Class="mono-input" Immediate="true" />
+                break;
+            case "apikey":
+                <MudText Typo="Typo.body2" Class="mb-3">Billed per use instead of a subscription. Agents get it as <code>@Support.ApiKeyName</code>.</MudText>
+                <MudTextField @bind-Value="_secret" Label="@Support.ApiKeyName" Variant="Variant.Outlined" Margin="Margin.Dense" InputType="InputType.Password" Class="mono-input" Immediate="true" />
+                break;
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">@(_captured ? "Close" : "Cancel")</MudButton>
+        @if (_method == "login")
+        {
+            @if (_login is null && _runners.Count > 0)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Login" OnClick="StartLogin">Start login</MudButton>
+            }
+        }
+        else
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || string.IsNullOrWhiteSpace(_secret)" OnClick="SaveTypedAsync">Save</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public string HarnessId { get; set; } = "";
+
+    /// <summary>Set to log in again for an existing account.</summary>
+    [Parameter]
+    public AccountDto? Existing { get; set; }
+
+    private HarnessDto? _harness;
+
+    private HarnessDto Harness => _harness ?? new HarnessDto(HarnessId, HarnessId, "", false, false, null, null);
+
+    private HarnessAccountSupport Support => Harness.AccountSupport ?? new HarnessAccountSupport("", "", "", null, null, "", null);
+
+    private List<RunnerDto> _runners = [];
+    private Guid _runnerId;
+    private string _method = "login";
+    private string? _name;
+    private string? _secret;
+    private LoginTerminal? _login;
+    private bool _captured;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _harness = (await Api.InfoAsync()).Harnesses.FirstOrDefault(h => h.Id == HarnessId);
+        _runners = (await Api.ListRunnersAsync()).Where(r => r.State == RunnerState.Ready && r.HarnessIds.Contains(HarnessId)).ToList();
+        _runnerId = _runners.FirstOrDefault()?.Id ?? Guid.Empty;
+        if (Existing?.Kind == AccountKind.ApiKey)
+        {
+            _method = "apikey";
+        }
+    }
+
+    private void StartLogin() => _login = new LoginTerminal(HarnessId, Existing?.Id, _name);
+
+    /// <summary>The Manager found the login's credential and saved it (or couldn't).</summary>
+    private Task OnLoginFinishedAsync((bool Ok, string Message) result)
+    {
+        if (result.Ok)
+        {
+            _captured = true;
+            Snackbar.Add($"{Harness.DisplayName}: {result.Message}", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        else
+        {
+            Snackbar.Add(result.Message, Severity.Error);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveTypedAsync()
+    {
+        var kind = _method == "apikey" ? AccountKind.ApiKey : AccountKind.Subscription;
+        _busy = true;
+        try
+        {
+            if (Existing is not null)
+            {
+                await Api.ReplaceAccountSecretAsync(Existing.Id, new ReplaceAccountSecretRequest(kind, _secret ?? ""));
+                Snackbar.Add($"'{Existing.Name}' is connected again. Agents use the new login from their next start.", Severity.Success);
+            }
+            else
+            {
+                var account = await Api.AddAccountAsync(new AddAccountRequest(HarnessId, _name, kind, _secret ?? ""));
+                Snackbar.Add($"{Harness.DisplayName} account '{account.Name}' connected.", Severity.Success);
+            }
+
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

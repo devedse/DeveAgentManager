@@ -20,4 +20,8 @@
     <PackageReference Include="SshNet.Keygen" Version="2026.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\DeveAgentManager.Contracts\DeveAgentManager.Contracts.csproj" />
+  </ItemGroup>
+
 </Project>

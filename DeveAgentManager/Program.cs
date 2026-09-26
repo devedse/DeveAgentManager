@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using DeveAgentManager.Api;
 using DeveAgentManager.Components;
+using DeveAgentManager.Contracts;
 using DeveAgentManager.Core;
 using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
@@ -14,8 +16,6 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
-using MudBlazor;
-using MudBlazor.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,13 +26,14 @@ builder.Services.AddPiHarness();
 builder.Services.AddClaudeHarness();
 builder.Services.AddCodexHarness();
 
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
-builder.Services.AddMudServices(config =>
-{
-    config.SnackbarConfiguration.PositionClass = Defaults.Classes.Position.BottomRight;
-    config.SnackbarConfiguration.PreventDuplicates = true;
-    config.SnackbarConfiguration.VisibleStateDuration = 5000;
-});
+// The Portal (DeveAgentManager.Client) runs in the browser; the Manager serves it and its API, live hub and terminals.
+builder.Services.AddRazorComponents().AddInteractiveWebAssemblyComponents();
+builder.Services.ConfigureHttpJsonOptions(json => ApiJson.Configure(json.SerializerOptions));
+builder.Services.AddSignalR().AddJsonProtocol(json => ApiJson.Configure(json.PayloadSerializerOptions));
+builder.Services.AddSingleton<DtoMapper>();
+builder.Services.AddSingleton<OperationNotifier>();
+builder.Services.AddHostedService<LiveUpdatesBridge>();
+builder.Services.AddProblemDetails();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(cookie =>
@@ -42,8 +43,25 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         cookie.Cookie.SameSite = SameSiteMode.Lax;
         cookie.ExpireTimeSpan = TimeSpan.FromDays(30);
         cookie.SlidingExpiration = true;
+        // The API, the live hub and terminals answer 401/403; only pages redirect to the login page.
+        cookie.Events.OnRedirectToLogin = context =>
+        {
+            if (RequestSecurity.IsMachinePath(context.Request.Path))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            }
+
+            context.Response.Redirect(context.RedirectUri);
+            return Task.CompletedTask;
+        };
+        cookie.Events.OnRedirectToAccessDenied = context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        };
     });
-// Everything needs a login (pages, the Blazor connection, terminals) unless it is explicitly anonymous.
+// Everything needs a login (pages, the API, the live hub, terminals) unless it is explicitly anonymous.
 builder.Services.AddAuthorizationBuilder()
     .SetFallbackPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
 builder.Services.AddCascadingAuthenticationState();
@@ -70,14 +88,22 @@ if (managerOptions.UsesDefaultAdminPassword)
 }
 
 app.UseForwardedHeaders();
-if (!app.Environment.IsDevelopment())
-{
-    app.UseExceptionHandler("/Error", createScopeForErrors: true);
-}
 
-app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
+// Error and "not found" pages are for pages; the API answers with problem details.
+app.UseWhen(context => !RequestSecurity.IsMachinePath(context.Request.Path), pages =>
+{
+    if (!app.Environment.IsDevelopment())
+    {
+        pages.UseExceptionHandler("/Error", createScopeForErrors: true);
+    }
+
+    pages.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
+});
+
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseSameOriginForSockets();
 app.UseAntiforgery();
 
 app.MapStaticAssets().AllowAnonymous();
@@ -110,7 +136,13 @@ app.MapPost("/account/logout", async (HttpContext context) =>
     return Results.LocalRedirect("/login");
 });
 
-app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+app.MapManagerApi();
+app.MapTerminalSocket();
+app.MapHub<LiveUpdatesHub>(LiveHub.Path);
+
+app.MapRazorComponents<App>()
+    .AddInteractiveWebAssemblyRenderMode()
+    .AddAdditionalAssemblies(typeof(DeveAgentManager.Client.Routes).Assembly);
 
 app.Run();
 

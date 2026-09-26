@@ -184,6 +184,16 @@ keys that decrypt stored secrets (Setup Profile, GitHub token). Losing the keys 
   the harness's own format, in the new agent's folder, before the harness starts. Sessions can be exported (DeveSession
   or pi `.jsonl`) and imported. See [docs/session-formats.md](docs/session-formats.md) for the pi, Claude Code and Codex
   formats and how they map.
+- **The Portal** is a Blazor WebAssembly app: it runs in the browser and talks to the Manager only through its HTTP
+  API (`/api`), a SignalR hub for live updates and setup logs (`/hubs/live`), and a WebSocket per terminal
+  (`/ws/terminal`). The Manager keeps everything that matters: the database, the secrets, SSH to the Runners. Only the
+  login and error pages are server-rendered. A phone that sleeps just reconnects (pages reload what they missed, and an
+  agent's terminal reconnects by itself); there is no server-side session to lose.
+- **Security**: everything but the login page needs the login cookie (SameSite=Lax). Requests that change something
+  must carry the Portal's `X-DAM-Request` header (other sites can't send it without CORS, which the Manager doesn't
+  allow) and, like the hub and terminal WebSockets, come from the Manager's own origin. The API never returns a secret:
+  account logins, Runner passwords and the GitHub token stay on the Manager. A login terminal only names the harness;
+  the Manager runs the harness's login itself and saves what it produces.
 - **Terminals** are xterm.js in the browser, connected through the Manager to an SSH session on the Runner. The Runner
   never needs to be reachable from your browser. On phones there is a row of extra keys, and swiping scrolls
   (through tmux's mouse mode). Phone keyboards garble text typed straight into xterm.js (xterm.js issue #3600). So on
@@ -208,6 +218,10 @@ dotnet run --project DeveAgentManager       # http://localhost:5099, data in Dev
 dotnet test --solution DeveAgentManager.slnx
 ```
 
+Projects: `DeveAgentManager` (the Manager: API, hub, terminal sockets, hosting), `DeveAgentManager.Client` (the Portal,
+WebAssembly), `DeveAgentManager.Contracts` (what both share: states, API data, the session and Setup Profile models),
+`DeveAgentManager.Core` (Runners, agents, sessions, accounts, SSH), the harnesses and the providers.
+
 Any Debian machine you can SSH to works as an *Existing machine* Runner for testing, for example a container:
 
 ```bash
@@ -219,6 +233,7 @@ docker run -d --name fake-runner -p 2222:22 debian:trixie bash -c "apt-get updat
 Then add it as an existing machine at `127.0.0.1`, port `2222` (from the Manager container: `host.docker.internal`).
 
 Every push builds and tests on GitHub Actions and publishes a multi-arch (amd64, arm64) image to
-`ghcr.io/devedse/deveagentmanager`: `latest` and `1.0.<build>` from `master`, `beta_<branch>` from other branches.
+`ghcr.io/devedse/deveagentmanager`: `latest` and `1.0.<build>` from `master`; other branches get `beta` (the newest
+branch build) and `beta_<branch>`, versioned `1.0.0-beta.<run>`, and never touch `latest`.
 No secrets are needed; the workflow uses the built-in `GITHUB_TOKEN`. Run it manually (workflow_dispatch) to pick a
 self-hosted runner.

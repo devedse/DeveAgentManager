@@ -12,14 +12,20 @@
     <link rel="stylesheet" href="@Assets["_content/MudBlazor/MudBlazor.min.css"]" />
     <link rel="stylesheet" href="@Assets["_content/XtermBlazor/XtermBlazor.min.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
-    <link rel="stylesheet" href="@Assets["DeveAgentManager.styles.css"]" />
     <ImportMap />
     <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 
 <body>
-    <Routes @rendermode="PageRenderMode" />
-    <ReconnectModal />
+    @if (PageRenderMode is not null)
+    {
+        @* Shown while the Portal starts in the browser; it removes this once it runs. *@
+        <div id="app-loading" class="app-loading">
+            <img src="favicon.svg" alt="" width="48" height="48" />
+            <div class="app-loading-bar"><div></div></div>
+        </div>
+    }
+    <DeveAgentManager.Client.Routes @rendermode="PageRenderMode" />
     <script src="@Assets["lib/xterm/addon-fit.js"]"></script>
     <script src="@Assets["lib/xterm/addon-web-links.js"]"></script>
     <script src="@Assets["_framework/blazor.web.js"]"></script>
@@ -35,7 +41,11 @@
     [CascadingParameter]
     private HttpContext HttpContext { get; set; } = default!;
 
-    // The login page is plain server-rendered HTML (it has to set the auth cookie); everything else is interactive.
+    // The Portal runs in the browser (WebAssembly) and talks to the Manager's API. The login and error pages are plain
+    // server-rendered HTML (the login has to set the auth cookie). Not prerendered: the pages load their data from the
+    // API in the browser, and an unauthenticated visitor never gets past the login page (the fallback policy).
+    private static readonly IComponentRenderMode Portal = new InteractiveWebAssemblyRenderMode(prerender: false);
+
     private IComponentRenderMode? PageRenderMode =>
-        HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null;
+        HttpContext.AcceptsInteractiveRouting() ? Portal : null;
 }

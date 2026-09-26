@@ -11,6 +11,8 @@ ENV DATA_DIR=/data \
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY ["DeveAgentManager/DeveAgentManager.csproj", "DeveAgentManager/"]
+COPY ["DeveAgentManager.Client/DeveAgentManager.Client.csproj", "DeveAgentManager.Client/"]
+COPY ["DeveAgentManager.Contracts/DeveAgentManager.Contracts.csproj", "DeveAgentManager.Contracts/"]
 COPY ["DeveAgentManager.Core/DeveAgentManager.Core.csproj", "DeveAgentManager.Core/"]
 COPY ["DeveAgentManager.Providers.Proxmox/DeveAgentManager.Providers.Proxmox.csproj", "DeveAgentManager.Providers.Proxmox/"]
 COPY ["DeveAgentManager.Harnesses.Pi/DeveAgentManager.Harnesses.Pi.csproj", "DeveAgentManager.Harnesses.Pi/"]

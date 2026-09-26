@@ -1,5 +1,5 @@
 using System.Text.Json.Nodes;
-using DeveAgentManager.Components.Shared;
+using DeveAgentManager.Client.Shared;
 using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Harnesses.Pi;
 using Xunit;

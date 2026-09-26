@@ -1,0 +1,170 @@
+@page "/"
+@inherits LiveComponent
+@inject IDialogService Dialogs
+
+<PageTitle>Dashboard · DeveAgentManager</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page">
+    <PageHeader Title="Dashboard" Subtitle="Your coding agents and the machines they run on.">
+        <Actions>
+            <MudButton Variant="Variant.Outlined" Color="Color.Default" StartIcon="@Icons.Material.Rounded.AddToQueue" OnClick="NewRunnerAsync">New Runner</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
+        </Actions>
+    </PageHeader>
+
+    @if (_info?.UsesDefaultAdminPassword == true)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4" Dense="true">
+            The Portal uses the default password. Set <code>ADMIN_PASSWORD</code> in the compose file, because the Portal gives shell access to every Runner.
+        </MudAlert>
+    }
+
+    @if (_info is not null && !_info.Providers.Any(p => p.IsConfigured && !p.Capabilities.RequiresConnectionDetails))
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4" Dense="true">
+            Proxmox is not configured yet, so only existing machines can be added. See <MudLink Href="settings">Settings</MudLink> for what to set.
+        </MudAlert>
+    }
+
+    <div class="stat-grid">
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-primary"><MudIcon Icon="@Icons.Material.Rounded.SmartToy" /></div>
+            <div>
+                <div class="stat-value">@_agents.Count(a => a.State == AgentState.Running)<span class="stat-total"> / @_agents.Count</span></div>
+                <div class="stat-label">Agents running</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-success"><MudIcon Icon="@Icons.Material.Rounded.Dns" /></div>
+            <div>
+                <div class="stat-value">@_runners.Count(r => r.State == RunnerState.Ready)<span class="stat-total"> / @_runners.Count</span></div>
+                <div class="stat-label">Runners ready</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-info"><MudIcon Icon="@Icons.Material.Rounded.Autorenew" /></div>
+            <div>
+                <div class="stat-value">@_runners.Count(r => StateStyles.For(r.State).Busy || r.Operation is not null)</div>
+                <div class="stat-label">Runners busy</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-warning"><MudIcon Icon="@Icons.Material.Rounded.Memory" /></div>
+            <div>
+                @{
+                    var cores = _runners.Where(r => r.State == RunnerState.Ready).Sum(r => r.Cores);
+                    var memory = _runners.Where(r => r.State == RunnerState.Ready).Sum(r => (long)r.MemoryMb);
+                }
+                <div class="stat-value">@(cores > 0 ? cores : "-")<span class="stat-total"> cores</span></div>
+                <div class="stat-label">@(memory > 0 ? $"{FormatMemory(memory)} memory" : "Allocated to Proxmox Runners")</div>
+            </div>
+        </div>
+    </div>
+
+    @if (Loaded && _runners.Count == 0)
+    {
+        <div class="panel get-started">
+            <MudText Typo="Typo.h5">Get started</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">Three steps to your first agent.</MudText>
+            <div class="steps">
+                <a class="step" href="settings">
+                    <span class="step-number">1</span>
+                    <div><div class="step-title">Check the connection</div><div class="step-text">Settings → Providers → Test connection</div></div>
+                </a>
+                <button type="button" class="step" @onclick="NewRunnerAsync">
+                    <span class="step-number">2</span>
+                    <div><div class="step-title">Create a Runner</div><div class="step-text">A VM cloned from your template and set up for agents</div></div>
+                </button>
+                <button type="button" class="step" @onclick="NewAgentAsync">
+                    <span class="step-number">3</span>
+                    <div><div class="step-title">Start an agent</div><div class="step-text">Clone a repository and open pi in your browser</div></div>
+                </button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <MudGrid Spacing="4">
+            <MudItem xs="12" lg="7">
+                <div class="panel">
+                    <div class="panel-header">
+                        <MudText Typo="Typo.h6">Agents</MudText>
+                        <MudButton Href="agents" Variant="Variant.Text" Size="Size.Small" EndIcon="@Icons.Material.Rounded.ChevronRight">All agents</MudButton>
+                    </div>
+                    @if (_agents.Count == 0)
+                    {
+                        <EmptyState Icon="@Icons.Material.Rounded.SmartToy" Title="No agents yet" Text="Start an agent on a Runner to work on a repository.">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
+                        </EmptyState>
+                    }
+                    else
+                    {
+                        <div class="list">
+                            @foreach (var agent in _agents.Take(8))
+                            {
+                                <a class="list-row" href="agents/@agent.Id">
+                                    <div class="list-avatar">@agent.HarnessId</div>
+                                    <div class="list-main">
+                                        <div class="list-title">@agent.Name</div>
+                                        <div class="list-subtitle">@agent.RunnerName · @(agent.RepositoryUrl ?? agent.WorkingDirectory)</div>
+                                    </div>
+                                    <div class="list-meta">
+                                        <StatusPill Style="StateStyles.For(agent.State)" />
+                                        <span class="list-time">@agent.CreatedAt.Humanize()</span>
+                                    </div>
+                                </a>
+                            }
+                        </div>
+                    }
+                </div>
+            </MudItem>
+            <MudItem xs="12" lg="5">
+                <div class="panel">
+                    <div class="panel-header">
+                        <MudText Typo="Typo.h6">Runners</MudText>
+                        <MudButton Href="runners" Variant="Variant.Text" Size="Size.Small" EndIcon="@Icons.Material.Rounded.ChevronRight">All Runners</MudButton>
+                    </div>
+                    <div class="list">
+                        @foreach (var runner in _runners)
+                        {
+                            var status = runner.Status;
+                            <a class="list-row" href="runners/@runner.Id">
+                                <div class="list-avatar list-avatar-icon"><MudIcon Icon="@(runner.Kind == RunnerKind.Desktop ? Icons.Material.Rounded.DesktopWindows : Icons.Material.Rounded.Dns)" Size="Size.Small" /></div>
+                                <div class="list-main">
+                                    <div class="list-title">@runner.Name</div>
+                                    <div class="list-subtitle">@(runner.Host ?? "no address yet") · @runner.Agents.Count @(runner.Agents.Count == 1 ? "agent" : "agents")</div>
+                                    @if (runner.State == RunnerState.Ready && status is { CpuUsage: not null })
+                                    {
+                                        <UsageBars Status="status" Compact="true" />
+                                    }
+                                </div>
+                                <div class="list-meta">
+                                    <StatusPill Style="StateStyles.For(runner.State)" Text="@runner.Operation" />
+                                </div>
+                            </a>
+                        }
+                    </div>
+                </div>
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+@code {
+    private ManagerInfoDto? _info;
+    private List<RunnerDto> _runners = [];
+    private List<AgentDto> _agents = [];
+
+    protected override async Task LoadAsync()
+    {
+        _info ??= await Api.InfoAsync();
+        _runners = await Api.ListRunnersAsync();
+        _agents = _runners.SelectMany(r => r.Agents).OrderByDescending(a => a.State == AgentState.Running).ThenByDescending(a => a.CreatedAt).ToList();
+    }
+
+    private Task NewRunnerAsync() => Dialogs.ShowAsync<NewRunnerDialog>();
+
+    private Task NewAgentAsync() => Dialogs.ShowAsync<NewAgentDialog>();
+
+    private static string FormatMemory(long megabytes) => megabytes >= 1024 ? $"{megabytes / 1024.0:0.#} GB" : $"{megabytes} MB";
+}

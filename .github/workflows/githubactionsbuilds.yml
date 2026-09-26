@@ -20,6 +20,8 @@ jobs:
     runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "medium"]') || 'ubuntu-latest' }}
     outputs:
       build_number: ${{ github.ref == 'refs/heads/master' && steps.buildnumber.outputs.build_number || 1 }}
+      # master: 1.0.<build number>. Other branches: a beta, e.g. 1.0.0-beta.123 (the run number), so the Portal shows it.
+      version: ${{ github.ref == 'refs/heads/master' && format('1.0.{0}', steps.buildnumber.outputs.build_number) || format('1.0.0-beta.{0}', github.run_number) }}
     steps:
     - name: Generate build number
       if: github.ref == 'refs/heads/master'
@@ -40,7 +42,7 @@ jobs:
     - name: dotnet restore
       run: dotnet restore DeveAgentManager.slnx
     - name: dotnet build
-      run: dotnet build DeveAgentManager.slnx -c Release --no-restore /p:Version=1.0.${{ needs.generate_version_number.outputs.build_number }}
+      run: dotnet build DeveAgentManager.slnx -c Release --no-restore /p:Version=${{ needs.generate_version_number.outputs.version }}
     - name: dotnet test
       run: dotnet test --solution DeveAgentManager.slnx -c Release --no-build --verbosity normal
 
@@ -70,11 +72,14 @@ jobs:
       uses: docker/metadata-action@v6
       with:
         images: ghcr.io/devedse/deveagentmanager
+        # master: its version and latest (what the compose file runs). Other branches never touch those: they get
+        # "beta" (the newest branch build) and "beta_<branch>" (sanitized, so any branch name is a valid tag).
         tags: |
           type=raw,value=1.0.${{ needs.generate_version_number.outputs.build_number }},enable=${{ github.ref == 'refs/heads/master' }}
           type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
           type=raw,value=beta_nightly,enable=${{ github.actor != 'dependabot[bot]' }}
-          type=raw,value=beta_${{ github.ref_name }},enable=${{ github.ref != 'refs/heads/master' }}
+          type=raw,value=beta,enable=${{ github.ref != 'refs/heads/master' }}
+          type=ref,event=branch,prefix=beta_,enable=${{ github.ref != 'refs/heads/master' }}
         labels: |
           maintainer=${{ github.actor }}
           org.opencontainers.image.description=DeveAgentManager - run coding agents on Proxmox VMs from your browser
@@ -91,7 +96,7 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         annotations: ${{ steps.meta.outputs.annotations }}
         build-args: |
-          BUILD_VERSION=1.0.${{ needs.generate_version_number.outputs.build_number }}
+          BUILD_VERSION=${{ needs.generate_version_number.outputs.version }}
         github-token: ${{ secrets.GITHUB_TOKEN }}
         provenance: false
         sbom: false
