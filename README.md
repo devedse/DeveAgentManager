@@ -176,6 +176,10 @@ keys that decrypt stored secrets (Setup Profile, GitHub token). Losing the keys 
   touch devices the keyboard types into a hidden field that keeps the current line, and only the differences are sent:
   Backspaces, arrows and new text. Autocorrect, swipe typing and Backspace then behave as in other apps. The
   **⌨ fix** key switches this off.
+- **One screen per agent**: opening an agent's terminal disconnects its other terminals. tmux sizes the terminal to the
+  screen used last, so several attached screens (a phone and a PC) would make pi redraw its whole conversation on every
+  switch. The **screens** button in the terminal's toolbar shows what is attached (it turns orange with more than one,
+  e.g. a manual `tmux attach` over SSH) and can disconnect them; a disconnected screen says so and offers Reconnect.
 - **Pasting** into a terminal uses your computer's clipboard. Ctrl+V (or Ctrl+Shift+V, Shift+Insert) pastes text, and
   also images such as screenshots. Images can be dropped on the terminal too, or picked with the **📎 Image** key
   (on phones: gallery, camera, screenshots). Images are stored on the Runner in `~/.deveagentmanager/uploads`, and their

@@ -217,6 +217,74 @@ public sealed partial class AgentService(
         return (runner, $"tmux -u attach-session -d -t {ShellQuote.Quote("=" + agent.TmuxSession)}");
     }
 
+    /// <summary>What a kicked terminal prints (instead of tmux's own goodbye), so it can say why it was disconnected.</summary>
+    public const string KickedMarker = "__DAM_KICKED__";
+
+    /// <summary>The terminals attached to the agent's tmux session: browser terminals, and SSH sessions that attached by hand.</summary>
+    public async Task<IReadOnlyList<AgentViewer>> ListViewersAsync(Guid agentId, CancellationToken cancellationToken = default)
+    {
+        var agent = await GetAsync(agentId, cancellationToken) ?? throw new ArgumentException("Agent not found.");
+        var runner = RequireReady(agent.Runner!);
+        var result = await shell.RunAsync(runner,
+            $"tmux list-clients -t {ShellQuote.Quote("=" + agent.TmuxSession)} -F '#{{client_tty}}|#{{client_width}}|#{{client_height}}|#{{client_created}}|#{{client_activity}}' 2>/dev/null || true",
+            TimeSpan.FromSeconds(20), cancellationToken);
+        return ParseViewers(result.Output);
+    }
+
+    /// <summary>
+    /// Disconnects terminals from the agent: one (<paramref name="tty"/>), or all but <paramref name="keepTty"/>. They show
+    /// that another screen disconnected them, with a Reconnect button. The agent keeps running.
+    /// </summary>
+    public async Task DisconnectViewersAsync(Guid agentId, string? tty, string? keepTty, CancellationToken cancellationToken = default)
+    {
+        var agent = await GetAsync(agentId, cancellationToken) ?? throw new ArgumentException("Agent not found.");
+        var runner = RequireReady(agent.Runner!);
+        // Replaces the client with a command that prints the marker, so the terminal knows it was kicked.
+        var goodbye = ShellQuote.Quote($"printf '\\r\\n{KickedMarker}\\r\\n'");
+        string command;
+        if (tty is not null)
+        {
+            command = $"tmux detach-client -t {ShellQuote.Quote(RequireTty(tty))} -E {goodbye}";
+        }
+        else
+        {
+            var viewers = await ListViewersAsync(agentId, cancellationToken);
+            var others = viewers.Where(v => v.Tty != keepTty).Select(v => $"tmux detach-client -t {ShellQuote.Quote(RequireTty(v.Tty))} -E {goodbye}").ToList();
+            if (others.Count == 0)
+            {
+                return;
+            }
+
+            command = string.Join(" ; ", others);
+        }
+
+        (await shell.RunAsync(runner, command, TimeSpan.FromSeconds(20), cancellationToken)).EnsureSuccess("Disconnecting the terminal");
+    }
+
+    internal static IReadOnlyList<AgentViewer> ParseViewers(string output)
+    {
+        var viewers = new List<AgentViewer>();
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var parts = line.Split('|');
+            if (parts.Length < 5 || !parts[0].StartsWith("/dev/", StringComparison.Ordinal)
+                || !int.TryParse(parts[1], out var columns) || !int.TryParse(parts[2], out var rows))
+            {
+                continue;
+            }
+
+            viewers.Add(new AgentViewer(parts[0], columns, rows, FromUnix(parts[3]), FromUnix(parts[4])));
+        }
+
+        return viewers.OrderBy(v => v.ConnectedAt).ToList();
+    }
+
+    private static DateTime FromUnix(string value) =>
+        long.TryParse(value, out var seconds) ? DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime : DateTime.UtcNow;
+
+    private static string RequireTty(string tty) =>
+        System.Text.RegularExpressions.Regex.IsMatch(tty, "^/dev/[A-Za-z0-9/]+$") ? tty : throw new ArgumentException($"'{tty}' is not a terminal.");
+
     /// <summary>Reads the state of every agent on a Runner from tmux.</summary>
     public async Task RefreshRunnerAsync(Runner runner, CancellationToken cancellationToken = default)
     {
@@ -401,3 +469,7 @@ public sealed partial class AgentService(
     [GeneratedRegex("^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$")]
     private static partial Regex AgentName();
 }
+
+/// <summary>A terminal attached to an agent's tmux session.</summary>
+/// <param name="Tty">The client's tty on the Runner, e.g. /dev/pts/3.</param>
+public sealed record AgentViewer(string Tty, int Columns, int Rows, DateTime ConnectedAt, DateTime LastActiveAt);

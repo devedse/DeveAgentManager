@@ -83,7 +83,11 @@
 
     private Xterm _xterm = default!;
     private bool _touchInput;
+    private static readonly byte[] KickedMarker = Encoding.UTF8.GetBytes(AgentService.KickedMarker);
+
     private bool _detachedElsewhere;
+    private bool _kicked;
+    private bool _reportedConnected;
     private DotNetObjectReference<TerminalView>? _self;
     private TerminalConnection? _connection;
     private CancellationTokenSource _lifetime = new();
@@ -104,6 +108,13 @@
 
     [Parameter]
     public EventCallback Disconnected { get; set; }
+
+    /// <summary>Raised once the terminal is attached and its <see cref="Tty"/> is known.</summary>
+    [Parameter]
+    public EventCallback Connected { get; set; }
+
+    /// <summary>This terminal's tty on the Runner (e.g. /dev/pts/3): tells it apart from the agent's other viewers.</summary>
+    public string? Tty => _connection?.Tty;
 
     public async Task SendAsync(string data)
     {
@@ -146,6 +157,8 @@
     private async Task ConnectAsync()
     {
         _detachedElsewhere = false;
+        _kicked = false;
+        _reportedConnected = false;
         _overlay = "Connecting...";
         _connecting = true;
         _error = false;
@@ -190,8 +203,25 @@
                     break;
                 }
 
-                // tmux's goodbye when another terminal took over the agent (attach -d).
-                _detachedElsewhere = data.Length < 512 && Encoding.UTF8.GetString(data).Contains("[detached (from session", StringComparison.Ordinal);
+                // tmux's goodbye when another terminal took over the agent (attach -d)...
+                _detachedElsewhere |= data.AsSpan().IndexOf("[detached (from session"u8) >= 0;
+                // ...or what a terminal prints when another screen disconnected it (Viewers).
+                if (data.AsSpan().IndexOf(KickedMarker) >= 0)
+                {
+                    _kicked = true;
+                    data = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(data).Replace(AgentService.KickedMarker, ""));
+                }
+
+                if (!ReferenceEquals(connection, _connection))
+                {
+                    continue;
+                }
+
+                if (!_reportedConnected && connection.Tty is not null)
+                {
+                    _reportedConnected = true;
+                    await InvokeAsync(() => Connected.InvokeAsync());
+                }
 
                 await InvokeAsync(async () => await _xterm.Write(data));
             }
@@ -211,6 +241,7 @@
             await InvokeAsync(async () =>
             {
                 _overlay = AgentId is null ? "The shell was closed."
+                    : _kicked ? "Another screen disconnected this one. The agent keeps running; reconnect to continue here."
                     : _detachedElsewhere ? "Opened in another window or on another device. Reconnect to continue here."
                     : "Disconnected from the agent. It keeps running on the Runner.";
                 StateHasChanged();
@@ -289,9 +320,9 @@
         {
             await JS.InvokeVoidAsync("damTerminal.dispose", _xterm.Id);
         }
-        catch (JSDisconnectedException)
+        catch (Exception ex) when (ex is JSDisconnectedException or InvalidOperationException)
         {
-            // The browser is already gone.
+            // The browser is already gone, or this was the server-side prerender (no browser to talk to).
         }
     }
 }

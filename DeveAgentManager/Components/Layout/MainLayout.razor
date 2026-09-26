@@ -11,7 +11,7 @@
         <MudSpacer />
         <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
             <ActivatorContent>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" StartIcon="@Icons.Material.Rounded.AccountCircle" Class="user-button">
+                <MudButton Variant="Variant.Text" Color="Color.Inherit" StartIcon="@Icons.Material.Rounded.AccountCircle" Class="user-button" OnClick="@context.ToggleAsync">
                     <span class="d-none d-sm-inline">@Options.AdminUsername</span>
                 </MudButton>
             </ActivatorContent>

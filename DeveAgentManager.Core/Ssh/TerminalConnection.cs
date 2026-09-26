@@ -32,12 +32,17 @@ public sealed class TerminalConnection : IDisposable
         if (command is not null)
         {
             filter = new StartupOutputFilter();
-            shell.Write($"stty -echo 2>/dev/null; printf '{StartupOutputFilter.EscapedMarker}\\n'; exec {command}\n");
+            // The tty goes out before the marker (hidden with the rest): it identifies this terminal among the clients
+            // attached to a tmux session.
+            shell.Write($"stty -echo 2>/dev/null; printf '{StartupOutputFilter.EscapedTtyMarker}%s\\n' \"$(tty)\"; printf '{StartupOutputFilter.EscapedMarker}\\n'; exec {command}\n");
             shell.Flush();
         }
 
         return new TerminalConnection(client, shell, filter);
     }
+
+    /// <summary>The terminal's tty on the Runner (e.g. /dev/pts/3), known once the startup output has been read.</summary>
+    public string? Tty => _filter?.Tty;
 
     /// <summary>Blocks until output is available. Returns an empty array when the terminal closed.</summary>
     public byte[] Read()
@@ -105,7 +110,16 @@ public sealed class StartupOutputFilter
 {
     public const string Marker = "__DAM_READY__";
 
-    public static readonly string EscapedMarker = string.Concat(Marker.Select(c => c == '_' ? "\\137" : c.ToString()));
+    public const string TtyMarker = "__DAM_TTY__";
+
+    public static readonly string EscapedMarker = Escape(Marker);
+
+    public static readonly string EscapedTtyMarker = Escape(TtyMarker);
+
+    /// <summary>The tty printed before the marker, when there was one.</summary>
+    public string? Tty { get; private set; }
+
+    private static string Escape(string marker) => string.Concat(marker.Select(c => c == '_' ? "\\137" : c.ToString()));
 
     private const int MaxBuffered = 256 * 1024;
 
@@ -125,6 +139,13 @@ public sealed class StartupOutputFilter
         var index = text.IndexOf(Marker, StringComparison.Ordinal);
         if (index >= 0)
         {
+            var ttyIndex = text.LastIndexOf(TtyMarker, index, StringComparison.Ordinal);
+            if (ttyIndex >= 0)
+            {
+                var value = text[(ttyIndex + TtyMarker.Length)..index].Split('\n', 2)[0].Trim();
+                Tty = value.StartsWith("/dev/", StringComparison.Ordinal) ? value : null;
+            }
+
             var end = index + Marker.Length;
             while (end < text.Length && text[end] is '\r' or '\n')
             {

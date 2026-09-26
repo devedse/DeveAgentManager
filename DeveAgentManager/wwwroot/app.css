@@ -1347,6 +1347,84 @@ a {
     touch-action: none;
 }
 
+/* ---------- Agent viewers (terminal toolbar) ---------- */
+
+.viewers-chip {
+    min-width: 0 !important;
+    height: 28px;
+    padding: 0 10px !important;
+    border-radius: 14px !important;
+    border-color: var(--dam-border-strong) !important;
+    color: var(--dam-muted) !important;
+    font-weight: 600;
+}
+
+.viewers-chip-warn {
+    border-color: var(--mud-palette-warning) !important;
+    color: var(--mud-palette-warning) !important;
+}
+
+.viewers-menu {
+    width: min(360px, 90vw);
+    padding: 8px 12px;
+}
+
+.viewers-title {
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.viewers-hint {
+    color: var(--dam-muted);
+    font-size: 0.8rem;
+    margin-bottom: 8px;
+}
+
+.viewer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-top: 1px solid var(--dam-border);
+}
+
+.viewer-icon {
+    color: var(--dam-muted);
+    flex-shrink: 0;
+}
+
+.viewer-self .viewer-icon {
+    color: var(--mud-palette-primary);
+}
+
+.viewer-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.viewer-name {
+    font-weight: 600;
+}
+
+.viewer-size {
+    color: var(--dam-muted);
+    font-family: var(--dam-mono);
+    font-size: 0.75rem;
+    margin-left: 4px;
+}
+
+.viewer-meta {
+    color: var(--dam-muted);
+    font-size: 0.75rem;
+}
+
+.viewers-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 8px;
+    border-top: 1px solid var(--dam-border);
+}
+
 /* ---------- Runner operations ---------- */
 
 .operation-list {

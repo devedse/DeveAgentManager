@@ -1,0 +1,150 @@
+@* The terminals attached to an agent, with a way to disconnect them. Lives in the agent's terminal toolbar. *@
+@implements IAsyncDisposable
+@inject AgentService AgentService
+@inject ISnackbar Snackbar
+
+<MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" @bind-Open="_open" @bind-Open:after="OnOpenChangedAsync">
+    <ActivatorContent>
+        @* MudBlazor 9: a custom activator opens the menu itself. *@
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Devices" title="@Summary" aria-label="@Summary" OnClick="@context.ToggleAsync"
+                   Class="@($"viewers-chip {(Others > 0 ? "viewers-chip-warn" : "")}")">@(_viewers?.Count ?? 0)</MudButton>
+    </ActivatorContent>
+    <ChildContent>
+        <div class="viewers-menu">
+            <div class="viewers-title">Screens attached to this agent</div>
+            @if (Others > 0)
+            {
+                <div class="viewers-hint">
+                    The agent's terminal takes the size of the screen used last. Every switch makes @Harness redraw its whole conversation.
+                </div>
+            }
+
+            @foreach (var viewer in _viewers ?? [])
+            {
+                var self = viewer.Tty == OwnTty;
+                <div class="viewer @(self ? "viewer-self" : "")">
+                    <MudIcon Icon="@(self ? Icons.Material.Rounded.PhonelinkRing : Icons.Material.Rounded.Monitor)" Size="Size.Small" Class="viewer-icon" />
+                    <div class="viewer-text">
+                        <div class="viewer-name">@(self ? "This screen" : "Other screen") <span class="viewer-size">@viewer.Columns×@viewer.Rows</span></div>
+                        <div class="viewer-meta">Connected @viewer.ConnectedAt.Humanize() · last used @viewer.LastActiveAt.Humanize()</div>
+                    </div>
+                    @if (!self)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" Disabled="_busy" OnClick="() => DisconnectAsync(viewer.Tty)">Disconnect</MudButton>
+                    }
+                </div>
+            }
+
+            @if (_viewers is { Count: 0 })
+            {
+                <div class="viewers-hint">No screens attached.</div>
+            }
+
+            @if (Others > 1 && OwnTty is not null)
+            {
+                <div class="viewers-actions">
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Rounded.LinkOff" Disabled="_busy" OnClick="() => DisconnectAsync(null)">
+                        Disconnect all others
+                    </MudButton>
+                </div>
+            }
+        </div>
+    </ChildContent>
+</MudMenu>
+
+@code {
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
+
+    private readonly CancellationTokenSource _lifetime = new();
+    private IReadOnlyList<AgentViewer>? _viewers;
+    private bool _busy;
+    private string? _lastTty;
+
+    [Parameter, EditorRequired]
+    public Guid AgentId { get; set; }
+
+    /// <summary>This page's terminal (null until it is attached).</summary>
+    [Parameter]
+    public string? OwnTty { get; set; }
+
+    [Parameter]
+    public string Harness { get; set; } = "the harness";
+
+    private int Others => _viewers?.Count(v => v.Tty != OwnTty) ?? 0;
+
+    private string Summary => _viewers is null ? "Screens attached to this agent"
+        : Others == 0 ? "Only this screen is attached"
+        : $"{Others} other {(Others == 1 ? "screen is" : "screens are")} attached";
+
+    protected override void OnInitialized() => _ = PollAsync();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (OwnTty != _lastTty)
+        {
+            // Just attached (or reattached): show the new list right away.
+            _lastTty = OwnTty;
+            await RefreshAsync();
+        }
+    }
+
+    private async Task PollAsync()
+    {
+        using var timer = new PeriodicTimer(PollInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_lifetime.Token))
+            {
+                await InvokeAsync(RefreshAsync);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The page was closed.
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            _viewers = await AgentService.ListViewersAsync(AgentId, _lifetime.Token);
+            StateHasChanged();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The Runner is unreachable for a moment; the next poll tries again.
+        }
+    }
+
+    private bool _open;
+
+    private Task OnOpenChangedAsync() => _open ? RefreshAsync() : Task.CompletedTask;
+
+    /// <param name="tty">One screen, or null for all but this one.</param>
+    private async Task DisconnectAsync(string? tty)
+    {
+        _busy = true;
+        try
+        {
+            await AgentService.DisconnectViewersAsync(AgentId, tty, OwnTty, _lifetime.Token);
+            Snackbar.Add(tty is null ? "Disconnected the other screens." : "Disconnected that screen.", Severity.Success);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        await RefreshAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _lifetime.CancelAsync();
+        _lifetime.Dispose();
+    }
+}

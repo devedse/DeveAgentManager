@@ -28,6 +28,7 @@
             }
             @if (_agent.State is AgentState.Running or AgentState.Starting)
             {
+                <AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" />
                 <MudTooltip Text="Restart the harness (resumes the conversation)">
                     <MudIconButton Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" Disabled="_busy" OnClick="RestartAsync" />
                 </MudTooltip>
@@ -49,7 +50,7 @@
     }
     else if (_agent.State is AgentState.Running or AgentState.Starting)
     {
-        <TerminalView @ref="_terminal" @key="_connectionKey" AgentId="_agent.Id" Disconnected="OnDisconnectedAsync" />
+        <TerminalView @ref="_terminal" @key="_connectionKey" AgentId="_agent.Id" Disconnected="OnDisconnectedAsync" Connected="StateHasChanged" />
     }
     else
     {
