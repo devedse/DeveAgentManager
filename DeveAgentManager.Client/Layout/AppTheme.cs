@@ -2,7 +2,7 @@ using MudBlazor;
 
 namespace DeveAgentManager.Client.Layout;
 
-/// <summary>The Portal's look: a dark, slightly blue-tinted theme with a violet accent.</summary>
+/// <summary>The Portal's look: dark and slightly blue-tinted, or light, with a violet accent (the same colors as app.css).</summary>
 public static class AppTheme
 {
     public const string MonoFont = "'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, Consolas, 'DejaVu Sans Mono', monospace";
@@ -41,6 +41,37 @@ public static class AppTheme
             Divider = "#1e2430",
             DividerLight = "#1a1f2a",
             Skeleton = "#1c2230",
+        },
+        PaletteLight = new PaletteLight
+        {
+            Primary = "#6a5af0",
+            PrimaryContrastText = "#ffffff",
+            Secondary = "#0d9488",
+            Tertiary = "#db2777",
+            Info = "#2563eb",
+            Success = "#059669",
+            Warning = "#b45309",
+            Error = "#dc2626",
+            Black = "#0d1017",
+            Background = "#f5f6fa",
+            BackgroundGray = "#eceef4",
+            Surface = "#ffffff",
+            DrawerBackground = "#fbfbfd",
+            DrawerText = "#2a3142",
+            DrawerIcon = "#5b6477",
+            AppbarBackground = "rgba(255,255,255,0.85)",
+            AppbarText = "#161b26",
+            TextPrimary = "#161b26",
+            TextSecondary = "#5b6477",
+            TextDisabled = "#a3aaba",
+            ActionDefault = "#4b5467",
+            LinesDefault = "#e2e5ed",
+            LinesInputs = "#cfd4df",
+            TableLines = "#e8ebf1",
+            TableHover = "#f3f4f8",
+            Divider = "#e2e5ed",
+            DividerLight = "#eef0f5",
+            Skeleton = "#e8ebf1",
         },
         Typography = new Typography
         {

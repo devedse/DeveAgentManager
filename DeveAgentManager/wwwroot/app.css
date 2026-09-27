@@ -19,6 +19,41 @@
     --dam-error: #f87171;
     --dam-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
     --dam-radius: 14px;
+    /* Accent text (links, the active page, tool names), hover tints and scrollbars. */
+    --dam-primary-text: #b6adff;
+    --dam-hover: rgba(255, 255, 255, 0.04);
+    --dam-scrollbar: #2b3445;
+    --dam-brand-start: #a79cff;
+    /* Terminals, logs and code stay dark in both themes: that is what harnesses and tools print for. */
+    --dam-console: #0a0d13;
+    --dam-console-text: #b9c2d3;
+    --dam-console-muted: #8791a5;
+    color-scheme: dark;
+}
+
+/* Light (Settings → Appearance, or a light device with "System"). The attribute is set before the page paints. */
+:root[data-theme="light"] {
+    --dam-bg: #f5f6fa;
+    --dam-surface: #ffffff;
+    --dam-surface-2: #f3f4f8;
+    --dam-surface-3: #eceef4;
+    --dam-border: #e2e5ed;
+    --dam-border-strong: #d0d5e0;
+    --dam-text: #161b26;
+    --dam-muted: #5b6477;
+    --dam-faint: #8a93a6;
+    --dam-primary: #6a5af0;
+    --dam-primary-soft: rgba(106, 90, 240, 0.1);
+    --dam-teal: #0d9488;
+    --dam-success: #059669;
+    --dam-info: #2563eb;
+    --dam-warning: #b45309;
+    --dam-error: #dc2626;
+    --dam-primary-text: #5846e0;
+    --dam-hover: rgba(15, 23, 42, 0.04);
+    --dam-scrollbar: #c5cbd8;
+    --dam-brand-start: #6a5af0;
+    color-scheme: light;
 }
 
 html, body {
@@ -55,7 +90,7 @@ a {
 
 * {
     scrollbar-width: thin;
-    scrollbar-color: #2b3445 transparent;
+    scrollbar-color: var(--dam-scrollbar) transparent;
 }
 
 /* ---------- Layout ---------- */
@@ -79,7 +114,7 @@ a {
 }
 
 .brand-accent {
-    background: linear-gradient(90deg, #a79cff, var(--dam-teal));
+    background: linear-gradient(90deg, var(--dam-brand-start), var(--dam-teal));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -109,7 +144,7 @@ a {
 }
 
     .menu-form-button:hover {
-        background: rgba(255, 255, 255, 0.04);
+        background: var(--dam-hover);
     }
 
 .app-drawer {
@@ -144,7 +179,7 @@ a {
 
     .app-nav .mud-nav-link.active {
         background: var(--dam-primary-soft) !important;
-        color: #b6adff !important;
+        color: var(--dam-primary-text) !important;
     }
 
         .app-nav .mud-nav-link.active .mud-nav-link-icon {
@@ -428,7 +463,7 @@ a {
     border-radius: 10px;
     background: linear-gradient(135deg, rgba(139, 125, 255, 0.25), rgba(45, 212, 191, 0.18));
     border: 1px solid rgba(139, 125, 255, 0.25);
-    color: #cfc9ff;
+    color: var(--dam-primary-text);
     font-family: var(--dam-mono);
     font-size: 0.8rem;
     font-weight: 700;
@@ -977,7 +1012,7 @@ a {
     gap: 14px;
     padding: 16px;
     border-radius: 12px;
-    background: rgba(13, 16, 23, 0.6);
+    background: var(--dam-surface-2);
     border: 1px solid var(--dam-border);
     color: inherit;
     font: inherit;
@@ -1273,7 +1308,7 @@ a {
     gap: 8px;
     padding: 10px 12px;
     border-radius: 10px;
-    background: #0a0d13;
+    background: var(--dam-console);
     border: 1px solid var(--dam-border);
 }
 
@@ -1293,7 +1328,7 @@ a {
     overflow: auto;
     padding: 12px 0;
     border-radius: 10px;
-    background: #0a0d13;
+    background: var(--dam-console);
     border: 1px solid var(--dam-border);
     font-family: var(--dam-mono);
     font-size: 0.78rem;
@@ -1312,7 +1347,7 @@ a {
 }
 
     .log-line:hover {
-        background: rgba(255, 255, 255, 0.02);
+        background: rgba(255, 255, 255, 0.03);
     }
 
 .log-time {
@@ -1330,12 +1365,12 @@ a {
 .log-text {
     white-space: pre-wrap;
     word-break: break-word;
-    color: #b9c2d3;
+    color: var(--dam-console-text);
 }
 
-.log-output .log-text { color: #8791a5; }
+.log-output .log-text { color: var(--dam-console-muted); }
 .log-step { margin-top: 8px; }
-.log-step .log-text, .log-step .log-marker { color: #b6adff; font-weight: 700; }
+.log-step .log-text, .log-step .log-marker { color: #b6adff; font-weight: 700; } /* on the console background */
 .log-success .log-text, .log-success .log-marker { color: var(--dam-success); }
 .log-warning .log-text, .log-warning .log-marker { color: var(--dam-warning); }
 .log-error .log-text, .log-error .log-marker { color: var(--dam-error); }
@@ -1902,7 +1937,7 @@ a {
     max-width: 400px;
     padding: 32px;
     border-radius: 18px;
-    background: rgba(20, 25, 35, 0.88);
+    background: color-mix(in srgb, var(--dam-surface) 88%, transparent);
     border: 1px solid var(--dam-border-strong);
     box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8);
     backdrop-filter: blur(12px);
@@ -1937,7 +1972,7 @@ a {
     padding: 11px 14px;
     border-radius: 10px;
     border: 1px solid var(--dam-border-strong);
-    background: #0f131b;
+    background: var(--dam-surface-2);
     color: var(--dam-text);
     font: inherit;
     outline: none;
@@ -2236,7 +2271,7 @@ a {
     }
 
 .conv-tool {
-    background: #10141c;
+    background: var(--dam-surface-2);
 }
 
 .conv-tool-error {
@@ -2244,7 +2279,7 @@ a {
 }
 
 .conv-tool-name {
-    color: #b6adff;
+    color: var(--dam-primary-text);
     font-family: var(--dam-mono);
     font-weight: 600;
     flex-shrink: 0;
@@ -2290,14 +2325,14 @@ a {
     max-height: 360px;
     overflow: auto;
     border-radius: 8px;
-    background: #0a0d13;
+    background: var(--dam-console);
     border: 1px solid var(--dam-border);
     font-family: var(--dam-mono);
     font-size: 0.76rem;
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
-    color: #b9c2d3;
+    color: var(--dam-console-text);
 }
 
 .conv-event {
@@ -2348,7 +2383,7 @@ a {
     .markdown h3, .markdown h4 { font-size: 1rem; }
 
     .markdown a {
-        color: #b6adff;
+        color: var(--dam-primary-text);
     }
 
     .markdown pre {
@@ -2394,14 +2429,14 @@ a {
     align-items: center;
     justify-content: center;
     gap: 20px;
-    background: #0d1017;
+    background: var(--dam-bg);
 }
 
 .app-loading-bar {
     width: 160px;
     height: 3px;
     border-radius: 2px;
-    background: #1e2430;
+    background: var(--dam-border);
     overflow: hidden;
 }
 
@@ -2409,7 +2444,7 @@ a {
         width: 40%;
         height: 100%;
         border-radius: 2px;
-        background: #8b7dff;
+        background: var(--dam-primary);
         animation: app-loading 1.2s ease-in-out infinite;
     }
 
@@ -2489,7 +2524,7 @@ a {
     position: relative;
     flex: 1;
     min-height: 0;
-    background: #1f1f1f;
+    background: var(--dam-bg);
 }
 
     .editor-frame iframe {
@@ -2502,4 +2537,12 @@ a {
 
 .editor-logo {
     margin: 0 2px;
+}
+
+.theme-choice {
+    max-width: 420px;
+}
+
+:root[data-theme="light"] .login-card {
+    box-shadow: 0 30px 80px -30px rgba(15, 23, 42, 0.25);
 }

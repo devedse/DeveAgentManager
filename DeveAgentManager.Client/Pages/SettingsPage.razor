@@ -4,6 +4,7 @@
 @inject LiveUpdates Live
 @inject ISnackbar Snackbar
 @inject IJSRuntime JS
+@inject ThemeService Theme
 
 <PageTitle>Settings · DeveAgentManager</PageTitle>
 
@@ -218,6 +219,21 @@
                             }
                         </div>
                     }
+                </div>
+            </MudTabPanel>
+
+            <MudTabPanel Text="Appearance" Icon="@Icons.Material.Rounded.Contrast">
+                <div class="settings-section">
+                    <MudText Typo="Typo.subtitle1" Class="section-title">Theme</MudText>
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+                        Saved in this browser. <b>System</b> follows the device's light or dark mode, also when it changes. Terminals and logs stay dark,
+                        and VS Code follows the device.
+                    </MudText>
+                    <MudToggleGroup T="string" Value="Theme.Mode" ValueChanged="Theme.SetModeAsync" Color="Color.Primary" Outlined="true" Class="theme-choice">
+                        <MudToggleItem Value="ThemeService.System"><MudIcon Icon="@Icons.Material.Rounded.BrightnessAuto" Size="Size.Small" Class="mr-2" />System</MudToggleItem>
+                        <MudToggleItem Value="ThemeService.Light"><MudIcon Icon="@Icons.Material.Rounded.LightMode" Size="Size.Small" Class="mr-2" />Light</MudToggleItem>
+                        <MudToggleItem Value="ThemeService.Dark"><MudIcon Icon="@Icons.Material.Rounded.DarkMode" Size="Size.Small" Class="mr-2" />Dark</MudToggleItem>
+                    </MudToggleGroup>
                 </div>
             </MudTabPanel>
 

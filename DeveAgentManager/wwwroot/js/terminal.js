@@ -625,6 +625,63 @@
         },
     };
 
+    // Light or dark (Settings → Appearance), per browser. "system" follows the device, also when it changes.
+    const THEME_KEY = "dam-theme";
+    const themeWatchers = new Set();
+    const systemLight = window.matchMedia?.("(prefers-color-scheme: light)");
+
+    function themeMode() {
+        try {
+            return localStorage.getItem(THEME_KEY) || "system";
+        } catch {
+            return "system";
+        }
+    }
+
+    function applyTheme() {
+        const mode = themeMode();
+        const dark = mode === "dark" || (mode !== "light" && !systemLight?.matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) {
+            meta.content = dark ? "#0d1017" : "#f5f6fa";
+        }
+
+        themeWatchers.forEach(watcher => watcher.invokeMethodAsync("OnThemeChanged", dark).catch(() => themeWatchers.delete(watcher)));
+        return dark;
+    }
+
+    systemLight?.addEventListener("change", () => {
+        if (themeMode() === "system") {
+            applyTheme();
+        }
+    });
+
+    window.damTheme = {
+        // Returns [mode, isDark].
+        get() {
+            return [themeMode(), document.documentElement.dataset.theme !== "light"];
+        },
+
+        set(mode) {
+            try {
+                localStorage.setItem(THEME_KEY, mode);
+            } catch {
+                // Private window: it lasts for this page.
+            }
+
+            return applyTheme();
+        },
+
+        watch(dotnet) {
+            themeWatchers.add(dotnet);
+        },
+
+        unwatch(dotnet) {
+            themeWatchers.delete(dotnet);
+        },
+    };
+
     window.damUi = {
         // Keeps a log scrolled to the bottom, unless the user scrolled up to read.
         stickToBottom(element, force) {
