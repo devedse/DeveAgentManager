@@ -124,9 +124,34 @@ public class Agent
 
     public int? ExitCode { get; set; }
 
+    /// <summary>Changes when the agent's icon (<see cref="AgentIcon"/>) changes; null when it has none (the harness's logo is shown).</summary>
+    public long? IconVersion { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// The icon of the project an agent works on: found in its folder (see <see cref="Agents.RepoIcons"/>) or picked in the
+/// Portal, and kept by the Manager so lists show it without asking the Runner.
+/// </summary>
+public class AgentIcon
+{
+    public Guid AgentId { get; set; }
+
+    /// <summary>The image, relative to the agent's folder; null for none (the harness's logo).</summary>
+    public string? Path { get; set; }
+
+    public string? ContentType { get; set; }
+
+    public byte[]? Data { get; set; }
+
+    /// <summary>Picked in the Portal (a file, or none): the Manager doesn't look for another one.</summary>
+    public bool ChosenByUser { get; set; }
+
+    /// <summary>When the folder was last searched.</summary>
+    public DateTime CheckedAt { get; set; }
 }
 
 /// <summary>

@@ -100,7 +100,18 @@ public sealed record AgentDto(
     Guid? AccountId,
     string? AccountName,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    long? IconVersion = null);
+
+/// <summary>An image in an agent's folder, for the icon picker. <paramref name="Path"/> is relative to the folder.</summary>
+/// <param name="Automatic">What the Manager would pick by itself.</param>
+public sealed record AgentIconImageDto(string Path, long Bytes, double? Width, double? Height, int Score, bool Automatic);
+
+/// <param name="Current">The image in use, or null for the harness's logo.</param>
+public sealed record AgentIconChoicesDto(IReadOnlyList<AgentIconImageDto> Images, string? Current, bool ChosenByUser);
+
+/// <summary>Use this image (a path in the agent's folder) or none (null); or, with <paramref name="Automatic"/>, let the Manager pick again.</summary>
+public sealed record SetAgentIconRequest(string? Path, bool Automatic = false);
 
 public sealed record SessionDto(
     Guid Id,

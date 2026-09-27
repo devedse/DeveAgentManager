@@ -1,0 +1,100 @@
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+
+@* Picks the icon of an agent's project: any image in its folder, the harness's logo, or the Manager's own pick. *@
+<MudDialog>
+    <TitleContent>
+        <div class="dialog-title">
+            <MudIcon Icon="@Icons.Material.Rounded.Image" Color="Color.Primary" />
+            <span>Icon for '@Agent.Name'</span>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        @if (_choices is null)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">Looking at the images in @Agent.WorkingDirectory...</MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+                @(_choices.ChosenByUser ? "Picked by you." : "Picked by the Manager: it looks for the project's own icon (named in its project files, or called like the project, icon or logo; square and small).")
+                The best matches come first.
+            </MudText>
+            <div class="icon-choices">
+                <button type="button" class="icon-choice @(_choices.Current is null ? "selected" : "")" disabled="@_busy" @onclick="() => ChooseAsync(null)">
+                    <span class="icon-choice-image"><HarnessLogo HarnessId="@Agent.HarnessId" Size="Size.Large" /></span>
+                    <span class="icon-choice-name">The harness's logo</span>
+                </button>
+                @foreach (var image in _choices.Images)
+                {
+                    <button type="button" class="icon-choice @(image.Path == _choices.Current ? "selected" : "")" disabled="@_busy" title="@image.Path" @onclick="() => ChooseAsync(image.Path)">
+                        <span class="icon-choice-image"><img src="@ManagerApi.IconImageUrl(Agent.Id, image.Path)" alt="" loading="lazy" /></span>
+                        <span class="icon-choice-name">@System.IO.Path.GetFileName(image.Path)</span>
+                        <span class="icon-choice-meta">@Describe(image)@(image.Automatic ? " · auto" : "")</span>
+                    </button>
+                }
+            </div>
+            @if (_choices.Images.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary mt-3">No images in the folder (dependency and build folders are skipped).</MudText>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Disabled="_busy || _choices is null || !_choices.ChosenByUser" StartIcon="@Icons.Material.Rounded.AutoFixHigh" OnClick="AutomaticAsync">Pick automatically</MudButton>
+        <MudButton OnClick="() => MudDialog.Close()">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public AgentDto Agent { get; set; } = default!;
+
+    private AgentIconChoicesDto? _choices;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _choices = await Api.GetAgentIconChoicesAsync(Agent.Id);
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+            MudDialog.Close();
+        }
+    }
+
+    private Task ChooseAsync(string? path) => RunAsync(new SetAgentIconRequest(path), path is null ? "The harness's logo it is." : "Icon changed.");
+
+    private Task AutomaticAsync() => RunAsync(new SetAgentIconRequest(null, Automatic: true), "The Manager picks the icon again.");
+
+    private async Task RunAsync(SetAgentIconRequest request, string done)
+    {
+        _busy = true;
+        try
+        {
+            await Api.SetAgentIconAsync(Agent.Id, request);
+            Snackbar.Add(done, Severity.Success);
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string Describe(AgentIconImageDto image) =>
+        (image.Width is { } w && image.Height is { } h ? $"{w:0}×{h:0} · " : "") + (image.Bytes < 1024 ? $"{image.Bytes} B" : $"{image.Bytes / 1024.0:0} KB");
+}

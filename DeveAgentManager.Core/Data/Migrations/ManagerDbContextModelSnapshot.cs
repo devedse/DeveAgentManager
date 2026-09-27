@@ -82,6 +82,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("IconVersion")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -122,6 +125,33 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("Agents");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentIcon", b =>
+                {
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("ChosenByUser")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ContentType")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Data")
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("Path")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("AgentId");
+
+                    b.ToTable("AgentIcons");
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.Runner", b =>
@@ -346,6 +376,15 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Navigation("Account");
 
                     b.Navigation("Runner");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentIcon", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.Agent", null)
+                        .WithOne()
+                        .HasForeignKey("DeveAgentManager.Core.Data.AgentIcon", "AgentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.RunnerActivity", b =>

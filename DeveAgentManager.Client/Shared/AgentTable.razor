@@ -16,7 +16,7 @@ else
             var busy = _busy.Contains(agent.Id);
             <div class="agent-row">
                 <a class="agent-row-main" href="agents/@agent.Id">
-                    <div class="list-avatar list-avatar-logo"><HarnessLogo HarnessId="@agent.HarnessId" Size="Size.Medium" /></div>
+                    <AgentAvatar Agent="agent" />
                     <div class="list-main">
                         <div class="list-title">@agent.Name</div>
                         <div class="list-subtitle">
@@ -60,6 +60,7 @@ else
                             <MudMenuItem Icon="@Icons.Material.Rounded.Code" Href="@($"agents/{agent.Id}/vscode")">Open in VS Code</MudMenuItem>
                         }
                         <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="@(() => StartAsync(agent, true))">Restart</MudMenuItem>
+                        <MudMenuItem Icon="@Icons.Material.Rounded.Image" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => PickIconAsync(agent)">Icon...</MudMenuItem>
                         <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem>
                     </MudMenu>
                 </div>
@@ -99,6 +100,9 @@ else
             $"Restart '{agentName}'?",
             "The harness is stopped (it gets 10 seconds to exit) and started again. Anything it is doing right now, like a running command, is cancelled. The conversation is resumed.",
             yesText: "Restart", cancelText: "Cancel") == true;
+
+    private Task PickIconAsync(AgentDto agent) =>
+        Dialogs.ShowAsync<AgentIconDialog>("Icon", new DialogParameters<AgentIconDialog> { { d => d.Agent, agent } }, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
 
     private Task StopAsync(AgentDto agent) => RunAsync(agent, () => Api.StopAgentAsync(agent.Id), $"Stopped '{agent.Name}'");
 

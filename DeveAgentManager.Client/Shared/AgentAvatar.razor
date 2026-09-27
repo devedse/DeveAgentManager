@@ -1,0 +1,34 @@
+@* An agent's tile: its project's icon with the harness's logo in the corner, or the harness's logo when the project has
+   no icon (or it doesn't load). *@
+@if (ManagerApi.IconUrl(Agent) is { } url && !_failed)
+{
+    <div class="list-avatar list-avatar-logo agent-avatar @Class" title="@Agent.Name">
+        <img src="@url" alt="" class="agent-avatar-icon" @onerror="() => _failed = true" />
+        <span class="agent-avatar-harness"><HarnessLogo HarnessId="@Agent.HarnessId" /></span>
+    </div>
+}
+else
+{
+    <div class="list-avatar list-avatar-logo @Class"><HarnessLogo HarnessId="@Agent.HarnessId" Size="Size.Medium" /></div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public AgentDto Agent { get; set; } = default!;
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    private bool _failed;
+    private long? _version;
+
+    protected override void OnParametersSet()
+    {
+        // A new icon gets another chance to load.
+        if (_version != Agent.IconVersion)
+        {
+            _version = Agent.IconVersion;
+            _failed = false;
+        }
+    }
+}

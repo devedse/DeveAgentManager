@@ -13,6 +13,10 @@
         @if (_agent is not null)
         {
             var running = _agent.State is AgentState.Running or AgentState.Starting;
+            @if (ManagerApi.IconUrl(_agent) is not null)
+            {
+                <AgentAvatar Agent="_agent" Class="terminal-avatar" />
+            }
             <div class="terminal-title">
                 <div class="terminal-name-row">
                     <span class="terminal-name" title="@_agent.Name">@_agent.Name</span>

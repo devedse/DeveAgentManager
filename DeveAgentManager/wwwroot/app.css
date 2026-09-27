@@ -447,6 +447,116 @@ a {
     color: var(--dam-text);
 }
 
+/* An agent's project icon, with its harness's logo in the corner. */
+.agent-avatar {
+    position: relative;
+    overflow: visible;
+}
+
+.agent-avatar-icon {
+    width: 26px;
+    height: 26px;
+    object-fit: contain;
+}
+
+.agent-avatar-harness {
+    position: absolute;
+    right: -5px;
+    bottom: -5px;
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 6px;
+    background: var(--dam-surface);
+    border: 1px solid var(--dam-border-strong);
+}
+
+    .agent-avatar-harness .mud-icon-root {
+        font-size: 12px;
+    }
+
+/* Smaller in the terminal's header. */
+.terminal-avatar.list-avatar {
+    width: 30px;
+    height: 30px;
+    margin-right: 4px;
+}
+
+    .terminal-avatar .agent-avatar-icon {
+        width: 20px;
+        height: 20px;
+    }
+
+    .terminal-avatar .agent-avatar-harness {
+        width: 15px;
+        height: 15px;
+        right: -4px;
+        bottom: -4px;
+    }
+
+        .terminal-avatar .agent-avatar-harness .mud-icon-root {
+            font-size: 10px;
+        }
+
+/* The icon picker: a grid of the images in the agent's folder. */
+.icon-choices {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 8px;
+}
+
+.icon-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 6px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--dam-border);
+    background: var(--dam-surface-2);
+    color: var(--dam-text);
+    cursor: pointer;
+    font: inherit;
+    min-width: 0;
+}
+
+    .icon-choice:hover {
+        border-color: var(--dam-border-strong);
+    }
+
+    .icon-choice.selected {
+        border-color: var(--dam-primary);
+        background: var(--dam-primary-soft);
+    }
+
+.icon-choice-image {
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+}
+
+    .icon-choice-image img {
+        max-width: 56px;
+        max-height: 56px;
+        object-fit: contain;
+    }
+
+.icon-choice-name {
+    max-width: 100%;
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.icon-choice-meta {
+    color: var(--dam-muted);
+    font-size: 0.7rem;
+}
+
 /* A logo in front of a harness's name. */
 .harness-option {
     display: inline-flex;

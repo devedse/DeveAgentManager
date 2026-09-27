@@ -155,6 +155,40 @@ public static class ManagerApi
 
         agents.MapGet("/{agentId:guid}/viewers", (Guid agentId, AgentService service, CancellationToken ct) => service.ListViewersAsync(agentId, ct));
 
+        // The project's icon. The URL has the icon's version, so browsers keep it until it changes.
+        agents.MapGet("/{agentId:guid}/icon", async (Guid agentId, HttpContext context, AgentIconService icons, CancellationToken ct) =>
+            await icons.GetAsync(agentId, ct) is { } icon ? Image(context, icon.Data, icon.ContentType, TimeSpan.FromDays(365)) : Results.NotFound());
+
+        agents.MapGet("/{agentId:guid}/icon/choices", async (Guid agentId, AgentIconService icons, CancellationToken ct) =>
+        {
+            var (images, current, chosenByUser) = await icons.ListAsync(agentId, ct);
+            var automatic = images.FirstOrDefault(i => i.Eligible)?.File.Path;
+            // The same file in several folders (an .ico copied into every project) is shown once, where it ranks best
+            // (as the one in use, when that is one of them).
+            return new AgentIconChoicesDto(
+                images.GroupBy(i => (Path.GetFileName(i.File.Path).ToLowerInvariant(), i.File.Bytes, i.File.Width, i.File.Height))
+                    .Select(g => g.FirstOrDefault(i => i.File.Path == current) ?? g.First())
+                    .Take(60).Select(i => new AgentIconImageDto(i.File.Path, i.File.Bytes, i.File.Width, i.File.Height, i.Score, i.File.Path == automatic)).ToList(),
+                current, chosenByUser);
+        });
+
+        agents.MapGet("/{agentId:guid}/icon/image", async (Guid agentId, string path, HttpContext context, AgentIconService icons, CancellationToken ct) =>
+            await icons.ReadAsync(agentId, path, ct) is { } image ? Image(context, image.Data, image.ContentType, TimeSpan.FromMinutes(5)) : Results.NotFound());
+
+        agents.MapPut("/{agentId:guid}/icon", async (Guid agentId, SetAgentIconRequest request, AgentIconService icons, CancellationToken ct) =>
+        {
+            if (request.Automatic)
+            {
+                await icons.DetectAsync(agentId, ct);
+            }
+            else
+            {
+                await icons.ChooseAsync(agentId, request.Path, ct);
+            }
+
+            return Results.NoContent();
+        });
+
         agents.MapPost("/{agentId:guid}/viewers/disconnect", async (Guid agentId, DisconnectViewersRequest request, AgentService service, CancellationToken ct) =>
         {
             await service.DisconnectViewersAsync(agentId, request.Tty, request.KeepTty, ct);
@@ -301,6 +335,19 @@ public static class ManagerApi
         var runner = await service.GetAsync(runnerId, ct) ?? throw new KeyNotFoundException("Runner not found.");
         notifier.Track(runner.Id, runner.Name, operation, start());
         return Results.Accepted(value: new OperationStartedDto([runner.Id]));
+    }
+
+    /// <summary>
+    /// An image from a Runner. An SVG can hold script: shown as an image it doesn't run, and opened by itself the sandbox
+    /// keeps it from running as the Portal.
+    /// </summary>
+    private static IResult Image(HttpContext context, byte[] data, string contentType, TimeSpan maxAge)
+    {
+        var headers = context.Response.Headers;
+        headers.XContentTypeOptions = "nosniff";
+        headers.ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+        headers.CacheControl = $"private, max-age={(int)maxAge.TotalSeconds}";
+        return Results.File(data, contentType);
     }
 
     private static IResult Accepted(Action start)

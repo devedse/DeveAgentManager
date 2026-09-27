@@ -92,6 +92,16 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     public Task DisconnectViewersAsync(Guid agentId, string? tty, string? keepTty) =>
         SendAsync(HttpMethod.Post, $"api/agents/{agentId}/viewers/disconnect", new DisconnectViewersRequest(tty, keepTty));
 
+    /// <summary>Where the browser loads an agent's icon (the version in the URL makes it cacheable); null when it has none.</summary>
+    public static string? IconUrl(AgentDto agent) => agent.IconVersion is { } version ? $"api/agents/{agent.Id}/icon?v={version}" : null;
+
+    /// <summary>An image in an agent's folder, for the icon picker.</summary>
+    public static string IconImageUrl(Guid agentId, string path) => $"api/agents/{agentId}/icon/image?path={Uri.EscapeDataString(path)}";
+
+    public Task<AgentIconChoicesDto> GetAgentIconChoicesAsync(Guid agentId) => GetAsync<AgentIconChoicesDto>($"api/agents/{agentId}/icon/choices");
+
+    public Task SetAgentIconAsync(Guid agentId, SetAgentIconRequest request) => SendAsync(HttpMethod.Put, $"api/agents/{agentId}/icon", request);
+
     public Task<SessionDto?> GetAgentSessionAsync(Guid agentId) => FindAsync<SessionDto>($"api/agents/{agentId}/session");
 
     // Sessions

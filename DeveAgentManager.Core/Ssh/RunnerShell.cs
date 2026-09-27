@@ -155,20 +155,24 @@ public sealed class RunnerShell(
         return sftpPath;
     }
 
-    public async Task<string?> DownloadAsync(Runner runner, string remotePath, CancellationToken cancellationToken = default)
+    public async Task<string?> DownloadAsync(Runner runner, string remotePath, CancellationToken cancellationToken = default) =>
+        await DownloadBytesAsync(runner, remotePath, long.MaxValue, cancellationToken) is { } bytes ? Encoding.UTF8.GetString(bytes) : null;
+
+    /// <summary>A file's bytes, or null when it doesn't exist or is larger than <paramref name="maxBytes"/>.</summary>
+    public async Task<byte[]?> DownloadBytesAsync(Runner runner, string remotePath, long maxBytes, CancellationToken cancellationToken = default)
     {
         var sftp = await GetSftpAsync(runner, cancellationToken);
         var sftpPath = ToSftpPath(sftp, remotePath);
         try
         {
-            if (!sftp.Exists(sftpPath))
+            if (!sftp.Exists(sftpPath) || sftp.GetAttributes(sftpPath) is not { IsRegularFile: true } attributes || attributes.Size > maxBytes)
             {
                 return null;
             }
 
             using var stream = new MemoryStream();
             await Task.Run(() => sftp.DownloadFile(sftpPath, stream), cancellationToken);
-            return Encoding.UTF8.GetString(stream.ToArray());
+            return stream.Length > maxBytes ? null : stream.ToArray();
         }
         catch (SshConnectionException)
         {
