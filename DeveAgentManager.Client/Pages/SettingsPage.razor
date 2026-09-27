@@ -86,8 +86,9 @@
                         @foreach (var variable in _profile.EnvironmentVariables)
                         {
                             <div class="form-row form-row-center">
-                                <MudTextField @bind-Value="variable.Name" Placeholder="NAME" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono-input env-name" />
-                                <MudTextField @bind-Value="variable.Value" Placeholder="value" Variant="Variant.Outlined" Margin="Margin.Dense" InputType="@(_showSecrets ? InputType.Text : InputType.Password)" Class="flex-grow-1 mono-input" />
+                                <MudTextField @bind-Value="variable.Name" Placeholder="NAME" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono-input env-name" Immediate="true"
+                                              Error="@(_profile.Problem(variable) is not null)" ErrorText="@_profile.Problem(variable)" />
+                                <MudTextField @bind-Value="variable.Value" Placeholder="value" Variant="Variant.Outlined" Margin="Margin.Dense" InputType="@(_showSecrets ? InputType.Text : InputType.Password)" Class="flex-grow-1 mono-input" Immediate="true" />
                                 <MudIconButton Icon="@Icons.Material.Rounded.Close" Size="Size.Small" OnClick="() => _profile.EnvironmentVariables.Remove(variable)" aria-label="Remove" />
                             </div>
                         }
@@ -127,11 +128,13 @@
                         {
                             <div class="file-card">
                                 <div class="form-row form-row-center">
-                                    <MudTextField @bind-Value="file.Path" Label="Path on the Runner" Placeholder="~/.pi/agent/settings.json" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" />
-                                    <MudTextField @bind-Value="file.Mode" Label="Mode" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mode-field mono-input" />
+                                    <MudTextField @bind-Value="file.Path" Label="Path on the Runner" Placeholder="~/.pi/agent/settings.json" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" Immediate="true"
+                                                  Error="@(_profile.PathProblem(file) is not null)" ErrorText="@_profile.PathProblem(file)" />
+                                    <MudTextField @bind-Value="file.Mode" Label="Mode" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mode-field mono-input" Immediate="true"
+                                                  Error="@(SetupProfile.ModeProblem(file) is not null)" ErrorText="@SetupProfile.ModeProblem(file)" />
                                     <MudIconButton Icon="@Icons.Material.Rounded.Close" Size="Size.Small" OnClick="() => _profile.Files.Remove(file)" aria-label="Remove" />
                                 </div>
-                                <MudTextField @bind-Value="file.Content" Label="Content" Variant="Variant.Outlined" Lines="6" MaxLines="24" Class="mono-input mt-2" />
+                                <MudTextField @bind-Value="file.Content" Label="Content" Variant="Variant.Outlined" Lines="6" MaxLines="24" Class="mono-input mt-2" Immediate="true" DebounceInterval="400" />
                             </div>
                         }
                         <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Rounded.Add" Size="Size.Small" OnClick="() => _profile.Files.Add(new SetupFile())">Add file</MudButton>
@@ -206,7 +209,8 @@
                     {
                         <div class="form-row form-row-center">
                             <MudTextField @bind-Value="_pat" Label="Token" Placeholder="@(_hasPat ? "•••••••• (saved; enter a new one to replace it)" : "github_pat_...")" Variant="Variant.Outlined" Margin="Margin.Dense"
-                                          InputType="InputType.Password" Class="flex-grow-1 mono-input" Immediate="true" />
+                                          InputType="InputType.Password" Class="flex-grow-1 mono-input" Immediate="true"
+                                          HelperText="@PatHint" Error="@PatLooksWrong" ErrorText="@PatHint" />
                             <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving || string.IsNullOrWhiteSpace(_pat)" OnClick="SavePatAsync">Save</MudButton>
                             @if (_hasPat)
                             {
@@ -443,6 +447,18 @@
             _importing = false;
         }
     }
+
+    /// <summary>What kind of GitHub token was entered, from its prefix (GitHub's token formats).</summary>
+    private string? PatHint => _pat?.Trim() switch
+    {
+        null or "" => "Fine-grained (github_pat_...) or classic (ghp_...).",
+        var pat when pat.StartsWith("github_pat_", StringComparison.Ordinal) => "Fine-grained token.",
+        var pat when pat.StartsWith("ghp_", StringComparison.Ordinal) => "Classic token: it reaches every repository you can. A fine-grained one can be limited.",
+        var pat when pat.StartsWith("gho_", StringComparison.Ordinal) || pat.StartsWith("ghu_", StringComparison.Ordinal) => "An OAuth or app token; it works while it is valid.",
+        _ => "This doesn't look like a GitHub token: they start with github_pat_ or ghp_.",
+    };
+
+    private bool PatLooksWrong => !string.IsNullOrWhiteSpace(_pat) && !_pat.Trim().StartsWith("gh", StringComparison.Ordinal) && !_pat.Trim().StartsWith("github_pat_", StringComparison.Ordinal);
 
     private async Task SavePatAsync()
     {

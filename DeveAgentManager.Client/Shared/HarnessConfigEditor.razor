@@ -15,7 +15,8 @@
         var index = i;
         <div class="form-row form-row-center">
             <MudTextField T="string" Value="Config.Packages[index]" ValueChanged="value => Config.Packages[index] = value" Placeholder="@Support.PackageExample"
-                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" />
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" Immediate="true"
+                          Error="@(PackageProblem(index) is not null)" ErrorText="@PackageProblem(index)" />
             <MudIconButton Icon="@Icons.Material.Rounded.Close" Size="Size.Small" OnClick="() => Config.Packages.RemoveAt(index)" aria-label="Remove" />
         </div>
     }
@@ -57,7 +58,7 @@
         <MudAutocomplete T="string" @bind-Value="Config.DefaultModel" Label="Model" Placeholder="@($"{Harness.DisplayName} chooses")" SearchFunc="SearchModelsAsync"
                          CoerceValue="true" CoerceText="false" Clearable="true" ResetValueOnEmptyText="true" MaxItems="50" Strict="false"
                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input"
-                         HelperText="@(ModelsLoading ? "Loading the models from a Runner..." : Models.Count > 0 ? $"{Models.Count} models offered by {Harness.DisplayName} on your Runner, or type any name." : Support.ModelSuggestions is { Count: > 0 } ? "Or type a full name to stay on one model, e.g. claude-opus-5-5." : null)">
+                         HelperText="@ModelHint">
             <ItemTemplate Context="model">
                 <span class="mono">@model</span>
                 @if (Choices.FirstOrDefault(m => m.Id == model) is { } choice && choice.Name != model)
@@ -130,6 +131,38 @@
     {
         var all = Choices.Select(m => m.Id).Distinct();
         return Task.FromResult(string.IsNullOrWhiteSpace(text) ? all : all.Where(m => m.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private string? ModelHint
+    {
+        get
+        {
+            var model = Config.DefaultModel?.Trim();
+            if (ModelsLoading)
+            {
+                return "Loading the models from a Runner...";
+            }
+
+            if (!string.IsNullOrEmpty(model) && Models.Count > 0 && !Choices.Any(m => m.Id == model))
+            {
+                return $"Not one of the {Models.Count} models {Harness.DisplayName} offers on your Runner: passed on as typed, so check the spelling.";
+            }
+
+            return Models.Count > 0 ? $"{Models.Count} models offered by {Harness.DisplayName} on your Runner, or type any name."
+                : Support.ModelSuggestions is { Count: > 0 } ? "Or type a full name to stay on one model, e.g. claude-opus-5-5."
+                : null;
+        }
+    }
+
+    private string? PackageProblem(int index)
+    {
+        var package = Config.Packages[index].Trim();
+        if (HarnessConfig.PackageProblem(package) is { } problem)
+        {
+            return problem;
+        }
+
+        return package.Length > 0 && Config.Packages.Take(index).Any(p => p.Trim() == package) ? "Already in the list." : null;
     }
 
     private string? SettingsError => Check(new HarnessConfig { Settings = Config.Settings });

@@ -303,7 +303,7 @@ public sealed partial class RunnerSetupService(
         foreach (var variable in profile.EnvironmentVariables)
         {
             var name = variable.Name.Trim();
-            if (!EnvironmentVariableName().IsMatch(name))
+            if (!SetupProfile.IsValidVariableName(name))
             {
                 continue;
             }
@@ -327,6 +327,4 @@ public sealed partial class RunnerSetupService(
         return reader.ReadToEnd().ReplaceLineEndings("\n");
     }
 
-    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
-    private static partial Regex EnvironmentVariableName();
 }

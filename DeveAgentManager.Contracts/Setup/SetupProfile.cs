@@ -30,6 +30,72 @@ public sealed class SetupProfile
 
         return config;
     }
+
+    /// <summary>A name bash can export: letters, digits and underscores, not starting with a digit.</summary>
+    public static bool IsValidVariableName(string name) =>
+        name.Length > 0 && !char.IsAsciiDigit(name[0]) && name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
+
+    /// <summary>Why this variable can't be used, or null. An empty row is fine: it is left out when saving.</summary>
+    public string? Problem(SetupEnvironmentVariable variable)
+    {
+        var name = variable.Name.Trim();
+        if (name.Length == 0)
+        {
+            return variable.Value.Length == 0 ? null : "Enter a name for this value.";
+        }
+
+        if (!IsValidVariableName(name))
+        {
+            return "Letters, digits and _ only, not starting with a digit.";
+        }
+
+        return EnvironmentVariables.Count(v => v.Name.Trim() == name) > 1 ? $"{name} is listed twice." : null;
+    }
+
+    /// <summary>Why this file can't be written, or null. An empty row is fine: it is left out when saving.</summary>
+    public string? PathProblem(SetupFile file)
+    {
+        var path = file.Path.Trim();
+        if (path.Length == 0)
+        {
+            return file.Content.Length == 0 ? null : "Enter where the file goes on the Runner.";
+        }
+
+        if (!path.StartsWith('/') && !path.StartsWith("~/", StringComparison.Ordinal))
+        {
+            return "A full path, or one in the home folder like ~/.pi/agent/AGENTS.md.";
+        }
+
+        return Files.Count(f => f.Path.Trim() == path) > 1 ? "This file is listed twice." : null;
+    }
+
+    public static string? ModeProblem(SetupFile file) =>
+        file.Mode.Trim() is { Length: 3 or 4 } mode && mode.All(c => c is >= '0' and <= '7') ? null : "Octal, like 600 or 644.";
+
+    /// <summary>Throws with a readable message for the first thing that can't be applied.</summary>
+    public void Validate()
+    {
+        foreach (var variable in EnvironmentVariables)
+        {
+            if (Problem(variable) is { } problem)
+            {
+                throw new ArgumentException($"Environment variable '{variable.Name.Trim()}': {problem}");
+            }
+        }
+
+        foreach (var file in Files.Where(f => f.Path.Trim().Length > 0 || f.Content.Length > 0))
+        {
+            if ((PathProblem(file) ?? ModeProblem(file)) is { } problem)
+            {
+                throw new ArgumentException($"File '{file.Path.Trim()}': {problem}");
+            }
+        }
+
+        foreach (var config in Harnesses.Values)
+        {
+            config.Validate();
+        }
+    }
 }
 
 /// <summary>
@@ -57,14 +123,18 @@ public sealed class HarnessConfig
     public IReadOnlyList<string> CleanPackages() =>
         Packages.Select(p => p.Trim()).Where(p => p.Length > 0).Distinct(StringComparer.Ordinal).ToList();
 
+    /// <summary>Why this package source can't be installed, or null.</summary>
+    public static string? PackageProblem(string package) =>
+        package.Trim().Any(char.IsWhiteSpace) ? "No spaces: a source like npm:pi-web-access or git:github.com/owner/repo." : null;
+
     /// <summary>Throws with a readable message when something can't be applied.</summary>
     public void Validate()
     {
         foreach (var package in CleanPackages())
         {
-            if (package.Any(char.IsWhiteSpace))
+            if (PackageProblem(package) is { } problem)
             {
-                throw new ArgumentException($"Package '{package}' contains spaces. Use a source like npm:pi-web-access or git:github.com/owner/repo.");
+                throw new ArgumentException($"Package '{package}': {problem}");
             }
         }
 
