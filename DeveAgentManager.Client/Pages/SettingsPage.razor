@@ -261,6 +261,10 @@
     /// <summary>Runners a "Save and apply" is waiting for: runner id → (harness, index of its row in the results).</summary>
     private readonly Dictionary<Guid, (string HarnessId, int Index)> _applying = [];
 
+    /// <summary>Results that came in while "Save and apply" was still waiting for the Manager to say which Runners it started.</summary>
+    private readonly Dictionary<Guid, OperationFinished> _earlyResults = [];
+    private bool _startingApply;
+
     private ManagerInfoDto? _info;
     private SetupProfile? _profile;
     private List<RunnerDto> _readyRunners = [];
@@ -370,6 +374,9 @@
         }
 
         OperationStartedDto started;
+        var clicked = DateTime.UtcNow;
+        _earlyResults.Clear();
+        _startingApply = true;
         try
         {
             started = await Api.ApplyHarnessConfigAsync(harness.Id);
@@ -377,24 +384,63 @@
         catch (ApiException ex)
         {
             Snackbar.Add(ex.Message, Severity.Error);
+            _startingApply = false;
             return;
         }
 
+        // From here on without awaiting anything, so no result can come in between.
+        _startingApply = false;
         if (started.RunnerIds.Count == 0)
         {
             Snackbar.Add($"Saved. No ready Runner has {harness.DisplayName}; it is applied when one is set up.", Severity.Info);
             return;
         }
 
-        var runners = await Api.ListRunnersAsync();
         var results = new List<ProviderCheck>();
         foreach (var runnerId in started.RunnerIds)
         {
             _applying[runnerId] = (harness.Id, results.Count);
-            results.Add(new ProviderCheck(runners.FirstOrDefault(r => r.Id == runnerId)?.Name ?? runnerId.ToString(), CheckStatus.Warning, "Applying..."));
+            results.Add(new ProviderCheck(_readyRunners.FirstOrDefault(r => r.Id == runnerId)?.Name ?? "Runner", CheckStatus.Warning, "Applying..."));
         }
 
         _applyResults[harness.Id] = results;
+        foreach (var early in _earlyResults.Values.ToList())
+        {
+            OnOperationFinished(early);
+        }
+
+        _earlyResults.Clear();
+        _ = WatchActivityAsync(harness, clicked);
+    }
+
+    /// <summary>
+    /// In case a result never arrives (the live connection dropped, e.g. a phone that slept): the Runners' activity says
+    /// how their "Configuring ..." ended.
+    /// </summary>
+    private async Task WatchActivityAsync(HarnessDto harness, DateTime clicked)
+    {
+        var name = $"Configuring {harness.DisplayName}";
+        for (var round = 0; round < 200 && IsApplying(harness.Id); round++)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3));
+            foreach (var runnerId in _applying.Where(a => a.Value.HarnessId == harness.Id).Select(a => a.Key).ToList())
+            {
+                try
+                {
+                    var done = (await Api.ListRunnerActivityAsync(runnerId))
+                        .FirstOrDefault(a => a.Name == name && a.StartedAt >= clicked.AddSeconds(-30) && a.Outcome is not null);
+                    if (done is not null && _applying.ContainsKey(runnerId))
+                    {
+                        var runnerName = _readyRunners.FirstOrDefault(r => r.Id == runnerId)?.Name ?? "Runner";
+                        OnOperationFinished(new OperationFinished(runnerId, runnerName, "apply", done.Outcome == RunnerActivityOutcome.Succeeded ? null : done.Error ?? done.Outcome.ToString()));
+                    }
+                }
+                catch (ApiException)
+                {
+                    // Asked again in the next round.
+                }
+            }
+        }
     }
 
     private bool IsApplying(string harnessId) => _applying.Values.Any(a => a.HarnessId == harnessId);
@@ -402,6 +448,13 @@
     /// <summary>A Runner finished applying: fill in its row.</summary>
     private void OnOperationFinished(OperationFinished finished)
     {
+        if (finished.Operation == "apply" && _startingApply && !_applying.ContainsKey(finished.RunnerId))
+        {
+            // A quick apply can end before the request that started it has answered: kept until the rows exist.
+            _earlyResults[finished.RunnerId] = finished;
+            return;
+        }
+
         if (finished.Operation != "apply" || !_applying.Remove(finished.RunnerId, out var target) || !_applyResults.TryGetValue(target.HarnessId, out var results))
         {
             return;
