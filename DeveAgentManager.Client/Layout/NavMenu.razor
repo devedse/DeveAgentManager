@@ -18,7 +18,10 @@
         {
             <MudNavLink Href="@($"agents/{agent.Id}")" Match="NavLinkMatch.All" Class="nav-agent">
                 <div class="nav-agent-row">
-                    <span class="nav-agent-dot @(agent.State == AgentState.Running ? "live" : "")"></span>
+                    <span class="nav-agent-avatar">
+                        <AgentAvatar Agent="agent" Class="nav-avatar" />
+                        <span class="nav-agent-dot @(agent.State == AgentState.Running ? "live" : "")"></span>
+                    </span>
                     <span class="nav-agent-name">@agent.Name</span>
                     <span class="nav-agent-meta">@agent.RunnerName</span>
                 </div>

@@ -2067,7 +2067,7 @@ a {
 .app-nav .nav-agent .mud-nav-link {
     padding-top: 4px !important;
     padding-bottom: 4px !important;
-    padding-left: 52px !important;
+    padding-left: 46px !important;
     min-height: 0;
     font-weight: 400;
 }
@@ -2081,12 +2081,49 @@ a {
     font-size: 0.82rem;
 }
 
+/* The agent's avatar (project icon, harness in the corner) with its state as a dot on the other corner. */
+.nav-agent-avatar {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.nav-avatar.list-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+}
+
+    .nav-avatar .mud-icon-root {
+        font-size: 16px;
+    }
+
+    .nav-avatar .agent-avatar-icon {
+        width: 16px;
+        height: 16px;
+    }
+
+    .nav-avatar .agent-avatar-harness {
+        width: 13px;
+        height: 13px;
+        right: -4px;
+        bottom: -4px;
+        border-radius: 4px;
+    }
+
+        .nav-avatar .agent-avatar-harness .mud-icon-root {
+            font-size: 9px;
+        }
+
 .nav-agent-dot {
+    position: absolute;
+    top: -2px;
+    right: -2px;
     width: 7px;
     height: 7px;
     border-radius: 50%;
     background: var(--dam-info);
-    flex-shrink: 0;
+    border: 1px solid var(--dam-surface);
+    box-sizing: content-box;
 }
 
     .nav-agent-dot.live {
