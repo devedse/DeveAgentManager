@@ -179,7 +179,8 @@ a {
 }
 
 .app-main {
-    min-height: 100vh;
+    min-height: 100vh; /* fallback */
+    min-height: 100dvh; /* dynamic viewport height for mobile */
 }
 
 .page {
@@ -1700,8 +1701,8 @@ a {
 
 .login-page {
     position: relative;
-    min-height: 100vh;
-    min-height: 100dvh;
+    min-height: 100vh; /* fallback */
+    min-height: 100dvh; /* dynamic viewport height for mobile */
     display: grid;
     place-items: center;
     padding: 24px;
