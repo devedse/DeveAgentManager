@@ -16,7 +16,7 @@
             <div class="viewers-hint">Same folder, same conversation. Another harness gets the conversation as text.</div>
             @foreach (var harness in _harnesses.Where(h => Agent.RunnerHarnessIds.Contains(h.Id)))
             {
-                <div class="switch-harness">@harness.DisplayName</div>
+                <div class="switch-harness harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</div>
                 @if (harness.AccountSupport is null)
                 {
                     @Option(harness, null, harness.DisplayName)

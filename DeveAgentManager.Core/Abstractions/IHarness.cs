@@ -10,6 +10,9 @@ public interface IHarness
 
     string Description { get; }
 
+    /// <summary>The harness's logo: SVG content for a 24×24 view box (shapes without a fill take the text color).</summary>
+    string? Icon => null;
+
     /// <summary>Idempotent bash script that installs or updates the harness. Runs as the Runner Account with the Manager's env.sh sourced.</summary>
     string InstallScript { get; }
 

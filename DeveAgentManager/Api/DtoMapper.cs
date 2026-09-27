@@ -53,7 +53,8 @@ public sealed class DtoMapper(
         sessions.SupportsHarness(harness.Id),
         harness.ModelsCommand is not null,
         harness.ConfigSupport,
-        harness.AccountSupport);
+        harness.AccountSupport,
+        harness.Icon);
 
     public static ProviderDto Provider(IRunnerProvider provider) => new(
         provider.Id,

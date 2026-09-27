@@ -16,7 +16,7 @@ else
             var busy = _busy.Contains(agent.Id);
             <div class="agent-row">
                 <a class="agent-row-main" href="agents/@agent.Id">
-                    <div class="list-avatar">@agent.HarnessId</div>
+                    <div class="list-avatar list-avatar-logo"><HarnessLogo HarnessId="@agent.HarnessId" Size="Size.Medium" /></div>
                     <div class="list-main">
                         <div class="list-title">@agent.Name</div>
                         <div class="list-subtitle">

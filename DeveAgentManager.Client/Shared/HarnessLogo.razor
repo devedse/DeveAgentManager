@@ -1,0 +1,35 @@
+@inject ManagerApi Api
+
+@* A harness's logo (from the Manager's info), with its name as the tooltip. *@
+@if (_loaded)
+{
+    <MudIcon Icon="@(_harness?.Icon ?? Icons.Material.Rounded.SmartToy)" Size="Size" Class="@($"harness-logo {Class}")" Title="@(_harness?.DisplayName ?? HarnessId)" />
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public string HarnessId { get; set; } = "";
+
+    [Parameter]
+    public Size Size { get; set; } = Size.Small;
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    private HarnessDto? _harness;
+    private bool _loaded;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            _harness = (await Api.InfoAsync()).Harnesses.FirstOrDefault(h => h.Id == HarnessId);
+        }
+        catch (ApiException)
+        {
+            // Shown as the generic icon.
+        }
+
+        _loaded = true;
+    }
+}

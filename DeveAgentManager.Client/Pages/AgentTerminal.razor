@@ -18,7 +18,7 @@
                     <span class="terminal-name" title="@_agent.Name">@_agent.Name</span>
                     <StatusPill Style="StateStyles.For(_agent.State)" Title="@_agent.StateMessage" Class="terminal-status" />
                 </div>
-                <span class="terminal-context">@_agent.HarnessId@(_agent.AccountName is { } account ? $" · {account}" : "") · @_agent.RunnerName · <span class="mono">@(_agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
+                <span class="terminal-context"><HarnessLogo HarnessId="@_agent.HarnessId" Class="context-logo" />@(_agent.AccountName is { } account ? $"{account} · " : "")@_agent.RunnerName · <span class="mono">@(_agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
             </div>
             <span class="terminal-hint">Shift+drag selects · Ctrl+C copies a selection</span>
             @if (_sessionId is { } sessionId)

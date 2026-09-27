@@ -155,7 +155,7 @@
 
             @foreach (var harness in (_info?.Harnesses ?? []).Where(h => h.ConfigSupport is not null))
             {
-                <MudTabPanel Text="@harness.DisplayName" Icon="@Icons.Material.Rounded.Extension">
+                <MudTabPanel Text="@harness.DisplayName" Icon="@(harness.Icon ?? Icons.Material.Rounded.Extension)">
                     @if (_profile is not null)
                     {
                         <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">

@@ -425,6 +425,28 @@ a {
     color: var(--dam-muted);
 }
 
+/* A harness's logo in its own colors, on a neutral tile. */
+.list-avatar-logo {
+    background: var(--dam-surface-3);
+    border-color: var(--dam-border-strong);
+    color: var(--dam-text);
+}
+
+/* A logo in front of a harness's name. */
+.harness-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* The logo in the terminal's context line, sized to its small text. */
+.context-logo.mud-icon-root {
+    font-size: 1.1em;
+    vertical-align: -0.2em;
+    margin-right: 5px;
+    color: var(--dam-text);
+}
+
 .list-main {
     flex: 1;
     min-width: 0;

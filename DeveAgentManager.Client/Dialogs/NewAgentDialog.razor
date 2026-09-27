@@ -40,7 +40,7 @@
                     <MudSelect T="string" Value="_harnessId" ValueChanged="SelectHarness" Label="Harness" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1">
                         @foreach (var harness in _availableHarnesses)
                         {
-                            <MudSelectItem Value="harness.Id">@harness.DisplayName</MudSelectItem>
+                            <MudSelectItem Value="harness.Id"><span class="harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</span></MudSelectItem>
                         }
                     </MudSelect>
                 </div>

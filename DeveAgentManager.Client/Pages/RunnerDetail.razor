@@ -154,7 +154,7 @@
                         {
                             var harness = Harness(harnessId);
                             <div class="operation">
-                                <MudIcon Icon="@Icons.Material.Rounded.Upgrade" Class="operation-icon" />
+                                <MudIcon Icon="@(harness.Icon ?? Icons.Material.Rounded.Upgrade)" Class="operation-icon" />
                                 <div class="operation-text">
                                     <div class="operation-name">Update @harness.DisplayName</div>
                                     <div class="operation-description">The latest @harness.DisplayName and its packages, then Settings → @harness.DisplayName (packages, model, settings).</div>
@@ -165,7 +165,7 @@
                         @foreach (var harness in (_info?.Harnesses ?? []).Where(h => !_runner.HarnessIds.Contains(h.Id)))
                         {
                             <div class="operation">
-                                <MudIcon Icon="@Icons.Material.Rounded.AddCircleOutline" Class="operation-icon" />
+                                <MudIcon Icon="@(harness.Icon ?? Icons.Material.Rounded.AddCircleOutline)" Class="operation-icon" />
                                 <div class="operation-text">
                                     <div class="operation-name">Install @harness.DisplayName</div>
                                     <div class="operation-description">@harness.Description</div>

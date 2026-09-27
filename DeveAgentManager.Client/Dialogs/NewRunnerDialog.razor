@@ -81,7 +81,7 @@
                     @foreach (var harness in _harnessList)
                     {
                         <MudCheckBox T="bool" Value="_harnesses.Contains(harness.Id)" ValueChanged="on => ToggleHarness(harness.Id, on)" Color="Color.Primary" Dense="true">
-                            <span class="harness-name">@harness.DisplayName</span>
+                            <span class="harness-name harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</span>
                             <span class="mud-text-secondary harness-description">@harness.Description</span>
                         </MudCheckBox>
                     }

@@ -25,6 +25,7 @@ public sealed record ManagerInfoDto(
     IReadOnlyList<ProviderDto> Providers);
 
 /// <param name="HasSessionFormat">Its conversations can be stored, exported and continued.</param>
+/// <param name="Icon">The logo: SVG content for a 24×24 view box, as MudBlazor icons take it.</param>
 public sealed record HarnessDto(
     string Id,
     string DisplayName,
@@ -32,7 +33,8 @@ public sealed record HarnessDto(
     bool HasSessionFormat,
     bool HasModelCatalog,
     HarnessConfigSupport? ConfigSupport,
-    HarnessAccountSupport? AccountSupport);
+    HarnessAccountSupport? AccountSupport,
+    string? Icon = null);
 
 public sealed record ProviderDto(
     string Id,

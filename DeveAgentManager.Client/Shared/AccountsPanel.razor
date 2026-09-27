@@ -13,7 +13,7 @@
     var accounts = _accounts.Where(a => a.HarnessId == harness.Id).ToList();
     <div class="settings-section">
         <div class="section-title-row">
-            <MudText Typo="Typo.subtitle1" Class="section-title">@harness.DisplayName</MudText>
+            <MudText Typo="Typo.subtitle1" Class="section-title harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</MudText>
             <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => ConnectAsync(harness, null)">Connect account</MudButton>
         </div>
 
