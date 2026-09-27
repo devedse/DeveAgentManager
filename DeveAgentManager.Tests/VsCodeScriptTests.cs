@@ -27,7 +27,8 @@ public sealed class VsCodeScriptTests : IDisposable
             : $"#!/bin/sh\necho 'LISTEN 0 511 127.0.0.1:{VsCodeTool.Port} 0.0.0.0:* users:((\"node\",pid=4242,fd=22))'\n");
         if (installed)
         {
-            Stub("code-server", $"#!/bin/sh\necho \"$@\" > \"{_home}/args\"\ntouch \"{_home}/started\"\nsleep 30\n");
+            // Stops "answering" when it is stopped.
+            Stub("code-server", $"#!/bin/sh\necho \"$@\" >> \"{_home}/args\"\ntouch \"{_home}/started\"\ntrap 'rm -f \"{_home}/started\"; exit 0' TERM\nsleep 30 &\nwait\n");
         }
     }
 
@@ -57,6 +58,9 @@ public sealed class VsCodeScriptTests : IDisposable
         Assert.True(password.Length >= 30);
         Assert.Equal(VsCodeTool.PasswordMarker + password, output.Trim());
         Assert.Equal($"--config {State}/config.yaml", File.ReadAllText(Path.Combine(_home, "args")).Trim());
+        Assert.Contains("disable-workspace-trust: true", config);
+        var settings = Path.Combine(_home, ".local", "share", "code-server", "User", "settings.json");
+        Assert.Contains("\"window.autoDetectColorScheme\": true", File.ReadAllText(settings));
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(Path.Combine(State, "config.yaml")));
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(State));
 
@@ -64,6 +68,34 @@ public sealed class VsCodeScriptTests : IDisposable
         Assert.Equal(VsCodeTool.PasswordMarker + password, Run(VsCodeTool.EnsureRunningScript).Output.Trim());
         File.Delete(Path.Combine(_home, "started"));
         Assert.Equal(VsCodeTool.PasswordMarker + password, Run(VsCodeTool.EnsureRunningScript).Output.Trim());
+        Run(VsCodeTool.StopScript);
+    }
+
+    [Fact]
+    public void Ensure_RestartsCodeServer_WhenItsConfigChanged_AndKeepsTheUsersSettings()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        Stubs(installed: true);
+        var settings = Path.Combine(_home, ".local", "share", "code-server", "User", "settings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(settings)!);
+        File.WriteAllText(settings, "{ \"window.autoDetectColorScheme\": false }");
+        Assert.Equal(0, Run(VsCodeTool.EnsureRunningScript).ExitCode);
+        Assert.Contains("false", File.ReadAllText(settings));
+
+        // An older Manager wrote a config without the newer options: code-server is started again with them.
+        var config = Path.Combine(State, "config.yaml");
+        File.WriteAllLines(config, File.ReadAllLines(config).Where(l => !l.StartsWith("disable-workspace-trust", StringComparison.Ordinal)));
+        Assert.Equal(0, Run(VsCodeTool.EnsureRunningScript).ExitCode);
+        Assert.Equal(2, File.ReadAllLines(Path.Combine(_home, "args")).Length);
+        Assert.Contains("disable-workspace-trust: true", File.ReadAllText(config));
+
+        // Nothing changed: it keeps running.
+        Assert.Equal(0, Run(VsCodeTool.EnsureRunningScript).ExitCode);
+        Assert.Equal(2, File.ReadAllLines(Path.Combine(_home, "args")).Length);
         Run(VsCodeTool.StopScript);
     }
 

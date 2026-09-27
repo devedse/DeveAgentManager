@@ -83,16 +83,46 @@ public sealed class VsCodeTool : IRunnerTool
           echo "Port {{Port}} on this Runner is used by another user's program, so VS Code can't run there." >&2
           exit 5
         }
+
+        # The config is written by every Manager version (it may add options); the password stays. Folders open trusted:
+        # the agents already run whatever is in them (no Restricted Mode).
+        password="$(sed -n 's/^password: //p' "$state/config.yaml" 2>/dev/null || true)"
+        [ -n "$password" ] || password="$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+        config="$(printf 'bind-addr: 127.0.0.1:%s\nauth: password\npassword: %s\ncert: false\ndisable-telemetry: true\ndisable-update-check: true\ndisable-getting-started-override: true\ndisable-workspace-trust: true\n' {{Port}} "$password")"
+        changed=false
+        if [ "$config" != "$(cat "$state/config.yaml" 2>/dev/null || true)" ]; then
+          (umask 077; printf '%s\n' "$config" > "$state/config.yaml")
+          changed=true
+        fi
+
+        # VS Code follows the device's light or dark mode, unless its settings say otherwise.
+        node - <<'DAM_VSCODE_SETTINGS' || true
+        const fs = require("fs"), os = require("os"), path = require("path");
+        const file = path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "code-server", "User", "settings.json");
+        let settings = {};
+        if (fs.existsSync(file)) {
+          // Settings with comments (VS Code allows them) are the user's own: left alone.
+          try { settings = JSON.parse(fs.readFileSync(file, "utf8")); } catch { process.exit(0); }
+        }
+        const defaults = { "window.autoDetectColorScheme": true };
+        const missing = Object.keys(defaults).filter(key => !(key in settings));
+        if (missing.length > 0) {
+          for (const key of missing) settings[key] = defaults[key];
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+        }
+        DAM_VSCODE_SETTINGS
+
         if alive && ! ours; then
           taken
+        fi
+        if alive && [ "$changed" = true ]; then
+          # Started with an older config: once more with this one (open editors reconnect).
+          {{StopScript}}
         fi
         if ! alive; then
           # A code-server that hangs (it doesn't answer) still holds the port.
           {{StopScript}}
-          # Written at every start (a new Manager may add options); the password stays.
-          password="$(sed -n 's/^password: //p' "$state/config.yaml" 2>/dev/null || true)"
-          [ -n "$password" ] || password="$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
-          (umask 077; printf 'bind-addr: 127.0.0.1:%s\nauth: password\npassword: %s\ncert: false\ndisable-telemetry: true\ndisable-update-check: true\ndisable-getting-started-override: true\n' {{Port}} "$password" > "$state/config.yaml")
           if ! command -v code-server >/dev/null 2>&1; then
             echo "VS Code (code-server) is not installed on this Runner. Install it on the Runner page, under Operations." >&2
             exit 3
@@ -107,6 +137,6 @@ public sealed class VsCodeTool : IRunnerTool
           fi
           ours || taken
         fi
-        echo "{{PasswordMarker}}$(sed -n 's/^password: //p' "$state/config.yaml")"
+        echo "{{PasswordMarker}}$password"
         """;
 }
