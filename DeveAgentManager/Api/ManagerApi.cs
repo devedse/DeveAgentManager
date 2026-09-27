@@ -273,6 +273,31 @@ public static class ManagerApi
             return new OperationStartedDto(targets.Select(r => r.Id).ToList());
         });
 
+        // Installs code-server on all ready Runners; each result arrives as OperationFinished.
+        settings.MapPost("/vscode/install", async (RunnerService runners, RunnerShell shell, OperationNotifier notifier, CancellationToken ct) =>
+        {
+            var targets = (await runners.ListAsync(ct)).Where(r => r.State == RunnerState.Ready).ToList();
+            foreach (var runner in targets)
+            {
+                var task = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var result = await shell.RunAsync(runner, "curl -fsSL https://code-server.dev/install.sh | sh", TimeSpan.FromMinutes(10), ct);
+                        return result.ExitCode == 0 ? null : $"Installation failed: {result.Combined}";
+                    }
+                    catch (Exception ex)
+                    {
+                        return ex.Message;
+                    }
+                }, ct);
+
+                notifier.Track(runner.Id, runner.Name, "install-vscode", task);
+            }
+
+            return new OperationStartedDto(targets.Select(r => r.Id).ToList());
+        });
+
         settings.MapPut("/github-pat", async (GitHubPatRequest request, SettingsStore store, CancellationToken ct) =>
         {
             if (store.GitHubPatFromCompose)
