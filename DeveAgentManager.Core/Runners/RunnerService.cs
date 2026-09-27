@@ -35,6 +35,9 @@ public sealed partial class RunnerService(
 {
     private static readonly TimeSpan SshTimeout = TimeSpan.FromMinutes(5);
 
+    /// <summary>How many operations a Runner's activity list keeps.</summary>
+    private const int ActivityKept = 100;
+
     private readonly ConcurrentDictionary<Guid, Operation> _operations = new();
     private readonly Dictionary<string, IRunnerProvider> _providers = providers.ToDictionary(p => p.Id);
 
@@ -68,6 +71,14 @@ public sealed partial class RunnerService(
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         return await db.Runners.AsNoTracking().Include(r => r.Agents).FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken);
+    }
+
+    /// <summary>The operations that ran on a Runner, newest first.</summary>
+    public async Task<List<RunnerActivity>> ListActivityAsync(Guid runnerId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.RunnerActivities.AsNoTracking().Where(a => a.RunnerId == runnerId).OrderByDescending(a => a.StartedAt).ThenByDescending(a => a.Id)
+            .Take(ActivityKept).ToListAsync(cancellationToken);
     }
 
     public async Task<Runner> CreateAsync(CreateRunnerRequest request, CancellationToken cancellationToken = default)
@@ -299,6 +310,10 @@ public sealed partial class RunnerService(
         }
 
         await db.SaveChangesAsync(cancellationToken);
+        await db.RunnerActivities.Where(a => a.FinishedAt == null).ExecuteUpdateAsync(s => s
+            .SetProperty(a => a.FinishedAt, DateTime.UtcNow)
+            .SetProperty(a => a.Outcome, RunnerActivityOutcome.Interrupted)
+            .SetProperty(a => a.Error, "The Manager restarted while this ran."), cancellationToken);
     }
 
     /// <summary>Called by the monitor when a Runner's power state changed outside the Manager (e.g. in the Proxmox UI).</summary>
@@ -410,6 +425,9 @@ public sealed partial class RunnerService(
         operation.Completion = Task.Run(async () =>
         {
             var log = logs.For(runnerId);
+            // A Runner that is being deleted takes its activity list with it.
+            var activity = deleting ? null : await StartActivityAsync(runnerId, name);
+            var outcome = RunnerActivityOutcome.Succeeded;
             try
             {
                 if (previous?.Completion is { } running)
@@ -426,11 +444,13 @@ public sealed partial class RunnerService(
             {
                 log.Warning("Interrupted because the Manager is shutting down.");
                 operation.Error = "Interrupted because the Manager is shutting down.";
+                outcome = RunnerActivityOutcome.Interrupted;
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
             {
                 log.Warning($"{name} was cancelled.");
                 operation.Error = $"{name} was cancelled.";
+                outcome = RunnerActivityOutcome.Cancelled;
                 if (markFailed)
                 {
                     await MarkFailedAsync(runnerId, operation.Error);
@@ -441,6 +461,7 @@ public sealed partial class RunnerService(
                 logger.LogError(ex, "{Operation} failed for runner {RunnerId}", name, runnerId);
                 log.Error(ex.Message);
                 operation.Error = ex.Message;
+                outcome = RunnerActivityOutcome.Failed;
                 if (markFailed)
                 {
                     await MarkFailedAsync(runnerId, deleting ? $"Delete failed: {ex.Message}" : ex.Message);
@@ -448,6 +469,11 @@ public sealed partial class RunnerService(
             }
             finally
             {
+                if (activity is not null)
+                {
+                    await FinishActivityAsync(activity.Value, outcome, operation.Error);
+                }
+
                 // Only remove our own entry: a Delete may already have replaced it.
                 _operations.TryRemove(new KeyValuePair<Guid, Operation>(runnerId, operation));
                 operation.Cancellation.Dispose();
@@ -455,6 +481,47 @@ public sealed partial class RunnerService(
             }
         }, CancellationToken.None);
         return operation.Completion.ContinueWith(_ => operation.Error, TaskScheduler.Default);
+    }
+
+    /// <summary>Records that an operation started; null when that failed (the operation runs anyway).</summary>
+    private async Task<long?> StartActivityAsync(Guid runnerId, string name)
+    {
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            var activity = new RunnerActivity { RunnerId = runnerId, Name = name, StartedAt = DateTime.UtcNow };
+            db.RunnerActivities.Add(activity);
+            await db.SaveChangesAsync();
+            var old = await db.RunnerActivities.Where(a => a.RunnerId == runnerId).OrderByDescending(a => a.StartedAt).ThenByDescending(a => a.Id)
+                .Skip(ActivityKept).Select(a => a.Id).ToListAsync();
+            if (old.Count > 0)
+            {
+                await db.RunnerActivities.Where(a => old.Contains(a.Id)).ExecuteDeleteAsync();
+            }
+
+            return activity.Id;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not record {Operation} for runner {RunnerId}", name, runnerId);
+            return null;
+        }
+    }
+
+    private async Task FinishActivityAsync(long activityId, RunnerActivityOutcome outcome, string? error)
+    {
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            await db.RunnerActivities.Where(a => a.Id == activityId).ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.FinishedAt, DateTime.UtcNow)
+                .SetProperty(a => a.Outcome, outcome)
+                .SetProperty(a => a.Error, outcome == RunnerActivityOutcome.Succeeded ? null : error));
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not record the end of activity {ActivityId}", activityId);
+        }
     }
 
     private async Task MarkFailedAsync(Guid runnerId, string message)

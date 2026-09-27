@@ -97,6 +97,9 @@ public static class ManagerApi
         });
 
         runners.MapGet("/{runnerId:guid}/log", (Guid runnerId, RunnerLogStore logs) => logs.GetRecent(runnerId).TakeLast(2000).ToList());
+
+        runners.MapGet("/{runnerId:guid}/activity", async (Guid runnerId, RunnerService service, CancellationToken ct) =>
+            (await service.ListActivityAsync(runnerId, ct)).Select(a => new RunnerActivityDto(a.Id, a.Name, a.StartedAt, a.FinishedAt, a.Outcome, a.Error)).ToList());
     }
 
     private static void MapAgents(RouteGroupBuilder agents)

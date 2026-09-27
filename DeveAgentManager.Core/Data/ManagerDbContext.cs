@@ -16,6 +16,8 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
 
     public DbSet<Account> Accounts => Set<Account>();
 
+    public DbSet<RunnerActivity> RunnerActivities => Set<RunnerActivity>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // SQLite has no date type: store UTC and give values back as UTC.
@@ -34,6 +36,15 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
             runner.Property(r => r.Kind).HasConversion<string>().HasMaxLength(32);
             runner.Ignore(r => r.HarnessIds);
             runner.HasMany(r => r.Agents).WithOne(a => a.Runner).HasForeignKey(a => a.RunnerId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RunnerActivity>(activity =>
+        {
+            activity.HasKey(a => a.Id);
+            activity.HasIndex(a => new { a.RunnerId, a.StartedAt });
+            activity.Property(a => a.Name).HasMaxLength(200);
+            activity.Property(a => a.Outcome).HasConversion<string>().HasMaxLength(32);
+            activity.HasOne<Runner>().WithMany().HasForeignKey(a => a.RunnerId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Agent>(agent =>

@@ -62,6 +62,8 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task InstallHarnessAsync(Guid runnerId, string harnessId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/harnesses/{Uri.EscapeDataString(harnessId)}/install");
 
+    public Task<List<RunnerActivityDto>> ListRunnerActivityAsync(Guid runnerId) => GetAsync<List<RunnerActivityDto>>($"api/runners/{runnerId}/activity");
+
     public Task RefreshRunnerAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/refresh");
 
     // Agents

@@ -89,6 +89,9 @@
                         <MudTabPanel Text="Setup log" Icon="@Icons.Material.Rounded.Notes">
                             <RunnerLogView RunnerId="_runner.Id" Height="560px" />
                         </MudTabPanel>
+                        <MudTabPanel Text="Activity" Icon="@Icons.Material.Rounded.History">
+                            <RunnerActivityView Runner="_runner" />
+                        </MudTabPanel>
                     </MudTabs>
                 </div>
             </MudItem>

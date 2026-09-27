@@ -2291,3 +2291,63 @@ a {
         transform: translateX(250%);
     }
 }
+
+/* ---------- Runner activity ---------- */
+
+.activity-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.activity {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 4px;
+    border-bottom: 1px solid var(--dam-border);
+}
+
+    .activity:last-child {
+        border-bottom: none;
+    }
+
+.activity-icon {
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.activity-ok .activity-icon {
+    color: var(--dam-success);
+}
+
+.activity-failed .activity-icon {
+    color: var(--dam-error);
+}
+
+.activity-cancelled .activity-icon {
+    color: var(--dam-warning);
+}
+
+.activity-text {
+    min-width: 0;
+}
+
+.activity-name {
+    font-weight: 600;
+}
+
+.activity-meta {
+    color: var(--dam-muted);
+    font-size: 0.8rem;
+}
+
+.activity-error {
+    color: var(--dam-error);
+    font-size: 0.8rem;
+    margin-top: 2px;
+    overflow-wrap: anywhere;
+}
+
+    .activity-cancelled .activity-error {
+        color: var(--dam-muted);
+    }

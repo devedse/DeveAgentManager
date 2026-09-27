@@ -64,6 +64,26 @@ public class Runner
     public RunnerMachine ToMachine() => new(Id, Name, MachineId, ProviderData, Host, SshPort);
 }
 
+/// <summary>An operation that ran on a Runner (setup, start, an update), for the Runner's activity list.</summary>
+public class RunnerActivity
+{
+    public long Id { get; set; }
+
+    public Guid RunnerId { get; set; }
+
+    /// <summary>What ran, as the Portal shows it while it runs, e.g. "Setting up" or "Updating pi".</summary>
+    public string Name { get; set; } = "";
+
+    public DateTime StartedAt { get; set; }
+
+    public DateTime? FinishedAt { get; set; }
+
+    /// <summary>Null while it runs.</summary>
+    public RunnerActivityOutcome? Outcome { get; set; }
+
+    public string? Error { get; set; }
+}
+
 public class Agent
 {
     public Guid Id { get; set; }

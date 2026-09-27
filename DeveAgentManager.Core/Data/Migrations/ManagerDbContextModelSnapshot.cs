@@ -216,6 +216,40 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.ToTable("Runners");
                 });
 
+            modelBuilder.Entity("DeveAgentManager.Core.Data.RunnerActivity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("FinishedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Outcome")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RunnerId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunnerId", "StartedAt");
+
+                    b.ToTable("RunnerActivities");
+                });
+
             modelBuilder.Entity("DeveAgentManager.Core.Data.SettingEntry", b =>
                 {
                     b.Property<string>("Key")
@@ -308,6 +342,15 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Navigation("Account");
 
                     b.Navigation("Runner");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.RunnerActivity", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.Runner", null)
+                        .WithMany()
+                        .HasForeignKey("RunnerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.StoredSession", b =>

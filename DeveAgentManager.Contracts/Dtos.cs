@@ -72,6 +72,9 @@ public sealed record RunnerDto(
     MachineStatus? Status,
     IReadOnlyList<AgentDto> Agents);
 
+/// <summary>An operation that ran on a Runner. <paramref name="Outcome"/> is null while it runs.</summary>
+public sealed record RunnerActivityDto(long Id, string Name, DateTime StartedAt, DateTime? FinishedAt, RunnerActivityOutcome? Outcome, string? Error);
+
 /// <param name="AccountId">The account the agent picked; null uses the harness's default account.</param>
 public sealed record AgentDto(
     Guid Id,

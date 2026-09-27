@@ -32,3 +32,14 @@ public enum AccountKind
     /// <summary>An API key, billed per use.</summary>
     ApiKey,
 }
+
+/// <summary>How an operation on a Runner (setup, start, an update) ended.</summary>
+public enum RunnerActivityOutcome
+{
+    Succeeded,
+    Failed,
+    Cancelled,
+
+    /// <summary>The Manager stopped (or restarted) while it ran.</summary>
+    Interrupted,
+}
