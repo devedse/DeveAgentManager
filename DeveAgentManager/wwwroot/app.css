@@ -280,6 +280,21 @@ a {
     padding: 0 8px;
 }
 
+/* A tab's count (e.g. Agents 3) as a small pill after its label, instead of MudBlazor's badge on the tab's corner,
+   which overlaps the next tab now that tabs are as wide as their label. */
+.mud-tab .mud-tab-badge,
+.mud-tab .mud-tab-badge .mud-badge-wrapper,
+.mud-tab .mud-tab-badge .mud-badge {
+    position: static !important;
+    transform: none !important;
+    inset: auto !important;
+}
+
+.mud-tab .mud-tab-badge {
+    display: inline-flex;
+    margin-left: 8px;
+}
+
 /* Touch screens: the tab bar scrolls with a swipe, like any list, instead of MudBlazor's arrow buttons that move it
    a page per tap. The arrows go; the bar is scrolled natively (the wrapper's own scroll offset is switched off). */
 @media (pointer: coarse) {

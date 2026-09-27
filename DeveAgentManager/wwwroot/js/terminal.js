@@ -261,22 +261,59 @@
 
     // Sends an image over the terminal's socket (TerminalSocket.Image); resolves to its path on the Runner.
     // Not an HTTP upload: a reverse proxy's request size limit (nginx: 1 MB by default) doesn't apply to a WebSocket.
+    // When the connection drops meanwhile (a bad network), it is sent again once the terminal has reconnected.
     async function uploadImage(id, file) {
         if (file.size > MAX_IMAGE_BYTES) {
             throw new Error(`Images can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB.`);
         }
 
         const bytes = new Uint8Array(await file.arrayBuffer());
-        const connection = sockets.get(id);
-        if (bytes.length === 0 || connection?.socket.readyState !== WebSocket.OPEN) {
-            throw new Error(bytes.length === 0 ? "The image is empty." : "The terminal isn't connected.");
+        if (bytes.length === 0) {
+            throw new Error("The image is empty.");
         }
 
-        return await new Promise((resolve, reject) => {
+        for (let attempt = 1; ; attempt++) {
+            const connection = attempt === 1 ? openConnection(id) : await reconnected(id, 30000);
+            if (!connection) {
+                throw new Error(attempt === 1 ? "The terminal isn't connected." : "The connection dropped and didn't come back. Paste the image again.");
+            }
+
+            try {
+                return await sendImage(connection, file.type, bytes);
+            } catch (error) {
+                if (!error.dropped || attempt === 3) {
+                    throw error;
+                }
+            }
+        }
+    }
+
+    function openConnection(id) {
+        const connection = sockets.get(id);
+        return connection?.ready && connection.socket.readyState === WebSocket.OPEN ? connection : null;
+    }
+
+    // The terminal's next connection, once it is attached (the terminal reconnects by itself after a drop).
+    async function reconnected(id, timeout) {
+        const until = Date.now() + timeout;
+        while (Date.now() < until) {
+            const connection = openConnection(id);
+            if (connection) {
+                return connection;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 250));
+        }
+
+        return null;
+    }
+
+    function sendImage(connection, contentType, bytes) {
+        return new Promise((resolve, reject) => {
             const imageId = nextImageId++;
             connection.images.set(imageId, { resolve, reject });
             // Header and bytes in one go, without awaiting: nothing typed meanwhile can end up between them.
-            connection.socket.send(JSON.stringify({ type: "image", id: imageId, contentType: file.type, size: bytes.length }));
+            connection.socket.send(JSON.stringify({ type: "image", id: imageId, contentType, size: bytes.length }));
             for (let offset = 0; offset < bytes.length; offset += IMAGE_CHUNK_BYTES) {
                 connection.socket.send(bytes.subarray(offset, offset + IMAGE_CHUNK_BYTES));
             }
@@ -540,6 +577,7 @@
 
                 const message = JSON.parse(event.data);
                 if (message.type === "ready") {
+                    connection.ready = true;
                     dotnet?.invokeMethodAsync("OnSocketReady", message.tty ?? "");
                 } else if (message.type === "closed") {
                     connection.closed = message;
@@ -553,7 +591,7 @@
             };
             socket.onclose = () => {
                 connection.subscriptions.forEach(s => s.dispose());
-                connection.images.forEach(waiting => waiting.reject(new Error("The connection dropped before the image was stored. Paste it again.")));
+                connection.images.forEach(waiting => waiting.reject(Object.assign(new Error("The connection dropped before the image was stored. Paste it again."), { dropped: true })));
                 connection.images.clear();
                 // Only the current connection reports: an old one closing after a reconnect says nothing.
                 if (sockets.get(id) === connection) {
