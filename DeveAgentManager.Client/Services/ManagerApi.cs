@@ -143,10 +143,6 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     public Task<OperationStartedDto> ApplyHarnessConfigAsync(string harnessId) =>
         SendAsync<OperationStartedDto>(HttpMethod.Post, $"api/settings/harnesses/{Uri.EscapeDataString(harnessId)}/apply");
 
-    /// <summary>Installs code-server on all ready Runners; returns them. Results arrive as operations.</summary>
-    public Task<OperationStartedDto> InstallVSCodeAsync() =>
-        SendAsync<OperationStartedDto>(HttpMethod.Post, "api/settings/vscode/install");
-
     public Task SaveGitHubPatAsync(string? pat) => SendAsync(HttpMethod.Put, "api/settings/github-pat", new GitHubPatRequest(pat));
 
     public Task<List<ProviderCheck>> CheckProviderAsync(string providerId) => GetAsync<List<ProviderCheck>>($"api/providers/{Uri.EscapeDataString(providerId)}/check");

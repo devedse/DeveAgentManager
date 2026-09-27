@@ -138,31 +138,6 @@
                     </div>
 
                     <div class="settings-section">
-                        <MudText Typo="Typo.subtitle1" Class="section-title">Optional Tools</MudText>
-                        <div class="mb-3">
-                            <MudCheckBox @bind-Value="_profile.InstallCodeServer" Label="Install code-server (VSCode for the Web)" Color="Color.Primary" />
-                            <MudText Typo="Typo.body2" Class="mud-text-secondary ml-8">
-                                Adds a web-based VSCode editor accessible from Runner and Agent pages. Uses ~100MB RAM when running. Opens code at the Runner's home directory or the agent's working folder.
-                            </MudText>
-                        </div>
-                        @if (_profile.InstallCodeServer)
-                        {
-                            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.CloudDownload" Disabled="_installingVSCode" OnClick="InstallVSCodeOnRunnersAsync">
-                                @(_installingVSCode ? "Installing..." : "Install on all Runners now")
-                            </MudButton>
-                            @if (_vscodeInstallResults.Count > 0)
-                            {
-                                <div class="provider-checks mt-3">
-                                    @foreach (var result in _vscodeInstallResults)
-                                    {
-                                        <ProviderCheckRow Check="result" />
-                                    }
-                                </div>
-                            }
-                        }
-                    </div>
-
-                    <div class="settings-section">
                         <MudText Typo="Typo.subtitle1" Class="section-title">Script</MudText>
                         <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">Bash, run as the Runner Account at the end of setup. For example <code>sudo apt-get install -y dotnet-sdk-10.0</code>.</MudText>
                         <MudTextField @bind-Value="_profile.Script" Variant="Variant.Outlined" Lines="6" MaxLines="30" Placeholder="#!/usr/bin/env bash" Class="mono-input" />
@@ -292,9 +267,6 @@
     private bool _saving;
     private string? _pat;
     private bool _hasPat;
-    private bool _installingVSCode;
-    private readonly List<ProviderCheck> _vscodeInstallResults = [];
-    private readonly Dictionary<Guid, int> _installingVSCodeRunners = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -423,58 +395,9 @@
 
     private bool IsApplying(string harnessId) => _applying.Values.Any(a => a.HarnessId == harnessId);
 
-    private async Task InstallVSCodeOnRunnersAsync()
-    {
-        _installingVSCode = true;
-        _vscodeInstallResults.Clear();
-        _installingVSCodeRunners.Clear();
-
-        try
-        {
-            var started = await Api.InstallVSCodeAsync();
-            if (started.RunnerIds.Count == 0)
-            {
-                Snackbar.Add("No ready Runners found.", Severity.Info);
-                return;
-            }
-
-            var runners = await Api.ListRunnersAsync();
-            foreach (var runnerId in started.RunnerIds)
-            {
-                _installingVSCodeRunners[runnerId] = _vscodeInstallResults.Count;
-                var runner = runners.FirstOrDefault(r => r.Id == runnerId);
-                _vscodeInstallResults.Add(new ProviderCheck(runner?.Name ?? runnerId.ToString(), CheckStatus.Warning, "Installing..."));
-            }
-        }
-        catch (ApiException ex)
-        {
-            Snackbar.Add(ex.Message, Severity.Error);
-            _installingVSCode = false;
-        }
-    }
-
     /// <summary>A Runner finished applying: fill in its row.</summary>
     private void OnOperationFinished(OperationFinished finished)
     {
-        // Handle VSCode installation
-        if (finished.Operation == "install-vscode" && _installingVSCodeRunners.Remove(finished.RunnerId, out var vscodeIndex))
-        {
-            _vscodeInstallResults[vscodeIndex] = finished.Error is null
-                ? new ProviderCheck(finished.RunnerName, CheckStatus.Ok, "Installed. Click 'VSCode' on the Runner page to open it.")
-                : new ProviderCheck(finished.RunnerName, CheckStatus.Failed, finished.Error);
-
-            if (_installingVSCodeRunners.Count == 0)
-            {
-                _installingVSCode = false;
-                var failed = _vscodeInstallResults.Count(r => r.Status == CheckStatus.Failed);
-                Snackbar.Add(failed == 0 ? $"Installed on {_vscodeInstallResults.Count} Runner(s)." : $"Failed on {failed} of {_vscodeInstallResults.Count} Runner(s).", failed == 0 ? Severity.Success : Severity.Error);
-            }
-
-            _ = InvokeAsync(StateHasChanged);
-            return;
-        }
-
-        // Handle harness apply
         if (finished.Operation != "apply" || !_applying.Remove(finished.RunnerId, out var target) || !_applyResults.TryGetValue(target.HarnessId, out var results))
         {
             return;

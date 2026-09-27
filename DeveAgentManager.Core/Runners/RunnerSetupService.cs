@@ -117,12 +117,6 @@ public sealed partial class RunnerSetupService(
             }
         }
 
-        if (profile.InstallCodeServer)
-        {
-            await RunScriptAsync(runner, log, "Installing code-server (VSCode for the Web)",
-                "curl -fsSL https://code-server.dev/install.sh | sh", TimeSpan.FromMinutes(10), cancellationToken);
-        }
-
         if (!string.IsNullOrWhiteSpace(profile.Script))
         {
             await shell.UploadAsync(runner, "~/.deveagentmanager/profile-script.sh", profile.Script.ReplaceLineEndings("\n"), "700", cancellationToken);

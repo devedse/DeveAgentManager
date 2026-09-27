@@ -179,8 +179,7 @@ a {
 }
 
 .app-main {
-    min-height: 100vh; /* fallback */
-    min-height: 100dvh; /* dynamic viewport height for mobile */
+    min-height: 100vh;
 }
 
 .page {
@@ -1701,8 +1700,8 @@ a {
 
 .login-page {
     position: relative;
-    min-height: 100vh; /* fallback */
-    min-height: 100dvh; /* dynamic viewport height for mobile */
+    min-height: 100vh;
+    min-height: 100dvh;
     display: grid;
     place-items: center;
     padding: 24px;
@@ -2247,26 +2246,4 @@ a {
     to {
         transform: translateX(250%);
     }
-}
-
-/* ---------- Harness logos ---------- */
-
-.harness-logo {
-    display: inline-block;
-    vertical-align: middle;
-}
-
-.harness-logo.size-small {
-    width: 16px;
-    height: 16px;
-}
-
-.harness-logo.size-medium {
-    width: 24px;
-    height: 24px;
-}
-
-.harness-logo.size-large {
-    width: 32px;
-    height: 32px;
 }

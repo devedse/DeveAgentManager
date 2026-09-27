@@ -18,7 +18,7 @@
                     <span class="terminal-name" title="@_agent.Name">@_agent.Name</span>
                     <StatusPill Style="StateStyles.For(_agent.State)" Title="@_agent.StateMessage" Class="terminal-status" />
                 </div>
-                <span class="terminal-context"><HarnessIcon HarnessId="@_agent.HarnessId" />@(_agent.AccountName is { } account ? $" · {account}" : "") · @_agent.RunnerName · <span class="mono">@(_agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
+                <span class="terminal-context">@_agent.HarnessId@(_agent.AccountName is { } account ? $" · {account}" : "") · @_agent.RunnerName · <span class="mono">@(_agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
             </div>
             <span class="terminal-hint">Shift+drag selects · Ctrl+C copies a selection</span>
             @if (_sessionId is { } sessionId)
@@ -31,9 +31,6 @@
             {
                 <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" />
                 <AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" />
-                <span class="toolbar-wide"><MudTooltip Text="Open in VSCode">
-                    <MudIconButton Href="@($"/vscode/agents/{_agent.Id}/")" Target="_blank" Icon="@Icons.Material.Rounded.Code" Size="Size.Small" aria-label="VSCode" />
-                </MudTooltip></span>
                 <span class="toolbar-wide"><MudTooltip Text="Restart the harness (resumes the conversation)">
                     <MudIconButton Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" Disabled="_busy" OnClick="RestartAsync" aria-label="Restart" />
                 </MudTooltip></span>
@@ -51,7 +48,6 @@
                         }
                         @if (running)
                         {
-                            <MudMenuItem Icon="@Icons.Material.Rounded.Code" Href="@($"/vscode/agents/{_agent.Id}/")" Target="_blank">Open in VSCode</MudMenuItem>
                             <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="_busy" OnClick="RestartAsync">Restart the harness</MudMenuItem>
                             <MudMenuItem Icon="@Icons.Material.Rounded.Stop" Disabled="_busy" OnClick="StopAsync">Stop the agent</MudMenuItem>
                         }

@@ -27,12 +27,7 @@
                 <StatusPill Style="StateStyles.For(_runner.State)" Text="@operation" />
             </TitleContent>
             <Actions>
-                <MudTooltip Text="Shell">
-                    <MudIconButton Href="@($"runners/{_runner.Id}/shell")" Icon="@Icons.Material.Rounded.Terminal" Disabled="!ready" aria-label="Shell" />
-                </MudTooltip>
-                <MudTooltip Text="VSCode">
-                    <MudIconButton Href="@($"/vscode/runners/{_runner.Id}/")" Target="_blank" Icon="@Icons.Material.Rounded.Code" Disabled="!ready" aria-label="VSCode" />
-                </MudTooltip>
+                <MudButton Href="@($"runners/{_runner.Id}/shell")" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Terminal" Disabled="!ready">Shell</MudButton>
                 @if (provider?.Capabilities.CanStartStop == true)
                 {
                     @if (_runner.State is RunnerState.Stopped or RunnerState.Error)

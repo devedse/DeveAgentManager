@@ -103,7 +103,7 @@
                             @foreach (var agent in _agents.Take(8))
                             {
                                 <a class="list-row" href="agents/@agent.Id">
-                                    <div class="list-avatar"><HarnessIcon HarnessId="@agent.HarnessId" Size="Size.Medium" /></div>
+                                    <div class="list-avatar">@agent.HarnessId</div>
                                     <div class="list-main">
                                         <div class="list-title">@agent.Name</div>
                                         <div class="list-subtitle">@agent.RunnerName · @(agent.RepositoryUrl ?? agent.WorkingDirectory)</div>

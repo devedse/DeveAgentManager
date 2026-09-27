@@ -20,9 +20,6 @@ public sealed class SetupProfile
     /// <summary>Packages, default model and settings per harness id (e.g. "pi"), for harnesses that support it.</summary>
     public Dictionary<string, HarnessConfig> Harnesses { get; set; } = [];
 
-    /// <summary>Install code-server (VSCode for the Web) on Runners.</summary>
-    public bool InstallCodeServer { get; set; }
-
     public HarnessConfig GetHarness(string harnessId)
     {
         if (!Harnesses.TryGetValue(harnessId, out var config))
