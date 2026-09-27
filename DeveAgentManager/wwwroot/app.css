@@ -280,6 +280,28 @@ a {
     padding: 0 8px;
 }
 
+/* Touch screens: the tab bar scrolls with a swipe, like any list, instead of MudBlazor's arrow buttons that move it
+   a page per tap. The arrows go; the bar is scrolled natively (the wrapper's own scroll offset is switched off). */
+@media (pointer: coarse) {
+    .mud-tabs-tabbar .mud-tabs-scroll-button {
+        display: none;
+    }
+
+    .mud-tabs-tabbar .mud-tabs-tabbar-content {
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+    }
+
+        .mud-tabs-tabbar .mud-tabs-tabbar-content::-webkit-scrollbar {
+            display: none;
+        }
+
+    .mud-tabs-tabbar .mud-tabs-tabbar-wrapper {
+        transform: none !important;
+    }
+}
+
 .panel-tab-content {
     padding: 20px;
 }

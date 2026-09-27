@@ -11,7 +11,7 @@
     <PageHeader Title="Settings" Subtitle="Values set in the compose file are shown read-only. Everything else is stored encrypted in /data." />
 
     <div class="panel panel-flush">
-        <MudTabs Elevation="0" ApplyEffectsToContainer="true" Class="panel-tabs" TabPanelsClass="panel-tab-content" KeepPanelsAlive="true">
+        <MudTabs Elevation="0" ApplyEffectsToContainer="true" Class="panel-tabs" TabPanelsClass="panel-tab-content" KeepPanelsAlive="true" MinimumTabWidth="0">
             <MudTabPanel Text="Providers" Icon="@Icons.Material.Rounded.Cloud">
                 @foreach (var provider in (_info?.Providers ?? []).OrderBy(p => p.Capabilities.RequiresConnectionDetails))
                 {
