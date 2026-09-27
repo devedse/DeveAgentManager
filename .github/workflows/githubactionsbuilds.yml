@@ -17,11 +17,11 @@ jobs:
   generate_version_number:
     permissions:
       contents: write
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "medium"]') || 'ubuntu-latest' }}
     outputs:
       build_number: ${{ steps.buildnumber.outputs.build_number }}
-      # master: 1.0.<build number>. Other branches: a beta, e.g. 1.0.0-beta.123 (the run number), so the Portal shows it.
-      version: ${{ github.ref == 'refs/heads/master' && format('1.0.{0}', steps.buildnumber.outputs.build_number) || format('1.0.0-beta.{0}', github.run_number) }}
+      # One counter for every branch (the build-number-N tag): master 1.0.<N>, other branches 1.0.<N>-beta.
+      version: ${{ github.ref == 'refs/heads/master' && format('1.0.{0}', steps.buildnumber.outputs.build_number) || format('1.0.{0}-beta', steps.buildnumber.outputs.build_number) }}
     steps:
     - name: Generate build number
       id: buildnumber
