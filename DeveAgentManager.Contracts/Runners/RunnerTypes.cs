@@ -10,4 +10,5 @@ public sealed record CreateRunnerRequest(
     int MemoryMb,
     int DiskGb,
     IReadOnlyList<string> Harnesses,
-    ConnectionDetails? Connection);
+    ConnectionDetails? Connection,
+    IReadOnlyList<string>? Tools = null);

@@ -1,0 +1,136 @@
+@page "/runners/{RunnerId:guid}/vscode"
+@page "/agents/{AgentId:guid}/vscode"
+@layout TerminalLayout
+@inject ManagerApi Api
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+@* VS Code for a Runner (its home folder) or an agent (its folder), in a frame under a small header. The frame comes
+   from the Manager's editor port (see the Manager's EditorEndpoints); the header also opens it in a tab or full screen. *@
+
+<PageTitle>VS Code · @(_title ?? "...") · DeveAgentManager</PageTitle>
+
+<div class="terminal-page">
+    <div class="terminal-toolbar">
+        <MudIconButton Href="@_back" Icon="@Icons.Material.Rounded.ArrowBack" Size="Size.Small" aria-label="Back" />
+        @if (_tool?.Icon is { } icon)
+        {
+            <MudIcon Icon="@icon" Size="Size.Small" Class="editor-logo" />
+        }
+        <div class="terminal-title">
+            <div class="terminal-name-row">
+                <span class="terminal-name" title="@_title">@_title</span>
+            </div>
+            @if (_runner is not null)
+            {
+                <span class="terminal-context">VS Code · @_runner.Name@(_folder is null ? "" : " · ")<span class="mono">@_folder</span></span>
+            }
+        </div>
+        @if (_state == EditorState.Open)
+        {
+            <MudTooltip Text="Full screen">
+                <MudIconButton Icon="@Icons.Material.Rounded.Fullscreen" Size="Size.Small" OnClick="FullscreenAsync" aria-label="Full screen" />
+            </MudTooltip>
+            <MudTooltip Text="Open in a new tab">
+                <MudIconButton Href="@EditorLink" Target="_blank" Icon="@Icons.Material.Rounded.OpenInNew" Size="Size.Small" aria-label="Open in a new tab" />
+            </MudTooltip>
+        }
+    </div>
+
+    @switch (_state)
+    {
+        case EditorState.Loading:
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+            break;
+        case EditorState.Missing:
+            <EmptyState Icon="@Icons.Material.Rounded.SearchOff" Title="Not found" Text="It may have been deleted.">
+                <MudButton Href="runners" Variant="Variant.Outlined">Back to Runners</MudButton>
+            </EmptyState>
+            break;
+        case EditorState.NotInstalled:
+            <EmptyState Icon="@Icons.Material.Rounded.Code" Title="VS Code is not installed" Text="@($"Install it on '{_runner!.Name}' first: on the Runner page, under Operations.")">
+                <MudButton Href="@($"runners/{_runner.Id}")" Variant="Variant.Filled" Color="Color.Primary">Go to the Runner</MudButton>
+            </EmptyState>
+            break;
+        case EditorState.NotReady:
+            <EmptyState Icon="@Icons.Material.Rounded.PowerOff" Title="@($"'{_runner!.Name}' is not ready")" Text="VS Code opens once the Runner is ready." />
+            break;
+        case EditorState.Unreachable:
+            <EmptyState Icon="@Icons.Material.Rounded.LinkOff" Title="VS Code's port can't be reached"
+                        Text="VS Code is served on a port of its own (8081 by default), apart from the Portal. Publish that port in the compose file (&quot;8081:8081&quot;), or set EDITOR_URL to where it is reachable behind your proxy.">
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync">Try again</MudButton>
+            </EmptyState>
+            break;
+        case EditorState.Open:
+            <div class="editor-frame" @ref="_frame">
+                <iframe src="@EditorLink" title="VS Code" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+            </div>
+            break;
+    }
+</div>
+
+@code {
+    private enum EditorState { Loading, Missing, NotInstalled, NotReady, Unreachable, Open }
+
+    [Parameter]
+    public Guid? RunnerId { get; set; }
+
+    [Parameter]
+    public Guid? AgentId { get; set; }
+
+    private EditorState _state;
+    private RunnerToolDto? _tool;
+    private RunnerDto? _runner;
+    private string? _title;
+    private string? _folder;
+    private string _back = "runners";
+    private ElementReference _frame;
+
+    /// <summary>The Manager's link that opens VS Code (it logs the frame or tab in on the editor port).</summary>
+    private string EditorLink => AgentId is { } agentId ? $"editor/agents/{agentId}" : $"editor/runners/{RunnerId}";
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _state = EditorState.Loading;
+        try
+        {
+            _tool = (await Api.InfoAsync()).Tools.FirstOrDefault(t => t.Id == "vscode");
+            if (AgentId is { } agentId)
+            {
+                var agent = await Api.GetAgentAsync(agentId);
+                _runner = agent is null ? null : await Api.GetRunnerAsync(agent.RunnerId);
+                _title = agent?.Name;
+                _folder = agent?.WorkingDirectory;
+                _back = agent is null ? "agents" : $"agents/{agent.Id}";
+            }
+            else
+            {
+                _runner = await Api.GetRunnerAsync(RunnerId!.Value);
+                _title = _runner?.Name;
+                _folder = null;
+                _back = _runner is null ? "runners" : $"runners/{_runner.Id}";
+            }
+
+            _state = _runner is null ? EditorState.Missing
+                : !_runner.ToolIds.Contains("vscode") ? EditorState.NotInstalled
+                : _runner.State != RunnerState.Ready ? EditorState.NotReady
+                : await JS.InvokeAsync<bool>("damUi.canReach", "editor/ping") ? EditorState.Open
+                : EditorState.Unreachable;
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+            _state = EditorState.Missing;
+        }
+    }
+
+    private async Task FullscreenAsync()
+    {
+        if (!await JS.InvokeAsync<bool>("damUi.fullscreen", _frame))
+        {
+            Snackbar.Add("This browser doesn't allow full screen here. Use \"Open in a new tab\" instead.", Severity.Info);
+        }
+    }
+}

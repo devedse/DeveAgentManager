@@ -23,6 +23,11 @@ when you close the tab.
   **Settings → Claude Code / Codex**: the default model and effort for new agents. Empty (the default) lets the
   harness choose, which follows new models by itself. Claude takes aliases like `opus`, and Codex lists the models its
   catalog offers on your Runner.
+- **VS Code** (opt-in per Runner: tick it in **New Runner**, or **Install VS Code** on the Runner page): VS Code in the
+  browser ([code-server](https://github.com/coder/code-server)) to browse files, edit and see git changes. The Runner
+  page opens it in the Runner's home folder, an agent's terminal in the agent's folder. It opens inside the Portal,
+  with buttons for a new tab and full screen. It is served on the Manager's second port (`8081`), see below.
+- A Runner's **Activity** tab lists what ran on it (setup, starts, installs, updates), how long it took and how it ended.
 - On a Runner's page, **Re-run setup** runs the whole setup again, and **Update pi** only installs the latest pi,
   updates its packages and applies Settings → pi. Every step is idempotent, so both are safe to repeat. Running agents
   keep running and use the new versions after a restart.
@@ -36,7 +41,7 @@ See [PLAN.md](PLAN.md) for where this is going (Jobs API, projects).
 3. Log in to the GitHub Container Registry once (the image is private, like the repo). Use a
    [personal access token](https://github.com/settings/tokens) with `read:packages`:
    `echo <token> | docker login ghcr.io -u devedse --password-stdin`
-4. Run `docker compose up -d` and open `http://<docker-host>:8080`.
+4. Run `docker compose up -d` and open `http://<docker-host>:8080`. Port `8081` serves VS Code (optional).
 5. In **Settings → Providers**, click **Test connection**. Every check should be green.
 6. **New Runner** → Headless → Create. Watch the setup log (about 3 to 5 minutes).
 7. **New agent** → clone a repository → pi opens in the browser.
@@ -153,12 +158,18 @@ Everything is set with environment variables in the compose file.
 | `GITHUB_PAT` | | Token for cloning and pushing private repositories. Can also be set in the Portal. |
 | `GIT_USER_NAME` / `GIT_USER_EMAIL` | | Default git identity on Runners. Can also be set in the Portal. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |
+| `EDITOR_PORT` | `8081` | The port that serves VS Code, and nothing else. Publish it next to 8080. |
+| `EDITOR_URL` | Portal's host on `EDITOR_PORT` | Where browsers reach that port, when it differs (behind a proxy), e.g. `https://code.example.com`. |
 
 ### Running behind a reverse proxy
 
 Terminals and live updates use WebSockets, so the proxy must forward `Upgrade` / `Connection` headers
 (nginx: `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`).
 `X-Forwarded-*` headers are honored.
+
+VS Code needs its own origin: proxy `EDITOR_PORT` (8081) separately, on another port or hostname, with WebSockets too,
+and set `EDITOR_URL` to it. Inside the Portal, VS Code only works when both are the same site (another port, or e.g.
+`code.example.com` next to `agents.example.com`); on an unrelated domain, use its **Open in a new tab** button.
 
 ### Data and backups
 
@@ -194,6 +205,14 @@ keys that decrypt stored secrets (Setup Profile, GitHub token). Losing the keys 
   allow) and, like the hub and terminal WebSockets, come from the Manager's own origin. The API never returns a secret:
   account logins, Runner passwords and the GitHub token stay on the Manager. A login terminal only names the harness;
   the Manager runs the harness's login itself and saves what it produces.
+- **VS Code** runs as code-server on the Runner, on its loopback only (`127.0.0.1:13337`) with a password of its own
+  (in `~/.deveagentmanager/code-server/config.yaml`, mode 600), so other users of the machine can't use it. The
+  Manager starts it on first use and reaches it through an SSH tunnel, like terminals. It is served on its own port,
+  because VS Code runs code from the Runner (extensions, or anything an agent there puts in code-server's place): on the
+  Portal's origin, that code could use the Portal as the admin. The Portal hands the browser a ticket for one Runner,
+  valid for two minutes, which the editor port turns into a cookie for that Runner's path. The browser's other cookies
+  (the Portal's login) are removed before a request goes to the Runner, and cookies from the Runner never reach the
+  browser.
 - **Terminals** are xterm.js in the browser, connected through the Manager to an SSH session on the Runner. The Runner
   never needs to be reachable from your browser. On phones there is a row of extra keys, and swiping scrolls
   (through tmux's mouse mode). Phone keyboards garble text typed straight into xterm.js (xterm.js issue #3600). So on

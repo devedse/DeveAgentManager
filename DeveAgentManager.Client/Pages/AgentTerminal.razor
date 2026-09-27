@@ -31,6 +31,12 @@
             {
                 <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" />
                 <AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" />
+                @if (_agent.RunnerToolIds.Contains("vscode"))
+                {
+                    <span class="toolbar-wide"><MudTooltip Text="Open this folder in VS Code">
+                        <MudIconButton Href="@($"agents/{_agent.Id}/vscode")" Icon="@(_vsCodeIcon ?? Icons.Material.Rounded.Code)" Size="Size.Small" aria-label="VS Code" />
+                    </MudTooltip></span>
+                }
                 <span class="toolbar-wide"><MudTooltip Text="Restart the harness (resumes the conversation)">
                     <MudIconButton Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" Disabled="_busy" OnClick="RestartAsync" aria-label="Restart" />
                 </MudTooltip></span>
@@ -48,6 +54,10 @@
                         }
                         @if (running)
                         {
+                            @if (_agent.RunnerToolIds.Contains("vscode"))
+                            {
+                                <MudMenuItem Icon="@(_vsCodeIcon ?? Icons.Material.Rounded.Code)" Href="@($"agents/{_agent.Id}/vscode")">VS Code</MudMenuItem>
+                            }
                             <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="_busy" OnClick="RestartAsync">Restart the harness</MudMenuItem>
                             <MudMenuItem Icon="@Icons.Material.Rounded.Stop" Disabled="_busy" OnClick="StopAsync">Stop the agent</MudMenuItem>
                         }
@@ -92,12 +102,14 @@
     private TerminalView? _terminal;
     private int _connectionKey;
     private bool _busy;
+    private string? _vsCodeIcon;
 
     protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.AgentId == AgentId || managerEvent.Kind == ManagerEventKind.RunnerChanged;
 
     protected override async Task LoadAsync()
     {
         var previous = _agent?.State;
+        _vsCodeIcon ??= (await Api.InfoAsync()).Tools.FirstOrDefault(t => t.Id == "vscode")?.Icon;
         _agent = await Api.GetAgentAsync(AgentId);
         _sessionId ??= (await Api.GetAgentSessionAsync(AgentId))?.Id;
         if (previous is not null && previous != AgentState.Running && _agent?.State == AgentState.Running)

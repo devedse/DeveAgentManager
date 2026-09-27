@@ -35,6 +35,7 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
             runner.Property(r => r.State).HasConversion<string>().HasMaxLength(32);
             runner.Property(r => r.Kind).HasConversion<string>().HasMaxLength(32);
             runner.Ignore(r => r.HarnessIds);
+            runner.Ignore(r => r.ToolIds);
             runner.HasMany(r => r.Agents).WithOne(a => a.Runner).HasForeignKey(a => a.RunnerId).OnDelete(DeleteBehavior.Cascade);
         });
 

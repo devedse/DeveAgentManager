@@ -80,12 +80,26 @@
                 <div class="harness-list">
                     @foreach (var harness in _harnessList)
                     {
-                        <MudCheckBox T="bool" Value="_harnesses.Contains(harness.Id)" ValueChanged="on => ToggleHarness(harness.Id, on)" Color="Color.Primary" Dense="true">
+                        <MudCheckBox T="bool" Value="_harnesses.Contains(harness.Id)" ValueChanged="on => Toggle(_harnesses, harness.Id, on)" Color="Color.Primary" Dense="true">
                             <span class="harness-name harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</span>
                             <span class="mud-text-secondary harness-description">@harness.Description</span>
                         </MudCheckBox>
                     }
                 </div>
+
+                @if (_toolList.Count > 0)
+                {
+                    <MudText Typo="Typo.overline" Class="mud-text-secondary mt-4 d-block">Tools</MudText>
+                    <div class="harness-list">
+                        @foreach (var tool in _toolList)
+                        {
+                            <MudCheckBox T="bool" Value="_tools.Contains(tool.Id)" ValueChanged="on => Toggle(_tools, tool.Id, on)" Color="Color.Primary" Dense="true">
+                                <span class="harness-name harness-option"><MudIcon Icon="@(tool.Icon ?? Icons.Material.Rounded.Extension)" Size="Size.Small" />@tool.DisplayName</span>
+                                <span class="mud-text-secondary harness-description">@tool.Description</span>
+                            </MudCheckBox>
+                        }
+                    </div>
+                }
             </MudForm>
         }
     </DialogContent>
@@ -105,6 +119,7 @@
     private List<ProviderDto> _providers = [];
     private ProviderDto? _provider;
     private List<HarnessDto> _harnessList = [];
+    private List<RunnerToolDto> _toolList = [];
     private List<RunnerTemplate> _templates = [];
     private string? _templateId;
     private string _name = "";
@@ -116,6 +131,9 @@
     private int _memoryGb;
     private int _diskGb;
     private readonly HashSet<string> _harnesses = [];
+
+    /// <summary>Tools are opt-in: none are ticked at first.</summary>
+    private readonly HashSet<string> _tools = [];
     private bool _busy;
 
     protected override async Task OnInitializedAsync()
@@ -123,6 +141,7 @@
         var info = await Api.InfoAsync();
         _providers = info.Providers.Where(p => p.IsConfigured).OrderBy(p => p.Capabilities.RequiresConnectionDetails).ToList();
         _harnessList = info.Harnesses.ToList();
+        _toolList = info.Tools.ToList();
         _cores = info.DefaultCores;
         _memoryGb = Math.Max(1, info.DefaultMemoryMb / 1024);
         _diskGb = info.DefaultDiskGb;
@@ -148,15 +167,15 @@
         _templateId = _templates.FirstOrDefault()?.Id;
     }
 
-    private void ToggleHarness(string id, bool on)
+    private static void Toggle(HashSet<string> set, string id, bool on)
     {
         if (on)
         {
-            _harnesses.Add(id);
+            set.Add(id);
         }
         else
         {
-            _harnesses.Remove(id);
+            set.Remove(id);
         }
     }
 
@@ -179,7 +198,7 @@
             var connection = _provider.Capabilities.RequiresConnectionDetails
                 ? new ConnectionDetails(_host, _port, _username, string.IsNullOrEmpty(_password) ? null : _password)
                 : null;
-            var runner = await Api.CreateRunnerAsync(new CreateRunnerRequest(_name, _provider.Id, _templateId, _cores, _memoryGb * 1024, _diskGb, _harnesses.ToList(), connection));
+            var runner = await Api.CreateRunnerAsync(new CreateRunnerRequest(_name, _provider.Id, _templateId, _cores, _memoryGb * 1024, _diskGb, _harnesses.ToList(), connection, _tools.ToList()));
             Snackbar.Add($"Creating Runner '{runner.Name}'. Follow along in the setup log.", Severity.Info);
             MudDialog.Close(DialogResult.Ok(runner.Id));
             Navigation.NavigateTo($"runners/{runner.Id}");

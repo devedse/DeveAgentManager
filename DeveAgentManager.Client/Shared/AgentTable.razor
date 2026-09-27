@@ -55,6 +55,10 @@ else
                     }
                     <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
                         <MudMenuItem Icon="@Icons.Material.Rounded.Terminal" Href="@($"agents/{agent.Id}")">Open</MudMenuItem>
+                        @if (agent.RunnerToolIds.Contains("vscode"))
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Code" Href="@($"agents/{agent.Id}/vscode")">Open in VS Code</MudMenuItem>
+                        }
                         <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="@(() => StartAsync(agent, true))">Restart</MudMenuItem>
                         <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem>
                     </MudMenu>

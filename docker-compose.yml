@@ -4,13 +4,15 @@
 # 3. The image is private (like the repo): log in once with a GitHub token that has read:packages:
 #      echo <token> | docker login ghcr.io -u devedse --password-stdin
 # 4. docker compose up -d, then open http://<this-host>:8080
+#    (8081 is VS Code in the browser: it needs a port of its own, see README.md.)
 services:
   deveagentmanager:
     image: ghcr.io/devedse/deveagentmanager:latest
     container_name: deveagentmanager
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8080:8080" # the Portal
+      - "8081:8081" # VS Code (EDITOR_PORT)
     volumes:
       # Database, encryption keys and the Manager's SSH key. Back this up.
       - deveagentmanager-data:/data
@@ -45,6 +47,9 @@ services:
       RUNNER_DEFAULT_CORES: "4"
       RUNNER_DEFAULT_MEMORY_MB: "8192"
       RUNNER_DEFAULT_DISK_GB: "64"
+
+      # VS Code is served on its own port. Behind a reverse proxy, set where browsers reach that port:
+      # EDITOR_URL: https://code.example.com
 
       # Optional: set here, or in the Portal under Settings
       # GITHUB_PAT: github_pat_...

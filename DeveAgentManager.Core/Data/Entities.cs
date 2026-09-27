@@ -46,6 +46,9 @@ public class Runner
     /// <summary>Comma separated harness ids to install, e.g. "pi".</summary>
     public string Harnesses { get; set; } = "";
 
+    /// <summary>Comma separated ids of the other tools to install (<see cref="IRunnerTool"/>), e.g. "vscode".</summary>
+    public string Tools { get; set; } = "";
+
     public int? SetupVersion { get; set; }
 
     /// <summary>Tool versions found after the last setup, e.g. "pi 0.87.1 · node v24.8.0 · tmux 3.5a".</summary>
@@ -60,6 +63,8 @@ public class Runner
     public List<Agent> Agents { get; set; } = [];
 
     public IReadOnlyList<string> HarnessIds => Harnesses.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    public IReadOnlyList<string> ToolIds => Tools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     public RunnerMachine ToMachine() => new(Id, Name, MachineId, ProviderData, Host, SshPort);
 }

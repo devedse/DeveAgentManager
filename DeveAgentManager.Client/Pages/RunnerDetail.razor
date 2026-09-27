@@ -28,6 +28,10 @@
             </TitleContent>
             <Actions>
                 <MudButton Href="@($"runners/{_runner.Id}/shell")" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Terminal" Disabled="!ready">Shell</MudButton>
+                @if (_runner.ToolIds.Contains("vscode"))
+                {
+                    <MudButton Href="@($"runners/{_runner.Id}/vscode")" Variant="Variant.Outlined" StartIcon="@(Tool("vscode")?.Icon ?? Icons.Material.Rounded.Code)" Disabled="!ready">VS Code</MudButton>
+                }
                 @if (provider?.Capabilities.CanStartStop == true)
                 {
                     @if (_runner.State is RunnerState.Stopped or RunnerState.Error)
@@ -176,6 +180,18 @@
                                 <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => InstallHarnessAsync(harness)">Install</MudButton>
                             </div>
                         }
+                        @foreach (var tool in _info?.Tools ?? [])
+                        {
+                            var installed = _runner.ToolIds.Contains(tool.Id);
+                            <div class="operation">
+                                <MudIcon Icon="@(tool.Icon ?? Icons.Material.Rounded.Extension)" Class="operation-icon" />
+                                <div class="operation-text">
+                                    <div class="operation-name">@(installed ? "Update" : "Install") @tool.DisplayName</div>
+                                    <div class="operation-description">@(installed ? $"The latest {tool.DisplayName}. If it is open, it reloads with the new version." : tool.Description)</div>
+                                </div>
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => InstallToolAsync(tool, installed)">@(installed ? "Update" : "Install")</MudButton>
+                            </div>
+                        }
                         <div class="operation">
                             <MudIcon Icon="@Icons.Material.Rounded.Build" Class="operation-icon" />
                             <div class="operation-text">
@@ -261,7 +277,7 @@
         var running = _runner!.Agents.Count(a => a.State == AgentState.Running);
         var confirmed = await Dialogs.ShowMessageBoxAsync(
             $"Re-run setup on '{_runner.Name}'?",
-            "Everything is installed and configured again: base packages, tmux and git config, the Setup Profile (variables, files, script), the harnesses in their latest version and their packages. Each step is safe to repeat."
+            "Everything is installed and configured again: base packages, tmux and git config, the Setup Profile (variables, files, script), the harnesses and tools in their latest version, and the harnesses' packages. Each step is safe to repeat."
             + (running > 0 ? $" The {running} running {(running == 1 ? "agent keeps" : "agents keep")} running; restart {(running == 1 ? "it" : "them")} afterwards to use updated harnesses and packages." : ""),
             yesText: "Re-run setup", cancelText: "Cancel");
         if (confirmed == true)
@@ -283,6 +299,14 @@
             _waitingFor.Add("update");
             await RunAsync(() => Api.UpdateHarnessAsync(RunnerId, harness.Id));
         }
+    }
+
+    private RunnerToolDto? Tool(string toolId) => _info?.Tools.FirstOrDefault(t => t.Id == toolId);
+
+    private async Task InstallToolAsync(RunnerToolDto tool, bool update)
+    {
+        _waitingFor.Add(update ? "update" : "install");
+        await RunAsync(() => Api.InstallToolAsync(RunnerId, tool.Id, update));
     }
 
     private async Task InstallHarnessAsync(HarnessDto harness)

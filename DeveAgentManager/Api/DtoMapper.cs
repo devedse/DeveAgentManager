@@ -23,6 +23,7 @@ public sealed class DtoMapper(
     SessionService sessions,
     AccountService accounts,
     SettingsStore settings,
+    RunnerSetupService setup,
     ManagerOptions options,
     ManagerSshKey sshKey)
 {
@@ -44,7 +45,8 @@ public sealed class DtoMapper(
         await settings.GetGitHubPatAsync(cancellationToken) is not null,
         RunnerSetupService.SetupVersion,
         agents.Harnesses.OrderBy(h => h.Id == "pi" ? 0 : 1).ThenBy(h => h.DisplayName).Select(Harness).ToList(),
-        runners.Providers.OrderBy(p => p.Capabilities.RequiresConnectionDetails).Select(Provider).ToList());
+        runners.Providers.OrderBy(p => p.Capabilities.RequiresConnectionDetails).Select(Provider).ToList(),
+        setup.Tools.OrderBy(t => t.DisplayName).Select(t => new RunnerToolDto(t.Id, t.DisplayName, t.Description, t.Icon)).ToList());
 
     public HarnessDto Harness(IHarness harness) => new(
         harness.Id,
@@ -86,6 +88,7 @@ public sealed class DtoMapper(
         runner.MemoryMb,
         runner.DiskGb,
         runner.HarnessIds,
+        runner.ToolIds,
         runner.SetupVersion,
         runner.InstalledVersions,
         runner.CreatedAt,
@@ -101,6 +104,7 @@ public sealed class DtoMapper(
         runner.Name,
         runner.State,
         runner.HarnessIds,
+        runner.ToolIds,
         agent.Name,
         agent.HarnessId,
         agent.WorkingDirectory,

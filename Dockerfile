@@ -1,11 +1,12 @@
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 WORKDIR /app
-EXPOSE 8080
+# 8080: the Portal. 8081: VS Code, which needs an origin of its own (see EDITOR_PORT in README.md).
+EXPOSE 8080 8081
 # /data holds the database, the encryption keys and the Manager's SSH key. Owned by the non-root "app" user,
 # so a named volume mounted there starts with the right permissions.
 RUN mkdir -p /data && chown app:app /data
 ENV DATA_DIR=/data \
-    ASPNETCORE_HTTP_PORTS=8080
+    ASPNETCORE_HTTP_PORTS=8080;8081
 
 # The app is platform independent, so build once on the build machine for every target platform.
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build

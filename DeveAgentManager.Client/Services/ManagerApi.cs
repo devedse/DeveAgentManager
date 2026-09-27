@@ -60,6 +60,10 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     /// <summary>Starts updating a harness; the result arrives as <see cref="LiveUpdates.OperationFinished"/>.</summary>
     public Task UpdateHarnessAsync(Guid runnerId, string harnessId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/harnesses/{Uri.EscapeDataString(harnessId)}/update");
 
+    /// <summary>Installs a tool (e.g. VS Code), or updates it; the result arrives as an operation.</summary>
+    public Task InstallToolAsync(Guid runnerId, string toolId, bool update) =>
+        SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/tools/{Uri.EscapeDataString(toolId)}/{(update ? "update" : "install")}");
+
     public Task InstallHarnessAsync(Guid runnerId, string harnessId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/harnesses/{Uri.EscapeDataString(harnessId)}/install");
 
     public Task<List<RunnerActivityDto>> ListRunnerActivityAsync(Guid runnerId) => GetAsync<List<RunnerActivityDto>>($"api/runners/{runnerId}/activity");

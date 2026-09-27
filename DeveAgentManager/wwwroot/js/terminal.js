@@ -639,5 +639,30 @@
         scrollPageToEnd() {
             window.scrollTo(0, document.body.scrollHeight);
         },
+
+        // Whether the browser can reach a URL on another origin (e.g. the Manager's VS Code port). The answer can't be
+        // read across origins, but a request that fails at all means the port isn't reachable.
+        async canReach(url) {
+            try {
+                await fetch(url, { mode: "no-cors", credentials: "include", cache: "no-store" });
+                return true;
+            } catch {
+                return false;
+            }
+        },
+
+        // Full screen for an element (e.g. the VS Code frame); false where the browser doesn't allow it (iPhone).
+        async fullscreen(element) {
+            if (!element?.requestFullscreen) {
+                return false;
+            }
+
+            try {
+                await element.requestFullscreen();
+                return true;
+            } catch {
+                return false;
+            }
+        },
     };
 })();

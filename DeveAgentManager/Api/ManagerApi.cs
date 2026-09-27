@@ -85,6 +85,13 @@ public static class ManagerApi
         runners.MapPost("/{runnerId:guid}/harnesses/{harnessId}/install", async (Guid runnerId, string harnessId, RunnerService service, OperationNotifier notifier, CancellationToken ct) =>
             await Track(runnerId, service, notifier, "install", () => service.InstallHarness(runnerId, harnessId), ct));
 
+        // A tool's install script also updates it.
+        runners.MapPost("/{runnerId:guid}/tools/{toolId}/install", async (Guid runnerId, string toolId, RunnerService service, OperationNotifier notifier, CancellationToken ct) =>
+            await Track(runnerId, service, notifier, "install", () => service.InstallTool(runnerId, toolId), ct));
+
+        runners.MapPost("/{runnerId:guid}/tools/{toolId}/update", async (Guid runnerId, string toolId, RunnerService service, OperationNotifier notifier, CancellationToken ct) =>
+            await Track(runnerId, service, notifier, "update", () => service.InstallTool(runnerId, toolId, update: true), ct));
+
         // The agents' state from tmux right now (e.g. after a terminal closed), instead of at the monitor's next round.
         runners.MapPost("/{runnerId:guid}/refresh", async (Guid runnerId, RunnerService service, AgentService agents, CancellationToken ct) =>
         {

@@ -36,6 +36,15 @@ public sealed class ManagerOptions
 
     public string? GitUserEmail { get; init; }
 
+    /// <summary>
+    /// The Manager's second port, which only serves VS Code. VS Code runs code from the Runner (extensions, and anything
+    /// that took over code-server there), so it gets an origin of its own instead of running as the Portal.
+    /// </summary>
+    public int EditorPort { get; init; } = 8081;
+
+    /// <summary>How browsers reach <see cref="EditorPort"/> when that isn't the Portal's host on that port (e.g. behind a proxy).</summary>
+    public string? EditorUrl { get; init; }
+
     public string DatabasePath => Path.Combine(DataDirectory, "deveagentmanager.db");
 
     public string KeysDirectory => Path.Combine(DataDirectory, "keys");
@@ -68,6 +77,8 @@ public sealed class ManagerOptions
             GitHubPat = Value(configuration, "GITHUB_PAT"),
             GitUserName = Value(configuration, "GIT_USER_NAME"),
             GitUserEmail = Value(configuration, "GIT_USER_EMAIL"),
+            EditorPort = Int(configuration, "EDITOR_PORT", 8081),
+            EditorUrl = Value(configuration, "EDITOR_URL")?.TrimEnd('/'),
         };
     }
 

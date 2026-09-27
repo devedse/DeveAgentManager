@@ -2,6 +2,7 @@ using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
+using DeveAgentManager.Core.Editor;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Providers.ExistingMachine;
 using DeveAgentManager.Core.Runners;
@@ -42,6 +43,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RunnerStatusCache>();
         services.AddSingleton<TerminalService>();
         services.AddSingleton<IRunnerProvider, ExistingMachineProvider>();
+        services.AddSingleton<IRunnerTool, VsCodeTool>();
+        services.AddSingleton<EditorTunnels>();
+        services.AddSingleton<IEditorUpstreams>(sp => sp.GetRequiredService<EditorTunnels>());
+        services.AddHostedService(sp => sp.GetRequiredService<EditorTunnels>());
         services.AddHostedService<RunnerMonitor>();
         return services;
     }

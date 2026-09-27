@@ -32,6 +32,7 @@ builder.Services.ConfigureHttpJsonOptions(json => ApiJson.Configure(json.Seriali
 builder.Services.AddSignalR().AddJsonProtocol(json => ApiJson.Configure(json.PayloadSerializerOptions));
 builder.Services.AddSingleton<DtoMapper>();
 builder.Services.AddSingleton<OperationNotifier>();
+builder.Services.AddHttpForwarder();
 builder.Services.AddHostedService<LiveUpdatesBridge>();
 builder.Services.AddProblemDetails();
 
@@ -89,6 +90,9 @@ if (managerOptions.UsesDefaultAdminPassword)
 
 app.UseForwardedHeaders();
 
+// The editor port serves VS Code and nothing else (see EditorEndpoints).
+app.UseEditorOrigin();
+
 // Error and "not found" pages are for pages; the API answers with problem details.
 app.UseWhen(context => !RequestSecurity.IsMachinePath(context.Request.Path), pages =>
 {
@@ -138,6 +142,7 @@ app.MapPost("/account/logout", async (HttpContext context) =>
 
 app.MapManagerApi();
 app.MapTerminalSocket();
+app.MapEditorLinks();
 app.MapHub<LiveUpdatesHub>(LiveHub.Path);
 
 app.MapRazorComponents<App>()

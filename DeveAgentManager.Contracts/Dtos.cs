@@ -22,7 +22,12 @@ public sealed record ManagerInfoDto(
     bool HasGitHubPat,
     int SetupVersion,
     IReadOnlyList<HarnessDto> Harnesses,
-    IReadOnlyList<ProviderDto> Providers);
+    IReadOnlyList<ProviderDto> Providers,
+    IReadOnlyList<RunnerToolDto> Tools);
+
+/// <summary>Software a Runner can have besides the harnesses, e.g. VS Code.</summary>
+/// <param name="Icon">The logo: SVG content for a 24×24 view box.</param>
+public sealed record RunnerToolDto(string Id, string DisplayName, string Description, string? Icon);
 
 /// <param name="HasSessionFormat">Its conversations can be stored, exported and continued.</param>
 /// <param name="Icon">The logo: SVG content for a 24×24 view box, as MudBlazor icons take it.</param>
@@ -63,6 +68,7 @@ public sealed record RunnerDto(
     int MemoryMb,
     int DiskGb,
     IReadOnlyList<string> HarnessIds,
+    IReadOnlyList<string> ToolIds,
     int? SetupVersion,
     string? InstalledVersions,
     DateTime CreatedAt,
@@ -82,6 +88,7 @@ public sealed record AgentDto(
     string RunnerName,
     RunnerState RunnerState,
     IReadOnlyList<string> RunnerHarnessIds,
+    IReadOnlyList<string> RunnerToolIds,
     string Name,
     string HarnessId,
     string WorkingDirectory,

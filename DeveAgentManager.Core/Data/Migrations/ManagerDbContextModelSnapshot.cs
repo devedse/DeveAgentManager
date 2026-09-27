@@ -201,6 +201,10 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<string>("TemplateId")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Tools")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("TEXT");
 

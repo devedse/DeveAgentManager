@@ -122,6 +122,7 @@ public sealed partial class RunnerService(
             MemoryMb = provider.Capabilities.SupportsSizing ? request.MemoryMb : 0,
             DiskGb = provider.Capabilities.SupportsSizing ? request.DiskGb : 0,
             Harnesses = string.Join(',', request.Harnesses),
+            Tools = string.Join(',', (request.Tools ?? []).Select(t => setup.GetTool(t).Id).Distinct()),
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -211,6 +212,24 @@ public sealed partial class RunnerService(
             await setup.UpdateHarnessAsync(op.Runner, harnessId, op.Log, cancellation);
             await op.SaveAsync();
         }, markFailed: false);
+
+    /// <summary>Installs a tool (e.g. VS Code) on a Runner, or its latest version when it has it. Returns the error, or null.</summary>
+    public Task<string?> InstallTool(Guid runnerId, string toolId, bool update = false)
+    {
+        var tool = setup.GetTool(toolId);
+        return StartOperation(runnerId, $"{(update ? "Updating" : "Installing")} {tool.DisplayName}", async (op, cancellation) =>
+        {
+            RequireReady(op.Runner);
+            if (!op.Runner.ToolIds.Contains(tool.Id))
+            {
+                op.Runner.Tools = string.Join(',', op.Runner.ToolIds.Append(tool.Id));
+                await op.SaveAsync();
+            }
+
+            await setup.UpdateToolAsync(op.Runner, tool.Id, op.Log, cancellation);
+            await op.SaveAsync();
+        }, markFailed: false);
+    }
 
     /// <summary>Applies a harness's configuration from the Setup Profile (after it changed). Returns the error, or null.</summary>
     public Task<string?> ApplyHarnessConfig(Guid runnerId, string harnessId) =>
