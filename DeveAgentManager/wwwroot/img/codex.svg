@@ -1,0 +1,12 @@
+<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Codex logo - code brackets style -->
+  <defs>
+    <linearGradient id="codex-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#10A37F;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1A7F64;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <path d="M8 6L2 12l6 6v-3l-3-3 3-3V6z" fill="url(#codex-gradient)"/>
+  <path d="M16 6l6 6-6 6v-3l3-3-3-3V6z" fill="url(#codex-gradient)"/>
+  <rect x="10.5" y="8" width="3" height="8" rx="1" fill="url(#codex-gradient)"/>
+</svg>

@@ -1,16 +1,31 @@
-@* Displays an icon for a harness (pi, claude, codex, etc.) *@
-<MudIcon Icon="@GetIcon()" Size="@Size" Color="@Color" title="@HarnessId" />
+@* Displays a logo for a harness (pi, claude, codex, etc.) *@
+@if (GetLogoPath() is { } logo)
+{
+    <img src="@logo" alt="@HarnessId" title="@HarnessId" class="harness-logo @GetSizeClass()" />
+}
+else
+{
+    <MudIcon Icon="@Icons.Material.Rounded.Extension" Size="@Size" Color="@Color" title="@HarnessId" />
+}
 
 @code {
     [Parameter] public string HarnessId { get; set; } = "";
     [Parameter] public Size Size { get; set; } = Size.Small;
     [Parameter] public Color Color { get; set; } = Color.Default;
 
-    private string GetIcon() => HarnessId.ToLowerInvariant() switch
+    private string? GetLogoPath() => HarnessId.ToLowerInvariant() switch
     {
-        "pi" => Icons.Material.Rounded.Terminal,
-        "claude" => Icons.Material.Rounded.AutoAwesome,
-        "codex" => Icons.Material.Rounded.Code,
-        _ => Icons.Material.Rounded.Extension
+        "pi" => "/img/pi.svg",
+        "claude" => "/img/claude.svg",
+        "codex" => "/img/codex.svg",
+        _ => null
+    };
+
+    private string GetSizeClass() => Size switch
+    {
+        Size.Small => "size-small",
+        Size.Medium => "size-medium",
+        Size.Large => "size-large",
+        _ => "size-small"
     };
 }
