@@ -360,10 +360,19 @@ public sealed partial class AgentService(
         System.Text.RegularExpressions.Regex.IsMatch(tty, "^/dev/[A-Za-z0-9/]+$") ? tty : throw new ArgumentException($"'{tty}' is not a terminal.");
 
     /// <summary>Reads the state of every agent on a Runner from tmux.</summary>
+    /// <summary>How recent the harness's last output must be for the agent to count as working (spinners redraw every second or faster).</summary>
+    public static readonly TimeSpan WorkingWithin = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// The agents' state from tmux: running, exited or gone, and whether a running one is working (it printed something in
+    /// the last seconds; pi, Claude Code and Codex animate a spinner and a timer while they work) or idle (waiting for
+    /// input: the screen doesn't change).
+    /// </summary>
     public async Task RefreshRunnerAsync(Runner runner, CancellationToken cancellationToken = default)
     {
-        var result = await shell.RunAsync(runner, "tmux list-panes -a -F '#{session_name}|#{pane_dead}|#{pane_dead_status}' 2>/dev/null || true", TimeSpan.FromSeconds(30), cancellationToken);
-        var panes = ParsePanes(result.Output);
+        var result = await shell.RunAsync(runner, "date +%s; tmux list-panes -a -F '#{session_name}|#{pane_dead}|#{pane_dead_status}|#{window_activity}' 2>/dev/null || true",
+            TimeSpan.FromSeconds(30), cancellationToken);
+        var (now, panes) = ParsePanes(result.Output);
 
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agents = await db.Agents.Where(a => a.RunnerId == runner.Id).ToListAsync(cancellationToken);
@@ -371,10 +380,12 @@ public sealed partial class AgentService(
         {
             AgentState state;
             int? exitCode = null;
+            var working = false;
             if (panes.TryGetValue(agent.TmuxSession, out var pane))
             {
                 state = pane.Dead ? AgentState.Exited : AgentState.Running;
                 exitCode = pane.Dead ? pane.ExitCode : null;
+                working = !pane.Dead && now is { } runnerNow && pane.LastOutput is { } lastOutput && runnerNow - lastOutput <= (long)WorkingWithin.TotalSeconds;
             }
             else
             {
@@ -388,6 +399,12 @@ public sealed partial class AgentService(
                 agent.ExitCode = exitCode;
                 agent.StateMessage = state == AgentState.Exited ? $"The harness exited (code {exitCode}). Start it again to resume the conversation." : null;
                 agent.UpdatedAt = DateTime.UtcNow;
+                agent.Working = working;
+                events.AgentChanged(runner.Id, agent.Id);
+            }
+            else if (agent.Working != working)
+            {
+                agent.Working = working;
                 events.AgentChanged(runner.Id, agent.Id);
             }
         }
@@ -411,24 +428,35 @@ public sealed partial class AgentService(
         }
     }
 
-    internal static Dictionary<string, (bool Dead, int? ExitCode)> ParsePanes(string output)
+    /// <summary>
+    /// The output of <c>date +%s</c> followed by tmux's panes (session|dead|exit status|last output, in the Runner's epoch
+    /// seconds): the Runner's time, and per session its pane.
+    /// </summary>
+    internal static (long? Now, Dictionary<string, (bool Dead, int? ExitCode, long? LastOutput)> Panes) ParsePanes(string output)
     {
-        var panes = new Dictionary<string, (bool Dead, int? ExitCode)>(StringComparer.Ordinal);
+        var panes = new Dictionary<string, (bool Dead, int? ExitCode, long? LastOutput)>(StringComparer.Ordinal);
+        long? now = null;
         foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var parts = line.Split('|');
             if (parts.Length < 2)
             {
+                if (now is null && long.TryParse(line, out var seconds))
+                {
+                    now = seconds;
+                }
+
                 continue;
             }
 
             var dead = parts[1] == "1";
             int? exitCode = parts.Length > 2 && int.TryParse(parts[2], out var code) ? code : null;
+            long? lastOutput = parts.Length > 3 && long.TryParse(parts[3], out var activity) ? activity : null;
             // A session has one pane per window; the agent's session has a single pane.
-            panes[parts[0]] = (dead, exitCode);
+            panes[parts[0]] = (dead, exitCode, lastOutput);
         }
 
-        return panes;
+        return (now, panes);
     }
 
     private async Task PrepareWorkspaceAsync(Runner runner, Agent agent, AgentWorkspaceMode mode, CancellationToken cancellationToken)

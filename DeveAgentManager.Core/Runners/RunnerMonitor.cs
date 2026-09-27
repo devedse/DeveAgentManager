@@ -33,7 +33,12 @@ public sealed class RunnerMonitor(
     ManagerEvents events,
     ILogger<RunnerMonitor> logger) : BackgroundService
 {
-    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(15);
+    /// <summary>Agents (running, working or idle) are checked this often; the provider and conversations every third time.</summary>
+    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
+
+    private const int FullPassEvery = 3;
+
+    private int _pass;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -60,6 +65,7 @@ public sealed class RunnerMonitor(
 
     private async Task PollAsync(CancellationToken cancellationToken)
     {
+        var full = _pass++ % FullPassEvery == 0;
         var all = await runners.ListAsync(cancellationToken);
         await Parallel.ForEachAsync(all, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (runner, ct) =>
         {
@@ -71,7 +77,7 @@ public sealed class RunnerMonitor(
             try
             {
                 var provider = runners.FindProvider(runner.ProviderId);
-                if (provider is not null && runner.MachineId is not null && runner.State is RunnerState.Ready or RunnerState.Stopped or RunnerState.Error)
+                if (full && provider is not null && runner.MachineId is not null && runner.State is RunnerState.Ready or RunnerState.Stopped or RunnerState.Error)
                 {
                     var status = await provider.GetStatusAsync(runner.ToMachine(), ct);
                     statusCache.Set(runner.Id, status);
@@ -82,7 +88,10 @@ public sealed class RunnerMonitor(
                 if (runner.State == RunnerState.Ready && runner.Agents.Count > 0)
                 {
                     await agents.RefreshRunnerAsync(runner, ct);
-                    await sessions.SyncRunnerAsync(runner, ct);
+                    if (full)
+                    {
+                        await sessions.SyncRunnerAsync(runner, ct);
+                    }
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

@@ -2128,7 +2128,12 @@ a {
 
     .nav-agent-dot.live {
         background: var(--dam-success);
-        box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.15);
+    }
+
+    /* Working: its harness is busy. */
+    .nav-agent-dot.working {
+        background: var(--dam-info);
+        animation: dam-pulse 1.6s ease-in-out infinite;
     }
 
 .nav-agent-name {

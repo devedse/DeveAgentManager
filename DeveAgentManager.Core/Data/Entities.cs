@@ -124,6 +124,12 @@ public class Agent
 
     public int? ExitCode { get; set; }
 
+    /// <summary>
+    /// Running and busy: the harness printed something in the last seconds (they animate a spinner while they work).
+    /// False while it waits for input. See <see cref="Agents.AgentService.RefreshRunnerAsync"/>.
+    /// </summary>
+    public bool Working { get; set; }
+
     /// <summary>Changes when the agent's icon (<see cref="AgentIcon"/>) changes; null when it has none (the harness's logo is shown).</summary>
     public long? IconVersion { get; set; }
 

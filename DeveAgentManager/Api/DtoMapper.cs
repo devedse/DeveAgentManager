@@ -117,7 +117,8 @@ public sealed class DtoMapper(
         agent.AccountId is { } id ? accountNames.GetValueOrDefault(id) : null,
         agent.CreatedAt,
         agent.UpdatedAt,
-        agent.IconVersion);
+        agent.IconVersion,
+        agent.State == AgentState.Running && agent.Working);
 
     public static SessionDto Session(StoredSession session, IReadOnlyDictionary<Guid, string> accountNames) => new(
         session.Id,

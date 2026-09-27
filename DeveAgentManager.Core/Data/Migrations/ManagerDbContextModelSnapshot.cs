@@ -113,6 +113,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("Working")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("WorkingDirectory")
                         .IsRequired()
                         .HasColumnType("TEXT");

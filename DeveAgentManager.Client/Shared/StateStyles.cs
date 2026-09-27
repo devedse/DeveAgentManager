@@ -1,3 +1,4 @@
+using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Data;
 using MudBlazor;
 
@@ -39,6 +40,14 @@ public static class StateStyles
         AgentState.Stopped => new("Stopped", Tone.Neutral),
         AgentState.Error => new("Error", Tone.Error),
         _ => new("Unknown", Tone.Neutral),
+    };
+
+    /// <summary>A running agent is working (its harness is busy) or idle (waiting for you).</summary>
+    public static StateStyle For(AgentDto agent) => agent.State switch
+    {
+        AgentState.Running when agent.Working => new("Working", Tone.Info, true),
+        AgentState.Running => new("Idle", Tone.Success),
+        _ => For(agent.State),
     };
 
     public static string CssClass(this Tone tone) => tone.ToString().ToLowerInvariant();

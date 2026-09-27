@@ -29,7 +29,7 @@ else
                     </div>
                 </a>
                 <div class="agent-row-state">
-                    <StatusPill Style="StateStyles.For(agent.State)" Title="@agent.StateMessage" />
+                    <StatusPill Style="StateStyles.For(agent)" Title="@agent.StateMessage" />
                     <span class="list-time">@agent.CreatedAt.Humanize()</span>
                 </div>
                 <div class="agent-row-actions">

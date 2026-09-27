@@ -101,7 +101,8 @@ public sealed record AgentDto(
     string? AccountName,
     DateTime CreatedAt,
     DateTime UpdatedAt,
-    long? IconVersion = null);
+    long? IconVersion = null,
+    bool Working = false);
 
 /// <summary>An image in an agent's folder, for the icon picker. <paramref name="Path"/> is relative to the folder.</summary>
 /// <param name="Automatic">What the Manager would pick by itself.</param>
