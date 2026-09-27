@@ -91,9 +91,13 @@ public sealed class CodexHarness : IHarness
     public string BuildLaunchCommand(HarnessLaunch launch)
     {
         var id = ShellQuote.Quote(launch.SessionId);
+        // Without its background server: that listens on a socket in CODEX_HOME, and an account's folder is too long a
+        // path for a socket (108 characters), so Codex would refuse to start. Older Codex versions don't have the flag.
         var script = $"""
             node "{PrepareScript}" {id}
-            exec codex --dangerously-bypass-approvals-and-sandbox resume {id}
+            flags=""
+            if codex --help 2>/dev/null | grep -q -- '--no-daemon'; then flags="--no-daemon"; fi
+            exec codex $flags --dangerously-bypass-approvals-and-sandbox resume {id}
             """;
         return "bash -c " + ShellQuote.Quote(script);
     }
