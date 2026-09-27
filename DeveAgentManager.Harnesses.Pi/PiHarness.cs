@@ -53,7 +53,6 @@ public sealed class PiHarness : IHarness
             new("npm:pi-plugin-manager", "Manage plugins from inside pi"),
             new("npm:@dietrichgebert/ponytail", "Lazy senior dev mode: the best code is the code you never wrote"),
             new("npm:@pi-archimedes/image-paste", "Image paste with preview (reads the Runner's clipboard: in the browser terminal, use Ctrl+V or 📎)"),
-            new("npm:pi-archimedes", "Parallel agents, task lists, MCP, polished terminal (suite)"),
         ],
         SettingsFile: "~/.pi/agent/settings.json",
         KeybindingsFile: "~/.pi/agent/keybindings.json",
