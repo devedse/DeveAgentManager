@@ -91,31 +91,12 @@
                         <MudText Typo="Typo.h6">Agents</MudText>
                         <MudButton Href="agents" Variant="Variant.Text" Size="Size.Small" EndIcon="@Icons.Material.Rounded.ChevronRight">All agents</MudButton>
                     </div>
-                    @if (_agents.Count == 0)
-                    {
-                        <EmptyState Icon="@Icons.Material.Rounded.SmartToy" Title="No agents yet" Text="Start an agent on a Runner to work on a repository.">
+                    @* The same rows, with the same quick actions, as on the Agents and Runner pages. *@
+                    <AgentTable Agents="_agents.Take(8).ToList()" ShowRunner="true" EmptyText="Start an agent on a Runner to work on a repository.">
+                        <EmptyContent>
                             <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
-                        </EmptyState>
-                    }
-                    else
-                    {
-                        <div class="list">
-                            @foreach (var agent in _agents.Take(8))
-                            {
-                                <a class="list-row" href="agents/@agent.Id">
-                                    <div class="list-avatar">@agent.HarnessId</div>
-                                    <div class="list-main">
-                                        <div class="list-title">@agent.Name</div>
-                                        <div class="list-subtitle">@agent.RunnerName · @(agent.RepositoryUrl ?? agent.WorkingDirectory)</div>
-                                    </div>
-                                    <div class="list-meta">
-                                        <StatusPill Style="StateStyles.For(agent.State)" />
-                                        <span class="list-time">@agent.CreatedAt.Humanize()</span>
-                                    </div>
-                                </a>
-                            }
-                        </div>
-                    }
+                        </EmptyContent>
+                    </AgentTable>
                 </div>
             </MudItem>
             <MudItem xs="12" lg="5">
