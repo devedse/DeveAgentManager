@@ -103,6 +103,18 @@ public static class ManagerApi
             return Results.NoContent();
         });
 
+        // The Details panel's refresh: the installed versions and the agents' state, read from the Runner now.
+        runners.MapPost("/{runnerId:guid}/refresh-details", async (Guid runnerId, RunnerService service, AgentService agents, CancellationToken ct) =>
+        {
+            await service.RefreshVersionsAsync(runnerId, ct);
+            if (await service.GetAsync(runnerId, ct) is { State: RunnerState.Ready } runner)
+            {
+                await agents.RefreshRunnerAsync(runner, ct);
+            }
+
+            return Results.NoContent();
+        });
+
         runners.MapGet("/{runnerId:guid}/log", (Guid runnerId, RunnerLogStore logs) => logs.GetRecent(runnerId).TakeLast(2000).ToList());
 
         runners.MapGet("/{runnerId:guid}/activity", async (Guid runnerId, RunnerService service, CancellationToken ct) =>

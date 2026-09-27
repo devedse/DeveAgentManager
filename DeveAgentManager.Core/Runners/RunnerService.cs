@@ -305,6 +305,30 @@ public sealed partial class RunnerService(
         events.Publish(new ManagerEvent(ManagerEventKind.RunnerRemoved, op.Runner.Id));
     }, deleting: true, replaceRunning: true);
 
+    /// <summary>
+    /// Reads the installed versions again (they are otherwise read after a setup, install or update, and harnesses like
+    /// Claude Code update themselves). Skipped while an operation runs: it reads them itself.
+    /// </summary>
+    public async Task RefreshVersionsAsync(Guid runnerId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var runner = await db.Runners.FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken) ?? throw new KeyNotFoundException("Runner not found.");
+        RequireReady(runner);
+        if (CurrentOperation(runnerId) is not null)
+        {
+            return;
+        }
+
+        var versions = await setup.ReadVersionsAsync(runner, cancellationToken);
+        if (versions != runner.InstalledVersions)
+        {
+            runner.InstalledVersions = versions;
+            runner.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            events.RunnerChanged(runnerId);
+        }
+    }
+
     public async Task ForgetHostKeyAsync(Guid runnerId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);

@@ -116,6 +116,10 @@
                 <div class="panel mb-4">
                     <div class="panel-header">
                         <MudText Typo="Typo.h6">Details</MudText>
+                        @* Resources and the address are live (asked every 15 seconds); the software versions are read at setup. *@
+                        <MudTooltip Text="Read the software versions from the Runner again">
+                            <MudIconButton Icon="@Icons.Material.Rounded.Refresh" Size="Size.Small" Disabled="!ready || _refreshing" OnClick="RefreshDetailsAsync" aria-label="Refresh" />
+                        </MudTooltip>
                     </div>
                     <dl class="details">
                         <dt>Provider</dt>
@@ -298,6 +302,26 @@
         {
             _waitingFor.Add("update");
             await RunAsync(() => Api.UpdateHarnessAsync(RunnerId, harness.Id));
+        }
+    }
+
+    private bool _refreshing;
+
+    private async Task RefreshDetailsAsync()
+    {
+        _refreshing = true;
+        try
+        {
+            await Api.RefreshRunnerDetailsAsync(RunnerId);
+            Snackbar.Add("Details read from the Runner.", Severity.Success);
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _refreshing = false;
         }
     }
 

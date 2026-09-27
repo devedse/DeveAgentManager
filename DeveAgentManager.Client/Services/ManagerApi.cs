@@ -68,6 +68,8 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task<List<RunnerActivityDto>> ListRunnerActivityAsync(Guid runnerId) => GetAsync<List<RunnerActivityDto>>($"api/runners/{runnerId}/activity");
 
+    public Task RefreshRunnerDetailsAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/refresh-details");
+
     public Task RefreshRunnerAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/refresh");
 
     // Agents
