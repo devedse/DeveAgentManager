@@ -159,7 +159,7 @@ Everything is set with environment variables in the compose file.
 | `GIT_USER_NAME` / `GIT_USER_EMAIL` | | Default git identity on Runners. Can also be set in the Portal. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |
 | `EDITOR_PORT` | `8081` | The port that serves VS Code, and nothing else. Publish it next to 8080. |
-| `EDITOR_URL` | Portal's host on `EDITOR_PORT` | Where browsers reach that port, when it differs (behind a proxy), e.g. `https://code.example.com`. |
+| `EDITOR_URL` | Portal's host on `EDITOR_PORT` | Where browsers reach that port, when it differs (behind a proxy), e.g. `https://code.example.com`. With `{runner}` in it (e.g. `https://{runner}.code.example.com`, a wildcard DNS name), each Runner's VS Code gets a host of its own, which isolates Runners from each other too. |
 
 ### Running behind a reverse proxy
 
@@ -212,7 +212,11 @@ keys that decrypt stored secrets (Setup Profile, GitHub token). Losing the keys 
   Portal's origin, that code could use the Portal as the admin. The Portal hands the browser a ticket for one Runner,
   valid for two minutes, which the editor port turns into a cookie for that Runner's path. The browser's other cookies
   (the Portal's login) are removed before a request goes to the Runner, and cookies from the Runner never reach the
-  browser.
+  browser. The Portal only hands out tickets to its own pages, can't be framed by the editor port, and frames VS Code
+  without letting it navigate the Portal's tab. The code-server password is only given to a program on its port that
+  belongs to the Runner Account. What one origin can't do: keep Runners apart from each other. A Runner whose VS Code
+  you open could reach the VS Code of other Runners opened in the same browser (for 12 hours); `EDITOR_URL` with
+  `{runner}` gives each Runner its own origin.
 - **Terminals** are xterm.js in the browser, connected through the Manager to an SSH session on the Runner. The Runner
   never needs to be reachable from your browser. On phones there is a row of extra keys, and swiping scrolls
   (through tmux's mouse mode). Phone keyboards garble text typed straight into xterm.js (xterm.js issue #3600). So on

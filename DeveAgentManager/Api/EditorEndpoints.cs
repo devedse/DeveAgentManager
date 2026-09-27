@@ -24,7 +24,12 @@ namespace DeveAgentManager.Api;
 /// <c>/runners/{id}/code/</c> is its code-server. It serves nothing else.</item>
 /// <item>The browser sends the Manager's login cookie to the editor port as well (cookies don't care about ports): it is
 /// removed before a request goes to the Runner, and cookies code-server sets never reach the browser.</item>
+/// <item>A page on the editor port counts as the same site as the Portal, so its frames get the login cookie: the links
+/// only answer the Portal itself (Sec-Fetch-Site), or a page there could get tickets for every Runner.</item>
 /// </list>
+/// All Runners share the editor origin unless <see cref="ManagerOptions.EditorUrl"/> has a <c>{runner}</c> placeholder
+/// (one host per Runner, e.g. <c>https://{runner}.code.example.com</c> with a wildcard DNS name). On a shared origin,
+/// a Runner whose VS Code is open could reach the VS Code of other Runners opened in the same browser.
 /// </summary>
 public static class EditorEndpoints
 {
@@ -73,19 +78,35 @@ public static class EditorEndpoints
                 ? Open(context, runner, agent.WorkingDirectory)
                 : Page(StatusCodes.Status404NotFound, "This agent doesn't exist (any more)."));
 
-        // Lets the Portal find out whether the editor port can be reached from the browser.
-        links.MapGet("/ping", (HttpContext context) => NoStore(context, Results.Redirect($"{EditorBase(context)}/ping")));
+        // Lets the Portal find out whether a Runner's editor origin can be reached from the browser.
+        links.MapGet("/ping", async (Guid? runner, HttpContext context, RunnerService runners, CancellationToken ct) =>
+            NoStore(context, Results.Redirect($"{EditorBase(context, runner is { } id ? (await runners.GetAsync(id, ct))?.Name : null)}/ping")));
     }
 
-    /// <summary>Where the browser reaches the editor origin: EDITOR_URL, or the Portal's host on the editor port.</summary>
-    internal static string EditorBase(HttpContext context)
+    /// <summary>
+    /// Where the browser reaches a Runner's editor origin: EDITOR_URL (with the Runner's name for <c>{runner}</c>), or the
+    /// Portal's host on the editor port.
+    /// </summary>
+    internal static string EditorBase(HttpContext context, string? runnerName)
     {
         var options = context.RequestServices.GetRequiredService<ManagerOptions>();
-        return options.EditorUrl ?? new UriBuilder(context.Request.Scheme, context.Request.Host.Host, options.EditorPort).Uri.GetLeftPart(UriPartial.Authority);
+        return options.EditorUrl?.Replace("{runner}", runnerName ?? "runner", StringComparison.Ordinal)
+            ?? new UriBuilder(context.Request.Scheme, context.Request.Host.Host, options.EditorPort).Uri.GetLeftPart(UriPartial.Authority);
     }
+
+    /// <summary>
+    /// The Portal's own pages (or an address typed in the browser), not a page on another port of this host: browsers say
+    /// where a request comes from in Sec-Fetch-Site. Browsers without it are let through.
+    /// </summary>
+    private static bool FromThePortal(HttpRequest request) => request.Headers["Sec-Fetch-Site"].ToString() is "" or "same-origin" or "none";
 
     private static IResult Open(HttpContext context, Runner runner, string? folder)
     {
+        if (!FromThePortal(context.Request))
+        {
+            return Page(StatusCodes.Status403Forbidden, "Open VS Code from the Manager's own pages.");
+        }
+
         if (!runner.ToolIds.Contains(VsCodeTool.ToolId))
         {
             return Page(StatusCodes.Status409Conflict, $"VS Code is not installed on '{runner.Name}'. Install it on the Runner page, under Operations.");
@@ -98,7 +119,7 @@ public static class EditorEndpoints
             query = query.Add("folder", folder);
         }
 
-        return NoStore(context, Results.Redirect($"{EditorBase(context)}/runners/{runner.Id}/auth{query}"));
+        return NoStore(context, Results.Redirect($"{EditorBase(context, runner.Name)}/runners/{runner.Id}/auth{query}"));
     }
 
     private static async Task HandleEditorRequestAsync(HttpContext context)
@@ -115,6 +136,12 @@ public static class EditorEndpoints
         // /runners/{id}/auth, /runners/{id}/code and /runners/{id}/code/...
         var parts = path.Split('/', 4);
         if (parts.Length != 4 || parts[0] != "" || parts[1] != "runners" || !Guid.TryParseExact(parts[2], "D", out var runnerId) || parts[2] != runnerId.ToString())
+        {
+            await WriteAsync(context, Page(StatusCodes.Status404NotFound, "Nothing here. Open VS Code from the Manager."));
+            return;
+        }
+
+        if (!await OnItsOwnHostAsync(context, runnerId))
         {
             await WriteAsync(context, Page(StatusCodes.Status404NotFound, "Nothing here. Open VS Code from the Manager."));
             return;
@@ -138,6 +165,20 @@ public static class EditorEndpoints
         {
             await WriteAsync(context, Page(StatusCodes.Status404NotFound, "Nothing here. Open VS Code from the Manager."));
         }
+    }
+
+    /// <summary>With one host per Runner (EDITOR_URL with <c>{runner}</c>), a Runner is only served on its own host.</summary>
+    private static async Task<bool> OnItsOwnHostAsync(HttpContext context, Guid runnerId)
+    {
+        var template = context.RequestServices.GetRequiredService<ManagerOptions>().EditorUrl;
+        if (template is null || !template.Contains("{runner}", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var runner = await context.RequestServices.GetRequiredService<RunnerService>().GetAsync(runnerId, context.RequestAborted);
+        return runner is not null && Uri.TryCreate(template.Replace("{runner}", runner.Name, StringComparison.Ordinal), UriKind.Absolute, out var own)
+            && string.Equals(own.Authority, context.Request.Host.Value, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Turns a ticket from the Portal into this origin's cookie for the one Runner, then opens VS Code.</summary>
@@ -200,7 +241,7 @@ public static class EditorEndpoints
         }
 
         var error = await services.GetRequiredService<IHttpForwarder>().SendAsync(context, $"http://127.0.0.1:{upstream.LocalPort}", Upstream, RequestConfig,
-            new Transformer(path, upstream.SessionCookie, () => upstreams.Forget(runnerId)));
+            new Transformer($"/runners/{runnerId}/code/", path, upstream.SessionCookie, () => upstreams.Forget(runnerId)));
         if (error is ForwarderError.Request or ForwarderError.RequestTimedOut or ForwarderError.UpgradeRequestDestination)
         {
             // code-server (or the tunnel to it) is gone: start again on the next request.
@@ -208,7 +249,7 @@ public static class EditorEndpoints
         }
     }
 
-    private sealed class Transformer(PathString path, string sessionCookie, Action loggedOut) : HttpTransformer
+    private sealed class Transformer(string basePath, PathString path, string sessionCookie, Action loggedOut) : HttpTransformer
     {
         public override async ValueTask TransformRequestAsync(HttpContext httpContext, HttpRequestMessage proxyRequest, string destinationPrefix, CancellationToken cancellationToken)
         {
@@ -224,8 +265,15 @@ public static class EditorEndpoints
         public override async ValueTask<bool> TransformResponseAsync(HttpContext httpContext, HttpResponseMessage? proxyResponse, CancellationToken cancellationToken)
         {
             var copyBody = await base.TransformResponseAsync(httpContext, proxyResponse, cancellationToken);
-            // A cookie the Runner sets would be a cookie for the Manager's host (all its ports).
+            // A cookie the Runner sets would be a cookie for the Manager's host (all its ports), and Clear-Site-Data would
+            // log the Portal out. code-server's service worker may cover its own path, not the whole origin (every
+            // Runner's VS Code, and the tickets).
             httpContext.Response.Headers.Remove(HeaderNames.SetCookie);
+            httpContext.Response.Headers.Remove("Clear-Site-Data");
+            if (httpContext.Response.Headers.ContainsKey("Service-Worker-Allowed"))
+            {
+                httpContext.Response.Headers["Service-Worker-Allowed"] = basePath;
+            }
 
             if (proxyResponse is { StatusCode: HttpStatusCode.Found or HttpStatusCode.SeeOther } && proxyResponse.Headers.Location is { } location
                 && location.OriginalString.Split('?')[0].EndsWith("login", StringComparison.Ordinal))

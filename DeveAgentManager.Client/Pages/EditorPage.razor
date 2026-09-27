@@ -63,7 +63,9 @@
             break;
         case EditorState.Open:
             <div class="editor-frame" @ref="_frame">
-                <iframe src="@EditorLink" title="VS Code" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+                @* No allow-top-navigation: VS Code can't send this tab somewhere else (e.g. a fake login page). *@
+                <iframe src="@EditorLink" title="VS Code" allow="clipboard-read; clipboard-write; fullscreen"
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals"></iframe>
             </div>
             break;
     }
@@ -116,7 +118,7 @@
             _state = _runner is null ? EditorState.Missing
                 : !_runner.ToolIds.Contains("vscode") ? EditorState.NotInstalled
                 : _runner.State != RunnerState.Ready ? EditorState.NotReady
-                : await JS.InvokeAsync<bool>("damUi.canReach", "editor/ping") ? EditorState.Open
+                : await JS.InvokeAsync<bool>("damUi.canReach", $"editor/ping?runner={_runner.Id}") ? EditorState.Open
                 : EditorState.Unreachable;
         }
         catch (ApiException ex)

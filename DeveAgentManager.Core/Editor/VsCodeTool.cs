@@ -55,7 +55,7 @@ public sealed class VsCodeTool : IRunnerTool
         if [ -f "$state/pid" ]; then
           pid="$(cat "$state/pid")"
           if ps -p "$pid" -o args= 2>/dev/null | grep -q code-server; then
-            echo "Stopping the running VS Code (it starts again with the new version when it is opened)"
+            echo "Stopping the running VS Code (it starts again with the new version when it is opened)" >&2
             kill "$pid" 2>/dev/null || true
             for _ in $(seq 1 20); do ps -p "$pid" >/dev/null 2>&1 || break; sleep 0.25; done
           fi
@@ -63,9 +63,14 @@ public sealed class VsCodeTool : IRunnerTool
         fi
         """;
 
+    /// <summary>The line of <see cref="EnsureRunningScript"/>'s output that holds the password (anything else is ignored).</summary>
+    public const string PasswordMarker = "DAM-PASSWORD:";
+
     /// <summary>
-    /// Starts code-server when it isn't running and prints its password. The password is made once and kept in the
-    /// config file (mode 600), so other users on the machine can't use code-server even though it listens on 127.0.0.1.
+    /// Starts code-server when it isn't running and prints its password (after <see cref="PasswordMarker"/>). The password
+    /// is made once and kept in the config file (mode 600), so other users of the machine can't use code-server even though
+    /// it listens on 127.0.0.1. The password is only given out when the program on the port is the Runner Account's own
+    /// (ss shows the process only for this user's programs), not something another user started there.
     /// </summary>
     public static string EnsureRunningScript => $$"""
         set -euo pipefail
@@ -73,7 +78,17 @@ public sealed class VsCodeTool : IRunnerTool
         mkdir -p "$state"
         chmod 700 "$state"
         alive() { curl -fsS -m 3 -o /dev/null "http://127.0.0.1:{{Port}}/healthz"; }
+        ours() { ! command -v ss >/dev/null 2>&1 || ss -Hltnp "sport = :{{Port}}" | grep -q "pid="; }
+        taken() {
+          echo "Port {{Port}} on this Runner is used by another user's program, so VS Code can't run there." >&2
+          exit 5
+        }
+        if alive && ! ours; then
+          taken
+        fi
         if ! alive; then
+          # A code-server that hangs (it doesn't answer) still holds the port.
+          {{StopScript}}
           # Written at every start (a new Manager may add options); the password stays.
           password="$(sed -n 's/^password: //p' "$state/config.yaml" 2>/dev/null || true)"
           [ -n "$password" ] || password="$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
@@ -90,7 +105,8 @@ public sealed class VsCodeTool : IRunnerTool
             tail -n 20 "$state/code-server.log" >&2
             exit 4
           fi
+          ours || taken
         fi
-        sed -n 's/^password: //p' "$state/config.yaml"
+        echo "{{PasswordMarker}}$(sed -n 's/^password: //p' "$state/config.yaml")"
         """;
 }

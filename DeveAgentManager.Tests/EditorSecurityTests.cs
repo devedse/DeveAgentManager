@@ -113,6 +113,8 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
             }
 
             context.Response.Headers.SetCookie = "stolen=1; Path=/";
+            context.Response.Headers["Clear-Site-Data"] = "\"cookies\"";
+            context.Response.Headers["Service-Worker-Allowed"] = "/";
             return Results.Json(new
             {
                 path = context.Request.Path.Value,
@@ -245,6 +247,29 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
         Assert.Equal("code-server-session=runner-session", upstream.GetProperty("cookie").GetString());
         Assert.Equal("localhost", upstream.GetProperty("host").GetString());
         Assert.False(response.Headers.Contains("Set-Cookie"));
+        Assert.False(response.Headers.Contains("Clear-Site-Data"));
+        Assert.Equal($"/runners/{_runnerId}/code/", response.Headers.GetValues("Service-Worker-Allowed").Single());
+    }
+
+    [Theory]
+    [InlineData("same-site")]
+    [InlineData("cross-site")]
+    public async Task EditorLink_FromAnotherPage_GetsNoTicket(string site)
+    {
+        // A page on the editor port is "same-site" to the Portal, and its frames get the Portal's login cookie.
+        var portal = Client();
+        portal.DefaultRequestHeaders.Add("Cookie", await ManagerCookieAsync());
+        portal.DefaultRequestHeaders.Add("Sec-Fetch-Site", site);
+        var response = await portal.GetAsync($"/editor/runners/{_runnerId}");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Null(response.Headers.Location);
+    }
+
+    [Fact]
+    public async Task Portal_CannotBeFramedByOtherPages()
+    {
+        var response = await Client().GetAsync("/login");
+        Assert.Equal("frame-ancestors 'self'", response.Headers.GetValues("Content-Security-Policy").Single());
     }
 
     [Fact]
@@ -263,4 +288,80 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
     [Fact]
     public async Task EditorPath_WithoutSlash_GetsIt() =>
         Assert.Equal($"/runners/{_runnerId}/code/?x=1", (await Client(EditorPort).GetAsync($"/runners/{_runnerId}/code?x=1")).Headers.Location?.ToString());
+}
+
+/// <summary>With EDITOR_URL like <c>http://{runner}.code.test</c>, every Runner's VS Code has a host of its own.</summary>
+public sealed class EditorHostPerRunnerTests : IClassFixture<EditorHostPerRunnerTests.Manager>
+{
+    private const string Password = "test-password-1234";
+    private const int EditorPort = 18082;
+
+    private readonly Manager _manager;
+
+    public EditorHostPerRunnerTests(Manager manager) => _manager = manager;
+
+    public sealed class Manager : WebApplicationFactory<DtoMapper>
+    {
+        private readonly string _data = Directory.CreateTempSubdirectory("dam-editor-hosts-").FullName;
+
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            builder.UseSetting("DATA_DIR", _data);
+            builder.UseSetting("ADMIN_PASSWORD", Password);
+            builder.UseSetting("PROXMOX_URL", "");
+            builder.UseSetting("EDITOR_PORT", EditorPort.ToString());
+            builder.UseSetting("EDITOR_URL", "http://{runner}.code.test:18082");
+            builder.ConfigureServices(services => services.AddSingleton<IStartupFilter, EditorPortForTests>());
+        }
+    }
+
+    private sealed class EditorPortForTests : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use((context, nextMiddleware) =>
+            {
+                if (context.Request.Host.Host.EndsWith(".code.test", StringComparison.Ordinal))
+                {
+                    context.Connection.LocalPort = EditorPort;
+                }
+
+                return nextMiddleware(context);
+            });
+            next(app);
+        };
+    }
+
+    [Fact]
+    public async Task EachRunner_IsOnlyServedOnItsOwnHost()
+    {
+        var id = Guid.NewGuid();
+        await using (var db = await _manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync())
+        {
+            db.Runners.Add(new Runner
+            {
+                Id = id, Name = "alpha", ProviderId = "existing", State = RunnerState.Ready, Host = "127.0.0.1", Username = "test",
+                Tools = VsCodeTool.ToolId, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            db.Runners.Add(new Runner
+            {
+                Id = Guid.NewGuid(), Name = "beta", ProviderId = "existing", State = RunnerState.Ready, Host = "127.0.0.1", Username = "test",
+                Tools = VsCodeTool.ToolId, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var anonymous = _manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
+        var login = await anonymous.PostAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = Password }));
+        var portal = _manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
+        portal.DefaultRequestHeaders.Add("Cookie", string.Join("; ", login.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0])));
+        var auth = (await portal.GetAsync($"/editor/runners/{id}")).Headers.Location!;
+        Assert.Equal("alpha.code.test", auth.Host);
+
+        var editor = _manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
+        var onItsHost = new HttpRequestMessage(HttpMethod.Get, auth);
+        Assert.Equal(HttpStatusCode.Redirect, (await editor.SendAsync(onItsHost)).StatusCode);
+        var onAnotherRunnersHost = new HttpRequestMessage(HttpMethod.Get, new Uri(auth.ToString().Replace("alpha.code.test", "beta.code.test")));
+        Assert.Equal(HttpStatusCode.NotFound, (await editor.SendAsync(onAnotherRunnersHost)).StatusCode);
+    }
 }

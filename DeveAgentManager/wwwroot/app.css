@@ -1027,6 +1027,12 @@ a {
     margin-right: 8px;
 }
 
+    /* With its logo: on the description's line, not above it. */
+    .harness-name.harness-option {
+        vertical-align: bottom;
+        gap: 6px;
+    }
+
 .harness-description {
     font-size: 0.82rem;
 }

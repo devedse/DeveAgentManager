@@ -93,6 +93,14 @@ app.UseForwardedHeaders();
 // The editor port serves VS Code and nothing else (see EditorEndpoints).
 app.UseEditorOrigin();
 
+// The Portal can't be framed by other pages, such as one on the editor port (clicks on its buttons in a hidden frame).
+app.Use((context, next) =>
+{
+    context.Response.Headers.ContentSecurityPolicy = "frame-ancestors 'self'";
+    context.Response.Headers.XFrameOptions = "SAMEORIGIN";
+    return next();
+});
+
 // Error and "not found" pages are for pages; the API answers with problem details.
 app.UseWhen(context => !RequestSecurity.IsMachinePath(context.Request.Path), pages =>
 {
