@@ -8,8 +8,10 @@
 
     const observers = new Map();
 
-    // Tracks the visible part of the screen. A phone's on-screen keyboard covers the page without resizing it
-    // (iOS Safari, and Chrome on Android by default), so the full-screen terminal page sizes itself to this instead.
+    // Where the on-screen keyboard only covers the page (iOS Safari), the full-screen terminal page sizes itself to the
+    // visible part. Browsers that honour interactive-widget=resizes-content (Chrome, Firefox on Android) shrink the
+    // page itself, so 100dvh is right there; a height set from here could be read mid-animation and stay too short
+    // after the keyboard closes (an empty strip under the key row).
     (function trackVisualViewport() {
         const viewport = window.visualViewport;
         if (!viewport) {
@@ -21,12 +23,21 @@
         const update = () => {
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(() => {
-                root.style.setProperty("--dam-vv-height", `${Math.round(viewport.height)}px`);
-                root.style.setProperty("--dam-vv-top", `${Math.round(viewport.offsetTop)}px`);
+                const covered = window.innerHeight - viewport.height > 1 || viewport.offsetTop > 1;
+                if (covered) {
+                    root.style.setProperty("--dam-vv-height", `${Math.round(viewport.height)}px`);
+                    root.style.setProperty("--dam-vv-top", `${Math.round(viewport.offsetTop)}px`);
+                } else {
+                    root.style.removeProperty("--dam-vv-height");
+                    root.style.removeProperty("--dam-vv-top");
+                }
             });
         };
         viewport.addEventListener("resize", update);
         viewport.addEventListener("scroll", update);
+        window.addEventListener("resize", update);
+        // The keyboard closes after the text box lost focus; check again once it has.
+        document.addEventListener("focusout", () => setTimeout(update, 400));
         update();
     })();
 
