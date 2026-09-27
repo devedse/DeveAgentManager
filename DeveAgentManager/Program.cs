@@ -138,6 +138,7 @@ app.MapPost("/account/logout", async (HttpContext context) =>
 
 app.MapManagerApi();
 app.MapTerminalSocket();
+app.MapVSCodeProxy();
 app.MapHub<LiveUpdatesHub>(LiveHub.Path);
 
 app.MapRazorComponents<App>()

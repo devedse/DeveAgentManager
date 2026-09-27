@@ -28,6 +28,7 @@
             </TitleContent>
             <Actions>
                 <MudButton Href="@($"runners/{_runner.Id}/shell")" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Terminal" Disabled="!ready">Shell</MudButton>
+                <MudButton Href="@($"/vscode/runners/{_runner.Id}/")" Target="_blank" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Code" Disabled="!ready">VSCode</MudButton>
                 @if (provider?.Capabilities.CanStartStop == true)
                 {
                     @if (_runner.State is RunnerState.Stopped or RunnerState.Error)

@@ -9,6 +9,7 @@ using DeveAgentManager.Core.Security;
 using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Setup;
 using DeveAgentManager.Core.Ssh;
+using DeveAgentManager.Core.VSCode;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -41,6 +42,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RunnerService>();
         services.AddSingleton<RunnerStatusCache>();
         services.AddSingleton<TerminalService>();
+        services.AddSingleton<VSCodeService>();
         services.AddSingleton<IRunnerProvider, ExistingMachineProvider>();
         services.AddHostedService<RunnerMonitor>();
         return services;

@@ -138,6 +138,14 @@
                     </div>
 
                     <div class="settings-section">
+                        <MudText Typo="Typo.subtitle1" Class="section-title">Optional Tools</MudText>
+                        <MudCheckBox @bind-Value="_profile.InstallCodeServer" Label="Install code-server (VSCode for the Web)" Color="Color.Primary" />
+                        <MudText Typo="Typo.body2" Class="mud-text-secondary ml-8">
+                            Adds a web-based VSCode editor accessible from Runner and Agent pages. Uses ~100MB RAM when running. Opens code at the Runner's home directory or the agent's working folder.
+                        </MudText>
+                    </div>
+
+                    <div class="settings-section">
                         <MudText Typo="Typo.subtitle1" Class="section-title">Script</MudText>
                         <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">Bash, run as the Runner Account at the end of setup. For example <code>sudo apt-get install -y dotnet-sdk-10.0</code>.</MudText>
                         <MudTextField @bind-Value="_profile.Script" Variant="Variant.Outlined" Lines="6" MaxLines="30" Placeholder="#!/usr/bin/env bash" Class="mono-input" />
