@@ -130,10 +130,13 @@ public sealed class VsCodeScriptTests : IDisposable
 
     private (int ExitCode, string Output) Run(string script)
     {
-        // Only the stubs and the basics: no real code-server from this machine's PATH.
+        // The stubs come first, so they stand in for curl and ss, and folders with a real code-server are left out;
+        // node comes from the PATH (on CI it is in /usr/local/bin).
+        var path = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':').Where(d => d.Length > 0 && !File.Exists(Path.Combine(d, "code-server")));
         var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true, RedirectStandardError = true };
         start.Environment["HOME"] = _home;
-        start.Environment["PATH"] = _bin + ":/usr/bin:/bin";
+        start.Environment["PATH"] = string.Join(':', path.Prepend(_bin));
+        start.Environment.Remove("XDG_DATA_HOME");
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
