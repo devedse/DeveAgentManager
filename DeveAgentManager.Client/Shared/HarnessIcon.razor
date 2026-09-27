@@ -1,0 +1,16 @@
+@* Displays an icon for a harness (pi, claude, codex, etc.) *@
+<MudIcon Icon="@GetIcon()" Size="@Size" Color="@Color" title="@HarnessId" />
+
+@code {
+    [Parameter] public string HarnessId { get; set; } = "";
+    [Parameter] public Size Size { get; set; } = Size.Small;
+    [Parameter] public Color Color { get; set; } = Color.Default;
+
+    private string GetIcon() => HarnessId.ToLowerInvariant() switch
+    {
+        "pi" => Icons.Material.Rounded.Terminal,
+        "claude" => Icons.Material.Rounded.AutoAwesome,
+        "codex" => Icons.Material.Rounded.Code,
+        _ => Icons.Material.Rounded.Extension
+    };
+}

@@ -38,7 +38,7 @@
                     var live = session.Agent is { State: AgentState.Running or AgentState.Starting };
                     <div class="agent-row">
                         <a class="agent-row-main" href="sessions/@session.Id">
-                            <div class="list-avatar">@session.HarnessId</div>
+                            <div class="list-avatar"><HarnessIcon HarnessId="@session.HarnessId" Size="Size.Medium" /></div>
                             <div class="list-main">
                                 <div class="list-title">@session.Title</div>
                                 <div class="list-subtitle">
