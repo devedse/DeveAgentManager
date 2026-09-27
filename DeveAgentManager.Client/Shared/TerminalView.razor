@@ -145,7 +145,7 @@
     private async Task OnFirstRenderAsync()
     {
         _self = DotNetObjectReference.Create(this);
-        _touchInput = await JS.InvokeAsync<bool>("damTerminal.init", _xterm.Id, _self, ImageTarget());
+        _touchInput = await JS.InvokeAsync<bool>("damTerminal.init", _xterm.Id, _self, AcceptsImages);
         StateHasChanged();
         // Connecting to an agent makes this screen one of its viewers; a tab in the background waits until it is looked at.
         await JS.InvokeVoidAsync("damTerminal.whenVisible");
@@ -153,7 +153,8 @@
     }
 
     /// <summary>Where pasted images go: the agent's or the shell's Runner (query string for the upload).</summary>
-    private string? ImageTarget() => AgentId is { } agentId ? $"agentId={agentId}" : Login is null && RunnerId is { } runnerId ? $"runnerId={runnerId}" : null;
+    // Images go to the Runner through the terminal's socket: agents and shells, not login terminals.
+    private bool AcceptsImages => AgentId is not null || (Login is null && RunnerId is not null);
 
     private async Task ConnectAsync()
     {

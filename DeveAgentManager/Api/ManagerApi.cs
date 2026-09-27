@@ -50,19 +50,6 @@ public static class ManagerApi
 
         api.MapGet("/harnesses/{harnessId}/models", async (string harnessId, RunnerSetupService setup, RunnerService runners, CancellationToken ct) =>
             await setup.ListModelsAsync(harnessId, await runners.ListAsync(ct), ct));
-
-        // An image pasted, dropped or picked in a terminal: stored on the terminal's Runner; its path goes into the terminal.
-        api.MapPost("/terminals/images", async (Guid? agentId, Guid? runnerId, IFormFile file, TerminalService terminals, CancellationToken ct) =>
-        {
-            if (file.Length > TerminalService.MaxImageBytes)
-            {
-                throw new ArgumentException($"Images can be up to {TerminalService.MaxImageBytes / 1024 / 1024} MB.");
-            }
-
-            using var buffer = new MemoryStream();
-            await file.CopyToAsync(buffer, ct);
-            return new UploadedFileDto(await terminals.UploadImageAsync(agentId, runnerId, file.ContentType, buffer.ToArray(), ct));
-        });
     }
 
     private static void MapRunners(RouteGroupBuilder runners)

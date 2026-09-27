@@ -244,26 +244,44 @@
         return Array.from(dataTransfer?.files ?? []).filter(file => file.type.startsWith("image/"));
     }
 
+    const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // TerminalService.MaxImageBytes
+    const IMAGE_CHUNK_BYTES = 64 * 1024; // TerminalSocket.ImageChunkBytes
+    let nextImageId = 1;
+
+    // Sends an image over the terminal's socket (TerminalSocket.Image); resolves to its path on the Runner.
+    // Not an HTTP upload: a reverse proxy's request size limit (nginx: 1 MB by default) doesn't apply to a WebSocket.
+    async function uploadImage(id, file) {
+        if (file.size > MAX_IMAGE_BYTES) {
+            throw new Error(`Images can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB.`);
+        }
+
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const connection = sockets.get(id);
+        if (bytes.length === 0 || connection?.socket.readyState !== WebSocket.OPEN) {
+            throw new Error(bytes.length === 0 ? "The image is empty." : "The terminal isn't connected.");
+        }
+
+        return await new Promise((resolve, reject) => {
+            const imageId = nextImageId++;
+            connection.images.set(imageId, { resolve, reject });
+            // Header and bytes in one go, without awaiting: nothing typed meanwhile can end up between them.
+            connection.socket.send(JSON.stringify({ type: "image", id: imageId, contentType: file.type, size: bytes.length }));
+            for (let offset = 0; offset < bytes.length; offset += IMAGE_CHUNK_BYTES) {
+                connection.socket.send(bytes.subarray(offset, offset + IMAGE_CHUNK_BYTES));
+            }
+        });
+    }
+
     // Uploads images to the terminal's Runner (the Manager stores them) and pastes their paths into the terminal.
-    // `target` is the upload's query string (agentId=... or runnerId=...); progress and errors go to .NET (snackbars).
-    async function sendImages(terminal, dotnet, target, files, afterPaste) {
+    // Progress and errors go to .NET (snackbars).
+    async function sendImages(terminal, dotnet, id, files, afterPaste) {
         const paths = [];
         for (const file of files) {
             dotnet?.invokeMethodAsync("OnImageStatus", "uploading", `${file.name || "image"} (${Math.max(1, Math.round(file.size / 1024))} KB)`);
             try {
-                const form = new FormData();
-                form.append("file", file, file.name || "image");
-                // The header marks the request as coming from the Manager's own pages (its CSRF check).
-                const response = await fetch(`api/terminals/images?${target}`, { method: "POST", body: form, headers: { "X-DAM-Request": "1" }, credentials: "same-origin" });
-                if (!response.ok) {
-                    const problem = await response.json().catch(() => null);
-                    dotnet?.invokeMethodAsync("OnImageStatus", "error", problem?.detail ?? `The Manager answered ${response.status}.`);
-                    continue;
-                }
-
-                paths.push((await response.json()).path);
+                paths.push(await uploadImage(id, file));
             } catch (error) {
-                dotnet?.invokeMethodAsync("OnImageStatus", "error", String(error));
+                dotnet?.invokeMethodAsync("OnImageStatus", "error", error?.message ?? String(error));
             }
         }
 
@@ -276,7 +294,7 @@
         }
     }
 
-    function enableImagePaste(terminal, element, dotnet, target, afterPaste) {
+    function enableImagePaste(terminal, element, dotnet, id, afterPaste) {
         // Capture phase: before xterm.js (and the phone keyboard input) handle the paste as text.
         element.addEventListener("paste", event => {
             const files = imageFiles(event.clipboardData);
@@ -288,7 +306,7 @@
 
             event.preventDefault();
             event.stopPropagation();
-            sendImages(terminal, dotnet, target, files, afterPaste);
+            sendImages(terminal, dotnet, id, files, afterPaste);
         }, { capture: true });
 
         element.addEventListener("dragover", event => {
@@ -305,7 +323,7 @@
             }
 
             event.preventDefault();
-            sendImages(terminal, dotnet, target, files, afterPaste);
+            sendImages(terminal, dotnet, id, files, afterPaste);
         });
 
         return () => {
@@ -320,7 +338,7 @@
             picker.addEventListener("change", () => {
                 const files = Array.from(picker.files ?? []);
                 done();
-                sendImages(terminal, dotnet, target, files, afterPaste);
+                sendImages(terminal, dotnet, id, files, afterPaste);
             });
             picker.addEventListener("cancel", done);
             picker.click();
@@ -337,8 +355,8 @@
 
     window.damTerminal = {
         // Returns whether the phone keyboard input is on.
-        // Returns whether the phone keyboard input is on. `imageTarget` is where pasted images go (null: nowhere).
-        init(id, dotnet, imageTarget) {
+        // Returns whether the phone keyboard input is on. `images`: whether images can be pasted (they go to the Runner).
+        init(id, dotnet, images) {
             const terminal = XtermBlazor.getTerminalById(id);
             hardenInput(terminal);
 
@@ -406,9 +424,9 @@
 
             let pickImage = null;
             dotnets.set(id, dotnet);
-            if (xtermElement && dotnet && imageTarget && !xtermElement.dataset.imagePaste) {
+            if (xtermElement && dotnet && images && !xtermElement.dataset.imagePaste) {
                 xtermElement.dataset.imagePaste = "true";
-                pickImage = enableImagePaste(terminal, xtermElement, dotnet, imageTarget, () => touchInputs.get(id)?.reset());
+                pickImage = enableImagePaste(terminal, xtermElement, dotnet, id, () => touchInputs.get(id)?.reset());
             }
 
             // The on-screen keys must not take the focus: that would close the phone keyboard after every key.
@@ -496,7 +514,7 @@
             const socket = new WebSocket(address.href);
             socket.binaryType = "arraybuffer";
             const encoder = new TextEncoder();
-            const connection = { socket, subscriptions: [], closed: null };
+            const connection = { socket, subscriptions: [], closed: null, images: new Map() };
             const send = data => {
                 if (socket.readyState === WebSocket.OPEN) {
                     socket.send(data);
@@ -516,10 +534,16 @@
                     connection.closed = message;
                 } else if (message.type === "login") {
                     dotnet?.invokeMethodAsync("OnLoginResult", !!message.ok, message.message ?? "");
+                } else if (message.type === "image") {
+                    const waiting = connection.images.get(message.id);
+                    connection.images.delete(message.id);
+                    message.error ? waiting?.reject(new Error(message.error)) : waiting?.resolve(message.path);
                 }
             };
             socket.onclose = () => {
                 connection.subscriptions.forEach(s => s.dispose());
+                connection.images.forEach(waiting => waiting.reject(new Error("The connection dropped before the image was stored. Paste it again.")));
+                connection.images.clear();
                 // Only the current connection reports: an old one closing after a reconnect says nothing.
                 if (sockets.get(id) === connection) {
                     sockets.delete(id);

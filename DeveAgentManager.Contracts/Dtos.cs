@@ -135,8 +135,6 @@ public sealed record GitHubPatRequest(string? Pat);
 
 public sealed record ImportHarnessFilesRequest(Guid RunnerId, string HarnessId);
 
-public sealed record UploadedFileDto(string Path);
-
 /// <summary>An operation that was started in the background; its result arrives as an <see cref="OperationFinished"/>.</summary>
 public sealed record OperationStartedDto(IReadOnlyList<Guid> RunnerIds);
 
@@ -181,6 +179,17 @@ public static class TerminalSocket
 
     /// <summary>Client to server: the terminal's size changed (<c>cols</c>, <c>rows</c>).</summary>
     public const string Resize = "resize";
+
+    /// <summary>
+    /// An image for the terminal's Runner. Client to server: <c>id</c>, <c>contentType</c>, <c>size</c>, followed by exactly
+    /// <c>size</c> bytes in binary frames (they are the image, not input). Server to client: <c>id</c> and the stored
+    /// file's <c>path</c>, or an <c>error</c>. Over the socket rather than an HTTP upload, so a reverse proxy's request
+    /// size limit (nginx: 1 MB by default) doesn't apply.
+    /// </summary>
+    public const string Image = "image";
+
+    /// <summary>The size of the binary frames an image is sent in.</summary>
+    public const int ImageChunkBytes = 64 * 1024;
 
     public const string ClosedExited = "exited";
     public const string ClosedKicked = "kicked";

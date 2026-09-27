@@ -9,6 +9,7 @@ using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Ssh;
+using ImageUploader = System.Func<string, byte[], System.Threading.CancellationToken, System.Threading.Tasks.Task<string>>;
 
 namespace DeveAgentManager.Api;
 
@@ -48,16 +49,19 @@ public static partial class TerminalSocketEndpoint
                 switch (kind)
                 {
                     case "agent" when Guid.TryParse(query["id"], out var agentId):
-                        await session.RunAsync(await terminals.OpenAgentAsync(agentId, columns, rows, context.RequestAborted), agentId, agents, login: null, context.RequestAborted);
+                        await session.RunAsync(await terminals.OpenAgentAsync(agentId, columns, rows, context.RequestAborted), agentId, agents, login: null,
+                            (type, bytes, ct) => terminals.UploadImageAsync(agentId, null, type, bytes, ct), context.RequestAborted);
                         break;
                     case "shell" when Guid.TryParse(query["id"], out var runnerId):
-                        await session.RunAsync(await terminals.OpenShellAsync(runnerId, columns, rows, context.RequestAborted), null, agents, login: null, context.RequestAborted);
+                        await session.RunAsync(await terminals.OpenShellAsync(runnerId, columns, rows, context.RequestAborted), null, agents, login: null,
+                            (type, bytes, ct) => terminals.UploadImageAsync(null, runnerId, type, bytes, ct), context.RequestAborted);
                         break;
                     case "login" when Guid.TryParse(query["runner"], out var runnerId):
                         var login = await LoginWatcher.CreateAsync(runnerId, query["harness"].ToString(), Guid.TryParse(query["account"], out var accountId) ? accountId : null,
                             query["name"].ToString(), accounts, runners, context.RequestAborted);
                         // Wide, so a token is printed on one line (the harness's login command also sets it with stty).
-                        await session.RunAsync(await terminals.OpenCommandAsync(runnerId, login.Command, 500, rows, context.RequestAborted), null, agents, login, context.RequestAborted);
+                        await session.RunAsync(await terminals.OpenCommandAsync(runnerId, login.Command, 500, rows, context.RequestAborted), null, agents, login,
+                            uploadImage: null, context.RequestAborted);
                         break;
                     default:
                         await session.CloseAsync(TerminalSocket.ClosedError, "Unknown terminal.");
@@ -82,12 +86,12 @@ public static partial class TerminalSocketEndpoint
         private readonly SemaphoreSlim _sending = new(1, 1);
         private string _closeReason = TerminalSocket.ClosedExited;
 
-        public async Task RunAsync(TerminalConnection connection, Guid? agentId, AgentService agents, LoginWatcher? login, CancellationToken cancellationToken)
+        public async Task RunAsync(TerminalConnection connection, Guid? agentId, AgentService agents, LoginWatcher? login, ImageUploader? uploadImage, CancellationToken cancellationToken)
         {
             using (connection)
             {
                 var output = Task.Factory.StartNew(() => PumpOutputAsync(connection, login, cancellationToken), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
-                var input = PumpInputAsync(connection, agentId, agents, login is null, cancellationToken);
+                var input = PumpInputAsync(connection, agentId, agents, login is null, uploadImage, cancellationToken);
                 if (await Task.WhenAny(output, input) == output)
                 {
                     // The terminal ended: say why, then close. The browser answers the close, which ends the input side.
@@ -146,10 +150,12 @@ public static partial class TerminalSocketEndpoint
             }
         }
 
-        private async Task PumpInputAsync(TerminalConnection connection, Guid? agentId, AgentService agents, bool forwardResize, CancellationToken cancellationToken)
+        private async Task PumpInputAsync(TerminalConnection connection, Guid? agentId, AgentService agents, bool forwardResize, ImageUploader? uploadImage, CancellationToken cancellationToken)
         {
             var buffer = new byte[64 * 1024];
             var sizeClaimed = false;
+            // An image being received: its announced bytes arrive in binary frames, which are not terminal input.
+            (JsonNode? Id, string ContentType, MemoryStream Bytes, long Size)? image = null;
             try
             {
                 while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
@@ -173,7 +179,22 @@ public static partial class TerminalSocketEndpoint
                     while (!received.EndOfMessage);
 
                     var bytes = message.ToArray();
-                    if (received.MessageType == WebSocketMessageType.Binary)
+                    if (received.MessageType == WebSocketMessageType.Binary && image is { } receiving)
+                    {
+                        if (receiving.Bytes.Length + bytes.Length > receiving.Size)
+                        {
+                            throw new InvalidDataException("More image bytes than announced.");
+                        }
+
+                        receiving.Bytes.Write(bytes);
+                        if (receiving.Bytes.Length == receiving.Size)
+                        {
+                            image = null;
+                            // Stored while the terminal goes on; the answer names the image it is for.
+                            _ = UploadImageAsync(uploadImage!, receiving.Id, receiving.ContentType, receiving.Bytes, cancellationToken);
+                        }
+                    }
+                    else if (received.MessageType == WebSocketMessageType.Binary)
                     {
                         connection.Write(bytes);
                         // A screen that joined watching sets the size once somebody types on it (not on the terminal's replies).
@@ -183,15 +204,57 @@ public static partial class TerminalSocketEndpoint
                             _ = ClaimSizeAsync(agents, id, tty);
                         }
                     }
-                    else if (JsonNode.Parse(bytes) is JsonObject control && (string?)control["type"] == TerminalSocket.Resize && forwardResize)
+                    else if (JsonNode.Parse(bytes) is not JsonObject control)
+                    {
+                        // Not a control message: ignored.
+                    }
+                    else if ((string?)control["type"] == TerminalSocket.Resize && forwardResize)
                     {
                         connection.Resize((int?)control["cols"] ?? 0, (int?)control["rows"] ?? 0);
+                    }
+                    else if ((string?)control["type"] == TerminalSocket.Image)
+                    {
+                        // The browser checks the size first, so a wrong one isn't from the Portal: stop rather than type the
+                        // image's bytes into the terminal.
+                        var size = (long?)control["size"] ?? 0;
+                        if (uploadImage is null || image is not null || size <= 0 || size > TerminalService.MaxImageBytes)
+                        {
+                            throw new InvalidDataException("Unexpected image.");
+                        }
+
+                        image = (control["id"]?.DeepClone(), (string?)control["contentType"] ?? "", new MemoryStream((int)size), size);
                     }
                 }
             }
             catch (Exception ex) when (ex is WebSocketException or OperationCanceledException or JsonException or InvalidDataException)
             {
                 // The browser went away or sent something that isn't a terminal message.
+            }
+        }
+
+        private async Task UploadImageAsync(ImageUploader uploadImage, JsonNode? id, string contentType, MemoryStream bytes, CancellationToken cancellationToken)
+        {
+            var answer = new JsonObject { ["type"] = TerminalSocket.Image, ["id"] = id };
+            try
+            {
+                using (bytes)
+                {
+                    answer["path"] = await uploadImage(contentType, bytes.ToArray(), cancellationToken);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogInformation(ex, "Image upload failed");
+                answer["error"] = ex.Message;
+            }
+
+            try
+            {
+                await SendJsonAsync(answer, cancellationToken);
+            }
+            catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException or OperationCanceledException)
+            {
+                // The browser went away meanwhile.
             }
         }
 
