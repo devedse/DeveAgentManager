@@ -226,7 +226,8 @@ public static class RepoIcons
 
         if (project.Length > 0 && name == project)
         {
-            score += 10;
+            // A project's own logo is stronger evidence than a favicon reference left over from a starter template.
+            score += 14;
             signal = true;
         }
         else if (project.Length >= 4 && name.Contains(project, StringComparison.Ordinal))

@@ -72,6 +72,18 @@ public sealed class RepoIconTests : IDisposable
         Assert.Equal("assets/myproject.png", RepoIcons.Pick(scan, "my-project")?.Path);
     }
 
+    [Fact]
+    public void Prefers_TheProjectsOwnLogo_OverAReferencedStarterFavicon()
+    {
+        // DeveStreamingPlatform still references Vite's starter favicon in index.html.
+        var scan = new RepoIconScan(
+            [F("public/vite.svg", 32, 32), F("public/DeveStreamingPlatform.png", 256, 256),
+             F("src/assets/vue.svg", 37, 36), F("Screenshot1.png", 1361, 1303)],
+            [new("index.html", "/vite.svg")]);
+
+        Assert.Equal("public/DeveStreamingPlatform.png", RepoIcons.Pick(scan, "devestreamingplatform")?.Path);
+    }
+
     [Theory]
     [InlineData("assets/icon.png", true)]
     [InlineData("icon.svg", true)]
