@@ -73,10 +73,11 @@ public sealed class ClaudeHarness : IHarness
     public string VersionCommand => "claude --version | cut -d' ' -f1";
 
     /// <summary>
-    /// Claude Code's spinner line, "✢ Clauding… (5s · ↓ 77 tokens)" (idle it becomes "✻ Cooked for 12s · done"), or its
-    /// footer's "esc to interrupt" (cut off on a narrow screen, the spinner line isn't).
+    /// Claude Code's spinner line, "✢ Clauding… (5s · ↓ 77 tokens)" (idle it becomes "✻ Cooked for 12s · done").
+    /// Require the spinner at the start of the line: quoted busy phrases in prompts and replies aren't status lines.
+    /// This also works on narrow screens where the "esc to interrupt" footer is cut off.
     /// </summary>
-    public string BusyPattern => "esc to interrupt|… \\([0-9]+[smh]";
+    public string BusyPattern => "^[[:space:]]*(✢|✳|✶|✻|✽|\\*|·) .+… \\([0-9]+[smh]";
 
     public string NewSessionId(Guid agentId) => agentId.ToString();
 

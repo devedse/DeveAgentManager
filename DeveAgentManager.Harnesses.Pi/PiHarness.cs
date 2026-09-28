@@ -38,7 +38,7 @@ public sealed class PiHarness : IHarness
     public string VersionCommand => "pi --version";
 
     /// <summary>pi's spinner line above the editor: "⠼ Working (medium effort)...".</summary>
-    public string BusyPattern => "(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏) Working";
+    public string BusyPattern => "^[[:space:]]*(─)+[[:space:]]+(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏) Working";
 
     /// <summary>
     /// <c>--session-id</c> opens the session with that id or creates it, so the same command both starts and resumes.
