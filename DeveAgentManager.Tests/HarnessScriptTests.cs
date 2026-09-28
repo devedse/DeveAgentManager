@@ -95,6 +95,9 @@ public sealed class HarnessScriptTests : IDisposable
         var config = File.ReadAllText(Path.Combine(_home, ".codex", "config.toml"));
         Assert.Single(System.Text.RegularExpressions.Regex.Matches(config, System.Text.RegularExpressions.Regex.Escape($"[projects.\"{_work}\"]")));
         Assert.Contains("trust_level = \"trusted\"", config);
+        // Codex's own update question would stop the agent at start; the Manager updates it. Once, before the tables.
+        Assert.StartsWith("check_for_update_on_startup = false\n", config);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(config, "check_for_update_on_startup"));
     }
 
     [Fact]

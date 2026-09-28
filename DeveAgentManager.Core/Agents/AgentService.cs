@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
@@ -363,19 +364,26 @@ public sealed partial class AgentService(
     /// <summary>How recent the harness's last output must be for the agent to count as working (spinners redraw every second or faster).</summary>
     public static readonly TimeSpan WorkingWithin = TimeSpan.FromSeconds(3);
 
+    /// <summary>With a harness's busy pattern on screen, how recent its last output must be (a harness that hangs stops counting).</summary>
+    public static readonly TimeSpan BusyScreenWithin = TimeSpan.FromSeconds(10);
+
+    /// <summary>How many of the last (non-empty) lines of an agent's screen are searched for its harness's busy pattern.</summary>
+    private const int BusyLines = 15;
+
     /// <summary>
-    /// The agents' state from tmux: running, exited or gone, and whether a running one is working (it printed something in
-    /// the last seconds; pi, Claude Code and Codex animate a spinner and a timer while they work) or idle (waiting for
-    /// input: the screen doesn't change).
+    /// The agents' state from tmux: running, exited or gone, and whether a running one is working or idle (waiting for
+    /// input). Working: the harness's busy line is on its screen (<see cref="IHarness.BusyPattern"/>, e.g. pi's spinner),
+    /// and it printed something recently. For a harness without one: it printed something in the last seconds.
     /// </summary>
     public async Task RefreshRunnerAsync(Runner runner, CancellationToken cancellationToken = default)
     {
-        var result = await shell.RunAsync(runner, "date +%s; tmux list-panes -a -F '#{session_name}|#{pane_dead}|#{pane_dead_status}|#{window_activity}' 2>/dev/null || true",
-            TimeSpan.FromSeconds(30), cancellationToken);
-        var (now, panes) = ParsePanes(result.Output);
-
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agents = await db.Agents.Where(a => a.RunnerId == runner.Id).ToListAsync(cancellationToken);
+
+        var result = await shell.RunAsync(runner, BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern))),
+            TimeSpan.FromSeconds(30), cancellationToken);
+        var (now, panes, busy) = ParsePanes(result.Output);
+
         foreach (var agent in agents)
         {
             AgentState state;
@@ -385,7 +393,10 @@ public sealed partial class AgentService(
             {
                 state = pane.Dead ? AgentState.Exited : AgentState.Running;
                 exitCode = pane.Dead ? pane.ExitCode : null;
-                working = !pane.Dead && now is { } runnerNow && pane.LastOutput is { } lastOutput && runnerNow - lastOutput <= (long)WorkingWithin.TotalSeconds;
+                var quietFor = now is { } runnerNow && pane.LastOutput is { } lastOutput ? runnerNow - lastOutput : (long?)null;
+                working = !pane.Dead && quietFor is { } quiet && (_harnesses.GetValueOrDefault(agent.HarnessId)?.BusyPattern is null
+                    ? quiet <= (long)WorkingWithin.TotalSeconds
+                    : busy.Contains(agent.TmuxSession) && quiet <= (long)BusyScreenWithin.TotalSeconds);
             }
             else
             {
@@ -429,15 +440,55 @@ public sealed partial class AgentService(
     }
 
     /// <summary>
-    /// The output of <c>date +%s</c> followed by tmux's panes (session|dead|exit status|last output, in the Runner's epoch
-    /// seconds): the Runner's time, and per session its pane.
+    /// Bash that prints the Runner's time, tmux's panes, and after <see cref="BusyMarker"/> the sessions whose screen shows
+    /// their harness's busy pattern.
     /// </summary>
-    internal static (long? Now, Dictionary<string, (bool Dead, int? ExitCode, long? LastOutput)> Panes) ParsePanes(string output)
+    internal static string BuildStateScript(IEnumerable<(string Session, string? BusyPattern)> agents)
+    {
+        var script = new StringBuilder("""
+            date +%s
+            tmux list-panes -a -F '#{session_name}|#{pane_dead}|#{pane_dead_status}|#{window_activity}' 2>/dev/null || true
+            echo '
+            """);
+        script.Append(BusyMarker).Append("'\n");
+        script.Append($"busy() {{ tmux capture-pane -p -t \"=$1:\" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n {BusyLines} | grep -qE -- \"$2\" && echo \"$1\"; }}\n");
+        foreach (var (session, pattern) in agents)
+        {
+            if (pattern is not null)
+            {
+                script.Append("busy ").Append(ShellQuote.Quote(session)).Append(' ').Append(ShellQuote.Quote(pattern)).Append(" || true\n");
+            }
+        }
+
+        return script.ToString();
+    }
+
+    internal const string BusyMarker = "--busy--";
+
+    /// <summary>
+    /// The output of <see cref="BuildStateScript"/>: the Runner's time (epoch seconds), per session its pane
+    /// (session|dead|exit status|last output), and the sessions that show their busy pattern.
+    /// </summary>
+    internal static (long? Now, Dictionary<string, (bool Dead, int? ExitCode, long? LastOutput)> Panes, HashSet<string> Busy) ParsePanes(string output)
     {
         var panes = new Dictionary<string, (bool Dead, int? ExitCode, long? LastOutput)>(StringComparer.Ordinal);
+        var busy = new HashSet<string>(StringComparer.Ordinal);
         long? now = null;
+        var inBusy = false;
         foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
+            if (line == BusyMarker)
+            {
+                inBusy = true;
+                continue;
+            }
+
+            if (inBusy)
+            {
+                busy.Add(line);
+                continue;
+            }
+
             var parts = line.Split('|');
             if (parts.Length < 2)
             {
@@ -456,7 +507,7 @@ public sealed partial class AgentService(
             panes[parts[0]] = (dead, exitCode, lastOutput);
         }
 
-        return (now, panes);
+        return (now, panes, busy);
     }
 
     private async Task PrepareWorkspaceAsync(Runner runner, Agent agent, AgentWorkspaceMode mode, CancellationToken cancellationToken)

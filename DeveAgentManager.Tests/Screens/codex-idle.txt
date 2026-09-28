@@ -1,0 +1,15 @@
+│                                                  │
+│ model:       GPT-6-Sol medium   /model to change │
+│ directory:   ~/dam-e2e/work/marker-codex         │
+│ permissions: YOLO mode                           │
+╰──────────────────────────────────────────────────╯
+› Run the shell command `sleep 12 && echo finished`, then reply with just the word done.
+• I’ll run the command now.
+• Ran sleep 12 && echo finished
+  └ finished
+• done
+  06:11
+                                                                             Tip: Use /statusline to configure which items appear in the status line.
+› Ask Codex to do anything
+  GPT-6-Sol medium · ~/dam-e2e/work/marker-codex · Run shell command
+  ? for shortcuts

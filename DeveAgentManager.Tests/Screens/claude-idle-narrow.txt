@@ -1,0 +1,15 @@
+ ▝▝   ▝▝   ~/dam-e2e/work/marker-claude
+❯ Run the shell command sleep 12 && echo
+  finished, then reply with just the word done.
+  Ran 1 shell command
+● done
+✻ Sautéed for 15s · done 6:07 AM
+❯ Run the shell command sleep 10, then reply with
+  just the word ok.
+  Ran 1 shell command
+● ok
+✻ Cooked for 12s · done 6:11 AM
+──────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

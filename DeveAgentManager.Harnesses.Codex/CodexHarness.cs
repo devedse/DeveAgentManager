@@ -44,7 +44,8 @@ public sealed class CodexHarness : IHarness
         touch "$HOME/.codex/config.toml"
         cat > "{{PrepareScript}}" <<'DAM_PREPARE'
         // Written by DeveAgentManager: node codex-prepare.js <session-id>
-        // Creates the session file for the id when there is none, and trusts the working directory.
+        // Creates the session file for the id when there is none, trusts the working directory, and turns off Codex's
+        // update question at start (the Manager updates Codex: Update Codex on the Runner page).
         const fs = require("fs");
         const os = require("os");
         const path = require("path");
@@ -77,6 +78,11 @@ public sealed class CodexHarness : IHarness
         const table = `[projects.${JSON.stringify(process.cwd())}]`;
         let toml = "";
         try { toml = fs.readFileSync(config, "utf8"); } catch {}
+        if (!/^\s*check_for_update_on_startup\s*=/m.test(toml)) {
+          // A top-level key: before the first table.
+          toml = `check_for_update_on_startup = false\n${toml}`;
+          fs.writeFileSync(config, toml);
+        }
         if (!toml.includes(table)) {
           fs.appendFileSync(config, `${toml.length && !toml.endsWith("\n") ? "\n" : ""}\n${table}\ntrust_level = "trusted"\n`);
         }
@@ -84,6 +90,9 @@ public sealed class CodexHarness : IHarness
         """;
 
     public string VersionCommand => "codex --version | awk '{print $NF}'";
+
+    /// <summary>Codex's status line while it works: "◦ Working (6s • esc to interrupt)".</summary>
+    public string BusyPattern => "esc to interrupt|Working \\([0-9]";
 
     /// <summary>Codex's own ids are UUIDv7; a new one per conversation.</summary>
     public string NewSessionId(Guid agentId) => Guid.CreateVersion7().ToString();

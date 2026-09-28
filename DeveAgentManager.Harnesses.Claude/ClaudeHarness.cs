@@ -72,6 +72,12 @@ public sealed class ClaudeHarness : IHarness
 
     public string VersionCommand => "claude --version | cut -d' ' -f1";
 
+    /// <summary>
+    /// Claude Code's spinner line, "✢ Clauding… (5s · ↓ 77 tokens)" (idle it becomes "✻ Cooked for 12s · done"), or its
+    /// footer's "esc to interrupt" (cut off on a narrow screen, the spinner line isn't).
+    /// </summary>
+    public string BusyPattern => "esc to interrupt|… \\([0-9]+[smh]";
+
     public string NewSessionId(Guid agentId) => agentId.ToString();
 
     /// <summary><c>--session-id</c> only creates a conversation ("already in use" otherwise), so a restart uses <c>--resume</c>.</summary>

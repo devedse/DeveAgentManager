@@ -1,0 +1,11 @@
+ ▐▛███▛█   Claude Code v2.1.283
+▝▜██████▀  Opus 5.5 · Claude API
+ ▝▝   ▝▝   ~/dam-e2e/work/marker-claude
+❯ Run the shell command sleep 12 && echo finished, then reply with just the word done.
+  Ran 1 shell command
+● done
+✻ Sautéed for 15s · done 6:07 AM
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

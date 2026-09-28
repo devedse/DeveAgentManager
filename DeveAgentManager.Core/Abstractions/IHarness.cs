@@ -23,6 +23,13 @@ public interface IHarness
     string VersionCommand { get; }
 
     /// <summary>
+    /// What the harness shows at the bottom of its screen while it works (an extended regular expression, as grep -E
+    /// takes it), e.g. its spinner line; null when it has none. An agent counts as working while this is on its screen,
+    /// instead of whenever its screen changes (typing, a resize or a rotating tip change it too).
+    /// </summary>
+    string? BusyPattern => null;
+
+    /// <summary>
     /// Command that starts the harness for an agent. It is run inside tmux in the agent's working directory and must
     /// resume the same conversation when it is run again (after a restart or a Runner reboot).
     /// </summary>
