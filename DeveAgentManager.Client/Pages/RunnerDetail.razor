@@ -118,7 +118,13 @@
                         <MudText Typo="Typo.h6">Details</MudText>
                         @* Resources and the address are live (asked every 15 seconds); the software versions are read at setup. *@
                         <MudTooltip Text="Read the software versions from the Runner again">
-                            <MudIconButton Icon="@Icons.Material.Rounded.Refresh" Size="Size.Small" Disabled="!ready || _refreshing" OnClick="RefreshDetailsAsync" aria-label="Refresh" />
+                            <MudIconButton Icon="@(_refreshing ? null : Icons.Material.Rounded.Refresh)" Size="Size.Small" Disabled="!ready || _refreshing" OnClick="RefreshDetailsAsync"
+                                           aria-label="@(_refreshing ? "Refreshing runner details" : "Refresh runner details")" aria-busy="@(_refreshing ? "true" : "false")">
+                                @if (_refreshing)
+                                {
+                                    <MudProgressCircular Indeterminate="true" Color="Color.Primary" Style="width:20px;height:20px" />
+                                }
+                            </MudIconButton>
                         </MudTooltip>
                     </div>
                     <dl class="details">
