@@ -1567,7 +1567,6 @@ a {
     display: none;
     gap: 4px;
     padding: 5px 6px;
-    padding-bottom: max(5px, env(safe-area-inset-bottom));
     background: var(--dam-surface);
     border-top: 1px solid var(--dam-border);
     flex-shrink: 0;
