@@ -1381,12 +1381,13 @@ a {
    sit right above a phone's on-screen keyboard instead of behind it. */
 .terminal-layout {
     position: fixed;
+    /* Pinned to the window's edges, so its bottom is the window's bottom, whatever a browser takes 100dvh to be.
+       Where the keyboard only covers the page (iOS), terminal.js sets the visible part's top and height instead. */
     top: var(--dam-vv-top, 0px);
+    bottom: 0;
     left: 0;
     right: 0;
-    height: 100vh;
-    height: 100dvh;
-    height: var(--dam-vv-height, 100dvh);
+    height: var(--dam-vv-height, auto);
     overflow: hidden;
     background: #0a0d13;
 }

@@ -41,6 +41,49 @@
         update();
     })();
 
+    // A page with ?viewport in its address shows how the screen is measured, to tell where unused space comes from.
+    (function viewportReadout() {
+        if (!new URLSearchParams(location.search).has("viewport")) {
+            return;
+        }
+
+        const box = document.createElement("div");
+        box.style.cssText = "position:fixed;top:60px;right:8px;z-index:100000;background:rgba(0,0,0,.85);color:#7fffd4;" +
+            "font:12px/1.35 monospace;padding:8px 10px;border-radius:8px;white-space:pre;pointer-events:none";
+        const probe = document.createElement("div");
+        probe.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;visibility:hidden;padding-bottom:env(safe-area-inset-bottom)";
+        const unit = value => {
+            probe.style.height = value;
+            return Math.round(probe.getBoundingClientRect().height);
+        };
+        const bottom = selector => {
+            const element = document.querySelector(selector);
+            return element ? Math.round(element.getBoundingClientRect().bottom) : "-";
+        };
+        const show = () => {
+            const vv = window.visualViewport;
+            probe.style.height = "0px";
+            const inset = Math.round(probe.getBoundingClientRect().height);
+            const keys = document.querySelector(".terminal-keys");
+            box.textContent = [
+                `innerHeight      ${window.innerHeight}`,
+                `clientHeight     ${document.documentElement.clientHeight}`,
+                `visualViewport   ${vv ? `${Math.round(vv.height)} (top ${Math.round(vv.offsetTop)})` : "-"}`,
+                `100dvh/svh/lvh   ${unit("100dvh")}/${unit("100svh")}/${unit("100lvh")}`,
+                `screen/avail     ${screen.height}/${screen.availHeight} @${window.devicePixelRatio}`,
+                `safe-area bottom ${inset}`,
+                `--dam-vv-height  ${document.documentElement.style.getPropertyValue("--dam-vv-height") || "(none)"}`,
+                `layout bottom    ${bottom(".terminal-layout")}`,
+                `keys bottom      ${bottom(".terminal-keys")} (padding ${keys ? getComputedStyle(keys).paddingBottom : "-"})`,
+            ].join("\n");
+        };
+        document.body.append(box, probe);
+        window.visualViewport?.addEventListener("resize", show);
+        window.addEventListener("resize", show);
+        setInterval(show, 1000);
+        show();
+    })();
+
     // On touch devices the terminal keeps its rows when the frame only gets shorter, which is the on-screen keyboard
     // opening, or a little taller (the address bar hiding). Fewer rows would resize tmux's pane, and pi then redraws its whole screen, so the history streams by every
     // time the keyboard opens or closes. Instead the terminal keeps its full height in the (clipped) frame, positioned
