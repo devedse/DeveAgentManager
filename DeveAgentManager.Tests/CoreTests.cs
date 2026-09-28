@@ -39,10 +39,13 @@ public class CoreTests
     [Fact]
     public void ParsePanes_ReadsTmuxState()
     {
-        var panes = AgentService.ParsePanes("dam-a|0|\ndam-b|1|3\ngarbage\n");
-        Assert.Equal((false, (int?)null), panes["dam-a"]);
-        Assert.Equal((true, (int?)3), panes["dam-b"]);
-        Assert.Equal(2, panes.Count);
+        var (now, panes, busy) = AgentService.ParsePanes("1790545300\ndam-a|0||1790545299\ndam-b|1|3|1790545000\ndam-c|0|\ngarbage\n--busy--\ndam-a\n");
+        Assert.Equal(["dam-a"], busy);
+        Assert.Equal(1790545300, now);
+        Assert.Equal((false, (int?)null, (long?)1790545299), panes["dam-a"]);
+        Assert.Equal((true, (int?)3, (long?)1790545000), panes["dam-b"]);
+        Assert.Null(panes["dam-c"].LastOutput);
+        Assert.Equal(3, panes.Count);
     }
 
     [Theory]

@@ -1,0 +1,90 @@
+@inject ManagerApi Api
+
+@* What ran on a Runner (setup, start, updates), newest first, with how long it took and how it ended. *@
+@if (_activities is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_activities.Count == 0)
+{
+    <EmptyState Icon="@Icons.Material.Rounded.History" Title="Nothing yet" Text="Setups, starts and updates show up here with how they ended." />
+}
+else
+{
+    <div class="activity-list">
+        @foreach (var activity in _activities)
+        {
+            var (icon, tone) = Look(activity.Outcome);
+            <div class="activity activity-@tone">
+                @if (activity.Outcome is null)
+                {
+                    <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" Class="activity-icon" />
+                }
+                else
+                {
+                    <MudIcon Icon="@icon" Size="Size.Small" Class="activity-icon" />
+                }
+                <div class="activity-text">
+                    <div class="activity-name">@activity.Name</div>
+                    <div class="activity-meta" title="@activity.StartedAt.ToLocalTime().ToString("g")">
+                        @activity.StartedAt.Humanize() · @Describe(activity)
+                    </div>
+                    @if (activity.Error is not null)
+                    {
+                        <div class="activity-error">@activity.Error</div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public RunnerDto Runner { get; set; } = default!;
+
+    private List<RunnerActivityDto>? _activities;
+    private (string? Operation, DateTime UpdatedAt)? _loadedFor;
+
+    /// <summary>Reloads when the Runner changed: an operation started or ended.</summary>
+    protected override async Task OnParametersSetAsync()
+    {
+        var current = (Runner.Operation, Runner.UpdatedAt);
+        if (_loadedFor == current)
+        {
+            return;
+        }
+
+        _loadedFor = current;
+        try
+        {
+            _activities = await Api.ListRunnerActivityAsync(Runner.Id);
+        }
+        catch (ApiException)
+        {
+            _activities ??= [];
+        }
+    }
+
+    private static (string Icon, string Tone) Look(RunnerActivityOutcome? outcome) => outcome switch
+    {
+        RunnerActivityOutcome.Succeeded => (Icons.Material.Rounded.CheckCircle, "ok"),
+        RunnerActivityOutcome.Failed => (Icons.Material.Rounded.Cancel, "failed"),
+        RunnerActivityOutcome.Cancelled => (Icons.Material.Rounded.DoNotDisturbOn, "cancelled"),
+        RunnerActivityOutcome.Interrupted => (Icons.Material.Rounded.Warning, "cancelled"),
+        _ => (Icons.Material.Rounded.HourglassTop, "running"),
+    };
+
+    private static string Describe(RunnerActivityDto activity)
+    {
+        var took = activity.FinishedAt is { } finished ? (finished - activity.StartedAt).Humanize(2, minUnit: TimeUnit.Second) : null;
+        return activity.Outcome switch
+        {
+            null => "running",
+            RunnerActivityOutcome.Succeeded => $"took {took}",
+            RunnerActivityOutcome.Failed => $"failed after {took}",
+            RunnerActivityOutcome.Cancelled => $"cancelled after {took}",
+            _ => "interrupted",
+        };
+    }
+}

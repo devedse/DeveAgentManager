@@ -19,6 +19,41 @@
     --dam-error: #f87171;
     --dam-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
     --dam-radius: 14px;
+    /* Accent text (links, the active page, tool names), hover tints and scrollbars. */
+    --dam-primary-text: #b6adff;
+    --dam-hover: rgba(255, 255, 255, 0.04);
+    --dam-scrollbar: #2b3445;
+    --dam-brand-start: #a79cff;
+    /* Terminals, logs and code stay dark in both themes: that is what harnesses and tools print for. */
+    --dam-console: #0a0d13;
+    --dam-console-text: #b9c2d3;
+    --dam-console-muted: #8791a5;
+    color-scheme: dark;
+}
+
+/* Light (Settings → Appearance, or a light device with "System"). The attribute is set before the page paints. */
+:root[data-theme="light"] {
+    --dam-bg: #f5f6fa;
+    --dam-surface: #ffffff;
+    --dam-surface-2: #f3f4f8;
+    --dam-surface-3: #eceef4;
+    --dam-border: #e2e5ed;
+    --dam-border-strong: #d0d5e0;
+    --dam-text: #161b26;
+    --dam-muted: #5b6477;
+    --dam-faint: #8a93a6;
+    --dam-primary: #6a5af0;
+    --dam-primary-soft: rgba(106, 90, 240, 0.1);
+    --dam-teal: #0d9488;
+    --dam-success: #059669;
+    --dam-info: #2563eb;
+    --dam-warning: #b45309;
+    --dam-error: #dc2626;
+    --dam-primary-text: #5846e0;
+    --dam-hover: rgba(15, 23, 42, 0.04);
+    --dam-scrollbar: #c5cbd8;
+    --dam-brand-start: #6a5af0;
+    color-scheme: light;
 }
 
 html, body {
@@ -55,7 +90,7 @@ a {
 
 * {
     scrollbar-width: thin;
-    scrollbar-color: #2b3445 transparent;
+    scrollbar-color: var(--dam-scrollbar) transparent;
 }
 
 /* ---------- Layout ---------- */
@@ -79,7 +114,7 @@ a {
 }
 
 .brand-accent {
-    background: linear-gradient(90deg, #a79cff, var(--dam-teal));
+    background: linear-gradient(90deg, var(--dam-brand-start), var(--dam-teal));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -109,7 +144,7 @@ a {
 }
 
     .menu-form-button:hover {
-        background: rgba(255, 255, 255, 0.04);
+        background: var(--dam-hover);
     }
 
 .app-drawer {
@@ -144,7 +179,7 @@ a {
 
     .app-nav .mud-nav-link.active {
         background: var(--dam-primary-soft) !important;
-        color: #b6adff !important;
+        color: var(--dam-primary-text) !important;
     }
 
         .app-nav .mud-nav-link.active .mud-nav-link-icon {
@@ -280,6 +315,43 @@ a {
     padding: 0 8px;
 }
 
+/* A tab's count (e.g. Agents 3) as a small pill after its label, instead of MudBlazor's badge on the tab's corner,
+   which overlaps the next tab now that tabs are as wide as their label. */
+.mud-tab .mud-tab-badge,
+.mud-tab .mud-tab-badge .mud-badge-wrapper,
+.mud-tab .mud-tab-badge .mud-badge {
+    position: static !important;
+    transform: none !important;
+    inset: auto !important;
+}
+
+.mud-tab .mud-tab-badge {
+    display: inline-flex;
+    margin-left: 8px;
+}
+
+/* Touch screens: the tab bar scrolls with a swipe, like any list, instead of MudBlazor's arrow buttons that move it
+   a page per tap. The arrows go; the bar is scrolled natively (the wrapper's own scroll offset is switched off). */
+@media (pointer: coarse) {
+    .mud-tabs-tabbar .mud-tabs-scroll-button {
+        display: none;
+    }
+
+    .mud-tabs-tabbar .mud-tabs-tabbar-content {
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+    }
+
+        .mud-tabs-tabbar .mud-tabs-tabbar-content::-webkit-scrollbar {
+            display: none;
+        }
+
+    .mud-tabs-tabbar .mud-tabs-tabbar-wrapper {
+        transform: none !important;
+    }
+}
+
 .panel-tab-content {
     padding: 20px;
 }
@@ -391,7 +463,7 @@ a {
     border-radius: 10px;
     background: linear-gradient(135deg, rgba(139, 125, 255, 0.25), rgba(45, 212, 191, 0.18));
     border: 1px solid rgba(139, 125, 255, 0.25);
-    color: #cfc9ff;
+    color: var(--dam-primary-text);
     font-family: var(--dam-mono);
     font-size: 0.8rem;
     font-weight: 700;
@@ -401,6 +473,138 @@ a {
     background: var(--dam-surface-3);
     border-color: var(--dam-border-strong);
     color: var(--dam-muted);
+}
+
+/* A harness's logo in its own colors, on a neutral tile. */
+.list-avatar-logo {
+    background: var(--dam-surface-3);
+    border-color: var(--dam-border-strong);
+    color: var(--dam-text);
+}
+
+/* An agent's project icon, with its harness's logo in the corner. */
+.agent-avatar {
+    position: relative;
+    overflow: visible;
+}
+
+.agent-avatar-icon {
+    width: 26px;
+    height: 26px;
+    object-fit: contain;
+}
+
+.agent-avatar-harness {
+    position: absolute;
+    right: -5px;
+    bottom: -5px;
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 6px;
+    background: var(--dam-surface);
+    border: 1px solid var(--dam-border-strong);
+}
+
+    .agent-avatar-harness .mud-icon-root {
+        font-size: 12px;
+    }
+
+/* Smaller in the terminal's header. */
+.terminal-avatar.list-avatar {
+    width: 30px;
+    height: 30px;
+    margin-right: 4px;
+}
+
+    .terminal-avatar .agent-avatar-icon {
+        width: 20px;
+        height: 20px;
+    }
+
+    .terminal-avatar .agent-avatar-harness {
+        width: 15px;
+        height: 15px;
+        right: -4px;
+        bottom: -4px;
+    }
+
+        .terminal-avatar .agent-avatar-harness .mud-icon-root {
+            font-size: 10px;
+        }
+
+/* The icon picker: a grid of the images in the agent's folder. */
+.icon-choices {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 8px;
+}
+
+.icon-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 6px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--dam-border);
+    background: var(--dam-surface-2);
+    color: var(--dam-text);
+    cursor: pointer;
+    font: inherit;
+    min-width: 0;
+}
+
+    .icon-choice:hover {
+        border-color: var(--dam-border-strong);
+    }
+
+    .icon-choice.selected {
+        border-color: var(--dam-primary);
+        background: var(--dam-primary-soft);
+    }
+
+.icon-choice-image {
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+}
+
+    .icon-choice-image img {
+        max-width: 56px;
+        max-height: 56px;
+        object-fit: contain;
+    }
+
+.icon-choice-name {
+    max-width: 100%;
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.icon-choice-meta {
+    color: var(--dam-muted);
+    font-size: 0.7rem;
+}
+
+/* A logo in front of a harness's name. */
+.harness-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* The logo in the terminal's context line, sized to its small text. */
+.context-logo.mud-icon-root {
+    font-size: 1.1em;
+    vertical-align: -0.2em;
+    margin-right: 5px;
+    color: var(--dam-text);
 }
 
 .list-main {
@@ -808,7 +1012,7 @@ a {
     gap: 14px;
     padding: 16px;
     border-radius: 12px;
-    background: rgba(13, 16, 23, 0.6);
+    background: var(--dam-surface-2);
     border: 1px solid var(--dam-border);
     color: inherit;
     font: inherit;
@@ -983,6 +1187,12 @@ a {
     margin-right: 8px;
 }
 
+    /* With its logo: on the description's line, not above it. */
+    .harness-name.harness-option {
+        vertical-align: bottom;
+        gap: 6px;
+    }
+
 .harness-description {
     font-size: 0.82rem;
 }
@@ -1098,7 +1308,7 @@ a {
     gap: 8px;
     padding: 10px 12px;
     border-radius: 10px;
-    background: #0a0d13;
+    background: var(--dam-console);
     border: 1px solid var(--dam-border);
 }
 
@@ -1118,7 +1328,7 @@ a {
     overflow: auto;
     padding: 12px 0;
     border-radius: 10px;
-    background: #0a0d13;
+    background: var(--dam-console);
     border: 1px solid var(--dam-border);
     font-family: var(--dam-mono);
     font-size: 0.78rem;
@@ -1137,7 +1347,7 @@ a {
 }
 
     .log-line:hover {
-        background: rgba(255, 255, 255, 0.02);
+        background: rgba(255, 255, 255, 0.03);
     }
 
 .log-time {
@@ -1155,12 +1365,12 @@ a {
 .log-text {
     white-space: pre-wrap;
     word-break: break-word;
-    color: #b9c2d3;
+    color: var(--dam-console-text);
 }
 
-.log-output .log-text { color: #8791a5; }
+.log-output .log-text { color: var(--dam-console-muted); }
 .log-step { margin-top: 8px; }
-.log-step .log-text, .log-step .log-marker { color: #b6adff; font-weight: 700; }
+.log-step .log-text, .log-step .log-marker { color: #b6adff; font-weight: 700; } /* on the console background */
 .log-success .log-text, .log-success .log-marker { color: var(--dam-success); }
 .log-warning .log-text, .log-warning .log-marker { color: var(--dam-warning); }
 .log-error .log-text, .log-error .log-marker { color: var(--dam-error); }
@@ -1171,12 +1381,13 @@ a {
    sit right above a phone's on-screen keyboard instead of behind it. */
 .terminal-layout {
     position: fixed;
+    /* Pinned to the window's edges, so its bottom is the window's bottom, whatever a browser takes 100dvh to be.
+       Where the keyboard only covers the page (iOS), terminal.js sets the visible part's top and height instead. */
     top: var(--dam-vv-top, 0px);
+    bottom: 0;
     left: 0;
     right: 0;
-    height: 100vh;
-    height: 100dvh;
-    height: var(--dam-vv-height, 100dvh);
+    height: var(--dam-vv-height, auto);
     overflow: hidden;
     background: #0a0d13;
 }
@@ -1356,7 +1567,6 @@ a {
     display: none;
     gap: 4px;
     padding: 5px 6px;
-    padding-bottom: max(5px, env(safe-area-inset-bottom));
     background: var(--dam-surface);
     border-top: 1px solid var(--dam-border);
     flex-shrink: 0;
@@ -1727,7 +1937,7 @@ a {
     max-width: 400px;
     padding: 32px;
     border-radius: 18px;
-    background: rgba(20, 25, 35, 0.88);
+    background: color-mix(in srgb, var(--dam-surface) 88%, transparent);
     border: 1px solid var(--dam-border-strong);
     box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8);
     backdrop-filter: blur(12px);
@@ -1762,7 +1972,7 @@ a {
     padding: 11px 14px;
     border-radius: 10px;
     border: 1px solid var(--dam-border-strong);
-    background: #0f131b;
+    background: var(--dam-surface-2);
     color: var(--dam-text);
     font: inherit;
     outline: none;
@@ -1857,7 +2067,7 @@ a {
 .app-nav .nav-agent .mud-nav-link {
     padding-top: 4px !important;
     padding-bottom: 4px !important;
-    padding-left: 52px !important;
+    padding-left: 46px !important;
     min-height: 0;
     font-weight: 400;
 }
@@ -1871,17 +2081,59 @@ a {
     font-size: 0.82rem;
 }
 
+/* The agent's avatar (project icon, harness in the corner) with its state as a dot on the other corner. */
+.nav-agent-avatar {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.nav-avatar.list-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+}
+
+    .nav-avatar .mud-icon-root {
+        font-size: 16px;
+    }
+
+    .nav-avatar .agent-avatar-icon {
+        width: 16px;
+        height: 16px;
+    }
+
+    .nav-avatar .agent-avatar-harness {
+        width: 13px;
+        height: 13px;
+        right: -4px;
+        bottom: -4px;
+        border-radius: 4px;
+    }
+
+        .nav-avatar .agent-avatar-harness .mud-icon-root {
+            font-size: 9px;
+        }
+
 .nav-agent-dot {
+    position: absolute;
+    top: -2px;
+    right: -2px;
     width: 7px;
     height: 7px;
     border-radius: 50%;
     background: var(--dam-info);
-    flex-shrink: 0;
+    border: 1px solid var(--dam-surface);
+    box-sizing: content-box;
 }
 
     .nav-agent-dot.live {
         background: var(--dam-success);
-        box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.15);
+    }
+
+    /* Working: its harness is busy. */
+    .nav-agent-dot.working {
+        background: var(--dam-info);
+        animation: dam-pulse 1.6s ease-in-out infinite;
     }
 
 .nav-agent-name {
@@ -2061,7 +2313,7 @@ a {
     }
 
 .conv-tool {
-    background: #10141c;
+    background: var(--dam-surface-2);
 }
 
 .conv-tool-error {
@@ -2069,7 +2321,7 @@ a {
 }
 
 .conv-tool-name {
-    color: #b6adff;
+    color: var(--dam-primary-text);
     font-family: var(--dam-mono);
     font-weight: 600;
     flex-shrink: 0;
@@ -2115,14 +2367,14 @@ a {
     max-height: 360px;
     overflow: auto;
     border-radius: 8px;
-    background: #0a0d13;
+    background: var(--dam-console);
     border: 1px solid var(--dam-border);
     font-family: var(--dam-mono);
     font-size: 0.76rem;
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
-    color: #b9c2d3;
+    color: var(--dam-console-text);
 }
 
 .conv-event {
@@ -2173,7 +2425,7 @@ a {
     .markdown h3, .markdown h4 { font-size: 1rem; }
 
     .markdown a {
-        color: #b6adff;
+        color: var(--dam-primary-text);
     }
 
     .markdown pre {
@@ -2207,3 +2459,132 @@ a {
     .markdown th {
         background: var(--dam-surface-2);
     }
+
+/* ---------- Loading screen (while the Portal starts in the browser) ---------- */
+
+.app-loading {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    background: var(--dam-bg);
+}
+
+.app-loading-bar {
+    width: 160px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--dam-border);
+    overflow: hidden;
+}
+
+    .app-loading-bar > div {
+        width: 40%;
+        height: 100%;
+        border-radius: 2px;
+        background: var(--dam-primary);
+        animation: app-loading 1.2s ease-in-out infinite;
+    }
+
+@keyframes app-loading {
+    from {
+        transform: translateX(-100%);
+    }
+
+    to {
+        transform: translateX(250%);
+    }
+}
+
+/* ---------- Runner activity ---------- */
+
+.activity-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.activity {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 4px;
+    border-bottom: 1px solid var(--dam-border);
+}
+
+    .activity:last-child {
+        border-bottom: none;
+    }
+
+.activity-icon {
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.activity-ok .activity-icon {
+    color: var(--dam-success);
+}
+
+.activity-failed .activity-icon {
+    color: var(--dam-error);
+}
+
+.activity-cancelled .activity-icon {
+    color: var(--dam-warning);
+}
+
+.activity-text {
+    min-width: 0;
+}
+
+.activity-name {
+    font-weight: 600;
+}
+
+.activity-meta {
+    color: var(--dam-muted);
+    font-size: 0.8rem;
+}
+
+.activity-error {
+    color: var(--dam-error);
+    font-size: 0.8rem;
+    margin-top: 2px;
+    overflow-wrap: anywhere;
+}
+
+    .activity-cancelled .activity-error {
+        color: var(--dam-muted);
+    }
+
+/* ---------- VS Code ---------- */
+
+.editor-frame {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: var(--dam-bg);
+}
+
+    .editor-frame iframe {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+    }
+
+.editor-logo {
+    margin: 0 2px;
+}
+
+.theme-choice {
+    max-width: 420px;
+}
+
+:root[data-theme="light"] .login-card {
+    box-shadow: 0 30px 80px -30px rgba(15, 23, 42, 0.25);
+}

@@ -1,0 +1,185 @@
+@page "/agents/{AgentId:guid}"
+@layout TerminalLayout
+@inherits LiveComponent
+@inject IDialogService Dialogs
+
+<PageTitle>@(_agent?.Name ?? "Agent") · DeveAgentManager</PageTitle>
+
+<div class="terminal-page">
+    @* Narrower screens get a more compact header: the state becomes a dot, the name and context are cut off with "…",
+       and on phones the less used actions move into the ⋮ menu (see app.css, "Terminal toolbar"). *@
+    <div class="terminal-toolbar">
+        <MudIconButton Href="@(_agent is null ? "agents" : $"runners/{_agent.RunnerId}")" Icon="@Icons.Material.Rounded.ArrowBack" Size="Size.Small" aria-label="Back" />
+        @if (_agent is not null)
+        {
+            var running = _agent.State is AgentState.Running or AgentState.Starting;
+            @if (ManagerApi.IconUrl(_agent) is not null)
+            {
+                <AgentAvatar Agent="_agent" Class="terminal-avatar" />
+            }
+            <div class="terminal-title">
+                <div class="terminal-name-row">
+                    <span class="terminal-name" title="@_agent.Name">@_agent.Name</span>
+                    <StatusPill Style="StateStyles.For(_agent)" Title="@_agent.StateMessage" Class="terminal-status" />
+                </div>
+                <span class="terminal-context"><HarnessLogo HarnessId="@_agent.HarnessId" Class="context-logo" />@(_agent.AccountName is { } account ? $"{account} · " : "")@_agent.RunnerName · <span class="mono">@(_agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
+            </div>
+            <span class="terminal-hint">Shift+drag selects · Ctrl+C copies a selection</span>
+            @if (_sessionId is { } sessionId)
+            {
+                <span class="toolbar-wide"><MudTooltip Text="Conversation">
+                    <MudIconButton Href="@($"sessions/{sessionId}")" Icon="@Icons.Material.Rounded.Forum" Size="Size.Small" aria-label="Conversation" />
+                </MudTooltip></span>
+            }
+            @if (running)
+            {
+                <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" />
+                <AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" />
+                @if (_agent.RunnerToolIds.Contains("vscode"))
+                {
+                    <span class="toolbar-wide"><MudTooltip Text="Open this folder in VS Code">
+                        <MudIconButton Href="@($"agents/{_agent.Id}/vscode")" Icon="@(_vsCodeIcon ?? Icons.Material.Rounded.Code)" Size="Size.Small" aria-label="VS Code" />
+                    </MudTooltip></span>
+                }
+                <span class="toolbar-wide"><MudTooltip Text="Restart the harness (resumes the conversation)">
+                    <MudIconButton Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" Disabled="_busy" OnClick="RestartAsync" aria-label="Restart" />
+                </MudTooltip></span>
+                <span class="toolbar-wide"><MudTooltip Text="Stop the agent">
+                    <MudIconButton Icon="@Icons.Material.Rounded.Stop" Size="Size.Small" Disabled="_busy" OnClick="StopAsync" aria-label="Stop" />
+                </MudTooltip></span>
+            }
+            @if (running || _sessionId is not null)
+            {
+                <div class="toolbar-narrow">
+                    <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" aria-label="More">
+                        @if (_sessionId is { } menuSessionId)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{menuSessionId}")">Conversation</MudMenuItem>
+                        }
+                        @if (running)
+                        {
+                            @if (_agent.RunnerToolIds.Contains("vscode"))
+                            {
+                                <MudMenuItem Icon="@(_vsCodeIcon ?? Icons.Material.Rounded.Code)" Href="@($"agents/{_agent.Id}/vscode")">VS Code</MudMenuItem>
+                            }
+                            <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="_busy" OnClick="RestartAsync">Restart the harness</MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Stop" Disabled="_busy" OnClick="StopAsync">Stop the agent</MudMenuItem>
+                        }
+                    </MudMenu>
+                </div>
+            }
+        }
+    </div>
+
+    @if (_agent is null)
+    {
+        @if (Loaded)
+        {
+            <EmptyState Icon="@Icons.Material.Rounded.SearchOff" Title="Agent not found" Text="It may have been deleted.">
+                <MudButton Href="agents" Variant="Variant.Outlined">Back to agents</MudButton>
+            </EmptyState>
+        }
+    }
+    else if (_agent.State is AgentState.Running or AgentState.Starting)
+    {
+        <TerminalView @ref="_terminal" @key="_connectionKey" AgentId="_agent.Id" Disconnected="OnDisconnectedAsync" Connected="StateHasChanged" />
+    }
+    else
+    {
+        <div class="terminal-stopped">
+            <EmptyState Icon="@Icons.Material.Rounded.PauseCircle" Title="@($"'{_agent.Name}' is not running")"
+                        Text="@(_agent.StateMessage ?? "Start it to continue. The harness resumes the same conversation.")">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" Disabled="_busy || _agent.RunnerState != RunnerState.Ready" OnClick="StartAsync">
+                    @(_agent.RunnerState == RunnerState.Ready ? "Start agent" : $"Runner is {_agent.RunnerState.ToString().ToLowerInvariant()}")
+                </MudButton>
+            </EmptyState>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public Guid AgentId { get; set; }
+
+    private AgentDto? _agent;
+    private Guid? _sessionId;
+    private TerminalView? _terminal;
+    private int _connectionKey;
+    private bool _busy;
+    private string? _vsCodeIcon;
+
+    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.AgentId == AgentId || managerEvent.Kind == ManagerEventKind.RunnerChanged;
+
+    protected override async Task LoadAsync()
+    {
+        var previous = _agent?.State;
+        _vsCodeIcon ??= (await Api.InfoAsync()).Tools.FirstOrDefault(t => t.Id == "vscode")?.Icon;
+        _agent = await Api.GetAgentAsync(AgentId);
+        _sessionId ??= (await Api.GetAgentSessionAsync(AgentId))?.Id;
+        if (previous is not null && previous != AgentState.Running && _agent?.State == AgentState.Running)
+        {
+            // It was (re)started: attach a fresh terminal.
+            _connectionKey++;
+        }
+    }
+
+    private async Task OnDisconnectedAsync()
+    {
+        // The harness may have exited: refresh its state so the page shows it.
+        if (_agent is not null)
+        {
+            try
+            {
+                await Api.RefreshRunnerAsync(_agent.RunnerId);
+            }
+            catch (Exception ex) when (ex is ApiException or HttpRequestException)
+            {
+                // The monitor will catch up.
+            }
+        }
+
+        await ReloadAsync();
+    }
+
+    private Task StartAsync() => RunAsync(() => Api.StartAgentAsync(AgentId), reconnect: true);
+
+    private async Task RestartAsync()
+    {
+        if (_agent is null || !await AgentTable.ConfirmRestartAsync(Dialogs, _agent.Name))
+        {
+            return;
+        }
+
+        await RunAsync(() => Api.StartAgentAsync(AgentId, restart: true), reconnect: true);
+    }
+
+    private async Task OnSwitchedAsync()
+    {
+        await LoadAsync();
+        _connectionKey++;
+    }
+
+    private Task StopAsync() => RunAsync(() => Api.StopAgentAsync(AgentId), reconnect: false);
+
+    private async Task RunAsync(Func<Task> action, bool reconnect)
+    {
+        _busy = true;
+        try
+        {
+            await action();
+            await LoadAsync();
+            if (reconnect)
+            {
+                _connectionKey++;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

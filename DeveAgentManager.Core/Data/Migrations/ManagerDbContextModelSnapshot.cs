@@ -82,6 +82,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("IconVersion")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -110,6 +113,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("Working")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("WorkingDirectory")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -122,6 +128,33 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("Agents");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentIcon", b =>
+                {
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("ChosenByUser")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ContentType")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Data")
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("Path")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("AgentId");
+
+                    b.ToTable("AgentIcons");
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.Runner", b =>
@@ -201,6 +234,10 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<string>("TemplateId")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Tools")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("TEXT");
 
@@ -214,6 +251,40 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("Runners");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.RunnerActivity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("FinishedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Outcome")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RunnerId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunnerId", "StartedAt");
+
+                    b.ToTable("RunnerActivities");
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.SettingEntry", b =>
@@ -308,6 +379,24 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Navigation("Account");
 
                     b.Navigation("Runner");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentIcon", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.Agent", null)
+                        .WithOne()
+                        .HasForeignKey("DeveAgentManager.Core.Data.AgentIcon", "AgentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.RunnerActivity", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.Runner", null)
+                        .WithMany()
+                        .HasForeignKey("RunnerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.StoredSession", b =>

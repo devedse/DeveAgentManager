@@ -1,0 +1,21 @@
+@implements IDisposable
+@inject ThemeService ThemeService
+
+@* MudBlazor's theme, dialogs, popovers and snackbars: in the Portal's layouts (not in Routes, which the Manager also
+   renders for its login page, without MudBlazor). Light or dark as Settings → Appearance says. *@
+<MudThemeProvider Theme="AppTheme.Theme" IsDarkMode="ThemeService.IsDark" />
+<MudPopoverProvider />
+<MudDialogProvider CloseOnEscapeKey="true" CloseButton="true" MaxWidth="MaxWidth.Small" FullWidth="true" />
+<MudSnackbarProvider />
+
+@code {
+    protected override void OnInitialized()
+    {
+        ThemeService.Initialize();
+        ThemeService.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => ThemeService.Changed -= OnChanged;
+}

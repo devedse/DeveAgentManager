@@ -1,17 +1,5 @@
 namespace DeveAgentManager.Core.Abstractions;
 
-public enum RunnerLogLevel
-{
-    Step,
-    Info,
-    Output,
-    Success,
-    Warning,
-    Error,
-}
-
-public sealed record RunnerLogLine(DateTime Timestamp, RunnerLogLevel Level, string Text);
-
 /// <summary>The setup log of one Runner, shown live in the Portal.</summary>
 public interface IRunnerLog
 {

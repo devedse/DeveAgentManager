@@ -1,0 +1,15 @@
+│ https://github.com/openai/codex/releases/latest │
+╰─────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.1)                       │
+│                                                  │
+│ model:       GPT-6-Sol medium   /model to change │
+│ directory:   ~/dam-e2e/work/marker-codex         │
+│ permissions: YOLO mode                           │
+╰──────────────────────────────────────────────────╯
+› Run the shell command `sleep 12 && echo finished`, then reply with just the word done.
+• I’ll run the command now.
+◦ Working (6s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+› Ask Codex to do anything
+  GPT-6-Sol medium · ~/dam-e2e/work/marker-codex · Run shell command
+  ? for shortcuts

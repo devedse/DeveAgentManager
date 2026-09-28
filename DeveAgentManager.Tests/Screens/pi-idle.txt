@@ -1,0 +1,15 @@
+ Packages:
+ - pi-mcp-adapter
+ - pi-web-access
+ - pi-subagents
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Run the shell command sleep 12 && echo finished, then reply with just the word done.
+ $ sleep 12 && echo finished
+ finished
+ Took 12.0s
+ done
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~/dam-e2e/work/marker-pi
+↑6 ↓59 R10k W11k CH99.4% $0.056 (sub) 1.1%/1.0M (auto)                                claude-opus-5.5 • medium
+think:medium ○ 🐴 ponytail: ⚡ FULL

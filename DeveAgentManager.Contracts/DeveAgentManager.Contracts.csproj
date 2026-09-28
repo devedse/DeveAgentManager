@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- What the Manager and the browser app (DeveAgentManager.Client) share: states, API data and the session and
+       Setup Profile models. No server-only dependencies: this assembly runs in WebAssembly. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

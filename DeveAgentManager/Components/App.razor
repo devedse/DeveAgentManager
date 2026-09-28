@@ -3,8 +3,18 @@
 
 <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#0d1017" />
+    @* Light or dark before anything paints (Settings → Appearance; "system" follows the device). terminal.js keeps it up to date. *@
+    <script>
+        (function () {
+            var mode = "system";
+            try { mode = localStorage.getItem("dam-theme") || "system"; } catch (e) { }
+            var dark = mode === "dark" || (mode !== "light" && !(window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches));
+            document.documentElement.dataset.theme = dark ? "dark" : "light";
+            document.querySelector('meta[name="theme-color"]').content = dark ? "#0d1017" : "#f5f6fa";
+        })();
+    </script>
     <base href="/" />
     <title>DeveAgentManager</title>
     <link rel="icon" type="image/svg+xml" href="@Assets["favicon.svg"]" />
@@ -12,14 +22,20 @@
     <link rel="stylesheet" href="@Assets["_content/MudBlazor/MudBlazor.min.css"]" />
     <link rel="stylesheet" href="@Assets["_content/XtermBlazor/XtermBlazor.min.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
-    <link rel="stylesheet" href="@Assets["DeveAgentManager.styles.css"]" />
     <ImportMap />
     <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 
 <body>
-    <Routes @rendermode="PageRenderMode" />
-    <ReconnectModal />
+    @if (PageRenderMode is not null)
+    {
+        @* Shown while the Portal starts in the browser; it removes this once it runs. *@
+        <div id="app-loading" class="app-loading">
+            <img src="favicon.svg" alt="" width="48" height="48" />
+            <div class="app-loading-bar"><div></div></div>
+        </div>
+    }
+    <DeveAgentManager.Client.Routes @rendermode="PageRenderMode" />
     <script src="@Assets["lib/xterm/addon-fit.js"]"></script>
     <script src="@Assets["lib/xterm/addon-web-links.js"]"></script>
     <script src="@Assets["_framework/blazor.web.js"]"></script>
@@ -35,7 +51,11 @@
     [CascadingParameter]
     private HttpContext HttpContext { get; set; } = default!;
 
-    // The login page is plain server-rendered HTML (it has to set the auth cookie); everything else is interactive.
+    // The Portal runs in the browser (WebAssembly) and talks to the Manager's API. The login and error pages are plain
+    // server-rendered HTML (the login has to set the auth cookie). Not prerendered: the pages load their data from the
+    // API in the browser, and an unauthenticated visitor never gets past the login page (the fallback policy).
+    private static readonly IComponentRenderMode Portal = new InteractiveWebAssemblyRenderMode(prerender: false);
+
     private IComponentRenderMode? PageRenderMode =>
-        HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null;
+        HttpContext.AcceptsInteractiveRouting() ? Portal : null;
 }

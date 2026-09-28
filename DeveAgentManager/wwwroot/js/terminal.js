@@ -8,8 +8,10 @@
 
     const observers = new Map();
 
-    // Tracks the visible part of the screen. A phone's on-screen keyboard covers the page without resizing it
-    // (iOS Safari, and Chrome on Android by default), so the full-screen terminal page sizes itself to this instead.
+    // Where the on-screen keyboard only covers the page (iOS Safari), the full-screen terminal page sizes itself to the
+    // visible part. Browsers that honour interactive-widget=resizes-content (Chrome, Firefox on Android) shrink the
+    // page itself, so 100dvh is right there; a height set from here could be read mid-animation and stay too short
+    // after the keyboard closes (an empty strip under the key row).
     (function trackVisualViewport() {
         const viewport = window.visualViewport;
         if (!viewport) {
@@ -21,13 +23,65 @@
         const update = () => {
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(() => {
-                root.style.setProperty("--dam-vv-height", `${Math.round(viewport.height)}px`);
-                root.style.setProperty("--dam-vv-top", `${Math.round(viewport.offsetTop)}px`);
+                const covered = window.innerHeight - viewport.height > 1 || viewport.offsetTop > 1;
+                if (covered) {
+                    root.style.setProperty("--dam-vv-height", `${Math.round(viewport.height)}px`);
+                    root.style.setProperty("--dam-vv-top", `${Math.round(viewport.offsetTop)}px`);
+                } else {
+                    root.style.removeProperty("--dam-vv-height");
+                    root.style.removeProperty("--dam-vv-top");
+                }
             });
         };
         viewport.addEventListener("resize", update);
         viewport.addEventListener("scroll", update);
+        window.addEventListener("resize", update);
+        // The keyboard closes after the text box lost focus; check again once it has.
+        document.addEventListener("focusout", () => setTimeout(update, 400));
         update();
+    })();
+
+    // A page with ?viewport in its address shows how the screen is measured, to tell where unused space comes from.
+    (function viewportReadout() {
+        if (!new URLSearchParams(location.search).has("viewport")) {
+            return;
+        }
+
+        const box = document.createElement("div");
+        box.style.cssText = "position:fixed;top:60px;right:8px;z-index:100000;background:rgba(0,0,0,.85);color:#7fffd4;" +
+            "font:12px/1.35 monospace;padding:8px 10px;border-radius:8px;white-space:pre;pointer-events:none";
+        const probe = document.createElement("div");
+        probe.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;visibility:hidden;padding-bottom:env(safe-area-inset-bottom)";
+        const unit = value => {
+            probe.style.height = value;
+            return Math.round(probe.getBoundingClientRect().height);
+        };
+        const bottom = selector => {
+            const element = document.querySelector(selector);
+            return element ? Math.round(element.getBoundingClientRect().bottom) : "-";
+        };
+        const show = () => {
+            const vv = window.visualViewport;
+            probe.style.height = "0px";
+            const inset = Math.round(probe.getBoundingClientRect().height);
+            const keys = document.querySelector(".terminal-keys");
+            box.textContent = [
+                `innerHeight      ${window.innerHeight}`,
+                `clientHeight     ${document.documentElement.clientHeight}`,
+                `visualViewport   ${vv ? `${Math.round(vv.height)} (top ${Math.round(vv.offsetTop)})` : "-"}`,
+                `100dvh/svh/lvh   ${unit("100dvh")}/${unit("100svh")}/${unit("100lvh")}`,
+                `screen/avail     ${screen.height}/${screen.availHeight} @${window.devicePixelRatio}`,
+                `safe-area bottom ${inset}`,
+                `--dam-vv-height  ${document.documentElement.style.getPropertyValue("--dam-vv-height") || "(none)"}`,
+                `layout bottom    ${bottom(".terminal-layout")}`,
+                `keys bottom      ${bottom(".terminal-keys")} (padding ${keys ? getComputedStyle(keys).paddingBottom : "-"})`,
+            ].join("\n");
+        };
+        document.body.append(box, probe);
+        window.visualViewport?.addEventListener("resize", show);
+        window.addEventListener("resize", show);
+        setInterval(show, 1000);
+        show();
     })();
 
     // On touch devices the terminal keeps its rows when the frame only gets shorter, which is the on-screen keyboard
@@ -103,6 +157,10 @@
 
     // Phones and tablets: the primary pointer is a finger.
     const isTouch = () => window.matchMedia("(pointer: coarse)").matches;
+
+    // Per terminal: its WebSocket to the Manager, and the .NET component that shows its state.
+    const sockets = new Map();
+    const dotnets = new Map();
 
     // Per terminal: the phone keyboard input (terminal-touch-input.js).
     const touchInputs = new Map();
@@ -240,16 +298,85 @@
         return Array.from(dataTransfer?.files ?? []).filter(file => file.type.startsWith("image/"));
     }
 
-    async function sendImages(terminal, dotnet, files, afterPaste) {
+    const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // TerminalService.MaxImageBytes
+    const IMAGE_CHUNK_BYTES = 64 * 1024; // TerminalSocket.ImageChunkBytes
+    let nextImageId = 1;
+
+    // Sends an image over the terminal's socket (TerminalSocket.Image); resolves to its path on the Runner.
+    // Not an HTTP upload: a reverse proxy's request size limit (nginx: 1 MB by default) doesn't apply to a WebSocket.
+    // When the connection drops meanwhile (a bad network), it is sent again once the terminal has reconnected.
+    async function uploadImage(id, file) {
+        if (file.size > MAX_IMAGE_BYTES) {
+            throw new Error(`Images can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB.`);
+        }
+
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (bytes.length === 0) {
+            throw new Error("The image is empty.");
+        }
+
+        for (let attempt = 1; ; attempt++) {
+            const connection = attempt === 1 ? openConnection(id) : await reconnected(id, 30000);
+            if (!connection) {
+                throw new Error(attempt === 1 ? "The terminal isn't connected." : "The connection dropped and didn't come back. Paste the image again.");
+            }
+
+            try {
+                return await sendImage(connection, file.type, bytes);
+            } catch (error) {
+                if (!error.dropped || attempt === 3) {
+                    throw error;
+                }
+            }
+        }
+    }
+
+    function openConnection(id) {
+        const connection = sockets.get(id);
+        return connection?.ready && connection.socket.readyState === WebSocket.OPEN ? connection : null;
+    }
+
+    // The terminal's next connection, once it is attached (the terminal reconnects by itself after a drop).
+    async function reconnected(id, timeout) {
+        const until = Date.now() + timeout;
+        while (Date.now() < until) {
+            const connection = openConnection(id);
+            if (connection) {
+                return connection;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 250));
+        }
+
+        return null;
+    }
+
+    function sendImage(connection, contentType, bytes) {
+        return new Promise((resolve, reject) => {
+            const imageId = nextImageId++;
+            connection.images.set(imageId, { resolve, reject });
+            // Header and bytes in one go, without awaiting: nothing typed meanwhile can end up between them.
+            connection.socket.send(JSON.stringify({ type: "image", id: imageId, contentType, size: bytes.length }));
+            for (let offset = 0; offset < bytes.length; offset += IMAGE_CHUNK_BYTES) {
+                connection.socket.send(bytes.subarray(offset, offset + IMAGE_CHUNK_BYTES));
+            }
+        });
+    }
+
+    // Uploads images to the terminal's Runner (the Manager stores them) and pastes their paths into the terminal.
+    // Progress and errors go to .NET (snackbars).
+    async function sendImages(terminal, dotnet, id, files, afterPaste) {
         const paths = [];
         for (const file of files) {
-            // Unsupported types are refused by the Manager, which says which types work.
-            const path = await dotnet.invokeMethodAsync("UploadImageAsync", file.name || "", file.type, file.size, DotNet.createJSStreamReference(file));
-            if (path) {
-                paths.push(path);
+            dotnet?.invokeMethodAsync("OnImageStatus", "uploading", `${file.name || "image"} (${Math.max(1, Math.round(file.size / 1024))} KB)`);
+            try {
+                paths.push(await uploadImage(id, file));
+            } catch (error) {
+                dotnet?.invokeMethodAsync("OnImageStatus", "error", error?.message ?? String(error));
             }
         }
 
+        dotnet?.invokeMethodAsync("OnImageStatus", "done", "");
         if (paths.length > 0) {
             afterPaste();
             // A space after each, so text typed next doesn't run into the path.
@@ -258,7 +385,7 @@
         }
     }
 
-    function enableImagePaste(terminal, element, dotnet, afterPaste) {
+    function enableImagePaste(terminal, element, dotnet, id, afterPaste) {
         // Capture phase: before xterm.js (and the phone keyboard input) handle the paste as text.
         element.addEventListener("paste", event => {
             const files = imageFiles(event.clipboardData);
@@ -270,7 +397,7 @@
 
             event.preventDefault();
             event.stopPropagation();
-            sendImages(terminal, dotnet, files, afterPaste);
+            sendImages(terminal, dotnet, id, files, afterPaste);
         }, { capture: true });
 
         element.addEventListener("dragover", event => {
@@ -287,7 +414,7 @@
             }
 
             event.preventDefault();
-            sendImages(terminal, dotnet, files, afterPaste);
+            sendImages(terminal, dotnet, id, files, afterPaste);
         });
 
         return () => {
@@ -302,7 +429,7 @@
             picker.addEventListener("change", () => {
                 const files = Array.from(picker.files ?? []);
                 done();
-                sendImages(terminal, dotnet, files, afterPaste);
+                sendImages(terminal, dotnet, id, files, afterPaste);
             });
             picker.addEventListener("cancel", done);
             picker.click();
@@ -319,7 +446,8 @@
 
     window.damTerminal = {
         // Returns whether the phone keyboard input is on.
-        init(id, dotnet) {
+        // Returns whether the phone keyboard input is on. `images`: whether images can be pasted (they go to the Runner).
+        init(id, dotnet, images) {
             const terminal = XtermBlazor.getTerminalById(id);
             hardenInput(terminal);
 
@@ -386,9 +514,10 @@
             }
 
             let pickImage = null;
-            if (xtermElement && dotnet && !xtermElement.dataset.imagePaste) {
+            dotnets.set(id, dotnet);
+            if (xtermElement && dotnet && images && !xtermElement.dataset.imagePaste) {
                 xtermElement.dataset.imagePaste = "true";
-                pickImage = enableImagePaste(terminal, xtermElement, dotnet, () => touchInputs.get(id)?.reset());
+                pickImage = enableImagePaste(terminal, xtermElement, dotnet, id, () => touchInputs.get(id)?.reset());
             }
 
             // The on-screen keys must not take the focus: that would close the phone keyboard after every key.
@@ -461,11 +590,138 @@
             }
         },
 
+        // Connects the terminal to the Manager's terminal WebSocket: binary frames are the terminal's data both ways,
+        // text frames are JSON control messages (ready, closed, login; resize). Tells .NET when it is ready or closed.
+        connect(id, url) {
+            this.disconnect(id);
+            const terminal = getTerminal(id);
+            const dotnet = dotnets.get(id);
+            if (!terminal) {
+                return;
+            }
+
+            const address = new URL(`${url}&cols=${terminal.cols}&rows=${terminal.rows}`, document.baseURI);
+            address.protocol = address.protocol === "https:" ? "wss:" : "ws:";
+            const socket = new WebSocket(address.href);
+            socket.binaryType = "arraybuffer";
+            const encoder = new TextEncoder();
+            const connection = { socket, subscriptions: [], closed: null, images: new Map() };
+            const send = data => {
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(data);
+                }
+            };
+
+            socket.onmessage = event => {
+                if (typeof event.data !== "string") {
+                    terminal.write(new Uint8Array(event.data));
+                    return;
+                }
+
+                const message = JSON.parse(event.data);
+                if (message.type === "ready") {
+                    connection.ready = true;
+                    dotnet?.invokeMethodAsync("OnSocketReady", message.tty ?? "");
+                } else if (message.type === "closed") {
+                    connection.closed = message;
+                } else if (message.type === "login") {
+                    dotnet?.invokeMethodAsync("OnLoginResult", !!message.ok, message.message ?? "");
+                } else if (message.type === "image") {
+                    const waiting = connection.images.get(message.id);
+                    connection.images.delete(message.id);
+                    message.error ? waiting?.reject(new Error(message.error)) : waiting?.resolve(message.path);
+                }
+            };
+            socket.onclose = () => {
+                connection.subscriptions.forEach(s => s.dispose());
+                connection.images.forEach(waiting => waiting.reject(Object.assign(new Error("The connection dropped before the image was stored. Paste it again."), { dropped: true })));
+                connection.images.clear();
+                // Only the current connection reports: an old one closing after a reconnect says nothing.
+                if (sockets.get(id) === connection) {
+                    sockets.delete(id);
+                    dotnet?.invokeMethodAsync("OnSocketClosed", connection.closed?.reason ?? null, connection.closed?.message ?? null);
+                }
+            };
+
+            connection.subscriptions.push(terminal.onData(data => send(encoder.encode(data))));
+            connection.subscriptions.push(terminal.onBinary(data => send(Uint8Array.from(data, c => c.charCodeAt(0) & 255))));
+            connection.subscriptions.push(terminal.onResize(size => send(JSON.stringify({ type: "resize", cols: size.cols, rows: size.rows }))));
+            sockets.set(id, connection);
+        },
+
+        disconnect(id) {
+            const connection = sockets.get(id);
+            if (connection) {
+                sockets.delete(id);
+                connection.subscriptions.forEach(s => s.dispose());
+                connection.socket.close();
+            }
+        },
+
         dispose(id) {
+            this.disconnect(id);
             observers.get(id)?.disconnect();
             observers.delete(id);
             touchInputs.delete(id);
             layouts.delete(id);
+            dotnets.delete(id);
+        },
+    };
+
+    // Light or dark (Settings → Appearance), per browser. "system" follows the device, also when it changes.
+    const THEME_KEY = "dam-theme";
+    const themeWatchers = new Set();
+    const systemLight = window.matchMedia?.("(prefers-color-scheme: light)");
+
+    function themeMode() {
+        try {
+            return localStorage.getItem(THEME_KEY) || "system";
+        } catch {
+            return "system";
+        }
+    }
+
+    function applyTheme() {
+        const mode = themeMode();
+        const dark = mode === "dark" || (mode !== "light" && !systemLight?.matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) {
+            meta.content = dark ? "#0d1017" : "#f5f6fa";
+        }
+
+        themeWatchers.forEach(watcher => watcher.invokeMethodAsync("OnThemeChanged", dark).catch(() => themeWatchers.delete(watcher)));
+        return dark;
+    }
+
+    systemLight?.addEventListener("change", () => {
+        if (themeMode() === "system") {
+            applyTheme();
+        }
+    });
+
+    window.damTheme = {
+        // Returns [mode, isDark].
+        get() {
+            return [themeMode(), document.documentElement.dataset.theme !== "light"];
+        },
+
+        set(mode) {
+            try {
+                localStorage.setItem(THEME_KEY, mode);
+            } catch {
+                // Private window: it lasts for this page.
+            }
+
+            return applyTheme();
+        },
+
+        watch(dotnet) {
+            themeWatchers.add(dotnet);
+        },
+
+        unwatch(dotnet) {
+            themeWatchers.delete(dotnet);
         },
     };
 
@@ -493,6 +749,16 @@
             await navigator.clipboard.writeText(text);
         },
 
+        // Downloads a file the Manager serves (e.g. a session export); the login cookie goes along.
+        downloadUrl(url) {
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "";
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        },
+
         async download(fileName, contentType, streamReference) {
             const buffer = await streamReference.arrayBuffer();
             const url = URL.createObjectURL(new Blob([buffer], { type: contentType }));
@@ -503,8 +769,38 @@
             URL.revokeObjectURL(url);
         },
 
+        // The Portal runs: remove the loading screen the Manager sent with the page.
+        hideLoading() {
+            document.getElementById("app-loading")?.remove();
+        },
+
         scrollPageToEnd() {
             window.scrollTo(0, document.body.scrollHeight);
+        },
+
+        // Whether the browser can reach a URL on another origin (e.g. the Manager's VS Code port). The answer can't be
+        // read across origins, but a request that fails at all means the port isn't reachable.
+        async canReach(url) {
+            try {
+                await fetch(url, { mode: "no-cors", credentials: "include", cache: "no-store" });
+                return true;
+            } catch {
+                return false;
+            }
+        },
+
+        // Full screen for an element (e.g. the VS Code frame); false where the browser doesn't allow it (iPhone).
+        async fullscreen(element) {
+            if (!element?.requestFullscreen) {
+                return false;
+            }
+
+            try {
+                await element.requestFullscreen();
+                return true;
+            } catch {
+                return false;
+            }
         },
     };
 })();

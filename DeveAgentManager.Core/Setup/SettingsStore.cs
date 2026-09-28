@@ -30,11 +30,12 @@ public sealed class SettingsStore(
 
     public async Task SaveSetupProfileAsync(SetupProfile profile, CancellationToken cancellationToken = default)
     {
+        profile.Validate();
+        // What is left without a name or path is an empty row (Validate refuses a value without a name).
         profile.EnvironmentVariables = profile.EnvironmentVariables.Where(v => !string.IsNullOrWhiteSpace(v.Name)).ToList();
         profile.Files = profile.Files.Where(f => !string.IsNullOrWhiteSpace(f.Path)).ToList();
         foreach (var config in profile.Harnesses.Values)
         {
-            config.Validate();
             config.Packages = config.CleanPackages().ToList();
         }
 

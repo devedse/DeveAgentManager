@@ -2,29 +2,6 @@ using DeveAgentManager.Core.Abstractions;
 
 namespace DeveAgentManager.Core.Data;
 
-public enum RunnerState
-{
-    Creating,
-    Starting,
-    WaitingForNetwork,
-    SettingUp,
-    Ready,
-    Stopping,
-    Stopped,
-    Deleting,
-    Error,
-}
-
-public enum AgentState
-{
-    Starting,
-    Running,
-    Exited,
-    Stopped,
-    Unknown,
-    Error,
-}
-
 public class Runner
 {
     public Guid Id { get; set; }
@@ -69,6 +46,9 @@ public class Runner
     /// <summary>Comma separated harness ids to install, e.g. "pi".</summary>
     public string Harnesses { get; set; } = "";
 
+    /// <summary>Comma separated ids of the other tools to install (<see cref="IRunnerTool"/>), e.g. "vscode".</summary>
+    public string Tools { get; set; } = "";
+
     public int? SetupVersion { get; set; }
 
     /// <summary>Tool versions found after the last setup, e.g. "pi 0.87.1 · node v24.8.0 · tmux 3.5a".</summary>
@@ -84,7 +64,29 @@ public class Runner
 
     public IReadOnlyList<string> HarnessIds => Harnesses.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+    public IReadOnlyList<string> ToolIds => Tools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
     public RunnerMachine ToMachine() => new(Id, Name, MachineId, ProviderData, Host, SshPort);
+}
+
+/// <summary>An operation that ran on a Runner (setup, start, an update), for the Runner's activity list.</summary>
+public class RunnerActivity
+{
+    public long Id { get; set; }
+
+    public Guid RunnerId { get; set; }
+
+    /// <summary>What ran, as the Portal shows it while it runs, e.g. "Setting up" or "Updating pi".</summary>
+    public string Name { get; set; } = "";
+
+    public DateTime StartedAt { get; set; }
+
+    public DateTime? FinishedAt { get; set; }
+
+    /// <summary>Null while it runs.</summary>
+    public RunnerActivityOutcome? Outcome { get; set; }
+
+    public string? Error { get; set; }
 }
 
 public class Agent
@@ -122,9 +124,40 @@ public class Agent
 
     public int? ExitCode { get; set; }
 
+    /// <summary>
+    /// Running and busy: the harness printed something in the last seconds (they animate a spinner while they work).
+    /// False while it waits for input. See <see cref="Agents.AgentService.RefreshRunnerAsync"/>.
+    /// </summary>
+    public bool Working { get; set; }
+
+    /// <summary>Changes when the agent's icon (<see cref="AgentIcon"/>) changes; null when it has none (the harness's logo is shown).</summary>
+    public long? IconVersion { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// The icon of the project an agent works on: found in its folder (see <see cref="Agents.RepoIcons"/>) or picked in the
+/// Portal, and kept by the Manager so lists show it without asking the Runner.
+/// </summary>
+public class AgentIcon
+{
+    public Guid AgentId { get; set; }
+
+    /// <summary>The image, relative to the agent's folder; null for none (the harness's logo).</summary>
+    public string? Path { get; set; }
+
+    public string? ContentType { get; set; }
+
+    public byte[]? Data { get; set; }
+
+    /// <summary>Picked in the Portal (a file, or none): the Manager doesn't look for another one.</summary>
+    public bool ChosenByUser { get; set; }
+
+    /// <summary>When the folder was last searched.</summary>
+    public DateTime CheckedAt { get; set; }
 }
 
 /// <summary>
@@ -181,16 +214,6 @@ public class SettingEntry
     public string? Value { get; set; }
 
     public DateTime UpdatedAt { get; set; }
-}
-
-/// <summary>How an account logs in.</summary>
-public enum AccountKind
-{
-    /// <summary>A subscription (Claude Pro/Max, ChatGPT Plus/Pro), logged in once in a terminal.</summary>
-    Subscription,
-
-    /// <summary>An API key, billed per use.</summary>
-    ApiKey,
 }
 
 /// <summary>

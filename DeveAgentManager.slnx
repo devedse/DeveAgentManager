@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="DeveAgentManager.Client/DeveAgentManager.Client.csproj" />
+  <Project Path="DeveAgentManager.Contracts/DeveAgentManager.Contracts.csproj" />
   <Project Path="DeveAgentManager.Core/DeveAgentManager.Core.csproj" />
   <Project Path="DeveAgentManager.Harnesses.Claude/DeveAgentManager.Harnesses.Claude.csproj" />
   <Project Path="DeveAgentManager.Harnesses.Codex/DeveAgentManager.Harnesses.Codex.csproj" />

@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
@@ -8,24 +9,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace DeveAgentManager.Core.Agents;
-
-public enum AgentWorkspaceMode
-{
-    EmptyFolder,
-    CloneRepository,
-    ExistingFolder,
-}
-
-public sealed record CreateAgentRequest(
-    Guid RunnerId,
-    string Name,
-    string HarnessId,
-    AgentWorkspaceMode Mode,
-    string? RepositoryUrl = null,
-    string? Branch = null,
-    string? ExistingPath = null,
-    Guid? ContinueSessionId = null,
-    Guid? AccountId = null);
 
 public sealed class AgentNotRunningException(string message) : Exception(message);
 
@@ -378,21 +361,42 @@ public sealed partial class AgentService(
         System.Text.RegularExpressions.Regex.IsMatch(tty, "^/dev/[A-Za-z0-9/]+$") ? tty : throw new ArgumentException($"'{tty}' is not a terminal.");
 
     /// <summary>Reads the state of every agent on a Runner from tmux.</summary>
+    /// <summary>How recent the harness's last output must be for the agent to count as working (spinners redraw every second or faster).</summary>
+    public static readonly TimeSpan WorkingWithin = TimeSpan.FromSeconds(3);
+
+    /// <summary>With a harness's busy pattern on screen, how recent its last output must be (a harness that hangs stops counting).</summary>
+    public static readonly TimeSpan BusyScreenWithin = TimeSpan.FromSeconds(10);
+
+    /// <summary>How many of the last (non-empty) lines of an agent's screen are searched for its harness's busy pattern.</summary>
+    private const int BusyLines = 15;
+
+    /// <summary>
+    /// The agents' state from tmux: running, exited or gone, and whether a running one is working or idle (waiting for
+    /// input). Working: the harness's busy line is on its screen (<see cref="IHarness.BusyPattern"/>, e.g. pi's spinner),
+    /// and it printed something recently. For a harness without one: it printed something in the last seconds.
+    /// </summary>
     public async Task RefreshRunnerAsync(Runner runner, CancellationToken cancellationToken = default)
     {
-        var result = await shell.RunAsync(runner, "tmux list-panes -a -F '#{session_name}|#{pane_dead}|#{pane_dead_status}' 2>/dev/null || true", TimeSpan.FromSeconds(30), cancellationToken);
-        var panes = ParsePanes(result.Output);
-
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agents = await db.Agents.Where(a => a.RunnerId == runner.Id).ToListAsync(cancellationToken);
+
+        var result = await shell.RunAsync(runner, BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern))),
+            TimeSpan.FromSeconds(30), cancellationToken);
+        var (now, panes, busy) = ParsePanes(result.Output);
+
         foreach (var agent in agents)
         {
             AgentState state;
             int? exitCode = null;
+            var working = false;
             if (panes.TryGetValue(agent.TmuxSession, out var pane))
             {
                 state = pane.Dead ? AgentState.Exited : AgentState.Running;
                 exitCode = pane.Dead ? pane.ExitCode : null;
+                var quietFor = now is { } runnerNow && pane.LastOutput is { } lastOutput ? runnerNow - lastOutput : (long?)null;
+                working = !pane.Dead && quietFor is { } quiet && (_harnesses.GetValueOrDefault(agent.HarnessId)?.BusyPattern is null
+                    ? quiet <= (long)WorkingWithin.TotalSeconds
+                    : busy.Contains(agent.TmuxSession) && quiet <= (long)BusyScreenWithin.TotalSeconds);
             }
             else
             {
@@ -406,6 +410,12 @@ public sealed partial class AgentService(
                 agent.ExitCode = exitCode;
                 agent.StateMessage = state == AgentState.Exited ? $"The harness exited (code {exitCode}). Start it again to resume the conversation." : null;
                 agent.UpdatedAt = DateTime.UtcNow;
+                agent.Working = working;
+                events.AgentChanged(runner.Id, agent.Id);
+            }
+            else if (agent.Working != working)
+            {
+                agent.Working = working;
                 events.AgentChanged(runner.Id, agent.Id);
             }
         }
@@ -429,24 +439,75 @@ public sealed partial class AgentService(
         }
     }
 
-    internal static Dictionary<string, (bool Dead, int? ExitCode)> ParsePanes(string output)
+    /// <summary>
+    /// Bash that prints the Runner's time, tmux's panes, and after <see cref="BusyMarker"/> the sessions whose screen shows
+    /// their harness's busy pattern.
+    /// </summary>
+    internal static string BuildStateScript(IEnumerable<(string Session, string? BusyPattern)> agents)
     {
-        var panes = new Dictionary<string, (bool Dead, int? ExitCode)>(StringComparer.Ordinal);
+        var script = new StringBuilder("""
+            date +%s
+            tmux list-panes -a -F '#{session_name}|#{pane_dead}|#{pane_dead_status}|#{window_activity}' 2>/dev/null || true
+            echo '
+            """);
+        script.Append(BusyMarker).Append("'\n");
+        script.Append($"busy() {{ tmux capture-pane -p -t \"=$1:\" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n {BusyLines} | grep -qE -- \"$2\" && echo \"$1\"; }}\n");
+        foreach (var (session, pattern) in agents)
+        {
+            if (pattern is not null)
+            {
+                script.Append("busy ").Append(ShellQuote.Quote(session)).Append(' ').Append(ShellQuote.Quote(pattern)).Append(" || true\n");
+            }
+        }
+
+        return script.ToString();
+    }
+
+    internal const string BusyMarker = "--busy--";
+
+    /// <summary>
+    /// The output of <see cref="BuildStateScript"/>: the Runner's time (epoch seconds), per session its pane
+    /// (session|dead|exit status|last output), and the sessions that show their busy pattern.
+    /// </summary>
+    internal static (long? Now, Dictionary<string, (bool Dead, int? ExitCode, long? LastOutput)> Panes, HashSet<string> Busy) ParsePanes(string output)
+    {
+        var panes = new Dictionary<string, (bool Dead, int? ExitCode, long? LastOutput)>(StringComparer.Ordinal);
+        var busy = new HashSet<string>(StringComparer.Ordinal);
+        long? now = null;
+        var inBusy = false;
         foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
+            if (line == BusyMarker)
+            {
+                inBusy = true;
+                continue;
+            }
+
+            if (inBusy)
+            {
+                busy.Add(line);
+                continue;
+            }
+
             var parts = line.Split('|');
             if (parts.Length < 2)
             {
+                if (now is null && long.TryParse(line, out var seconds))
+                {
+                    now = seconds;
+                }
+
                 continue;
             }
 
             var dead = parts[1] == "1";
             int? exitCode = parts.Length > 2 && int.TryParse(parts[2], out var code) ? code : null;
+            long? lastOutput = parts.Length > 3 && long.TryParse(parts[3], out var activity) ? activity : null;
             // A session has one pane per window; the agent's session has a single pane.
-            panes[parts[0]] = (dead, exitCode);
+            panes[parts[0]] = (dead, exitCode, lastOutput);
         }
 
-        return panes;
+        return (now, panes, busy);
     }
 
     private async Task PrepareWorkspaceAsync(Runner runner, Agent agent, AgentWorkspaceMode mode, CancellationToken cancellationToken)
@@ -571,8 +632,3 @@ public sealed partial class AgentService(
     [GeneratedRegex("^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$")]
     private static partial Regex AgentName();
 }
-
-/// <summary>A terminal attached to an agent's tmux session.</summary>
-/// <param name="Tty">The client's tty on the Runner, e.g. /dev/pts/3.</param>
-/// <param name="Watching">Joined while others were attached and hasn't typed yet: doesn't change the terminal's size.</param>
-public sealed record AgentViewer(string Tty, int Columns, int Rows, DateTime ConnectedAt, DateTime LastActiveAt, bool Watching = false);

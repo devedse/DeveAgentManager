@@ -13,13 +13,14 @@ using Renci.SshNet.Common;
 namespace DeveAgentManager.Core.Runners;
 
 /// <summary>
-/// Sets up a Runner over SSH: base packages, tmux and git config, the Setup Profile and the selected harnesses.
+/// Sets up a Runner over SSH: base packages, tmux and git config, the Setup Profile, and the selected harnesses and tools.
 /// </summary>
 public sealed partial class RunnerSetupService(
     RunnerShell shell,
     ManagerSshKey sshKey,
     SettingsStore settings,
-    IEnumerable<IHarness> harnesses)
+    IEnumerable<IHarness> harnesses,
+    IEnumerable<IRunnerTool> tools)
 {
     /// <summary>Bump when runner-setup.sh changes, so the Portal can show that a Runner's setup is outdated.</summary>
     public const int SetupVersion = 1;
@@ -27,6 +28,9 @@ public sealed partial class RunnerSetupService(
     private static readonly Lazy<string> SetupScript = new(() => ReadResource("runner-setup.sh"));
 
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
+    private readonly Dictionary<string, IRunnerTool> _tools = tools.ToDictionary(t => t.Id);
+
+    public IReadOnlyCollection<IRunnerTool> Tools => _tools.Values;
 
     /// <summary>Waits until SSH answers (a fresh VM needs a moment after it got its IP).</summary>
     public async Task WaitForSshAsync(Runner runner, IRunnerLog log, TimeSpan timeout, CancellationToken cancellationToken)
@@ -117,6 +121,18 @@ public sealed partial class RunnerSetupService(
             }
         }
 
+        foreach (var toolId in runner.ToolIds)
+        {
+            if (_tools.TryGetValue(toolId, out var tool))
+            {
+                await RunScriptAsync(runner, log, $"Installing {tool.DisplayName}", tool.InstallScript, TimeSpan.FromMinutes(15), cancellationToken);
+            }
+            else
+            {
+                log.Warning($"Unknown tool '{toolId}', skipped.");
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(profile.Script))
         {
             await shell.UploadAsync(runner, "~/.deveagentmanager/profile-script.sh", profile.Script.ReplaceLineEndings("\n"), "700", cancellationToken);
@@ -163,6 +179,19 @@ public sealed partial class RunnerSetupService(
 
     public IHarness GetHarness(string harnessId) =>
         _harnesses.GetValueOrDefault(harnessId) ?? throw new ArgumentException($"Unknown harness '{harnessId}'.");
+
+    public IRunnerTool GetTool(string toolId) =>
+        _tools.GetValueOrDefault(toolId) ?? throw new ArgumentException($"Unknown tool '{toolId}'.");
+
+    /// <summary>Installs the latest version of a tool (its install script also updates) and refreshes the versions shown.</summary>
+    public async Task UpdateToolAsync(Runner runner, string toolId, IRunnerLog log, CancellationToken cancellationToken = default)
+    {
+        var tool = GetTool(toolId);
+        var before = runner.InstalledVersions;
+        await RunScriptAsync(runner, log, $"Installing the latest {tool.DisplayName}", tool.InstallScript, TimeSpan.FromMinutes(15), cancellationToken);
+        runner.InstalledVersions = await ReadVersionsAsync(runner, cancellationToken);
+        log.Success(before == runner.InstalledVersions ? $"{tool.DisplayName} is up to date: {runner.InstalledVersions}" : $"{tool.DisplayName} installed: {runner.InstalledVersions}");
+    }
 
     /// <summary>
     /// Installs the latest version of a harness and its packages (its install script is idempotent and updates), then
@@ -216,6 +245,14 @@ public sealed partial class RunnerSetupService(
             if (_harnesses.TryGetValue(harnessId, out var harness))
             {
                 commands.Add((harness.DisplayName, harness.VersionCommand));
+            }
+        }
+
+        foreach (var toolId in runner.ToolIds)
+        {
+            if (_tools.TryGetValue(toolId, out var tool))
+            {
+                commands.Add((tool.DisplayName, tool.VersionCommand));
             }
         }
 
@@ -303,7 +340,7 @@ public sealed partial class RunnerSetupService(
         foreach (var variable in profile.EnvironmentVariables)
         {
             var name = variable.Name.Trim();
-            if (!EnvironmentVariableName().IsMatch(name))
+            if (!SetupProfile.IsValidVariableName(name))
             {
                 continue;
             }
@@ -327,6 +364,4 @@ public sealed partial class RunnerSetupService(
         return reader.ReadToEnd().ReplaceLineEndings("\n");
     }
 
-    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
-    private static partial Regex EnvironmentVariableName();
 }

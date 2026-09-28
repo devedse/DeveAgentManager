@@ -1,0 +1,68 @@
+@inherits LiveComponent
+
+<div class="nav-wrapper">
+    <MudNavMenu Class="app-nav" Rounded="true" Margin="Margin.Dense" Color="Color.Primary">
+        <div class="nav-section">Overview</div>
+        <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Rounded.SpaceDashboard">Dashboard</MudNavLink>
+        <div class="nav-section">Work</div>
+        <MudNavLink Href="agents" Icon="@Icons.Material.Rounded.SmartToy">
+            <div class="nav-link-row">
+                <span>Agents</span>
+                @if (_runningAgents > 0)
+                {
+                    <span class="nav-badge nav-badge-live">@_runningAgents</span>
+                }
+            </div>
+        </MudNavLink>
+        @foreach (var agent in _liveAgents)
+        {
+            <MudNavLink Href="@($"agents/{agent.Id}")" Match="NavLinkMatch.All" Class="nav-agent">
+                <div class="nav-agent-row">
+                    <span class="nav-agent-avatar">
+                        <AgentAvatar Agent="agent" Class="nav-avatar" />
+                        <span class="nav-agent-dot @(agent.State != AgentState.Running ? "" : agent.Working ? "working" : "live")" title="@StateStyles.For(agent).Text"></span>
+                    </span>
+                    <span class="nav-agent-name">@agent.Name</span>
+                    <span class="nav-agent-meta">@agent.RunnerName</span>
+                </div>
+            </MudNavLink>
+        }
+        <MudNavLink Href="sessions" Icon="@Icons.Material.Rounded.Forum">Sessions</MudNavLink>
+        <MudNavLink Href="runners" Icon="@Icons.Material.Rounded.Dns">
+            <div class="nav-link-row">
+                <span>Runners</span>
+                @if (_readyRunners > 0)
+                {
+                    <span class="nav-badge">@_readyRunners</span>
+                }
+            </div>
+        </MudNavLink>
+        <div class="nav-section">Manage</div>
+        <MudNavLink Href="settings" Icon="@Icons.Material.Rounded.Tune">Settings</MudNavLink>
+    </MudNavMenu>
+
+    <div class="nav-footer">
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">DeveAgentManager @_version</MudText>
+    </div>
+</div>
+
+@code {
+    private string? _version;
+    private int _runningAgents;
+    private int _readyRunners;
+    private List<AgentDto> _liveAgents = [];
+
+    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.Kind != ManagerEventKind.SettingsChanged;
+
+    protected override async Task LoadAsync()
+    {
+        _version ??= (await Api.InfoAsync()).Version;
+        var runners = await Api.ListRunnersAsync();
+        _readyRunners = runners.Count(r => r.State == RunnerState.Ready);
+        _liveAgents = runners.SelectMany(r => r.Agents)
+            .Where(a => a.State is AgentState.Running or AgentState.Starting)
+            .OrderBy(a => a.Name)
+            .ToList();
+        _runningAgents = _liveAgents.Count;
+    }
+}

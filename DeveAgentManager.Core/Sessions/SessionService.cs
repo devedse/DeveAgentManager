@@ -132,8 +132,14 @@ public sealed class SessionService(
             session = SessionFlattener.Flatten(session, DisplayName(from), DisplayName(harnessId));
         }
 
-        var path = format.GetPath(harnessSessionId, workingDirectory, DateTime.UtcNow);
-        await shell.UploadAsync(runner, path, format.Write(session, harnessSessionId, workingDirectory), "600", cancellationToken);
+        // Nothing to move (e.g. pi writes its file only with the first message): the new harness starts a conversation
+        // of its own under the id, instead of being handed an empty one (claude --resume refuses those).
+        if (session.Entries.Count > 0)
+        {
+            var path = format.GetPath(harnessSessionId, workingDirectory, DateTime.UtcNow);
+            await shell.UploadAsync(runner, path, format.Write(session, harnessSessionId, workingDirectory), "600", cancellationToken);
+        }
+
         var trail = (stored.HarnessTrail ?? stored.HarnessId).Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
         if (trail.Count == 0 || trail[^1] != harnessId)
         {

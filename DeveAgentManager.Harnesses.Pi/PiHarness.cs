@@ -19,6 +19,9 @@ public sealed class PiHarness : IHarness
 
     public string DisplayName => "pi";
 
+    /// <summary>The pi logo (https://pi.dev/logo-auto.svg), cropped to the mark.</summary>
+    public string Icon => """<g transform="scale(0.051126) translate(-165.29 -165.29)"><path fill="#F09082" d="M165.29 165.29H517.36V400H400V282.65H165.29Z"/><path fill="#4D9ABF" d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z"/><path fill="#F1BE58" d="M517.36 400H634.72V634.72H517.36Z"/></g>""";
+
     public string Description => "The pi coding agent. Log in with /login in a terminal, or set an API key in the Setup Profile.";
 
     public string InstallScript => $"""
@@ -33,6 +36,9 @@ public sealed class PiHarness : IHarness
         """;
 
     public string VersionCommand => "pi --version";
+
+    /// <summary>pi's spinner line above the editor: "⠼ Working (medium effort)...".</summary>
+    public string BusyPattern => "^[[:space:]]*(─)+[[:space:]]+(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏) Working";
 
     /// <summary>
     /// <c>--session-id</c> opens the session with that id or creates it, so the same command both starts and resumes.
@@ -53,7 +59,6 @@ public sealed class PiHarness : IHarness
             new("npm:pi-plugin-manager", "Manage plugins from inside pi"),
             new("npm:@dietrichgebert/ponytail", "Lazy senior dev mode: the best code is the code you never wrote"),
             new("npm:@pi-archimedes/image-paste", "Image paste with preview (reads the Runner's clipboard: in the browser terminal, use Ctrl+V or 📎)"),
-            new("npm:pi-archimedes", "Parallel agents, task lists, MCP, polished terminal (suite)"),
         ],
         SettingsFile: "~/.pi/agent/settings.json",
         KeybindingsFile: "~/.pi/agent/keybindings.json",

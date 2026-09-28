@@ -1,0 +1,12 @@
+ ▐▛███▛█   Claude Code v2.1.283
+▝▜██████▀  Opus 5.5 · Claude API
+ ▝▝   ▝▝   ~/dam-e2e/work/marker-claude
+❯ Run the shell command sleep 12 && echo finished, then reply with just the word done.
+  Waiting 12 seconds then printing finished · 3s
+  ⎿  $ sleep 12 && echo finished (3s)
+     (ctrl+b ctrl+b (twice) to run in background)
+* Herding… (6s · ↓ 82 tokens)
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents

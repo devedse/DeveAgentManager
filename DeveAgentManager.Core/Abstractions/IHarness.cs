@@ -10,6 +10,9 @@ public interface IHarness
 
     string Description { get; }
 
+    /// <summary>The harness's logo: SVG content for a 24×24 view box (shapes without a fill take the text color).</summary>
+    string? Icon => null;
+
     /// <summary>Idempotent bash script that installs or updates the harness. Runs as the Runner Account with the Manager's env.sh sourced.</summary>
     string InstallScript { get; }
 
@@ -18,6 +21,13 @@ public interface IHarness
 
     /// <summary>Prints the installed version.</summary>
     string VersionCommand { get; }
+
+    /// <summary>
+    /// What the harness shows at the bottom of its screen while it works (an extended regular expression, as grep -E
+    /// takes it), e.g. its spinner line; null when it has none. An agent counts as working while this is on its screen,
+    /// instead of whenever its screen changes (typing, a resize or a rotating tip change it too).
+    /// </summary>
+    string? BusyPattern => null;
 
     /// <summary>
     /// Command that starts the harness for an agent. It is run inside tmux in the agent's working directory and must
@@ -56,63 +66,9 @@ public interface IHarness
     HarnessAccountSetup BuildAccountSetup(string accountFolder, Data.AccountKind kind, string secret) => throw new NotSupportedException();
 }
 
-/// <summary>How a harness's accounts log in.</summary>
-/// <param name="SubscriptionName">E.g. "Claude subscription (Pro, Max)".</param>
-/// <param name="LoginCommand">
-/// Bash run in a browser terminal on a Runner to log in with a subscription. <c>$DAM_LOGIN_DIR</c> is an empty folder
-/// for files the login writes.
-/// </param>
-/// <param name="LoginHelp">Shown above that terminal: what to do.</param>
-/// <param name="TokenPattern">When set, the credential is the text in the terminal's output that matches this regex.</param>
-/// <param name="LoginFile">When set, the credential is this file in <c>$DAM_LOGIN_DIR</c>, read after the login succeeded.</param>
-/// <param name="ApiKeyName">The environment variable of an API key, e.g. ANTHROPIC_API_KEY.</param>
-/// <param name="PasteHint">When set, a subscription token made elsewhere can be pasted; describes how to make one.</param>
-public sealed record HarnessAccountSupport(
-    string SubscriptionName,
-    string LoginCommand,
-    string LoginHelp,
-    string? TokenPattern,
-    string? LoginFile,
-    string ApiKeyName,
-    string? PasteHint);
-
 /// <param name="Files">Paths relative to the account folder, with their content and mode.</param>
 /// <param name="Environment">Bash that sets up an agent's environment (exports), sourced before the harness starts.</param>
 /// <param name="Script">Bash run after the files are written (e.g. links to shared folders).</param>
 public sealed record HarnessAccountSetup(IReadOnlyList<(string Path, string Content, string Mode)> Files, string Environment, string? Script);
-
-/// <summary>How the Portal presents a harness's configuration.</summary>
-/// <param name="PackageExample">Placeholder for a package source.</param>
-/// <param name="SuggestedPackages">Offered as one-click additions.</param>
-/// <param name="SettingsFile">Where the settings end up on the Runner.</param>
-/// <param name="KeybindingsFile">Where the keybindings end up on the Runner.</param>
-/// <param name="ThinkingLevels">Choices for the default thinking level.</param>
-/// <param name="DocsUrl">Where packages and settings are documented.</param>
-/// <param name="HasPackages">Offers packages (pi).</param>
-/// <param name="HasProvider">The model is chosen together with a provider (pi).</param>
-/// <param name="HasKeybindings">Offers keybindings (pi).</param>
-/// <param name="HasExtraSettings">Offers extra settings as JSON (merged into <see cref="SettingsFile"/>).</param>
-/// <param name="ModelSuggestions">Offered in the model field besides what <see cref="IHarness.ModelsCommand"/> lists.</param>
-/// <param name="EffortName">What the harness calls the thinking level ("Effort" for Claude Code and Codex).</param>
-public sealed record HarnessConfigSupport(
-    string PackageExample,
-    IReadOnlyList<SuggestedPackage> SuggestedPackages,
-    string SettingsFile,
-    string KeybindingsFile,
-    IReadOnlyList<string> ThinkingLevels,
-    string DocsUrl,
-    bool HasPackages = true,
-    bool HasProvider = true,
-    bool HasKeybindings = true,
-    bool HasExtraSettings = true,
-    IReadOnlyList<ModelChoice>? ModelSuggestions = null,
-    string EffortName = "Thinking level",
-    string SettingsExample = "{ \"enabledModels\": [\"anthropic/*\"], \"hideThinkingBlock\": true }");
-
-/// <param name="Id">What the harness takes as its model setting.</param>
-/// <param name="Efforts">The effort levels this model supports (empty: the harness's usual ones).</param>
-public sealed record ModelChoice(string Id, string Name, IReadOnlyList<string> Efforts, string? DefaultEffort = null);
-
-public sealed record SuggestedPackage(string Source, string Description);
 
 public sealed record HarnessLaunch(string SessionId, string DisplayName, string WorkingDirectory);

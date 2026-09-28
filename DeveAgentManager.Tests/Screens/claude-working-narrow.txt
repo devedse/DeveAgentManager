@@ -1,0 +1,15 @@
+● done
+✻ Sautéed for 15s · done 6:07 AM
+❯ Run the shell command sleep 10, then reply with
+  just the word ok.
+  Waiting 10 seconds · 3s
+  ⎿  $ sleep 10 (4s)
+     (ctrl+b ctrl+b (twice) to run in background)
+✢ Clauding… (5s · ↓ 77 tokens)
+  ⎿  Tip: Use Plan Mode to prepare for a complex
+     request before making changes. Press
+     shift+tab twice to enable.
+──────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
