@@ -23,6 +23,7 @@ public sealed class BusyScreenTests : IDisposable
     [InlineData("claude-idle", false)]
     [InlineData("claude-idle-narrow", false)]
     [InlineData("codex-working", true)]
+    [InlineData("codex-background-wait-narrow", true)]
     [InlineData("codex-idle", false)]
     public void BusyPattern_IsOnTheScreen_OnlyWhileTheHarnessWorks(string screen, bool working)
         => AssertBusy(screen.Split('-')[0], File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", screen + ".txt")), working);
@@ -35,6 +36,11 @@ public sealed class BusyScreenTests : IDisposable
     [InlineData("codex", "  │ Codex │ Working (6s • esc to interrupt) │")]
     [InlineData("claude", "  │ Claude │ Clauding… (5s · ↓ 77 tokens) │")]
     [InlineData("codex", "› ◦ Working (6s • esc to interrupt)")]
+    [InlineData("codex", "› Waiting for background terminal (23m • esc to interrupt)")]
+    [InlineData("codex", "› • Waiting for background terminal (23m • esc to interrupt)")]
+    [InlineData("codex", "• The status says Waiting for background terminal (23m • esc to interrupt).")]
+    [InlineData("codex", "• Waited for background terminal (23m)")]
+    [InlineData("codex", "  1 background terminal running · /ps to view · /stop to close")]
     [InlineData("claude", "❯ ✢ Clauding… (5s · ↓ 77 tokens)")]
     [InlineData("pi", " Explain ⠼ Working (medium effort)...")]
     public void BusyPattern_IgnoresBusyPhrasesInInputAndConversation(string harness, string text)

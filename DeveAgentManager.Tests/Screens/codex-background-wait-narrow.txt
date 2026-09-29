@@ -1,0 +1,33 @@
+go implement it now (you are sol 6)
+  also tightening the eject preflight
+  to prove each volume has one stable
+  disk extent before any cache state
+  changes.
+
+• Edited src/QueueCache.Operations/
+DiskEjection.cs (+2 -0)
+    142 +            foreach (var targe
+         t in targets)
+    143 +                target.Validat
+    + Show details
+
+• Edited docs/KNOWN_ISSUES.md (+4 -0)
+    203 +The first implementation seria
+         lizes eject preparation throug
+         h the existing global
+    + Show details
+
+• Ran python3 - <<'PY' …
+  └ fe54353 pending None 36602488209
+    fe54353 completed success 36602479…
+    + Show details
+
+• Waiting for background terminal (26m…
+  └ /home/remoteman/QueueCache-…
+
+                         ⚠ 5h 37% left
+
+› Ask Codex to do anything
+
+  GPT-6-Sol medium · ~/work/queuecache…
+  ? for shortcuts             ⚠ 1 · f2
