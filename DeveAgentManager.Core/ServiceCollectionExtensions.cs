@@ -48,6 +48,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IEditorUpstreams>(sp => sp.GetRequiredService<EditorTunnels>());
         services.AddHostedService(sp => sp.GetRequiredService<EditorTunnels>());
         services.AddHostedService<RunnerMonitor>();
+        services.AddHostedService<RunnerUsageMonitor>();
         services.AddSingleton<AgentIconService>();
         services.AddHostedService(sp => sp.GetRequiredService<AgentIconService>());
         return services;

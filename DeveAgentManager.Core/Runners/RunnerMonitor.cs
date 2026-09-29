@@ -14,14 +14,40 @@ namespace DeveAgentManager.Core.Runners;
 public sealed class RunnerStatusCache
 {
     private readonly ConcurrentDictionary<Guid, MachineStatus> _statuses = new();
-    private readonly ConcurrentDictionary<Guid, List<RunnerUsageSample>> _history = new();
+    private readonly ConcurrentDictionary<Guid, UsageHistory> _history = new();
     private static readonly TimeSpan Retain = TimeSpan.FromHours(1);
+    private static readonly TimeSpan FullResolution = TimeSpan.FromMinutes(1);
+    private const long BucketTicks = TimeSpan.TicksPerSecond * 15;
+
+    private sealed class UsageHistory
+    {
+        public List<RunnerUsageSample> Recent { get; } = [];
+        public SortedDictionary<long, UsageBucket> Older { get; } = [];
+    }
+
+    private sealed class UsageBucket
+    {
+        public double CpuSum, MemorySum;
+        public int CpuCount, MemoryCount;
+        public void Add(RunnerUsageSample sample)
+        {
+            if (sample.CpuPercent is { } cpu) { CpuSum += cpu; CpuCount++; }
+            if (sample.MemoryPercent is { } memory) { MemorySum += memory; MemoryCount++; }
+        }
+        public RunnerUsageSample Sample(long ticks) => new(new DateTime(ticks, DateTimeKind.Utc),
+            CpuCount == 0 ? null : CpuSum / CpuCount, MemoryCount == 0 ? null : MemorySum / MemoryCount);
+    }
 
     public MachineStatus? Get(Guid runnerId) => _statuses.GetValueOrDefault(runnerId);
 
     public void Set(Guid runnerId, MachineStatus status, DateTime? at = null)
     {
         _statuses[runnerId] = status;
+        RecordUsage(runnerId, status, at);
+    }
+
+    public void RecordUsage(Guid runnerId, MachineStatus status, DateTime? at = null)
+    {
         var cpu = Valid(status.CpuUsage);
         var memory = status is { MemoryUsedBytes: { } used, MemoryTotalBytes: > 0 and var total }
             ? Valid(used * 100.0 / total) : null;
@@ -30,27 +56,62 @@ public sealed class RunnerStatusCache
             return;
         }
 
-        var time = at ?? DateTime.UtcNow;
-        var samples = _history.GetOrAdd(runnerId, _ => []);
-        lock (samples)
+        var now = DateTime.UtcNow;
+        var time = at ?? now;
+        if (time < now - Retain) return;
+        var history = _history.GetOrAdd(runnerId, _ => new UsageHistory());
+        lock (history)
         {
-            samples.Add(new RunnerUsageSample(time, cpu, memory));
-            samples.RemoveAll(s => s.At < time - Retain);
+            var sample = new RunnerUsageSample(time, cpu, memory);
+            var recent = history.Recent;
+            if (time < now - FullResolution)
+            {
+                AddOlder(history, sample);
+            }
+            else if (recent.Count > 0 && recent[^1].At.Ticks / TimeSpan.TicksPerSecond == time.Ticks / TimeSpan.TicksPerSecond)
+            {
+                recent[^1] = sample;
+            }
+            else
+            {
+                recent.Add(sample);
+            }
+            Trim(history, now);
         }
     }
 
-    public IReadOnlyList<RunnerUsageSample> History(Guid runnerId)
+    public IReadOnlyList<RunnerUsageSample> History(Guid runnerId, int minutes = 60)
     {
-        if (!_history.TryGetValue(runnerId, out var samples))
+        if (!_history.TryGetValue(runnerId, out var history))
         {
             return [];
         }
 
-        lock (samples)
+        var now = DateTime.UtcNow;
+        lock (history)
         {
-            samples.RemoveAll(s => s.At < DateTime.UtcNow - Retain);
-            return samples.ToArray();
+            Trim(history, now);
+            var cutoff = now.AddMinutes(minutes == 1 ? -1 : -60);
+            return (minutes == 1 ? [] : history.Older.Select(pair => pair.Value.Sample(pair.Key)))
+                .Concat(history.Recent).Where(s => s.At >= cutoff).OrderBy(s => s.At).ToArray();
         }
+    }
+
+    private static void AddOlder(UsageHistory history, RunnerUsageSample sample)
+    {
+        var key = sample.At.Ticks / BucketTicks * BucketTicks;
+        if (!history.Older.TryGetValue(key, out var bucket)) history.Older[key] = bucket = new UsageBucket();
+        bucket.Add(sample);
+    }
+
+    private static void Trim(UsageHistory history, DateTime now)
+    {
+        var cutoff = now - Retain;
+        var recentCutoff = now - FullResolution;
+        foreach (var sample in history.Recent.Where(s => s.At < recentCutoff && s.At >= cutoff)) AddOlder(history, sample);
+        history.Recent.RemoveAll(s => s.At < recentCutoff);
+        // A bucket is discarded as soon as its start leaves the hour; no older reading can remain.
+        foreach (var key in history.Older.Keys.TakeWhile(key => key < cutoff.Ticks).ToArray()) history.Older.Remove(key);
     }
 
     private static double? Valid(double? value) => value is { } number && double.IsFinite(number) ? Math.Clamp(number, 0, 100) : null;

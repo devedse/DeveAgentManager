@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Corsinvest.ProxmoxVE.Api;
 using Corsinvest.ProxmoxVE.Api.Extension;
@@ -19,6 +20,7 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
     public const string Tag = "deveagentmanager";
 
     private static readonly SemaphoreSlim AllocationLock = new(1, 1);
+    private readonly ConcurrentDictionary<int, string> _knownNodes = new();
 
     private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan TaskTimeout = TimeSpan.FromMinutes(5);
@@ -29,6 +31,8 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
     public string DisplayName => "Proxmox VE";
 
     public bool IsConfigured => options.IsConfigured;
+
+    public bool SupportsUsageSampling => true;
 
     public RunnerProviderCapabilities Capabilities { get; } = new(
         CanStartStop: true,
@@ -268,6 +272,8 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
             return new MachineStatus(MachinePowerState.Missing);
         }
 
+        _knownNodes[vmId] = vm.Node;
+
         if (!vm.IsRunning)
         {
             return new MachineStatus(MachinePowerState.Stopped, Detail: vm.Status);
@@ -291,6 +297,32 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
             MemoryTotalBytes: (long)vm.MemorySize,
             Uptime: TimeSpan.FromSeconds(vm.Uptime),
             Detail: vm.Node);
+    }
+
+    public async Task<MachineStatus?> GetUsageAsync(RunnerMachine machine, CancellationToken cancellationToken)
+    {
+        var vmId = ParseVmId(machine);
+        var client = CreateClient();
+        string? node = null;
+        if (!string.IsNullOrWhiteSpace(machine.ProviderData))
+        {
+            try { node = JsonSerializer.Deserialize<ProxmoxMachineData>(machine.ProviderData)?.Node; }
+            catch (JsonException) { /* Older runner data may not contain a node. */ }
+        }
+
+        node ??= _knownNodes.GetValueOrDefault(vmId);
+        node ??= options.Node;
+        node ??= (await GetVmsAsync(client)).FirstOrDefault(vm => vm.VmId == vmId)?.Node;
+        if (node is null) return null;
+
+        _knownNodes[vmId] = node;
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var vm = await client.Nodes[node].Qemu[vmId].Status.Current.GetAsync();
+        return vm.IsRunning
+            ? new MachineStatus(MachinePowerState.Running, CpuUsage: vm.CpuUsagePercentage * 100,
+                MemoryUsedBytes: (long)vm.MemoryUsage, MemoryTotalBytes: (long)vm.MemorySize)
+            : new MachineStatus(MachinePowerState.Stopped);
     }
 
     public async Task<string> WaitForAddressAsync(RunnerMachine machine, IRunnerLog log, CancellationToken cancellationToken)

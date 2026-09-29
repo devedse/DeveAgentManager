@@ -8,8 +8,8 @@
             <span class="usage-chart-key usage-chart-key-memory">RAM <strong>@Latest(s => s.MemoryPercent)</strong></span>
         </div>
         <div class="usage-chart-ranges" role="group" aria-label="Graph time range">
-            <button type="button" class="@(_minutes == 1 ? "selected" : "")" aria-pressed="@(_minutes == 1)" @onclick="() => _minutes = 1">1 min</button>
-            <button type="button" class="@(_minutes == 60 ? "selected" : "")" aria-pressed="@(_minutes == 60)" @onclick="() => _minutes = 60">1 hour</button>
+            <button type="button" class="@(_minutes == 1 ? "selected" : "")" aria-pressed="@(_minutes == 1)" @onclick="() => ChangeRangeAsync(1)">1 min</button>
+            <button type="button" class="@(_minutes == 60 ? "selected" : "")" aria-pressed="@(_minutes == 60)" @onclick="() => ChangeRangeAsync(60)">1 hour</button>
         </div>
     </div>
 
@@ -43,11 +43,11 @@
                 }
                 @foreach (var point in Markers(cpu))
                 {
-                    <circle class="usage-chart-dot usage-chart-dot-cpu" cx="@Number(point.X)" cy="@Number(point.Y)" r="@(_minutes == 1 ? 4 : 3)"><title>CPU @point.Value.ToString("0.#")% · @point.At.ToLocalTime().ToString("t")</title></circle>
+                    <circle class="usage-chart-dot usage-chart-dot-cpu" cx="@Number(point.X)" cy="@Number(point.Y)" r="3"><title>CPU @point.Value.ToString("0.#")% · @point.At.ToLocalTime().ToString("T")</title></circle>
                 }
                 @foreach (var point in Markers(memory))
                 {
-                    <circle class="usage-chart-dot usage-chart-dot-memory" cx="@Number(point.X)" cy="@Number(point.Y)" r="@(_minutes == 1 ? 4 : 3)"><title>RAM @point.Value.ToString("0.#")% · @point.At.ToLocalTime().ToString("t")</title></circle>
+                    <circle class="usage-chart-dot usage-chart-dot-memory" cx="@Number(point.X)" cy="@Number(point.Y)" r="3"><title>RAM @point.Value.ToString("0.#")% · @point.At.ToLocalTime().ToString("T")</title></circle>
                 }
             </svg>
         </div>
@@ -62,10 +62,40 @@
     private readonly string _memoryFillId = "memory-fill-" + Guid.NewGuid().ToString("N");
     private List<RunnerUsageSample> _samples = [];
     private int _minutes = 60;
+    private readonly CancellationTokenSource _pollCancellation = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        _ = PollAsync();
+    }
+
+    private async Task PollAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_pollCancellation.Token)) await ReloadAsync();
+        }
+        catch (OperationCanceledException) when (_pollCancellation.IsCancellationRequested) { }
+    }
+
+    private async Task ChangeRangeAsync(int minutes)
+    {
+        _minutes = minutes;
+        await ReloadAsync();
+    }
 
     protected override bool IsRelevant(ManagerEvent change) => change.Kind == ManagerEventKind.RunnerChanged && change.RunnerId == RunnerId;
 
-    protected override async Task LoadAsync() => _samples = await Api.GetRunnerUsageAsync(RunnerId);
+    protected override async Task LoadAsync() => _samples = await Api.GetRunnerUsageAsync(RunnerId, _minutes);
+
+    public override void Dispose()
+    {
+        _pollCancellation.Cancel();
+        _pollCancellation.Dispose();
+        base.Dispose();
+    }
 
     private string Latest(Func<RunnerUsageSample, double?> select) =>
         _samples.LastOrDefault(s => select(s) is not null) is { } sample && select(sample) is { } value ? $"{value:0}%" : "–";
@@ -88,7 +118,7 @@
             }
 
             // Missing polls should appear as a break, rather than a line pretending the value stayed steady.
-            if (current is null || previous is { } last && sample.At - last > TimeSpan.FromSeconds(40))
+            if (current is null || previous is { } last && sample.At - last > TimeSpan.FromSeconds(_minutes == 1 ? 3 : 40))
             {
                 current = [];
                 result.Add(current);
@@ -102,9 +132,7 @@
         return result;
     }
 
-    private IEnumerable<Point> Markers(List<List<Point>> segments) => _minutes == 1
-        ? segments.SelectMany(s => s)
-        : segments.LastOrDefault()?.TakeLast(1) ?? [];
+    private IEnumerable<Point> Markers(List<List<Point>> segments) => segments.LastOrDefault()?.TakeLast(1) ?? [];
 
     private static string Line(List<Point> points) => "M" + string.Join(" L", points.Select(p => $"{Number(p.X)},{Number(p.Y)}"));
 
