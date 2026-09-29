@@ -117,8 +117,9 @@
                 continue;
             }
 
-            // Missing polls should appear as a break, rather than a line pretending the value stayed steady.
-            if (current is null || previous is { } last && sample.At - last > TimeSpan.FromSeconds(_minutes == 1 ? 3 : 40))
+            // The full provider check also supplies a reading every 15 seconds when fast sampling is unavailable.
+            // Connect those readings, but leave longer outages visible as gaps.
+            if (current is null || previous is { } last && sample.At - last > TimeSpan.FromSeconds(_minutes == 1 ? 20 : 40))
             {
                 current = [];
                 result.Add(current);
