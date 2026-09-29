@@ -52,6 +52,10 @@
             </svg>
         </div>
         <div class="usage-chart-time"><span>@(_minutes == 1 ? "1 min ago" : "1 hour ago")</span><span>@(_minutes == 1 ? "30 sec ago" : "30 min ago")</span><span>Now</span></div>
+        @if ((end - _samples[^1].At).TotalSeconds > 5)
+        {
+            <div class="mud-text-secondary text-small">Waiting for new readings · last received @((int)(end - _samples[^1].At).TotalSeconds)s ago</div>
+        }
     }
 </div>
 

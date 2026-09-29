@@ -301,24 +301,39 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
 
     public async Task<MachineStatus?> GetUsageAsync(RunnerMachine machine, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var vmId = ParseVmId(machine);
-        var client = CreateClient();
-        string? node = null;
-        if (!string.IsNullOrWhiteSpace(machine.ProviderData))
+        using var http = httpClientFactory.CreateClient(HttpClientName);
+        http.Timeout = TimeSpan.FromSeconds(5);
+        using var cancel = cancellationToken.Register(http.CancelPendingRequests);
+        var client = new PveClient(options.Host, options.Port, http) { ApiToken = options.ApiToken };
+        // The stored node is where the VM was created. Full status checks learn its current location after migration.
+        var node = _knownNodes.GetValueOrDefault(vmId);
+        if (node is null && !string.IsNullOrWhiteSpace(machine.ProviderData))
         {
             try { node = JsonSerializer.Deserialize<ProxmoxMachineData>(machine.ProviderData)?.Node; }
             catch (JsonException) { /* Older runner data may not contain a node. */ }
         }
 
-        node ??= _knownNodes.GetValueOrDefault(vmId);
-        node ??= options.Node;
+        // options.Node is a placement preference for new VMs, not the location of existing ones.
         node ??= (await GetVmsAsync(client)).FirstOrDefault(vm => vm.VmId == vmId)?.Node;
         if (node is null) return null;
 
-        _knownNodes[vmId] = node;
-
         cancellationToken.ThrowIfCancellationRequested();
-        var vm = await client.Nodes[node].Qemu[vmId].Status.Current.GetAsync();
+        VmQemuStatusCurrent vm;
+        try
+        {
+            vm = await client.Nodes[node].Qemu[vmId].Status.Current.GetAsync();
+        }
+        catch (PveResultException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // A VM can move between the full status checks. Rediscover once, then keep the fast per-VM path.
+            var currentNode = (await GetVmsAsync(client)).FirstOrDefault(v => v.VmId == vmId)?.Node;
+            if (currentNode is null || currentNode == node) throw;
+            node = currentNode;
+            vm = await client.Nodes[node].Qemu[vmId].Status.Current.GetAsync();
+        }
+        _knownNodes[vmId] = node;
         return vm.IsRunning
             ? new MachineStatus(MachinePowerState.Running, CpuUsage: vm.CpuUsagePercentage * 100,
                 MemoryUsedBytes: (long)vm.MemoryUsage, MemoryTotalBytes: (long)vm.MemorySize)

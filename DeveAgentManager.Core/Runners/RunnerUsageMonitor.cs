@@ -14,6 +14,7 @@ public sealed class RunnerUsageMonitor(RunnerService runners, RunnerStatusCache 
         var runnerList = await runners.ListAsync(stoppingToken);
         var refreshAt = DateTime.UtcNow.AddSeconds(15);
         var retryAfter = new ConcurrentDictionary<Guid, DateTime>();
+        var warnAfter = new ConcurrentDictionary<Guid, DateTime>();
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -24,6 +25,7 @@ public sealed class RunnerUsageMonitor(RunnerService runners, RunnerStatusCache 
                     refreshAt = DateTime.UtcNow.AddSeconds(15);
                     var active = runnerList.Select(r => r.Id).ToHashSet();
                     foreach (var id in retryAfter.Keys.Where(id => !active.Contains(id)).ToArray()) retryAfter.TryRemove(id, out _);
+                    foreach (var id in warnAfter.Keys.Where(id => !active.Contains(id)).ToArray()) warnAfter.TryRemove(id, out _);
                 }
 
                 await Parallel.ForEachAsync(runnerList, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = stoppingToken }, async (runner, ct) =>
@@ -37,12 +39,19 @@ public sealed class RunnerUsageMonitor(RunnerService runners, RunnerStatusCache 
                     try
                     {
                         if (await provider.GetUsageAsync(runner.ToMachine(), ct) is { } status)
+                        {
                             cache.RecordUsage(runner.Id, status);
+                            if (warnAfter.TryRemove(runner.Id, out _)) logger.LogInformation("One-second usage sampling resumed for runner {Runner}", runner.Name);
+                        }
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
                         retryAfter[runner.Id] = DateTime.UtcNow.AddSeconds(10);
-                        logger.LogDebug(ex, "Could not sample usage for runner {Runner}", runner.Name);
+                        if (!warnAfter.TryGetValue(runner.Id, out var warn) || warn <= DateTime.UtcNow)
+                        {
+                            warnAfter[runner.Id] = DateTime.UtcNow.AddMinutes(1);
+                            logger.LogWarning(ex, "One-second usage sampling failed for runner {Runner}; only slow status readings are available. Retrying in 10 seconds", runner.Name);
+                        }
                     }
                 });
             }
