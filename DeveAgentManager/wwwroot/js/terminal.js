@@ -187,6 +187,29 @@
         textarea.setAttribute("enterkeyhint", "send");
     }
 
+    // Link activation runs on xterm's screen; mouse reporting runs on its parent. Let the screen open the link,
+    // then stop the press/release from also reaching tmux and asking the harness to open a browser on the Runner.
+    function enableBrowserLinkClicks(element) {
+        const screen = element.querySelector(".xterm-screen");
+        if (!screen || screen.dataset.browserLinkClicks) {
+            return;
+        }
+        screen.dataset.browserLinkClicks = "true";
+        let linkPress = false;
+        screen.addEventListener("mousedown", event => {
+            linkPress = event.button === 0 && !event.shiftKey && screen.classList.contains("xterm-cursor-pointer");
+            if (linkPress) {
+                event.stopPropagation();
+            }
+        });
+        screen.addEventListener("mouseup", event => {
+            if (linkPress) {
+                event.stopPropagation();
+                linkPress = false;
+            }
+        });
+    }
+
     // Swipe to scroll on touch screens. xterm.js only scrolls its own scrollback on touch. When the program asks for
     // mouse events, like tmux with "mouse on", a swipe does nothing, because the scrollback lives in tmux. Turn the swipe
     // into wheel events, which xterm.js reports to tmux, so tmux scrolls (and enters copy mode) as with a mouse wheel.
@@ -484,6 +507,9 @@
             // XtermBlazor's id is Blazor's element reference, not an HTML id: find the element through the terminal.
             const element = terminal.element?.parentElement ?? document.getElementById(id);
             const xtermElement = terminal.element ?? element;
+            if (xtermElement) {
+                enableBrowserLinkClicks(xtermElement);
+            }
             if (xtermElement && !xtermElement.dataset.touchScroll) {
                 xtermElement.dataset.touchScroll = "true";
                 enableTouchScroll(terminal, xtermElement);
