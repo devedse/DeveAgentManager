@@ -43,6 +43,8 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task<RunnerDto?> GetRunnerAsync(Guid runnerId) => FindAsync<RunnerDto>($"api/runners/{runnerId}");
 
+    public Task<List<RunnerUsageSample>> GetRunnerUsageAsync(Guid runnerId) => GetAsync<List<RunnerUsageSample>>($"api/runners/{runnerId}/usage");
+
     public Task<RunnerDto> CreateRunnerAsync(CreateRunnerRequest request) => SendAsync<RunnerDto>(HttpMethod.Post, "api/runners", request);
 
     public Task StartRunnerAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/start");

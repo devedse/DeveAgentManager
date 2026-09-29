@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Data;
@@ -13,12 +14,63 @@ namespace DeveAgentManager.Core.Runners;
 public sealed class RunnerStatusCache
 {
     private readonly ConcurrentDictionary<Guid, MachineStatus> _statuses = new();
+    private readonly ConcurrentDictionary<Guid, List<RunnerUsageSample>> _history = new();
+    private static readonly TimeSpan Retain = TimeSpan.FromHours(1);
 
     public MachineStatus? Get(Guid runnerId) => _statuses.GetValueOrDefault(runnerId);
 
-    public void Set(Guid runnerId, MachineStatus status) => _statuses[runnerId] = status;
+    public void Set(Guid runnerId, MachineStatus status, DateTime? at = null)
+    {
+        _statuses[runnerId] = status;
+        var cpu = Valid(status.CpuUsage);
+        var memory = status is { MemoryUsedBytes: { } used, MemoryTotalBytes: > 0 and var total }
+            ? Valid(used * 100.0 / total) : null;
+        if (cpu is null && memory is null && !_history.ContainsKey(runnerId))
+        {
+            return;
+        }
 
-    public void Remove(Guid runnerId) => _statuses.TryRemove(runnerId, out _);
+        var time = at ?? DateTime.UtcNow;
+        var samples = _history.GetOrAdd(runnerId, _ => []);
+        lock (samples)
+        {
+            samples.Add(new RunnerUsageSample(time, cpu, memory));
+            samples.RemoveAll(s => s.At < time - Retain);
+        }
+    }
+
+    public IReadOnlyList<RunnerUsageSample> History(Guid runnerId)
+    {
+        if (!_history.TryGetValue(runnerId, out var samples))
+        {
+            return [];
+        }
+
+        lock (samples)
+        {
+            samples.RemoveAll(s => s.At < DateTime.UtcNow - Retain);
+            return samples.ToArray();
+        }
+    }
+
+    private static double? Valid(double? value) => value is { } number && double.IsFinite(number) ? Math.Clamp(number, 0, 100) : null;
+
+    public void Remove(Guid runnerId)
+    {
+        _statuses.TryRemove(runnerId, out _);
+        _history.TryRemove(runnerId, out _);
+    }
+
+    public void RemoveMissing(IReadOnlySet<Guid> runnerIds)
+    {
+        foreach (var id in _statuses.Keys)
+        {
+            if (!runnerIds.Contains(id))
+            {
+                Remove(id);
+            }
+        }
+    }
 }
 
 /// <summary>
@@ -67,6 +119,10 @@ public sealed class RunnerMonitor(
     {
         var full = _pass++ % FullPassEvery == 0;
         var all = await runners.ListAsync(cancellationToken);
+        if (full)
+        {
+            statusCache.RemoveMissing(all.Select(r => r.Id).ToHashSet());
+        }
         await Parallel.ForEachAsync(all, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (runner, ct) =>
         {
             if (runners.CurrentOperation(runner.Id) is not null)

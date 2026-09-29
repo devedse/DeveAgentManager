@@ -81,6 +81,9 @@ public sealed record RunnerDto(
 /// <summary>An operation that ran on a Runner. <paramref name="Outcome"/> is null while it runs.</summary>
 public sealed record RunnerActivityDto(long Id, string Name, DateTime StartedAt, DateTime? FinishedAt, RunnerActivityOutcome? Outcome, string? Error);
 
+/// <summary>One provider reading for a Runner. A missing value leaves a gap in its usage graph.</summary>
+public sealed record RunnerUsageSample(DateTime At, double? CpuPercent, double? MemoryPercent);
+
 /// <param name="AccountId">The account the agent picked; null uses the harness's default account.</param>
 public sealed record AgentDto(
     Guid Id,

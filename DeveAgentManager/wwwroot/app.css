@@ -842,6 +842,110 @@ a {
     text-align: right;
 }
 
+/* The Runner's live history uses the same CPU and RAM colors as the usage bars above it. */
+.usage-chart {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--dam-border);
+}
+
+.usage-chart-heading, .usage-chart-legend, .usage-chart-ranges {
+    display: flex;
+    align-items: center;
+}
+
+.usage-chart-heading {
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+
+.usage-chart-legend { gap: 14px; }
+
+.usage-chart-key {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--dam-muted);
+    font-size: .76rem;
+}
+
+.usage-chart-key::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--dam-primary);
+}
+
+.usage-chart-key-memory::before { background: var(--dam-teal); }
+.usage-chart-key strong { color: var(--dam-text); font-variant-numeric: tabular-nums; }
+
+.usage-chart-ranges {
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--dam-border);
+    border-radius: 8px;
+    background: var(--dam-surface-2);
+}
+
+.usage-chart-ranges button {
+    border: 0;
+    border-radius: 5px;
+    padding: 3px 8px;
+    background: transparent;
+    color: var(--dam-muted);
+    font: inherit;
+    font-size: .73rem;
+    cursor: pointer;
+}
+
+.usage-chart-ranges button.selected {
+    background: var(--dam-primary-soft);
+    color: var(--dam-primary-text);
+}
+
+.usage-chart-ranges button:focus-visible { outline: 2px solid var(--dam-primary); }
+
+.usage-chart-empty {
+    min-height: 120px;
+    display: grid;
+    place-items: center;
+    color: var(--dam-muted);
+    font-size: .8rem;
+}
+
+.usage-chart-plot { display: flex; gap: 8px; height: 150px; }
+.usage-chart-plot svg { display: block; flex: 1; min-width: 0; overflow: visible; }
+
+.usage-chart-y-labels {
+    width: 30px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    color: var(--dam-faint);
+    font-size: .65rem;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.usage-chart-grid { fill: none; stroke: var(--dam-border-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.usage-chart-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.usage-chart-line-cpu { stroke: var(--dam-primary); }
+.usage-chart-line-memory { stroke: var(--dam-teal); }
+.usage-chart-dot { stroke: var(--dam-surface); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.usage-chart-dot-cpu { fill: var(--dam-primary); }
+.usage-chart-dot-memory { fill: var(--dam-teal); }
+
+.usage-chart-time {
+    display: flex;
+    justify-content: space-between;
+    margin: 5px 0 0 38px;
+    color: var(--dam-faint);
+    font-size: .68rem;
+}
+
 .progress-banner {
     display: flex;
     align-items: center;

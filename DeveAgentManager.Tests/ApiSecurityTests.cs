@@ -63,6 +63,7 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
     [Theory]
     [InlineData("/api/info")]
     [InlineData("/api/runners")]
+    [InlineData("/api/runners/00000000-0000-0000-0000-000000000001/usage")]
     [InlineData("/api/accounts")]
     [InlineData("/api/settings/profile")]
     public async Task Api_WithoutLogin_Is401(string path) => Assert.Equal(HttpStatusCode.Unauthorized, (await Anonymous().GetAsync(path)).StatusCode);

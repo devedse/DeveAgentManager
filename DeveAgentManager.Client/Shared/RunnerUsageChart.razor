@@ -1,0 +1,115 @@
+@inherits LiveComponent
+@using System.Globalization
+
+<div class="usage-chart" aria-label="Runner CPU and memory usage">
+    <div class="usage-chart-heading">
+        <div class="usage-chart-legend">
+            <span class="usage-chart-key usage-chart-key-cpu">CPU <strong>@Latest(s => s.CpuPercent)</strong></span>
+            <span class="usage-chart-key usage-chart-key-memory">RAM <strong>@Latest(s => s.MemoryPercent)</strong></span>
+        </div>
+        <div class="usage-chart-ranges" role="group" aria-label="Graph time range">
+            <button type="button" class="@(_minutes == 1 ? "selected" : "")" aria-pressed="@(_minutes == 1)" @onclick="() => _minutes = 1">1 min</button>
+            <button type="button" class="@(_minutes == 60 ? "selected" : "")" aria-pressed="@(_minutes == 60)" @onclick="() => _minutes = 60">1 hour</button>
+        </div>
+    </div>
+
+    @if (_samples.Count == 0)
+    {
+        <div class="usage-chart-empty">Collecting usage readings…</div>
+    }
+    else
+    {
+        var end = DateTime.UtcNow;
+        var start = end.AddMinutes(-_minutes);
+        var cpu = Segments(start, end, s => s.CpuPercent);
+        var memory = Segments(start, end, s => s.MemoryPercent);
+        <div class="usage-chart-plot">
+            <div class="usage-chart-y-labels"><span>100%</span><span>50%</span><span>0%</span></div>
+            <svg viewBox="0 0 600 150" preserveAspectRatio="none" role="img" aria-label="CPU and memory percentages over the last @(_minutes == 1 ? "minute" : "hour")">
+                <defs>
+                    <linearGradient id="@_cpuFillId" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--dam-primary)" stop-opacity=".26" /><stop offset="100%" stop-color="var(--dam-primary)" stop-opacity="0" /></linearGradient>
+                    <linearGradient id="@_memoryFillId" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--dam-teal)" stop-opacity=".18" /><stop offset="100%" stop-color="var(--dam-teal)" stop-opacity="0" /></linearGradient>
+                </defs>
+                <path class="usage-chart-grid" d="M0 2 H600 M0 74 H600 M0 146 H600 M0 2 V146 M300 2 V146 M600 2 V146" />
+                @foreach (var segment in memory)
+                {
+                    <path d="@Area(segment)" fill="url(#@_memoryFillId)" />
+                    <path class="usage-chart-line usage-chart-line-memory" d="@Line(segment)" />
+                }
+                @foreach (var segment in cpu)
+                {
+                    <path d="@Area(segment)" fill="url(#@_cpuFillId)" />
+                    <path class="usage-chart-line usage-chart-line-cpu" d="@Line(segment)" />
+                }
+                @foreach (var point in Markers(cpu))
+                {
+                    <circle class="usage-chart-dot usage-chart-dot-cpu" cx="@Number(point.X)" cy="@Number(point.Y)" r="@(_minutes == 1 ? 4 : 3)"><title>CPU @point.Value.ToString("0.#")% · @point.At.ToLocalTime().ToString("t")</title></circle>
+                }
+                @foreach (var point in Markers(memory))
+                {
+                    <circle class="usage-chart-dot usage-chart-dot-memory" cx="@Number(point.X)" cy="@Number(point.Y)" r="@(_minutes == 1 ? 4 : 3)"><title>RAM @point.Value.ToString("0.#")% · @point.At.ToLocalTime().ToString("t")</title></circle>
+                }
+            </svg>
+        </div>
+        <div class="usage-chart-time"><span>@(_minutes == 1 ? "1 min ago" : "1 hour ago")</span><span>@(_minutes == 1 ? "30 sec ago" : "30 min ago")</span><span>Now</span></div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Guid RunnerId { get; set; }
+
+    private readonly string _cpuFillId = "cpu-fill-" + Guid.NewGuid().ToString("N");
+    private readonly string _memoryFillId = "memory-fill-" + Guid.NewGuid().ToString("N");
+    private List<RunnerUsageSample> _samples = [];
+    private int _minutes = 60;
+
+    protected override bool IsRelevant(ManagerEvent change) => change.Kind == ManagerEventKind.RunnerChanged && change.RunnerId == RunnerId;
+
+    protected override async Task LoadAsync() => _samples = await Api.GetRunnerUsageAsync(RunnerId);
+
+    private string Latest(Func<RunnerUsageSample, double?> select) =>
+        _samples.LastOrDefault(s => select(s) is not null) is { } sample && select(sample) is { } value ? $"{value:0}%" : "–";
+
+    private sealed record Point(double X, double Y, DateTime At, double Value);
+
+    private List<List<Point>> Segments(DateTime start, DateTime end, Func<RunnerUsageSample, double?> select)
+    {
+        var result = new List<List<Point>>();
+        List<Point>? current = null;
+        DateTime? previous = null;
+        foreach (var sample in _samples.Where(s => s.At >= start && s.At <= end))
+        {
+            var value = select(sample);
+            if (value is null)
+            {
+                current = null;
+                previous = null;
+                continue;
+            }
+
+            // Missing polls should appear as a break, rather than a line pretending the value stayed steady.
+            if (current is null || previous is { } last && sample.At - last > TimeSpan.FromSeconds(40))
+            {
+                current = [];
+                result.Add(current);
+            }
+
+            current.Add(new Point(4 + 592 * (sample.At - start).TotalSeconds / (end - start).TotalSeconds,
+                146 - 144 * Math.Clamp(value.Value, 0, 100) / 100, sample.At, value.Value));
+            previous = sample.At;
+        }
+
+        return result;
+    }
+
+    private IEnumerable<Point> Markers(List<List<Point>> segments) => _minutes == 1
+        ? segments.SelectMany(s => s)
+        : segments.LastOrDefault()?.TakeLast(1) ?? [];
+
+    private static string Line(List<Point> points) => "M" + string.Join(" L", points.Select(p => $"{Number(p.X)},{Number(p.Y)}"));
+
+    private static string Area(List<Point> points) => points.Count < 2 ? "" :
+        Line(points) + $" L{Number(points[^1].X)},146 L{Number(points[0].X)},146 Z";
+
+    private static string Number(double number) => number.ToString("0.##", CultureInfo.InvariantCulture);
+}

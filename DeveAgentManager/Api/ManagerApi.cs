@@ -63,6 +63,9 @@ public static class ManagerApi
         runners.MapGet("/{runnerId:guid}", async (Guid runnerId, RunnerService service, DtoMapper map, CancellationToken ct) =>
             await service.GetAsync(runnerId, ct) is { } runner ? Results.Ok(map.Runner(runner, await map.AccountNamesAsync(ct))) : Results.NotFound());
 
+        runners.MapGet("/{runnerId:guid}/usage", async (Guid runnerId, RunnerService service, RunnerStatusCache status, CancellationToken ct) =>
+            await service.GetAsync(runnerId, ct) is not null ? Results.Ok(status.History(runnerId)) : Results.NotFound());
+
         runners.MapPost("/", async (CreateRunnerRequest request, RunnerService service, DtoMapper map, CancellationToken ct) =>
             map.Runner(await service.CreateAsync(request, ct), new Dictionary<Guid, string>()));
 
