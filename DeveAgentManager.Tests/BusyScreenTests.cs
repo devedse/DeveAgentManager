@@ -24,6 +24,7 @@ public sealed class BusyScreenTests : IDisposable
     [InlineData("claude-idle-narrow", false)]
     [InlineData("codex-working", true)]
     [InlineData("codex-background-wait-narrow", true)]
+    [InlineData("codex-compacting", true)]
     [InlineData("codex-idle", false)]
     public void BusyPattern_IsOnTheScreen_OnlyWhileTheHarnessWorks(string screen, bool working)
         => AssertBusy(screen.Split('-')[0], File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", screen + ".txt")), working);
@@ -40,6 +41,9 @@ public sealed class BusyScreenTests : IDisposable
     [InlineData("codex", "› • Waiting for background terminal (23m • esc to interrupt)")]
     [InlineData("codex", "• The status says Waiting for background terminal (23m • esc to interrupt).")]
     [InlineData("codex", "• Waited for background terminal (23m)")]
+    [InlineData("codex", "› • Compacting context (1m 42s • esc to interrupt)")]
+    [InlineData("codex", "• The status says Compacting context (1m 42s • esc to interrupt).")]
+    [InlineData("codex", "• Compacted context (1m 42s)")]
     [InlineData("codex", "  1 background terminal running · /ps to view · /stop to close")]
     [InlineData("claude", "❯ ✢ Clauding… (5s · ↓ 77 tokens)")]
     [InlineData("pi", " Explain ⠼ Working (medium effort)...")]
@@ -48,6 +52,12 @@ public sealed class BusyScreenTests : IDisposable
         var screen = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", harness + "-idle.txt"));
         AssertBusy(harness, screen + "\n" + text, false);
     }
+
+    [Theory]
+    [InlineData("◦ Compacting context (1s • esc to interrupt)")]
+    [InlineData("• Compacting context (1m…")]
+    public void BusyPattern_RecognizesCompactingAtDifferentWidths(string status)
+        => AssertBusy("codex", status + "\n› Ask Codex to do anything\n  ? for shortcuts", true);
 
     private void AssertBusy(string harness, string screen, bool working)
     {

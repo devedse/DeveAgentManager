@@ -91,8 +91,8 @@ public sealed class CodexHarness : IHarness
 
     public string VersionCommand => "codex --version | awk '{print $NF}'";
 
-    /// <summary>Codex's timed status line while working or waiting for a background terminal, including truncated phone screens.</summary>
-    public string BusyPattern => "^[[:space:]]*(◦|•) (Working|Waiting for background terminal) \\([0-9]";
+    /// <summary>Codex's timed status line while working, compacting context or waiting for a background terminal, including truncated phone screens.</summary>
+    public string BusyPattern => "^[[:space:]]*(◦|•) (Working|Compacting context|Waiting for background terminal) \\([0-9]";
 
     /// <summary>Codex's own ids are UUIDv7; a new one per conversation.</summary>
     public string NewSessionId(Guid agentId) => Guid.CreateVersion7().ToString();
