@@ -110,6 +110,7 @@
         let resetPending = false;
         let writing = false;
         let composing = false;
+        let virtualPadding = 0; // Cushion stripped by an IME, retained logically until composition finishes.
 
         function write(text, caretAtEnd = true) {
             writing = true;
@@ -123,13 +124,14 @@
 
         function reset() {
             resetPending = false;
+            virtualPadding = 0;
             write(cushion);
             cursor = before.length;
         }
 
         function caretIndex() {
             // The caret as a grapheme index; the textarea counts UTF-16 units.
-            return graphemes(box.value.slice(0, box.selectionEnd ?? box.value.length)).length;
+            return virtualPadding + graphemes(box.value.slice(0, box.selectionEnd ?? box.value.length)).length;
         }
 
         function followCaret() {
@@ -143,12 +145,26 @@
             return data;
         }
 
-        function handleChange() {
+        function handleChange(event) {
             if (writing || !enabled) {
                 return;
             }
 
-            let after = graphemes(box.value);
+            // IMEs can replace their field context along with the corrected word. The leading cushion was never
+            // sent to the terminal: losing it during an insertion must not erase text from an earlier draft.
+            // Explicit deletion still consumes the cushion, so Backspace can reach text predating this field.
+            if (event?.inputType?.startsWith("insert") && before.slice(0, CUSHION).join("") === cushion) {
+                let spaces = 0;
+                while (spaces < box.value.length && box.value[spaces] === " ") spaces++;
+                if (spaces < CUSHION) {
+                    const missing = CUSHION - spaces;
+                    virtualPadding = missing;
+                } else {
+                    virtualPadding = 0;
+                }
+            }
+
+            let after = graphemes(" ".repeat(virtualPadding) + box.value);
             let data = "";
             const newline = after.findIndex(g => g === "\n" || g === "\r" || g === "\r\n");
             let rest = null;
@@ -189,7 +205,8 @@
                 const missing = CUSHION - spaces;
                 write(" ".repeat(missing) + text, false);
                 box.setSelectionRange(start + missing, end + missing);
-                cursor += missing;
+                cursor += missing - virtualPadding;
+                virtualPadding = 0;
             }
 
             if (data) {
@@ -212,7 +229,7 @@
 
         document.addEventListener("selectionchange", () => {
             // The caret was moved without typing (arrow keys, dragging over the space bar): move the terminal's cursor.
-            if (!enabled || writing || document.activeElement !== box || box.value !== before.join("")) {
+            if (!enabled || writing || document.activeElement !== box || " ".repeat(virtualPadding) + box.value !== before.join("")) {
                 return;
             }
 
@@ -241,7 +258,7 @@
                 // Gboard sends Enter in the middle of composing a word. Emptying the field now would break the
                 // keyboard's composition (and make it type the word again), so the text stays until the word is done.
                 // Until then, changes are still sent as usual.
-                before = graphemes(box.value);
+                before = graphemes(" ".repeat(virtualPadding) + box.value);
                 cursor = caretIndex();
                 resetPending = true;
             } else {

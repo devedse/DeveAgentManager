@@ -9,6 +9,8 @@
   <ItemGroup>
     <!-- Harness screens captured while they worked and while they waited, for the busy patterns. -->
     <None Include="Screens\*.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Js\*.cjs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\DeveAgentManager\wwwroot\js\terminal-touch-input.js" Link="Js\terminal-touch-input.js" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
