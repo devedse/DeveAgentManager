@@ -20,10 +20,12 @@
             <div class="terminal-title">
                 <div class="terminal-name-row">
                     <span class="terminal-name" title="@_agent.Name">@_agent.Name</span>
-                    <StatusPill Style="StateStyles.For(_agent)" Title="@_agent.StateMessage" Class="terminal-status" />
+                    <AgentStatus Agent="_agent" Class="terminal-status" />
                 </div>
                 <span class="terminal-context"><HarnessLogo HarnessId="@_agent.HarnessId" Class="context-logo" />@(_agent.AccountName is { } account ? $"{account} · " : "")@_agent.RunnerName · <span class="mono">@(_agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
             </div>
+            <AttentionMenu />
+            <AgentSeenWatcher @key="(AgentId, nameof(AgentSeenWatcher))" Agent="_agent" />
             <span class="terminal-hint">Shift+drag selects · Ctrl+C copies a selection</span>
             @if (_sessionId is { } sessionId)
             {
@@ -107,6 +109,25 @@
     private TerminalView? _terminal;
     private int _connectionKey;
     private bool _busy;
+    private readonly CancellationTokenSource _refreshStop = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        _ = RefreshStatusAsync();
+    }
+
+    private async Task RefreshStatusAsync()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+            while (await timer.WaitForNextTickAsync(_refreshStop.Token)) await ReloadAsync();
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    public override void Dispose() { _refreshStop.Cancel(); base.Dispose(); }
     private string? _vsCodeIcon;
 
     protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.AgentId == AgentId || managerEvent.Kind == ManagerEventKind.RunnerChanged;

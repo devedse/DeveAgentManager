@@ -23,7 +23,7 @@
             <TitleContent>
                 @if (_stored.Agent is { } agent)
                 {
-                    <StatusPill Style="StateStyles.For(agent)" />
+                    <AgentStatus Agent="agent" />
                 }
             </TitleContent>
             <Actions>

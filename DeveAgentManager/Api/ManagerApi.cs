@@ -132,6 +132,12 @@ public static class ManagerApi
 
     private static void MapAgents(RouteGroupBuilder agents)
     {
+        agents.MapGet("/attention", (AgentAttentionService attention, CancellationToken ct) => attention.ListAsync(ct));
+        agents.MapPost("/{agentId:guid}/seen", async (Guid agentId, MarkAgentSeenRequest request, AgentAttentionService attention, CancellationToken ct) =>
+        {
+            await attention.MarkSeenAsync(agentId, request.CompletionSequence, ct);
+            return Results.NoContent();
+        });
         agents.MapGet("/{agentId:guid}/limit", async (Guid agentId, AgentContinuations limits, CancellationToken ct) =>
             await limits.GetAsync(agentId, ct) is { } limit ? Results.Ok(limit) : Results.NotFound());
         agents.MapPost("/{agentId:guid}/limit/continue", async (Guid agentId, ScheduleContinueRequest request, AgentContinuations limits, CancellationToken ct) =>

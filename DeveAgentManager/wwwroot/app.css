@@ -2697,3 +2697,13 @@ a {
 .limit-alert-blink { animation: limit-alert-pulse 1.6s ease-in-out infinite; }
 @keyframes limit-alert-pulse { 50% { opacity: .4; } }
 @media (prefers-reduced-motion: reduce) { .limit-alert-blink { animation: none; } }
+
+.agent-status-button { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; font: inherit; }
+.agent-status-button:focus-visible { outline: 2px solid var(--mud-palette-primary); outline-offset: 4px; border-radius: 14px; }
+.agent-status-extra { color: var(--mud-palette-warning); font-size: .75rem; }
+.status-evidence { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; }
+.attention-item { display: flex; flex-direction: column; gap: 4px; max-width: min(340px, 75vw); white-space: normal; }
+.attention-item span, .attention-item small { color: var(--mud-palette-text-secondary); }
+.nav-agent-dot.warning { background: var(--mud-palette-warning); }
+.nav-agent-dot.neutral { background: var(--mud-palette-text-disabled); }
+@media (max-width: 600px) { .terminal-name-row .agent-status-extra { display: none; } }

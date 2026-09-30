@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json;
+using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
@@ -151,6 +153,7 @@ public sealed partial class AgentService(
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         var runner = RequireReady(agent.Runner!);
         await LaunchAsync(runner, agent, restart, cancellationToken);
+        if (restart || agent.State != AgentState.Running) AgentActivityTracker.Reset(agent);
         agent.State = AgentState.Running;
         agent.StateMessage = null;
         agent.ExitCode = null;
@@ -197,6 +200,7 @@ public sealed partial class AgentService(
         }
 
         agent.AccountId = accountId;
+        AgentActivityTracker.Reset(agent);
         agent.State = AgentState.Starting;
         agent.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
@@ -234,6 +238,9 @@ public sealed partial class AgentService(
         var runner = RequireReady(agent.Runner!);
         await shell.RunAsync(runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: cancellationToken);
         agent.State = AgentState.Stopped;
+        agent.StateMessage = null;
+        agent.ExitCode = null;
+        AgentActivityTracker.Reset(agent);
         agent.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
         events.AgentChanged(runner.Id, agent.Id);
@@ -361,74 +368,76 @@ public sealed partial class AgentService(
     private static string RequireTty(string tty) =>
         System.Text.RegularExpressions.Regex.IsMatch(tty, "^/dev/[A-Za-z0-9/]+$") ? tty : throw new ArgumentException($"'{tty}' is not a terminal.");
 
-    /// <summary>Reads the state of every agent on a Runner from tmux.</summary>
-    /// <summary>How recent the harness's last output must be for the agent to count as working (spinners redraw every second or faster).</summary>
-    public static readonly TimeSpan WorkingWithin = TimeSpan.FromSeconds(3);
-
-    /// <summary>With a harness's busy pattern on screen, how recent its last output must be (a harness that hangs stops counting).</summary>
-    public static readonly TimeSpan BusyScreenWithin = TimeSpan.FromSeconds(10);
-
-    /// <summary>How many of the last (non-empty) lines of an agent's screen are searched for its harness's busy pattern.</summary>
     private const int BusyLines = 15;
 
-    /// <summary>
-    /// The agents' state from tmux: running, exited or gone, and whether a running one is working or idle (waiting for
-    /// input). Working: the harness's busy line is on its screen (<see cref="IHarness.BusyPattern"/>, e.g. pi's spinner),
-    /// and it printed something recently. For a harness without one: it printed something in the last seconds.
-    /// </summary>
+    /// <summary>Reads process lifecycle and the current visible screen. Activity rules and stable completion tracking run in the Manager.</summary>
     public async Task RefreshRunnerAsync(Runner runner, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agents = await db.Agents.Where(a => a.RunnerId == runner.Id).ToListAsync(cancellationToken);
 
-        var result = await shell.RunAsync(runner, BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern))),
-            TimeSpan.FromSeconds(30), cancellationToken);
-        var (now, panes, busy) = ParsePanes(result.Output);
+        var result = (await shell.RunAsync(runner, BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern)), captureScreens: true),
+            TimeSpan.FromSeconds(30), cancellationToken)).EnsureSuccess("Reading agent state");
+        var (_, panes, _) = ParsePanes(result.Output);
+        var changedAgents = new List<Guid>();
+        var screens = ParseScreens(result.Output);
 
         foreach (var agent in agents)
         {
             AgentState state;
             int? exitCode = null;
             var working = false;
+            var activityChanged = false;
             if (panes.TryGetValue(agent.TmuxSession, out var pane))
             {
                 state = pane.Dead ? AgentState.Exited : AgentState.Running;
                 exitCode = pane.Dead ? pane.ExitCode : null;
-                var quietFor = now is { } runnerNow && pane.LastOutput is { } lastOutput ? runnerNow - lastOutput : (long?)null;
-                working = !pane.Dead && quietFor is { } quiet && (_harnesses.GetValueOrDefault(agent.HarnessId)?.BusyPattern is null
-                    ? quiet <= (long)WorkingWithin.TotalSeconds
-                    : busy.Contains(agent.TmuxSession) && quiet <= (long)BusyScreenWithin.TotalSeconds);
+                if (!pane.Dead)
+                {
+                    var screen = screens.GetValueOrDefault(agent.TmuxSession);
+                    var detection = screen?.Screen is { } text ? AgentScreenDetector.Detect(agent.HarnessId, text, DateTime.UtcNow)
+                        : new AgentScreenDetection(AgentActivityStatus.Unknown, "The terminal snapshot could not be read.", "snapshot-unavailable");
+                    activityChanged = AgentActivityTracker.Apply(agent, detection,
+                        screen?.Identity ?? AgentActivityTracker.Read(agent).Identity, DateTime.UtcNow);
+                    working = agent.Working;
+                }
             }
             else
             {
                 // Just created agents may not show up yet.
                 state = agent.State == AgentState.Starting && DateTime.UtcNow - agent.UpdatedAt < TimeSpan.FromMinutes(1) ? AgentState.Starting : AgentState.Stopped;
+                if (state == AgentState.Stopped && agent.State == AgentState.Running)
+                    agent.StateMessage = "The harness terminal disappeared unexpectedly. Start it to resume the conversation.";
             }
 
             if (agent.State != state || agent.ExitCode != exitCode)
             {
                 agent.State = state;
                 agent.ExitCode = exitCode;
-                agent.StateMessage = state == AgentState.Exited ? $"The harness exited (code {exitCode}). Start it again to resume the conversation." : null;
+                agent.StateMessage = state == AgentState.Exited ? $"The harness exited (code {exitCode}). Start it again to resume the conversation."
+                    : state == AgentState.Stopped ? agent.StateMessage : null;
                 agent.UpdatedAt = DateTime.UtcNow;
                 agent.Working = working;
-                events.AgentChanged(runner.Id, agent.Id);
+                changedAgents.Add(agent.Id);
             }
-            else if (agent.Working != working)
+            else if (agent.Working != working || activityChanged)
             {
                 agent.Working = working;
-                events.AgentChanged(runner.Id, agent.Id);
+                changedAgents.Add(agent.Id);
             }
         }
 
         await db.SaveChangesAsync(cancellationToken);
+        foreach (var id in changedAgents) events.AgentChanged(runner.Id, id);
     }
 
     public async Task MarkAllStoppedAsync(Guid runnerId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         await db.Agents.Where(a => a.RunnerId == runnerId && a.State != AgentState.Stopped)
-            .ExecuteUpdateAsync(s => s.SetProperty(a => a.State, AgentState.Stopped).SetProperty(a => a.UpdatedAt, DateTime.UtcNow), cancellationToken);
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.State, AgentState.Stopped).SetProperty(a => a.StateMessage, (string?)null)
+                .SetProperty(a => a.Working, false).SetProperty(a => a.ActivityJson, (string?)null)
+                .SetProperty(a => a.UpdatedAt, DateTime.UtcNow), cancellationToken);
         events.RunnerChanged(runnerId);
     }
 
@@ -444,8 +453,9 @@ public sealed partial class AgentService(
     /// Bash that prints the Runner's time, tmux's panes, and after <see cref="BusyMarker"/> the sessions whose screen shows
     /// their harness's busy pattern.
     /// </summary>
-    internal static string BuildStateScript(IEnumerable<(string Session, string? BusyPattern)> agents)
+    internal static string BuildStateScript(IEnumerable<(string Session, string? BusyPattern)> agents, bool captureScreens = false)
     {
+        var targets = agents.ToArray();
         var script = new StringBuilder("""
             date +%s
             tmux list-panes -a -F '#{session_name}|#{pane_dead}|#{pane_dead_status}|#{window_activity}' 2>/dev/null || true
@@ -453,18 +463,49 @@ public sealed partial class AgentService(
             """);
         script.Append(BusyMarker).Append("'\n");
         script.Append($"busy() {{ tmux capture-pane -p -t \"=$1:\" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n {BusyLines} | grep -qE -- \"$2\" && echo \"$1\"; }}\n");
-        foreach (var (session, pattern) in agents)
+        foreach (var (session, pattern) in targets)
         {
-            if (pattern is not null)
+            if (pattern is not null && !captureScreens)
             {
                 script.Append("busy ").Append(ShellQuote.Quote(session)).Append(' ').Append(ShellQuote.Quote(pattern)).Append(" || true\n");
             }
+        }
+
+        if (captureScreens)
+        {
+            script.Append("echo '--screens--'\npython3 - ");
+            foreach (var target in targets) script.Append(ShellQuote.Quote(target.Session)).Append(' ');
+            script.Append("<<'DAM_STATE'\n").Append("""
+                import json,pathlib,subprocess,sys
+                for session in sys.argv[1:]:
+                    try:
+                        target='='+session+':'
+                        meta=subprocess.check_output(['tmux','display-message','-p','-t',target,'#{pane_id}|#{pane_pid}'],text=True,stderr=subprocess.DEVNULL).strip()
+                        pane,pid=meta.split('|')
+                        start=pathlib.Path('/proc',pid,'stat').read_text().rsplit(')',1)[1].split()[19]
+                        identity=meta+'|'+start+'|'+pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+                        screen=subprocess.check_output(['tmux','capture-pane','-p','-J','-t',target],text=True,stderr=subprocess.DEVNULL)[-32768:]
+                        print(json.dumps(dict(Session=session,Identity=identity,Screen=screen)))
+                    except (OSError,ValueError,subprocess.CalledProcessError):
+                        print(json.dumps(dict(Session=session,Identity=None,Screen=None)))
+                """).Append("\nDAM_STATE\n");
         }
 
         return script.ToString();
     }
 
     internal const string BusyMarker = "--busy--";
+    internal sealed record ObservedScreen(string Session, string? Identity, string? Screen);
+    internal static Dictionary<string, ObservedScreen> ParseScreens(string output)
+    {
+        var screens = new Dictionary<string, ObservedScreen>();
+        var section = output.IndexOf("--screens--\n", StringComparison.Ordinal);
+        if (section < 0) return screens;
+        foreach (var line in output[(section + 12)..].Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            try { if (JsonSerializer.Deserialize<ObservedScreen>(line) is { } screen) screens[screen.Session] = screen; }
+            catch (JsonException) { }
+        return screens;
+    }
 
     /// <summary>
     /// The output of <see cref="BuildStateScript"/>: the Runner's time (epoch seconds), per session its pane
@@ -478,6 +519,7 @@ public sealed partial class AgentService(
         var inBusy = false;
         foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
+            if (line == "--screens--") break;
             if (line == BusyMarker)
             {
                 inBusy = true;

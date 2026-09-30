@@ -62,6 +62,7 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
 
     [Theory]
     [InlineData("/api/info")]
+    [InlineData("/api/agents/attention")]
     [InlineData("/api/runners")]
     [InlineData("/api/runners/00000000-0000-0000-0000-000000000001/usage")]
     [InlineData("/api/runners/00000000-0000-0000-0000-000000000001/timezone")]
@@ -110,6 +111,7 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
     public async Task Changes_NeedThePortalHeader()
     {
         var client = await SignedInAsync();
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync($"/api/agents/{Guid.NewGuid()}/seen", new MarkAgentSeenRequest(1), ApiJson.Options)).StatusCode);
         var request = new AddAccountRequest("claude", "x", AccountKind.ApiKey, "sk-ant-test");
         var response = await client.PostAsJsonAsync("/api/accounts", request, ApiJson.Options);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);

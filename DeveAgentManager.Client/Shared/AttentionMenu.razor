@@ -1,0 +1,42 @@
+@inherits LiveComponent
+<MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+    <ActivatorContent>
+        <MudBadge Content="@_items.Count" Visible="@(_items.Count > 0)" Color="Color.Warning" Overlap="true">
+            <MudIconButton Icon="@Icons.Material.Rounded.Notifications" Size="Size.Small" OnClick="@context.ToggleAsync" aria-label="@($"Agents needing attention: {_items.Count}")" />
+        </MudBadge>
+    </ActivatorContent>
+    <ChildContent>
+        @if (_items.Count == 0)
+        {
+            <MudMenuItem Disabled="true">Nothing needs attention</MudMenuItem>
+        }
+        @foreach (var item in _items)
+        {
+            <MudMenuItem Href="@($"agents/{item.AgentId}")">
+                <div class="attention-item">
+                    <strong>@item.Name · @Label(item.Kind)</strong>
+                    <span>@item.Reason</span>
+                    <small>@item.RunnerName · @item.At.Humanize()</small>
+                </div>
+            </MudMenuItem>
+        }
+    </ChildContent>
+</MudMenu>
+@code {
+    private List<AgentAttentionDto> _items = [];
+    private readonly CancellationTokenSource _stop = new();
+    protected override async Task OnInitializedAsync() { await base.OnInitializedAsync(); _ = TickAsync(); }
+    protected override async Task LoadAsync() => _items = await Api.ListAttentionAsync();
+    private async Task TickAsync()
+    {
+        try { using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15)); while (await timer.WaitForNextTickAsync(_stop.Token)) await ReloadAsync(); }
+        catch (OperationCanceledException) { }
+    }
+    private static string Label(AgentAttentionKind kind) => kind switch
+    {
+        AgentAttentionKind.NeedsInput => "Needs input", AgentAttentionKind.QuestionWaiting => "Question waiting",
+        AgentAttentionKind.UsageLimit => "Usage limit", AgentAttentionKind.UnexpectedExit => "Exited",
+        AgentAttentionKind.Finished => "Finished", _ => "Unclear"
+    };
+    public override void Dispose() { _stop.Cancel(); base.Dispose(); }
+}

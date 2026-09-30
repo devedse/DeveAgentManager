@@ -1,0 +1,35 @@
+@implements IDisposable
+@inject IJSRuntime Js
+@inject ManagerApi Api
+@code {
+    [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
+    private readonly CancellationTokenSource _stop = new();
+    private bool _busy;
+    private long _seen = -1;
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) _ = TickAsync();
+        return MarkAsync();
+    }
+    private async Task MarkAsync()
+    {
+        if (_busy || _stop.IsCancellationRequested || Agent.Activity is not { UnseenCompletion: true } activity || activity.CompletionSequence <= _seen) return;
+        _busy = true;
+        try
+        {
+            if (await Js.InvokeAsync<bool>("damAttention.isVisible", _stop.Token))
+            {
+                await Api.MarkAgentSeenAsync(Agent.Id, activity.CompletionSequence);
+                _seen = activity.CompletionSequence;
+            }
+        }
+        catch (Exception ex) when (ex is JSException or OperationCanceledException or HttpRequestException or ApiException) { }
+        finally { _busy = false; }
+    }
+    private async Task TickAsync()
+    {
+        try { using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5)); while (await timer.WaitForNextTickAsync(_stop.Token)) await InvokeAsync(MarkAsync); }
+        catch (OperationCanceledException) { }
+    }
+    public void Dispose() => _stop.Cancel();
+}

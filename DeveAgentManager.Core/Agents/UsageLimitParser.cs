@@ -20,16 +20,19 @@ public static class UsageLimitParser
         if (prompt < 0) return null;
         var prefix = harness == "codex"
             ? @"^\s*■\s*You've hit your usage limit\b"
-            : @"^\s*(?:[⎿■]\s*)?(?:You've hit your (?:(?:session|weekly|monthly|Opus|Sonnet) )?limit\b|Claude (?:AI )?usage limit reached\b|Usage limit reached\b)";
+            : @"^\s*(?:[⎿■└]\s*)?(?:You've hit your (?:(?:session|weekly|monthly|Opus|Sonnet) )?limit\b|Claude (?:AI )?usage limit reached\b|Usage limit reached\b)";
         var start = -1;
         for (var i = Math.Max(0, prompt - 16); i < prompt; i++)
             if (Match(lines[i], prefix).Success) start = i;
         var nativeFooter = harness == "claude" ? lines.Skip(Math.Max(prompt, lines.Length - 12))
-            .LastOrDefault(line => Match(line, @"^\s*(?:[⎿■]\s*)?Usage limit (?:reached|reset)\s*·\s*continuing (?:automatically|shortly)").Success) : null;
+            .LastOrDefault(line => Match(line, @"^\s*(?:[⎿■└]\s*)?Usage limit (?:reached|reset)\s*·\s*continuing (?:automatically|shortly)").Success) : null;
         if (start < 0 && nativeFooter is null) return null;
         // A later submitted prompt or assistant/tool output means this is an old error in the conversation.
-        if (start >= 0 && lines.Skip(start + 1).Take(prompt - start - 1).Any(line => Match(line, @"^\s*[›❯•●◦■⎿✻✢✽✶]").Success)) return null;
-        var message = Regex.Replace(start < 0 ? nativeFooter! : string.Join(" ", lines[start..prompt]), @"\s+", " ").Trim();
+        var following = start < 0 ? [] : lines.Skip(start + 1).Take(prompt - start - 1).ToArray();
+        bool CompletedFooter(string line) => harness == "claude" && Match(line,
+            @"^\s*[✻✢✽✶✳*] .+ for \d+[smh](?: \d+[smh])*\s*·\s*done \d{1,2}:\d{2}(?: [AP]M)?\s*$").Success;
+        if (following.Any(line => !CompletedFooter(line) && Match(line, @"^\s*[›❯•●◦■⎿└✻✢✽✶✳*]").Success)) return null;
+        var message = Regex.Replace(start < 0 ? nativeFooter! : string.Join(" ", new[] { lines[start] }.Concat(following.TakeWhile(line => !CompletedFooter(line)))), @"\s+", " ").Trim();
         if (message.Length > 1800) return null;
         var native = nativeFooter is not null || message.Contains("continuing automatically", StringComparison.OrdinalIgnoreCase);
         var marker = Match(message, @"(?:try again at|will reset at|\bresets|continuing automatically at)\s+(?<reset>.+)$");

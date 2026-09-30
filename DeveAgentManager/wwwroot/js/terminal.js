@@ -830,3 +830,6 @@
         },
     };
 })();
+
+// Background tabs must not acknowledge unseen agent completions.
+window.damAttention = { isVisible: () => document.visibilityState === 'visible' && document.hasFocus() };

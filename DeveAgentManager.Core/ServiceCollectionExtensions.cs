@@ -44,6 +44,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SessionService>();
         services.AddSingleton<Accounts.AccountService>();
         services.AddSingleton<AgentService>();
+        services.AddSingleton<AgentAttentionService>();
         services.AddSingleton<RunnerService>();
         services.AddSingleton<RunnerStatusCache>();
         services.AddSingleton<TerminalService>();

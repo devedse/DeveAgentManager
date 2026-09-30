@@ -42,9 +42,17 @@ public static class StateStyles
         _ => new("Unknown", Tone.Neutral),
     };
 
-    /// <summary>A running agent is working (its harness is busy) or idle (waiting for you).</summary>
+    /// <summary>Process state is separate from observed activity; legacy clients can still use the Working flag.</summary>
     public static StateStyle For(AgentDto agent) => agent.State switch
     {
+        AgentState.Running when agent.Activity is { } activity => activity.Status switch
+        {
+            AgentActivityStatus.Working => new("Working", Tone.Info, true),
+            AgentActivityStatus.Ready => new("Ready", Tone.Success),
+            AgentActivityStatus.NeedsInput => new("Needs input", Tone.Warning),
+            AgentActivityStatus.UsageLimited => new("Usage limit", Tone.Warning),
+            _ => new("Unclear", Tone.Neutral),
+        },
         AgentState.Running when agent.Working => new("Working", Tone.Info, true),
         AgentState.Running => new("Idle", Tone.Success),
         _ => For(agent.State),

@@ -82,6 +82,9 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task RefreshRunnerAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/refresh");
 
+    public Task<List<AgentAttentionDto>> ListAttentionAsync() => GetAsync<List<AgentAttentionDto>>("api/agents/attention");
+    public Task MarkAgentSeenAsync(Guid id, long sequence) => SendAsync(HttpMethod.Post, $"api/agents/{id}/seen", new MarkAgentSeenRequest(sequence));
+
     // Agents
 
     public Task<List<AgentDto>> ListAgentsAsync() => GetAsync<List<AgentDto>>("api/agents");

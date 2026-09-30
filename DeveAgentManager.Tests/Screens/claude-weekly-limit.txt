@@ -1,0 +1,9 @@
+The benchmark report is complete.
+❯ hi
+  └ You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)
+✻ Crunched for 0s · done 10:58 PM
+                 ✔ Update installed · Restart to apply
+────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

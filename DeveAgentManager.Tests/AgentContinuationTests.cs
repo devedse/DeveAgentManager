@@ -136,6 +136,22 @@ public sealed class AgentContinuationTests
         Assert.Equal(0, rig.Terminal.Sends);
     }
 
+    [Fact]
+    public async Task ClaudeWeeklyLimitOffersSchedulingAfterCompletedFooter()
+    {
+        await using var rig = await Rig.Create();
+        await using (var db = rig.Factory.CreateDbContext())
+            await db.Agents.Where(a => a.Id == rig.Id).ExecuteUpdateAsync(s => s.SetProperty(a => a.HarnessId, "claude"), Ct);
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = AgentActivityTests.Screen("claude-weekly-limit") };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var limit = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal("Detected", limit.Status);
+        Assert.Equal("Europe/Amsterdam", limit.TimeZoneId);
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct);
+        Assert.Equal(new DateTime(2026, 10, 4, 1, 1, 0, DateTimeKind.Utc), (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt);
+        Assert.Equal(0, rig.Terminal.Sends);
+    }
+
     private sealed class FakeClock : TimeProvider
     {
         public DateTimeOffset Utc = new(2026, 9, 30, 14, 0, 0, TimeSpan.Zero);

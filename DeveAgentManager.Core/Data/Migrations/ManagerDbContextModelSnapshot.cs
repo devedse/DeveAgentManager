@@ -68,6 +68,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<Guid?>("AccountId")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ActivityJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -97,6 +100,9 @@ namespace DeveAgentManager.Core.Data.Migrations
 
                     b.Property<Guid>("RunnerId")
                         .HasColumnType("TEXT");
+
+                    b.Property<long>("SeenCompletionSequence")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("State")
                         .IsRequired()
