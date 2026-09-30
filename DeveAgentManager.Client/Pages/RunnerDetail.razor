@@ -100,6 +100,7 @@
                 </div>
             </MudItem>
             <MudItem xs="12" lg="4">
+                <div class="panel mb-4"><RunnerTimeZoneEditor RunnerId="RunnerId" /></div>
                 @if (_runner.State == RunnerState.Ready && status is { CpuUsage: not null })
                 {
                     <div class="panel mb-4">

@@ -64,6 +64,10 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
     [InlineData("/api/info")]
     [InlineData("/api/runners")]
     [InlineData("/api/runners/00000000-0000-0000-0000-000000000001/usage")]
+    [InlineData("/api/runners/00000000-0000-0000-0000-000000000001/timezone")]
+    [InlineData("/api/settings/timezone")]
+    [InlineData("/api/settings/timezones")]
+    [InlineData("/api/agents/00000000-0000-0000-0000-000000000001/limit")]
     [InlineData("/api/accounts")]
     [InlineData("/api/settings/profile")]
     public async Task Api_WithoutLogin_Is401(string path) => Assert.Equal(HttpStatusCode.Unauthorized, (await Anonymous().GetAsync(path)).StatusCode);
@@ -109,6 +113,18 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
         var request = new AddAccountRequest("claude", "x", AccountKind.ApiKey, "sk-ant-test");
         var response = await client.PostAsJsonAsync("/api/accounts", request, ApiJson.Options);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DefaultTimezoneIsValidatedAndStored_AndSchedulingNeedsPortalHeader()
+    {
+        var client = await SignedInAsync();
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync($"/api/agents/{Guid.NewGuid()}/limit/continue", new ScheduleContinueRequest(), ApiJson.Options)).StatusCode);
+        client.DefaultRequestHeaders.Add(ApiHeaders.Request, "1");
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/settings/timezone", new TimeZoneRequest("Not/AZone"), ApiJson.Options)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/settings/timezone", new TimeZoneRequest("Europe/Amsterdam"), ApiJson.Options)).StatusCode);
+        Assert.Equal("Europe/Amsterdam", (await client.GetFromJsonAsync<TimeZoneConfigDto>("/api/settings/timezone", ApiJson.Options))!.DefaultTimeZoneId);
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/settings/timezone", new TimeZoneRequest("Etc/UTC"), ApiJson.Options)).StatusCode);
     }
 
     [Fact]

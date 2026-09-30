@@ -19,6 +19,7 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
     public DbSet<RunnerActivity> RunnerActivities => Set<RunnerActivity>();
 
     public DbSet<AgentIcon> AgentIcons => Set<AgentIcon>();
+    public DbSet<AgentLimit> AgentLimits => Set<AgentLimit>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -29,6 +30,11 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<AgentLimit>(limit =>
+        {
+            limit.HasKey(l => l.AgentId);
+            limit.HasOne<Agent>().WithOne().HasForeignKey<AgentLimit>(l => l.AgentId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<Runner>(runner =>
         {
             runner.HasKey(r => r.Id);

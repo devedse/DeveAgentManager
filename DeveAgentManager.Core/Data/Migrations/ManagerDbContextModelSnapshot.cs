@@ -157,6 +157,50 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.ToTable("AgentIcons");
                 });
 
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentLimit", b =>
+                {
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ContinueAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Detail")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("DetectedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("NativeAutoContinue")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PaneIdentity")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ResetAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TimeZoneId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("AgentId");
+
+                    b.ToTable("AgentLimits");
+                });
+
             modelBuilder.Entity("DeveAgentManager.Core.Data.Runner", b =>
                 {
                     b.Property<Guid>("Id")
@@ -232,6 +276,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("TemplateId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TimeZoneId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Tools")
@@ -386,6 +433,15 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.HasOne("DeveAgentManager.Core.Data.Agent", null)
                         .WithOne()
                         .HasForeignKey("DeveAgentManager.Core.Data.AgentIcon", "AgentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentLimit", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.Agent", null)
+                        .WithOne()
+                        .HasForeignKey("DeveAgentManager.Core.Data.AgentLimit", "AgentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

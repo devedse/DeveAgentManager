@@ -2692,3 +2692,8 @@ a {
 :root[data-theme="light"] .login-card {
     box-shadow: 0 30px 80px -30px rgba(15, 23, 42, 0.25);
 }
+
+/* A pending usage limit stays visible on narrow terminal headers. */
+.limit-alert-blink { animation: limit-alert-pulse 1.6s ease-in-out infinite; }
+@keyframes limit-alert-pulse { 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .limit-alert-blink { animation: none; } }

@@ -33,6 +33,7 @@
             }
             @if (running)
             {
+                <AgentLimitButton @key="AgentId" AgentId="AgentId" />
                 <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" />
                 <AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" />
                 @if (_agent.RunnerToolIds.Contains("vscode"))

@@ -35,6 +35,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SshConnector>();
         services.AddSingleton<RunnerShell>();
         services.AddSingleton<SettingsStore>();
+        services.AddSingleton<RunnerTimeZones>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<ILimitTerminal, LimitTerminal>();
+        services.AddSingleton<AgentContinuations>();
+        services.AddHostedService(sp => sp.GetRequiredService<AgentContinuations>());
         services.AddSingleton<RunnerSetupService>();
         services.AddSingleton<SessionService>();
         services.AddSingleton<Accounts.AccountService>();

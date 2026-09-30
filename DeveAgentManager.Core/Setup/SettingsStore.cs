@@ -19,6 +19,12 @@ public sealed class SettingsStore(
 
     public bool GitHubPatFromCompose => options.GitHubPat is not null;
 
+    public async Task<string> GetDefaultTimeZoneAsync(CancellationToken ct = default) =>
+        await GetRawAsync("runner-timezone", ct) ?? TimeZoneInfo.Local.Id;
+
+    public Task SaveDefaultTimeZoneAsync(string timeZoneId, CancellationToken ct = default) =>
+        SetRawAsync("runner-timezone", Runners.RunnerTimeZones.Validate(timeZoneId), ct);
+
     public async Task<SetupProfile> GetSetupProfileAsync(CancellationToken cancellationToken = default)
     {
         var json = protector.Unprotect(await GetRawAsync(SetupProfileKey, cancellationToken));

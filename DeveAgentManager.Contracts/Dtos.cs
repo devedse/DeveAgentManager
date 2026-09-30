@@ -3,6 +3,12 @@ using DeveAgentManager.Core.Data;
 
 namespace DeveAgentManager.Contracts;
 
+public sealed record TimeZoneRequest(string? TimeZoneId);
+public sealed record TimeZoneConfigDto(string DefaultTimeZoneId, string? OverrideTimeZoneId);
+public sealed record AgentLimitDto(string Message, string? TimeZoneId, DateTime DetectedAt, DateTime? ResetAt,
+    DateTime? ContinueAt, string Status, string? Detail, bool NativeAutoContinue);
+public sealed record ScheduleContinueRequest(DateTime? ResetAtUtc = null, DateTime? ExpectedDetectedAt = null);
+
 // What the Manager's API returns to the browser app. Built from the database entities on the server, without their
 // secrets: no account logins, no Runner passwords, no GitHub token.
 

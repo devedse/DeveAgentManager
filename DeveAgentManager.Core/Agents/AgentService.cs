@@ -22,6 +22,7 @@ public sealed partial class AgentService(
     IEnumerable<IHarness> harnesses,
     SessionService sessions,
     Accounts.AccountService accounts,
+    Setup.SettingsStore settings,
     ManagerEvents events,
     ILogger<AgentService> logger)
 {
@@ -553,7 +554,8 @@ public sealed partial class AgentService(
         }
 
         // The browser terminal (xterm.js) and tmux support 24-bit color, but programs inside tmux only use it when told.
-        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; {accountEnvironment}export COLORTERM=truecolor; exec {harnessCommand}");
+        var zone = Runners.RunnerTimeZones.Validate(runner.TimeZoneId ?? await settings.GetDefaultTimeZoneAsync(cancellationToken));
+        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; {accountEnvironment}export TZ={ShellQuote.Quote(zone)}; export COLORTERM=truecolor; exec {harnessCommand}");
         var session = ShellQuote.Quote("=" + agent.TmuxSession);
         var directory = ShellQuote.Quote(agent.WorkingDirectory);
 

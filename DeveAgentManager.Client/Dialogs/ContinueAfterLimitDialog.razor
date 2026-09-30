@@ -1,0 +1,74 @@
+@using System.Globalization
+@inject ManagerApi Api
+
+<MudDialog>
+    <DialogContent>
+        <MudText Class="mb-3">@Limit.Message</MudText>
+        @if (Limit.NativeAutoContinue)
+        {
+            <MudAlert Severity="Severity.Info">Claude is already waiting to continue automatically. The Manager will not send a second continuation.</MudAlert>
+        }
+        else if (Limit.Status == "Scheduled")
+        {
+            <MudText>Continue is scheduled for <b>@Format(Limit.ContinueAt)</b> (one minute after reset).</MudText>
+            <MudText Class="mt-2">You can close this page. Using the terminal cancels this schedule.</MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Class="mb-2">@ResetDescription</MudText>
+            @if (Limit.Detail is not null) { <MudAlert Severity="Severity.Info" Class="mb-3">@Limit.Detail</MudAlert> }
+            <MudTextField @bind-Value="_reset" Label="Reset time (UTC)" HelperText="yyyy-MM-dd HH:mm — change this if the detected reset is incorrect." Immediate="true" Variant="Variant.Outlined" />
+            <MudText Class="mt-3">The Manager will type and send <b>continue</b> once, one minute after this reset. It only sends while the same limit is still shown and the prompt is empty.</MudText>
+        }
+        @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert> }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Close</MudButton>
+        @if (!Limit.NativeAutoContinue && Limit.Status == "Scheduled")
+        {
+            <MudButton Color="Color.Warning" Disabled="_busy" OnClick="CancelAsync">Cancel scheduled continue</MudButton>
+        }
+        else if (!Limit.NativeAutoContinue && Limit.Status is "Detected" or "Cancelled")
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="ScheduleAsync">Schedule continue</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public Guid AgentId { get; set; }
+    [Parameter, EditorRequired] public AgentLimitDto Limit { get; set; } = default!;
+    private string? _reset;
+    private string? _error;
+    private bool _busy;
+    private static string Format(DateTime? date) => date?.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture) ?? "unknown";
+    private string ResetDescription
+    {
+        get
+        {
+            if (Limit.ResetAt is not { } utc) return "The reset time needs confirmation.";
+            try
+            {
+                var zone = TimeZoneInfo.FindSystemTimeZoneById(Limit.TimeZoneId ?? "UTC");
+                return $"Detected reset: {TimeZoneInfo.ConvertTimeFromUtc(utc, zone):yyyy-MM-dd HH:mm} ({zone.Id}) · {Format(utc)}";
+            }
+            catch (TimeZoneNotFoundException) { return $"Detected reset: {Format(utc)}"; }
+        }
+    }
+    protected override void OnInitialized() => _reset = Limit.ResetAt?.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+    private async Task ScheduleAsync()
+    {
+        if (!DateTime.TryParseExact(_reset, "yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var reset))
+        { _error = "Enter the reset as yyyy-MM-dd HH:mm in UTC."; return; }
+        await RunAsync(() => Api.ScheduleContinueAsync(AgentId, reset == Limit.ResetAt ? null : reset, Limit.DetectedAt));
+    }
+    private Task CancelAsync() => RunAsync(() => Api.CancelContinueAsync(AgentId));
+    private async Task RunAsync(Func<Task> action)
+    {
+        _busy = true;
+        try { await action(); MudDialog.Close(DialogResult.Ok(true)); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

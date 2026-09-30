@@ -54,6 +54,12 @@ public static class ManagerApi
 
     private static void MapRunners(RouteGroupBuilder runners)
     {
+        runners.MapGet("/{runnerId:guid}/timezone", (Guid runnerId, RunnerTimeZones zones, CancellationToken ct) => zones.GetAsync(runnerId, ct));
+        runners.MapPut("/{runnerId:guid}/timezone", async (Guid runnerId, TimeZoneRequest request, RunnerTimeZones zones, CancellationToken ct) =>
+        {
+            await zones.SaveAsync(runnerId, request.TimeZoneId, ct);
+            return await zones.GetAsync(runnerId, ct);
+        });
         runners.MapGet("/", async (RunnerService service, DtoMapper map, CancellationToken ct) =>
         {
             var names = await map.AccountNamesAsync(ct);
@@ -126,6 +132,19 @@ public static class ManagerApi
 
     private static void MapAgents(RouteGroupBuilder agents)
     {
+        agents.MapGet("/{agentId:guid}/limit", async (Guid agentId, AgentContinuations limits, CancellationToken ct) =>
+            await limits.GetAsync(agentId, ct) is { } limit ? Results.Ok(limit) : Results.NotFound());
+        agents.MapPost("/{agentId:guid}/limit/continue", async (Guid agentId, ScheduleContinueRequest request, AgentContinuations limits, CancellationToken ct) =>
+        {
+            if (request.ExpectedDetectedAt is null) throw new ArgumentException("Review the current usage limit before scheduling.");
+            await limits.ScheduleAsync(agentId, request.ResetAtUtc, ct, request.ExpectedDetectedAt);
+            return Results.NoContent();
+        });
+        agents.MapDelete("/{agentId:guid}/limit/continue", async (Guid agentId, AgentContinuations limits, CancellationToken ct) =>
+        {
+            await limits.CancelAsync(agentId, "Cancelled by you.", ct);
+            return Results.NoContent();
+        });
         agents.MapGet("/", async (AgentService service, DtoMapper map, CancellationToken ct) =>
         {
             var names = await map.AccountNamesAsync(ct);
@@ -294,6 +313,13 @@ public static class ManagerApi
 
     private static void MapSettings(RouteGroupBuilder settings)
     {
+        settings.MapGet("/timezones", () => RunnerTimeZones.Ids);
+        settings.MapGet("/timezone", (RunnerTimeZones zones, CancellationToken ct) => zones.GetAsync(null, ct));
+        settings.MapPut("/timezone", async (TimeZoneRequest request, RunnerTimeZones zones, CancellationToken ct) =>
+        {
+            await zones.SaveAsync(null, request.TimeZoneId, ct);
+            return await zones.GetAsync(null, ct);
+        });
         // The Setup Profile holds secrets the admin enters (API keys, login files). They are shown and edited here,
         // by the one admin; they never leave through any other endpoint.
         settings.MapGet("/profile", (SettingsStore store, CancellationToken ct) => store.GetSetupProfileAsync(ct));

@@ -1,0 +1,52 @@
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+
+@if (_config is not null)
+{
+    <div class="settings-section">
+        <MudText Typo="Typo.h6">@(RunnerId is null ? "Default runner timezone" : "Runner timezone")</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">Used by newly started harnesses. Restart running agents to apply a change. The Runner's system clock is not changed.</MudText>
+        @if (RunnerId is not null)
+        {
+            <MudCheckBox T="bool" @bind-Value="_inherit" Label="@($"Use default ({_config.DefaultTimeZoneId})")" />
+        }
+        <MudAutocomplete T="string" @bind-Value="_zone" Label="Timezone" SearchFunc="SearchAsync" Disabled="@(RunnerId is not null && _inherit)"
+                         Variant="Variant.Outlined" Margin="Margin.Dense" MaxItems="100" />
+        <MudButton Class="mt-3" Variant="Variant.Outlined" Disabled="_saving" OnClick="SaveAsync">Save timezone</MudButton>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid? RunnerId { get; set; }
+    private TimeZoneConfigDto? _config;
+    private List<string> _zones = [];
+    private string? _zone;
+    private bool _inherit;
+    private bool _saving;
+    private bool _loaded;
+    private Guid? _loadedRunnerId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loaded && _loadedRunnerId == RunnerId) return;
+        _zones = await Api.TimeZoneIdsAsync();
+        _config = await Api.GetTimeZoneAsync(RunnerId);
+        _inherit = _config.OverrideTimeZoneId is null;
+        _zone = _config.OverrideTimeZoneId ?? _config.DefaultTimeZoneId;
+        _loaded = true;
+        _loadedRunnerId = RunnerId;
+    }
+    private Task<IEnumerable<string>> SearchAsync(string text, CancellationToken ct) =>
+        Task.FromResult(_zones.Where(z => string.IsNullOrWhiteSpace(text) || z.Contains(text, StringComparison.OrdinalIgnoreCase)));
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        try
+        {
+            _config = await Api.SaveTimeZoneAsync(RunnerId, RunnerId is not null && _inherit ? null : _zone);
+            Snackbar.Add("Timezone saved. Restart running agents to apply it.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        finally { _saving = false; }
+    }
+}

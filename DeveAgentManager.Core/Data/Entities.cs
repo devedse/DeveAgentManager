@@ -4,6 +4,8 @@ namespace DeveAgentManager.Core.Data;
 
 public class Runner
 {
+    /// <summary>IANA timezone for new harness processes; null inherits the Manager default.</summary>
+    public string? TimeZoneId { get; set; }
     public Guid Id { get; set; }
 
     public string Name { get; set; } = "";
@@ -67,6 +69,22 @@ public class Runner
     public IReadOnlyList<string> ToolIds => Tools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     public RunnerMachine ToMachine() => new(Id, Name, MachineId, ProviderData, Host, SshPort);
+}
+
+/// <summary>One observed limit and an optional, explicitly armed, single continuation.</summary>
+public class AgentLimit
+{
+    public Guid AgentId { get; set; }
+    public string SessionId { get; set; } = "";
+    public string PaneIdentity { get; set; } = "";
+    public string Message { get; set; } = "";
+    public string? TimeZoneId { get; set; }
+    public DateTime DetectedAt { get; set; }
+    public DateTime? ResetAt { get; set; }
+    public DateTime? ContinueAt { get; set; }
+    public string Status { get; set; } = "Detected";
+    public string? Detail { get; set; }
+    public bool NativeAutoContinue { get; set; }
 }
 
 /// <summary>An operation that ran on a Runner (setup, start, an update), for the Runner's activity list.</summary>
@@ -243,4 +261,3 @@ public class Account
 
     public DateTime UpdatedAt { get; set; }
 }
-

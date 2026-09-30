@@ -39,6 +39,14 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     // Runners
 
+    public Task<List<string>> TimeZoneIdsAsync() => GetAsync<List<string>>("api/settings/timezones");
+    public Task<TimeZoneConfigDto> GetTimeZoneAsync(Guid? runnerId) => GetAsync<TimeZoneConfigDto>(runnerId is { } id ? $"api/runners/{id}/timezone" : "api/settings/timezone");
+    public Task<TimeZoneConfigDto> SaveTimeZoneAsync(Guid? runnerId, string? zone) => SendAsync<TimeZoneConfigDto>(HttpMethod.Put,
+        runnerId is { } id ? $"api/runners/{id}/timezone" : "api/settings/timezone", new TimeZoneRequest(zone));
+    public Task<AgentLimitDto?> GetAgentLimitAsync(Guid id) => FindAsync<AgentLimitDto>($"api/agents/{id}/limit");
+    public Task ScheduleContinueAsync(Guid id, DateTime? reset, DateTime detectedAt) => SendAsync(HttpMethod.Post, $"api/agents/{id}/limit/continue", new ScheduleContinueRequest(reset, detectedAt));
+    public Task CancelContinueAsync(Guid id) => SendAsync(HttpMethod.Delete, $"api/agents/{id}/limit/continue");
+
     public Task<List<RunnerDto>> ListRunnersAsync() => GetAsync<List<RunnerDto>>("api/runners");
 
     public Task<RunnerDto?> GetRunnerAsync(Guid runnerId) => FindAsync<RunnerDto>($"api/runners/{runnerId}");

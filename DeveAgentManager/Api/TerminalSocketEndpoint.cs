@@ -29,7 +29,7 @@ public static partial class TerminalSocketEndpoint
     private const string DoneMarker = "__DAM_LOGIN_OK__";
 
     public static void MapTerminalSocket(this IEndpointRouteBuilder app) =>
-        app.Map(TerminalSocket.Path, async (HttpContext context, TerminalService terminals, AgentService agents, AccountService accounts, RunnerService runners, ILoggerFactory loggers) =>
+        app.Map(TerminalSocket.Path, async (HttpContext context, TerminalService terminals, AgentService agents, AccountService accounts, RunnerService runners, AgentContinuations limits, ILoggerFactory loggers) =>
         {
             if (!context.WebSockets.IsWebSocketRequest)
             {
@@ -43,7 +43,7 @@ public static partial class TerminalSocketEndpoint
             var logger = loggers.CreateLogger("DeveAgentManager.Terminal");
 
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
-            var session = new TerminalSession(socket, logger);
+            var session = new TerminalSession(socket, logger, limits);
             try
             {
                 switch (kind)
@@ -78,7 +78,7 @@ public static partial class TerminalSocketEndpoint
         });
 
     /// <summary>One browser terminal: pumps the SSH terminal's output to the socket and the socket's input to the terminal.</summary>
-    private sealed class TerminalSession(WebSocket socket, ILogger logger)
+    private sealed class TerminalSession(WebSocket socket, ILogger logger, AgentContinuations limits)
     {
         private static readonly byte[] KickedMarker = Encoding.UTF8.GetBytes(AgentService.KickedMarker);
         private static readonly byte[] DetachedMarker = "[detached (from session"u8.ToArray();
@@ -196,6 +196,8 @@ public static partial class TerminalSocketEndpoint
                     }
                     else if (received.MessageType == WebSocketMessageType.Binary)
                     {
+                        if (agentId is { } inputAgent && !TerminalInput.IsTerminalReply(Encoding.UTF8.GetString(bytes)))
+                            await limits.OnUserInputAsync(inputAgent, cancellationToken);
                         connection.Write(bytes);
                         // A screen that joined watching sets the size once somebody types on it (not on the terminal's replies).
                         if (agentId is { } id && !sizeClaimed && connection.Tty is { } tty && !TerminalInput.IsTerminalReply(Encoding.UTF8.GetString(bytes)))

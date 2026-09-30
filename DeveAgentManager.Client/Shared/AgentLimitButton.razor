@@ -1,0 +1,30 @@
+@inherits LiveComponent
+@inject IDialogService Dialogs
+
+@if (_limit is not null)
+{
+    <MudTooltip Text="@Hint">
+        <MudIconButton Icon="@(_limit.Status == "Scheduled" ? Icons.Material.Rounded.Schedule : Icons.Material.Rounded.HourglassBottom)"
+                       Class="@(_limit.Status == "Detected" && !_limit.NativeAutoContinue ? "limit-alert-blink" : "")"
+                       Color="Color.Warning" Size="Size.Small" OnClick="OpenAsync" aria-label="@Hint" />
+    </MudTooltip>
+}
+
+@code {
+    [Parameter] public Guid AgentId { get; set; }
+    private AgentLimitDto? _limit;
+    private string Hint => _limit?.NativeAutoContinue == true ? "Usage limit: Claude will continue automatically"
+        : _limit?.Status == "Scheduled" ? $"Continue scheduled for {_limit.ContinueAt:yyyy-MM-dd HH:mm} UTC"
+        : "Usage limit: schedule continue after reset";
+    protected override bool IsRelevant(ManagerEvent change) => change.AgentId == AgentId;
+    protected override async Task LoadAsync() => _limit = await Api.GetAgentLimitAsync(AgentId);
+    private async Task OpenAsync()
+    {
+        if (_limit is null) return;
+        var dialog = await Dialogs.ShowAsync<ContinueAfterLimitDialog>("Continue after usage limit", new DialogParameters
+        { [nameof(ContinueAfterLimitDialog.AgentId)] = AgentId, [nameof(ContinueAfterLimitDialog.Limit)] = _limit },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        await dialog.Result;
+        await ReloadAsync();
+    }
+}
