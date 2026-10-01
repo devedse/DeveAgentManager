@@ -24,7 +24,14 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         return row is null || row.Status == "Cleared" ? null : Dto(row);
     }
 
-    private static AgentLimitDto Dto(AgentLimit l) => new(l.Message, l.TimeZoneId, l.DetectedAt, l.ResetAt, l.ContinueAt, l.Status, l.Detail, l.NativeAutoContinue, l.Manual);
+    private static AgentLimitDto Dto(AgentLimit l)
+    {
+        // Re-read the original message at its original observation time. ResetAt is the user's
+        // selected reset and may have been overridden; it must never masquerade as detection.
+        var detected = l.Manual ? null : UsageLimitParser.Parse(l.SessionId.Split('|')[0],
+            l.Message + "\n❯ ", l.TimeZoneId, l.DetectedAt)?.ResetAt;
+        return new(l.Message, l.TimeZoneId, l.DetectedAt, l.ResetAt, l.ContinueAt, l.Status, l.Detail, l.NativeAutoContinue, l.Manual, detected);
+    }
 
     public async Task ScheduleAsync(Guid id, DateTime? resetOverride, CancellationToken ct, DateTime? expectedDetectedAt = null, double? continueAfterMinutes = null, bool manual = false)
     {

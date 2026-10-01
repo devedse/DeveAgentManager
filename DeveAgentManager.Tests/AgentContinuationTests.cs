@@ -174,6 +174,21 @@ public sealed class AgentContinuationTests
     }
 
     [Fact]
+    public async Task DetectedResetRemainsAvailableAfterManualOverrideAndCancellation()
+    {
+        await using var rig = await Rig.Create();
+        var detectedReset = rig.Clock.Utc.AddMinutes(2).UtcDateTime;
+        var selectedReset = rig.Clock.Utc.AddHours(1).UtcDateTime;
+        await rig.Service.ScheduleAsync(rig.Id, selectedReset, Ct);
+        await rig.Service.CancelAsync(rig.Id, "Cancelled by you.", Ct);
+        var limit = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal(selectedReset, limit.ResetAt);
+        Assert.Equal(detectedReset, limit.DetectedResetAt);
+        await rig.Service.ScheduleAsync(rig.Id, limit.DetectedResetAt, Ct, limit.DetectedAt);
+        Assert.Equal(detectedReset.AddMinutes(1), (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt);
+    }
+
+    [Fact]
     public async Task RelativeScheduleUsesManagerClockAndSendsAfterExactDuration()
     {
         await using var rig = await Rig.Create();

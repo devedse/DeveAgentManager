@@ -58,7 +58,9 @@ public sealed class AgentAttentionService(IDbContextFactory<ManagerDbContext> fa
         await using var db = await factory.CreateDbContextAsync(ct);
         var agent = await db.Agents.AsNoTracking().Include(a => a.Runner).FirstOrDefaultAsync(a => a.Id == id, ct)
             ?? throw new KeyNotFoundException("Agent not found.");
-        if (Attention(agent, false, clock.GetUtcNow().UtcDateTime)?.Token != token) return;
+        var managed = await db.AgentLimits.AnyAsync(l => l.AgentId == id &&
+            ((l.Status != "Cleared" && l.NativeAutoContinue) || l.Status == "Scheduled" || l.Status == "Sending" || l.Status == "Sent"), ct);
+        if (Attention(agent, managed, clock.GetUtcNow().UtcDateTime)?.Token != token) return;
         // Save only the dismissed identity; a newer alert remains visible even if it races this write.
         await db.Agents.Where(a => a.Id == id).ExecuteUpdateAsync(s => s.SetProperty(a => a.DismissedAttentionToken, token), ct);
         events.AgentChanged(agent.RunnerId, id);

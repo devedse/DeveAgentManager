@@ -25,6 +25,10 @@
         {
             <MudText Typo="Typo.body2" Class="mb-2">@_resetDescription</MudText>
             @if (Limit.Detail is not null) { <MudAlert Severity="Severity.Info" Class="mb-3">@Limit.Detail</MudAlert> }
+            @if (Limit.DetectedResetAt is not null)
+            {
+                <MudButton Color="Color.Primary" Disabled="!_loaded || _busy" OnClick="UseDetectedAsync">Use detected reset (+1 minute)</MudButton>
+            }
             @if (!Limit.Manual) { <MudSwitch T="bool" @bind-Value="_relative" Color="Color.Primary" Label="Continue after a duration" /> }
             @if (_relative)
             {
@@ -43,6 +47,10 @@
                     <MudTimePicker @bind-Time="_time" Label="Reset time" Editable="true" AmPm="false" PickerVariant="PickerVariant.Dialog" Variant="Variant.Outlined" />
                 </div>
                 <MudText Typo="Typo.caption">Your local timezone: @_zone</MudText>
+                @if (_date is { } date && _time is { } time)
+                {
+                    <MudText Typo="Typo.body2">Continue at @date.Date.Add(time).AddMinutes(1).ToString("yyyy-MM-dd HH:mm") (@_zone).</MudText>
+                }
             }
             <MudText Class="mt-3">The Manager will type and send <b>continue</b> once, @(_relative ? "after this duration" : "one minute after this reset"). If the agent is busy or you have a draft, the schedule stays armed until the prompt is empty and the agent is ready.</MudText>
         }
@@ -82,14 +90,21 @@
         if (Limit.Manual) { _amount = 1; _resetDescription = "Test a one-time continuation without waiting for a usage limit."; }
         try
         {
-            var local = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", Limit.ResetAt ?? DateTime.UtcNow);
+            var local = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", Limit.ResetAt ?? Limit.DetectedResetAt ?? DateTime.UtcNow);
             _zone = local.Zone;
-            if (Limit.ResetAt is not null)
+            if ((Limit.ResetAt ?? Limit.DetectedResetAt) is not null)
             {
                 _date = DateTime.ParseExact(local.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
                 _time = TimeSpan.Parse(local.Time, CultureInfo.InvariantCulture);
-                _resetDescription = $"Detected reset: {local.Date} {local.Time} ({_zone}). Message timezone: {Limit.TimeZoneId ?? "unknown"}.";
+
             }
+            if (Limit.DetectedResetAt is { } detected)
+            {
+                var original = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", detected);
+                _resetDescription = $"Detected reset: {original.Date} {original.Time} ({original.Zone}). Message timezone: {Limit.TimeZoneId ?? "unknown"}.";
+            }
+            else if (!Limit.Manual && Limit.ResetAt is not null)
+                _resetDescription = "Using your previously selected reset. The message's reset time could not be detected.";
             if (Limit.ContinueAt is { } scheduled)
             {
                 var next = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", scheduled);
@@ -98,6 +113,20 @@
             _loaded = true;
         }
         catch (JSException) { _error = "Could not read your local timezone. Reopen this dialog to try again."; }
+    }
+
+    private async Task UseDetectedAsync()
+    {
+        if (Limit.DetectedResetAt is not { } detected) return;
+        try
+        {
+            var local = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", detected);
+            _date = DateTime.ParseExact(local.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+            _time = TimeSpan.Parse(local.Time, CultureInfo.InvariantCulture);
+            _relative = false;
+            _error = null;
+        }
+        catch (JSException) { _error = "Could not read your local timezone. Try again."; }
     }
 
     private async Task ScheduleAsync()

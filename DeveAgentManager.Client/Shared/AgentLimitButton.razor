@@ -1,5 +1,6 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
+@inject IJSRuntime Js
 
 <MudTooltip Text="@Hint">
     <MudIconButton Icon="@StatusIcon"
@@ -10,6 +11,7 @@
 @code {
     [Parameter] public Guid AgentId { get; set; }
     private AgentLimitDto? _limit;
+    private string? _scheduledLocal;
     protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
     private string StatusIcon => _limit?.Status switch
     {
@@ -21,14 +23,18 @@
         _ => Icons.Material.Rounded.HourglassBottom
     };
     private string Hint => _limit is null ? "Schedule continue" : _limit?.NativeAutoContinue == true ? "Usage limit: Claude will continue automatically"
-        : _limit?.Status == "Scheduled" ? $"Continue scheduled for {_limit.ContinueAt:yyyy-MM-dd HH:mm} UTC"
+        : _limit?.Status == "Scheduled" ? $"Continue scheduled for {_scheduledLocal ?? "your chosen time"}"
         : _limit?.Status == "Sending" ? "Sending scheduled continue"
         : _limit?.Status == "Sent" ? "Continue submitted; view result"
         : _limit?.Status == "Cancelled" ? "Continue cancelled; view reason"
         : _limit?.Status == "Uncertain" ? "Continue delivery uncertain; check the terminal"
         : _limit?.Manual == true ? "Schedule continue" : "Usage limit: schedule continue after reset";
     protected override bool IsRelevant(ManagerEvent change) => change.AgentId == AgentId;
-    protected override async Task LoadAsync() => _limit = await Api.GetAgentLimitAsync(AgentId);
+    protected override async Task LoadAsync()
+    {
+        _limit = await Api.GetAgentLimitAsync(AgentId);
+        _scheduledLocal = _limit?.ContinueAt is { } at ? await Js.InvokeAsync<string>("damSchedule.describe", at) : null;
+    }
     private async Task OpenAsync()
     {
         var dialog = await Dialogs.ShowAsync<ContinueAfterLimitDialog>(_limit is null || _limit.Manual ? "Schedule continue" : "Continue after usage limit", new DialogParameters

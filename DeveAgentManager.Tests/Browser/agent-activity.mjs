@@ -24,7 +24,7 @@ await page.route('**/api/**',async route=>{
  else if(path===`/api/agents/${id}/limit/continue`){schedules.push(route.request().postDataJSON());return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}/seen`){seen.push(route.request().postDataJSON());activity.unseenCompletion=false;activity.seenCompletionSequence=5;return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}`)body=agent;
- else if(path===`/api/agents/${id}/limit`)body=agent.harnessId==='claude'?{message:"You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)",timeZoneId:'Europe/Amsterdam',detectedAt:now,resetAt:'2026-10-04T01:00:00Z',status:limitStatus,detail:limitDetail,nativeAutoContinue:false}:null;
+ else if(path===`/api/agents/${id}/limit`)body=agent.harnessId==='claude'?{message:"You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)",timeZoneId:'Europe/Amsterdam',detectedAt:now,resetAt:'2026-10-04T02:00:00Z',detectedResetAt:'2026-10-04T01:00:00Z',continueAt:limitStatus==='Scheduled'?'2026-10-04T01:01:00Z':null,status:limitStatus,detail:limitDetail,nativeAutoContinue:false}:null;
  else if(path==='/api/agents')body=[agent];
  else if(path.includes('/session'))body=null;
  else if(path.includes('/viewers'))body=[];
@@ -108,12 +108,16 @@ await page.getByText("You've hit your weekly limit · resets Oct 4, 3am (Europe/
 await page.screenshot({path:'/tmp/dam-claude-limit-phone.png'});
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,'horizontal overflow');
 await page.getByText('Your local timezone: Europe/Amsterdam',{exact:true}).waitFor();
+assert.equal(await page.getByRole('textbox',{name:'Reset time',exact:true}).inputValue(),'04:00');
+await page.getByRole('button',{name:'Use detected reset (+1 minute)',exact:true}).click();
+assert.equal(await page.getByRole('textbox',{name:'Reset time',exact:true}).inputValue(),'03:00');
+await page.getByText('Continue at 2026-10-04 03:01 (Europe/Amsterdam).',{exact:true}).waitFor();
 await page.getByRole('textbox',{name:'Reset date',exact:true}).fill('2026-10-04');
-await page.getByRole('textbox',{name:'Reset time',exact:true}).fill('04:00');
+await page.getByRole('textbox',{name:'Reset time',exact:true}).fill('03:00');
 await page.getByRole('textbox',{name:'Reset time',exact:true}).press('Tab');
 await page.getByRole('button',{name:'Schedule continue',exact:true}).click();
 await page.waitForTimeout(300);
-assert.equal(Date.parse(schedules[0].resetAtUtc),Date.parse('2026-10-04T02:00:00Z'));
+assert.equal(Date.parse(schedules[0].resetAtUtc),Date.parse('2026-10-04T01:00:00Z'));
 await page.getByRole('button',{name:'Usage limit: schedule continue after reset',exact:true}).click();
 await page.getByRole('switch',{name:'Continue after a duration'}).check();
 await page.getByRole('spinbutton',{name:'Continue in',exact:true}).fill('5');
@@ -129,11 +133,24 @@ for (const [status,hint] of [['Sent','Continue submitted; view result'],['Cancel
  await page.getByRole('button',{name:'Close',exact:true}).last().click();
 }
 
+limitStatus='Scheduled';limitDetail=null;
+await page.getByRole('button',{name:'Continue scheduled for 2026-10-04 03:01 (Europe/Amsterdam)',exact:true}).waitFor({timeout:15000});
+await page.getByRole('button',{name:'Continue scheduled for 2026-10-04 03:01 (Europe/Amsterdam)',exact:true}).click();
+await page.getByText('2026-10-04 03:01 (Europe/Amsterdam)',{exact:true}).waitFor();
+await page.getByRole('button',{name:'Close',exact:true}).last().click();
+
 for (const path of ['/', '/runners', `/runners/${runner.id}`]) {
  await page.goto(base+path);
  await page.locator('.usage-label').filter({hasText:'Disk'}).first().waitFor();
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,'disk usage overflows on '+path);
 }
+for (const viewport of [{width:390,height:844},{width:1280,height:900}]) {
+ await page.setViewportSize(viewport); await page.waitForTimeout(500);
+ const bars=await page.locator('.usage:not(.usage-compact) .usage-track').evaluateAll(elements=>elements.map(e=>({x:e.getBoundingClientRect().x,width:e.getBoundingClientRect().width})));
+ assert.equal(bars.length,3);
+ assert.ok(bars.every(b=>Math.abs(b.x-bars[0].x)<1&&Math.abs(b.width-bars[0].width)<1),'CPU, RAM and disk tracks must align');
+}
+await page.setViewportSize({width:390,height:844});
 await page.locator('.usage-chart-line-disk').first().waitFor({state:'attached'});
 assert.equal(await page.locator('.usage-chart-line-disk').first().evaluate(p=>getComputedStyle(p).stroke),'rgb(245, 158, 11)');
 await page.getByRole('button',{name:'1 min',exact:true}).click();

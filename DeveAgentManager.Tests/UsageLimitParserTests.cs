@@ -9,6 +9,18 @@ public sealed class UsageLimitParserTests
     internal static string Claude(string message) => $"{message}\n\n❯ \n  bypass permissions on";
 
     [Theory]
+    [InlineData("1 background terminal running · /ps to view · /stop to close")]
+    [InlineData("1 background terminal\nrunning · /ps to view · /stop to close")]
+    [InlineData("2 background terminals running · /ps to view · /stop to close")]
+    public void CodexResetExcludesBackgroundTerminalFooter(string footer)
+    {
+        var screen = Codex("Oct 2nd, 2026 12:08 AM").Replace("\n\n›", "\n\n" + footer + "\n\n›");
+        var parsed = UsageLimitParser.Parse("codex", screen, "Europe/Amsterdam", new DateTime(2026, 10, 1, 20, 16, 0, DateTimeKind.Utc));
+        Assert.Equal(new DateTime(2026, 10, 1, 22, 8, 0, DateTimeKind.Utc), parsed!.ResetAt);
+        Assert.DoesNotContain("background terminal", parsed.Message);
+    }
+
+    [Theory]
     [InlineData("codex", "Oct 1st, 2026 12:30 AM", "Europe/Amsterdam", "2026-09-30T21:26:00Z", "2026-09-30T22:30:00Z")]
     [InlineData("codex", "October 2nd, 2026 1:30 PM", "UTC", "2026-09-30T21:26:00Z", "2026-10-02T13:30:00Z")]
     [InlineData("codex", "9:37 PM", "UTC", "2026-09-29T20:47:00Z", "2026-09-29T21:37:00Z")]

@@ -2720,3 +2720,7 @@ a {
 .attention-row .attention-item { max-width: 100%; overflow-wrap: anywhere; }
 .attention-row > .mud-menu-item { flex: 1; min-width: 0; }
 .attention-row > span { flex: none; padding: 8px 4px 0 0; }
+
+/* Share value-column width across all resource rows, so every track has identical bounds. */
+.usage:not(.usage-compact) { grid-template-columns: 34px minmax(0, 1fr) max-content; align-items: center; }
+.usage:not(.usage-compact) > .usage-item { display: contents; }

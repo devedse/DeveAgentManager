@@ -23,6 +23,10 @@
         }
         return { utc: d.toISOString() };
     };
-    root.damSchedule = { localParts, toUtc };
+    const describe = utc => {
+        const p = localParts(utc);
+        return `${p.date} ${p.time} (${p.zone})`;
+    };
+    root.damSchedule = { localParts, toUtc, describe };
     if (typeof module !== 'undefined') module.exports = root.damSchedule;
 })(globalThis);

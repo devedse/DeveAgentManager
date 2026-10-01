@@ -33,6 +33,9 @@ public static class UsageLimitParser
             @"^\s*[✻✢✽✶✳*] .+ for \d+[smh](?: \d+[smh])*\s*·\s*done \d{1,2}:\d{2}(?: [AP]M)?\s*$").Success;
         if (following.Any(line => !CompletedFooter(line) && Match(line, @"^\s*[›❯•●◦■⎿└✻✢✽✶✳*]").Success)) return null;
         var message = Regex.Replace(start < 0 ? nativeFooter! : string.Join(" ", new[] { lines[start] }.Concat(following.TakeWhile(line => !CompletedFooter(line)))), @"\s+", " ").Trim();
+        if (harness == "codex")
+            message = Regex.Replace(message, @"\s+\d+ background terminals? running\b.*$", "",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)).Trim();
         if (message.Length > 1800) return null;
         var native = nativeFooter is not null || message.Contains("continuing automatically", StringComparison.OrdinalIgnoreCase);
         var marker = Match(message, @"(?:try again at|will reset at|\bresets|continuing automatically at)\s+(?<reset>.+)$");

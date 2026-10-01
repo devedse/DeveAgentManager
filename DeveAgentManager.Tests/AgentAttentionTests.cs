@@ -126,6 +126,18 @@ public class AgentAttentionTests
             Assert.Equal(AgentAttentionKind.NeedsInput, latest.Kind);
             await service.DismissAsync(agent.Id, latest.Token, Ct);
             Assert.Empty(await service.ListAsync(Ct));
+            await using (var db = factory.CreateDbContext())
+            {
+                var current = await db.Agents.SingleAsync(Ct);
+                Complete(current, DateTime.UtcNow.AddSeconds(-15), "finished");
+                AgentActivityTracker.Apply(current, new(AgentActivityStatus.UsageLimited, "limit", "error", "new reset"), "process", DateTime.UtcNow);
+                db.AgentLimits.Add(new AgentLimit { AgentId = current.Id, Status = "Scheduled" });
+                await db.SaveChangesAsync(Ct);
+            }
+            var finished = Assert.Single(await service.ListAsync(Ct));
+            Assert.Equal(AgentAttentionKind.Finished, finished.Kind);
+            await service.DismissAsync(agent.Id, finished.Token, Ct);
+            Assert.Empty(await service.ListAsync(Ct));
         }
         finally { File.Delete(path); }
     }
