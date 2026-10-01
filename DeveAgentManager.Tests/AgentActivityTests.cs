@@ -47,6 +47,7 @@ public class AgentActivityTests
     [InlineData("codex-background-wait-narrow", AgentActivityStatus.Working)]
     [InlineData("codex-compacting", AgentActivityStatus.Working)]
     [InlineData("codex-idle", AgentActivityStatus.Ready)]
+    [InlineData("codex-idle-draft-warnings", AgentActivityStatus.Ready)]
     [InlineData("claude-weekly-limit", AgentActivityStatus.UsageLimited)]
     public void RealScreensHaveNamedRules(string name, AgentActivityStatus status)
     {
@@ -126,7 +127,7 @@ public class AgentActivityTests
     }
 
     [Fact]
-    public void RedrawGapAndEditablePromptCannotFinishTurn()
+    public void RecognizedIdleComposerDoesNotRequireCompletionEvidence()
     {
         var agent = NewAgent();
         AgentActivityTracker.Apply(agent, Working, "process", Now);
@@ -134,8 +135,54 @@ public class AgentActivityTests
         AgentActivityTracker.Apply(agent, draft, "process", Now.AddSeconds(5));
         Assert.True(agent.Working);
         AgentActivityTracker.Apply(agent, draft, "process", Now.AddSeconds(15));
-        Assert.Equal(AgentActivityStatus.Unknown, AgentActivityTracker.GetDto(agent, Now.AddSeconds(15)).Status);
+        Assert.Equal(AgentActivityStatus.Ready, AgentActivityTracker.GetDto(agent, Now.AddSeconds(15)).Status);
         Assert.False(AgentActivityTracker.GetDto(agent, Now.AddSeconds(15)).UnseenCompletion);
+    }
+
+    [Theory]
+    [InlineData("› it doesn't work")]
+    [InlineData("› Ask Codex to do anything")]
+    [InlineData("›")]
+    public void CompletedTurnWithWarningFooterReturnsReadyAndMarksCompletion(string prompt)
+    {
+        var agent = NewAgent();
+        AgentActivityTracker.Apply(agent, Working, "process", Now);
+        var screen = Screen("codex-idle-draft-warnings").Replace("› it doesn't work", prompt);
+        var detection = AgentScreenDetector.Detect("codex", screen, Now);
+        Assert.Equal(AgentActivityStatus.Ready, detection.Status);
+        Assert.NotNull(detection.CompletionEvidence);
+        AgentActivityTracker.Apply(agent, detection, "process", Now.AddSeconds(5));
+        AgentActivityTracker.Apply(agent, detection, "process", Now.AddSeconds(10));
+        Assert.Equal(AgentActivityStatus.Ready, AgentActivityTracker.GetDto(agent, Now.AddSeconds(10)).Status);
+        Assert.True(AgentActivityTracker.GetDto(agent, Now.AddSeconds(10)).UnseenCompletion);
+        var completionSequence = AgentActivityTracker.GetDto(agent, Now.AddSeconds(10)).CompletionSequence;
+        AgentActivityTracker.Apply(agent, AgentScreenDetector.Detect("codex", screen.Replace(prompt, "› a different draft"), Now), "process", Now.AddSeconds(15));
+        Assert.Equal(completionSequence, AgentActivityTracker.GetDto(agent, Now.AddSeconds(15)).CompletionSequence);
+    }
+
+    [Fact]
+    public void WorkingIndicatorWinsWithWarningFooterAndDraft()
+    {
+        var screen = "• Working (20s • esc to interrupt)\n› a queued draft\nGPT-6.1-Sol medium · ~/work/project\n⚠ 3 · f2";
+        Assert.Equal(AgentActivityStatus.Working, AgentScreenDetector.Detect("codex", screen, Now).Status);
+    }
+
+    [Theory]
+    [InlineData("› a draft")]
+    [InlineData("› Ask Codex to do anything")]
+    [InlineData("›")]
+    public void IdleComposerWithWarningsNeedsNoCompletionNotification(string prompt)
+    {
+        var agent = NewAgent();
+        AgentActivityTracker.Apply(agent, Working, "process", Now);
+        var detection = AgentScreenDetector.Detect("codex", $"• Ran a command\n{prompt}\nGPT-6.1-Sol medium · ~/work/project\n⚠ 3 · f2", Now);
+        Assert.Equal(AgentActivityStatus.Ready, detection.Status);
+        Assert.Null(detection.CompletionEvidence);
+        AgentActivityTracker.Apply(agent, detection, "process", Now.AddSeconds(5));
+        AgentActivityTracker.Apply(agent, detection, "process", Now.AddSeconds(10));
+        var status = AgentActivityTracker.GetDto(agent, Now.AddSeconds(10));
+        Assert.Equal(AgentActivityStatus.Ready, status.Status);
+        Assert.False(status.UnseenCompletion);
     }
 
     [Fact]

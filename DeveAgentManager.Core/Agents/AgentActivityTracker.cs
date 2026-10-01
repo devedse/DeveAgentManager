@@ -45,9 +45,8 @@ public static class AgentActivityTracker
         previous = observation.Snapshot;
         var status = detection.Status;
         var reason = detection.Reason;
-        // A vanished activity line or an editable composer alone cannot establish that the observed turn ended.
-        if (observation.TurnObserved && status == AgentActivityStatus.Ready && fingerprint is null)
-        { status = AgentActivityStatus.Unknown; reason = "The prompt is visible, but completion of the active turn is not confirmed."; }
+        // Readiness and completion are independent: a recognized idle composer needs no response
+        // fingerprint. Only confirmed completion evidence can produce a Finished notification.
         if (!changedProcess && previous.Status == AgentActivityStatus.Working && status is AgentActivityStatus.Ready or AgentActivityStatus.Unknown)
         {
             var pendingSince = observation.Pending == status && (status != AgentActivityStatus.Ready || observation.PendingCompletion == fingerprint) ? observation.PendingSince ?? now : now;

@@ -73,7 +73,7 @@ public static class AgentScreenDetector
         if (start < 0) return null;
         var line = lines[start].Trim();
         // A later tool result, response or submitted prompt invalidates a historical activity line.
-        if (lines.Skip(start + 1).Any(l => Has(l, @"^\s*[›❯■✗✓]|^\s*[•◦] (?!Queued follow-up inputs|Messages to be submitted)"))) return null;
+        if (lines.Skip(start + 1).Any(l => Has(l, @"^\s*[›❯■✗✓]|^\s*Worked for [0-9]|^\s*[•◦] (?!Queued follow-up inputs|Messages to be submitted)"))) return null;
         var knownTruncated = Has(line, @"^[•◦] (?:Working|Compacting context|Waiting for background terminal) \([0-9]");
         var timed = Has(line, @"^[•◦] [^\n]+ \((?:[0-9]+[hm] )*[0-9]+s(?: • [^\n]*to interrupt)\)(?: · [^\n]*)?$");
         if (!knownTruncated && !timed) return null;
@@ -104,11 +104,18 @@ public static class AgentScreenDetector
 
     private static AgentScreenDetection? CodexReady(Context c)
     {
-        if (c.Harness != "codex" || c.Prompt < 0 || !Has(c.After, @"\? for shortcuts")) return null;
+        if (c.Harness != "codex" || c.Prompt < 0) return null;
+        var content = AfterLastSubmitted(c);
+        var completed = Find(content, @"^\s*Worked for [0-9][^\n]*·\s*[0-9]{1,2}:[0-9]{2}[^\n]*$");
+        // The shortcuts hint can disappear while editing or be replaced by warning counters.
+        var composerFooter = Has(c.After, @"\? for shortcuts")
+            || Has(c.After, @"(?i)^\s*(?:GPT-\S+|o[134](?:-\S+)?)\s+(?:low|medium|high|xhigh|minimal|default)\b");
+        if (!composerFooter && completed is null) return null;
         var current = c.Lines[c.Prompt].Trim();
+        if (completed is not null)
+            return new(AgentActivityStatus.Ready, "Codex finished its turn and its prompt is ready for input.", "", Evidence(completed), CompletionEvidence: content.Trim());
         if (current != "›" && current != "› Ask Codex to do anything")
             return new(AgentActivityStatus.Ready, "Codex's prompt contains a draft; it is ready for input.", "", Evidence(current));
-        var content = AfterLastSubmitted(c);
         var response = Find(content, @"^\s*[•] (?!Ran |Running |Edited |Added |Deleted |Updated |Waiting |Working |Compacting |Queued |The status says |You)[^\n]+$");
         var lastMarker = content.Split('\n').LastOrDefault(l => Has(l, @"^\s*[•›■]"));
         if (response is not null && lastMarker is not null && Has(lastMarker, @"^\s*• (?!Ran |Running |Edited |Added |Deleted |Updated |Waiting |Working |Compacting |Queued |The status says )"))
@@ -116,7 +123,7 @@ public static class AgentScreenDetector
         // The initial empty composer is ready, but a submitted prompt without a settled response is ambiguous.
         if (!Has(c.Before, @"^\s*› ") && !Has(c.Before, @"^\s*[•◦■] "))
             return new(AgentActivityStatus.Ready, "Codex's initial prompt is ready.", "", current);
-        return null;
+        return new(AgentActivityStatus.Ready, "Codex's prompt is ready for input; no new completion is inferred.", "", Evidence(current));
     }
 
     private static AgentScreenDetection? ClaudeReady(Context c)

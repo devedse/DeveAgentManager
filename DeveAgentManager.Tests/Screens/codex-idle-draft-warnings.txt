@@ -1,0 +1,22 @@
+› what version is this fixed in
+
+• I'll check which release includes the fix.
+
+• Failed (exit 127) gh run list --comm…
+  └ /bin/bash: line 1: gh: command not…
+    + 2 lines (ctrl+t to expand)
+
+• Ran git log -1 --format=%H; git ls-r…
+  └ + 42 lines (ctrl+t to expand)
+
+• Fixed in 1.0.63. Update the Manager
+  to that version; no agent restarts
+  are needed.
+
+  Worked for 16s · 11:17
+                      ⚠ weekly 6% left
+
+› it doesn't work
+
+  GPT-6.1-Sol medium · ~/work/deveagen…
+                             ⚠ 3 · f2
