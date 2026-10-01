@@ -164,14 +164,6 @@
 
     // Per terminal: the phone keyboard input (terminal-touch-input.js).
     const touchInputs = new Map();
-    const TOUCH_INPUT_KEY = "dam.touchInput";
-
-    // On by default on touch devices; the "⌨" key switches it, and the choice is remembered in this browser.
-    function touchInputWanted() {
-        const stored = localStorage.getItem(TOUCH_INPUT_KEY);
-        return stored === null ? isTouch() : stored === "on";
-    }
-
     // Phone keyboards rewrite text they already typed (autocorrect, predictions, swipe typing). xterm.js has already
     // sent those keys, so the terminal ends up with garbled text. Ask the browser not to do that in xterm's input.
     function hardenInput(terminal) {
@@ -468,8 +460,7 @@
     }
 
     window.damTerminal = {
-        // Returns whether the phone keyboard input is on.
-        // Returns whether the phone keyboard input is on. `images`: whether images can be pasted (they go to the Runner).
+        // `images`: whether images can be pasted (they go to the Runner).
         init(id, dotnet, images) {
             const terminal = XtermBlazor.getTerminalById(id);
             hardenInput(terminal);
@@ -535,7 +526,8 @@
 
             if (xtermElement && !touchInputs.has(id)) {
                 const input = DamTouchInput.attach(terminal, xtermElement, data => terminal.input(data, true));
-                input.setEnabled(touchInputWanted());
+                // Phone input is always enabled on touch devices, including browsers with an old saved "off" choice.
+                input.setEnabled(isTouch());
                 touchInputs.set(id, input);
             }
 
@@ -559,7 +551,6 @@
             }
 
             fit(id);
-            return touchInputs.get(id)?.enabled ?? false;
         },
 
         fit,
@@ -591,20 +582,6 @@
             const input = touchInputs.get(id);
             input?.reset();
             terminal.input(sequence, true);
-        },
-
-        // Switches the phone keyboard input on or off and returns the new state.
-        toggleTouchInput(id) {
-            const input = touchInputs.get(id);
-            if (!input) {
-                return false;
-            }
-
-            const enabled = !input.enabled;
-            localStorage.setItem(TOUCH_INPUT_KEY, enabled ? "on" : "off");
-            input.setEnabled(enabled);
-            input.focus();
-            return enabled;
         },
 
         focus(id) {

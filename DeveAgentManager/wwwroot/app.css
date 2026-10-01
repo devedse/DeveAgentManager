@@ -1709,11 +1709,6 @@ a {
         border-color: var(--dam-primary);
     }
 
-.terminal-key-on {
-    background: var(--dam-primary-soft);
-    border-color: var(--dam-primary);
-}
-
 /* The phone keyboard types into this (terminal-touch-input.js). Invisible: what you type shows up in the terminal. */
 .dam-touch-input {
     /* Fixed: always "in view", so typing never makes the browser scroll the clipped terminal frame to show it. */
