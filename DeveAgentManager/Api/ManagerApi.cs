@@ -133,6 +133,11 @@ public static class ManagerApi
     private static void MapAgents(RouteGroupBuilder agents)
     {
         agents.MapGet("/attention", (AgentAttentionService attention, CancellationToken ct) => attention.ListAsync(ct));
+        agents.MapPost("/{agentId:guid}/attention/dismiss", async (Guid agentId, DismissAgentAttentionRequest request, AgentAttentionService attention, CancellationToken ct) =>
+        {
+            await attention.DismissAsync(agentId, request.Token, ct);
+            return Results.NoContent();
+        });
         agents.MapPost("/{agentId:guid}/seen", async (Guid agentId, MarkAgentSeenRequest request, AgentAttentionService attention, CancellationToken ct) =>
         {
             await attention.MarkSeenAsync(agentId, request.CompletionSequence, ct);

@@ -112,6 +112,7 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
     {
         var client = await SignedInAsync();
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync($"/api/agents/{Guid.NewGuid()}/seen", new MarkAgentSeenRequest(1), ApiJson.Options)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync($"/api/agents/{Guid.NewGuid()}/attention/dismiss", new DismissAgentAttentionRequest(new string('A', 64)), ApiJson.Options)).StatusCode);
         var request = new AddAccountRequest("claude", "x", AccountKind.ApiKey, "sk-ant-test");
         var response = await client.PostAsJsonAsync("/api/accounts", request, ApiJson.Options);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);

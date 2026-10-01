@@ -83,6 +83,53 @@ public class AgentAttentionTests
         finally { File.Delete(path); }
     }
 
+    [Fact]
+    public void DismissedLimitStaysHiddenOnPollButNewResetIsVisible()
+    {
+        var agent = NewAgent();
+        var detection = new AgentScreenDetection(AgentActivityStatus.UsageLimited, "limit", "error", "resets 3pm");
+        AgentActivityTracker.Apply(agent, detection, "process", Now);
+        agent.DismissedAttentionToken = AgentAttentionService.Attention(agent, false, Now)!.Token;
+        AgentActivityTracker.Apply(agent, detection, "process", Now.AddSeconds(5));
+        Assert.Null(AgentAttentionService.Attention(agent, false, Now.AddSeconds(5)));
+        Assert.Equal(AgentActivityStatus.UsageLimited, AgentActivityTracker.GetDto(agent, Now.AddSeconds(5)).Status);
+        AgentActivityTracker.Apply(agent, detection with { Evidence = "resets 4pm" }, "process", Now.AddSeconds(10));
+        Assert.NotNull(AgentAttentionService.Attention(agent, false, Now.AddSeconds(10)));
+    }
+
+    [Fact]
+    public async Task DismissalPersistsAndDelayedDismissCannotHideANewAlert()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"dam-dismiss-{Guid.NewGuid():N}.db");
+        var factory = new Factory(path);
+        try
+        {
+            var agent = NewAgent(); agent.RunnerId = agent.Runner!.Id;
+            AgentActivityTracker.Apply(agent, new(AgentActivityStatus.UsageLimited, "limit", "error", "first reset"), "process", DateTime.UtcNow);
+            await using (var db = factory.CreateDbContext())
+            {
+                await db.Database.EnsureCreatedAsync(Ct); db.Agents.Add(agent); await db.SaveChangesAsync(Ct);
+            }
+            var service = new AgentAttentionService(factory, new ManagerEvents(), TimeProvider.System);
+            var old = Assert.Single(await service.ListAsync(Ct));
+            await service.DismissAsync(agent.Id, old.Token, Ct);
+            service = new(factory, new ManagerEvents(), TimeProvider.System);
+            Assert.Empty(await service.ListAsync(Ct));
+            await using (var db = factory.CreateDbContext())
+            {
+                var current = await db.Agents.SingleAsync(Ct);
+                AgentActivityTracker.Apply(current, new(AgentActivityStatus.NeedsInput, "approval", "controls", "Approve command?"), "process", DateTime.UtcNow);
+                await db.SaveChangesAsync(Ct);
+            }
+            await service.DismissAsync(agent.Id, old.Token, Ct);
+            var latest = Assert.Single(await service.ListAsync(Ct));
+            Assert.Equal(AgentAttentionKind.NeedsInput, latest.Kind);
+            await service.DismissAsync(agent.Id, latest.Token, Ct);
+            Assert.Empty(await service.ListAsync(Ct));
+        }
+        finally { File.Delete(path); }
+    }
+
     private sealed class Factory(string path) : IDbContextFactory<ManagerDbContext>
     {
         public ManagerDbContext CreateDbContext() => new(new DbContextOptionsBuilder<ManagerDbContext>().UseSqlite($"Data Source={path};Pooling=False").Options);

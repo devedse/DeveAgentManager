@@ -10,6 +10,7 @@ const base=process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
 await context.request.post(base+'/account/login',{form:{username:'admin',password:process.env.DAM_TEST_PASSWORD ?? 'preview-test-only',returnUrl:'/'}});
 const info=await (await context.request.get(base+'/api/info')).json();
 const id='00000000-0000-0000-0000-000000000001', now=new Date().toISOString();
+let dismissed=false;
 let seen=[], schedules=[], limitStatus='Detected', limitDetail=null;
 const activity={status:'Ready',reason:"Codex returned a response and its prompt is ready.",rule:'codex/codex-ready-prompt · composer and latest response',evidence:'• done',observedAt:now,since:now,sequence:5,questionWaiting:false,completedAt:now,completionSequence:5,seenCompletionSequence:0,unseenCompletion:true};
 const agent={id,runnerId:'00000000-0000-0000-0000-000000000002',runnerName:'runner-01',runnerState:'Ready',runnerHarnessIds:['codex','claude'],runnerToolIds:[],name:'Example agent',harnessId:'codex',workingDirectory:'/work/example',state:'Running',accountName:'Personal',createdAt:now,updatedAt:now,working:false,activity,lastAssistantMessageAt:now};
@@ -18,7 +19,8 @@ await page.route('**/api/**',async route=>{
  const url=new URL(route.request().url()),path=url.pathname;
  let body;
  if(path==='/api/info')body=info;
- else if(path==='/api/agents/attention') body=activity.unseenCompletion?[{agentId:id,name:agent.name,runnerName:agent.runnerName,harnessId:'codex',kind:'Finished',reason:'Finished since you last viewed this agent.',at:now,completionSequence:5}]:[];
+ else if(path==='/api/agents/attention') body=activity.unseenCompletion&&!dismissed?[{agentId:id,name:agent.name,runnerName:agent.runnerName,harnessId:'codex',kind:'Finished',reason:'Finished since you last viewed this agent.',at:now,completionSequence:5,token:'A'.repeat(64)}]:[];
+ else if(path===`/api/agents/${id}/attention/dismiss`){assert.equal(route.request().postDataJSON().token,'A'.repeat(64));dismissed=true;return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}/limit/continue`){schedules.push(route.request().postDataJSON());return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}/seen`){seen.push(route.request().postDataJSON());activity.unseenCompletion=false;activity.seenCompletionSequence=5;return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}`)body=agent;
@@ -52,9 +54,18 @@ await page.setViewportSize({width:1280,height:900});
 await page.goto(base+'/agents');
 await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor({timeout:60000});
 await page.getByText('Last reply', {exact:false}).waitFor();
+await page.setViewportSize({width:390,height:844});
 await page.getByLabel('Agents needing attention: 1',{exact:true}).click();
 await page.getByRole('menuitem',{name:'View all agent statuses'}).waitFor();
 await page.getByText('Example agent · Finished',{exact:true}).waitFor();
+await page.waitForTimeout(500); // Allow the drawer and popover to settle after changing viewport size.
+assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,'attention dismissal overflows on phone');
+await page.screenshot({path:'/tmp/dam-dismiss-phone.png'});
+await page.getByRole('button',{name:'Dismiss Example agent notification',exact:true}).click();
+await page.getByLabel('Agents needing attention: 0',{exact:true}).waitFor();
+assert.equal(new URL(page.url()).pathname,'/agents','dismissing must not navigate to the terminal');
+assert.equal(seen.length,0,'dismissing a notification must not acknowledge a terminal view');
+await page.setViewportSize({width:1280,height:900});
 await page.keyboard.press('Escape');
 await page.getByRole('button',{name:'Explain Example agent status: Ready'}).click();
 await page.getByText(activity.reason,{exact:true}).waitFor();

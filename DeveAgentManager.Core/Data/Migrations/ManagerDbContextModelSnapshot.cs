@@ -74,6 +74,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("DismissedAttentionToken")
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("ExitCode")
                         .HasColumnType("INTEGER");
 

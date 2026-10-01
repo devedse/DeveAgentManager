@@ -115,6 +115,7 @@ public class Agent
     /// <summary>Durable semantic observation and transition bookkeeping, independent of process lifecycle.</summary>
     public string? ActivityJson { get; set; }
     public long SeenCompletionSequence { get; set; }
+    public string? DismissedAttentionToken { get; set; }
     public Guid Id { get; set; }
 
     public Guid RunnerId { get; set; }

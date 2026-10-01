@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
@@ -34,7 +37,31 @@ public sealed class AgentAttentionService(IDbContextFactory<ManagerDbContext> fa
             else if (activity.UnseenCompletion) { kind = AgentAttentionKind.Finished; reason = "Finished since you last viewed this agent."; at = activity.CompletedAt!.Value; }
             else if (activity.Status == AgentActivityStatus.Unknown && now - activity.Since >= TimeSpan.FromSeconds(30)) kind = AgentAttentionKind.Unclear;
         }
-        return kind is null ? null : new(agent.Id, agent.Name, agent.Runner?.Name ?? "Runner", agent.HarnessId, kind.Value, reason, at, activity.CompletionSequence);
+        if (kind is null) return null;
+        // Poll timestamps and elapsed working timers must not revive a dismissed alert. A new
+        // semantic observation, process or changed blocking message does create a new alert.
+        var identity = AgentActivityTracker.Read(agent).Identity;
+        var key = kind == AgentAttentionKind.Finished
+            ? JsonSerializer.Serialize(new object?[] { kind, identity, activity.CompletionSequence })
+            : JsonSerializer.Serialize(new object?[] { kind, identity, activity.Sequence,
+                kind is AgentAttentionKind.NeedsInput or AgentAttentionKind.UsageLimit ? activity.Evidence : null,
+                kind == AgentAttentionKind.UnexpectedExit ? agent.UpdatedAt.ToString("O") + reason : null });
+        var token = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+        return token == agent.DismissedAttentionToken ? null
+            : new(agent.Id, agent.Name, agent.Runner?.Name ?? "Runner", agent.HarnessId, kind.Value, reason, at, activity.CompletionSequence, token);
+    }
+
+    public async Task DismissAsync(Guid id, string token, CancellationToken ct)
+    {
+        if (token is null || token.Length != 64 || !token.All(Uri.IsHexDigit))
+            throw new ArgumentException("Choose a current notification to dismiss.");
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var agent = await db.Agents.AsNoTracking().Include(a => a.Runner).FirstOrDefaultAsync(a => a.Id == id, ct)
+            ?? throw new KeyNotFoundException("Agent not found.");
+        if (Attention(agent, false, clock.GetUtcNow().UtcDateTime)?.Token != token) return;
+        // Save only the dismissed identity; a newer alert remains visible even if it races this write.
+        await db.Agents.Where(a => a.Id == id).ExecuteUpdateAsync(s => s.SetProperty(a => a.DismissedAttentionToken, token), ct);
+        events.AgentChanged(agent.RunnerId, id);
     }
 
     public async Task MarkSeenAsync(Guid id, long completionSequence, CancellationToken ct)

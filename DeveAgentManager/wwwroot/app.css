@@ -2715,3 +2715,8 @@ a {
 .activity-card-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .activity-card-name { flex: 1; min-width: 150px; overflow-wrap: anywhere; }
 .activity-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+
+.attention-row { display: flex; align-items: flex-start; width: min(400px, calc(100vw - 32px)); }
+.attention-row .attention-item { max-width: 100%; overflow-wrap: anywhere; }
+.attention-row > .mud-menu-item { flex: 1; min-width: 0; }
+.attention-row > span { flex: none; padding: 8px 4px 0 0; }

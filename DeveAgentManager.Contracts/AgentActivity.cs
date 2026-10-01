@@ -11,5 +11,7 @@ public sealed record AgentActivityDto(AgentActivityStatus Status, string Reason,
 
 public enum AgentAttentionKind { NeedsInput, QuestionWaiting, UsageLimit, UnexpectedExit, Finished, Unclear }
 public sealed record AgentAttentionDto(Guid AgentId, string Name, string RunnerName, string HarnessId,
-    AgentAttentionKind Kind, string Reason, DateTime At, long CompletionSequence);
+    AgentAttentionKind Kind, string Reason, DateTime At, long CompletionSequence, string Token = "");
 public sealed record MarkAgentSeenRequest(long CompletionSequence);
+
+public sealed record DismissAgentAttentionRequest(string Token);

@@ -14,18 +14,32 @@
         }
         @foreach (var item in _items)
         {
-            <MudMenuItem Href="@($"agents/{item.AgentId}")">
-                <div class="attention-item">
-                    <strong>@item.Name · @Label(item.Kind)</strong>
-                    <span>@item.Reason</span>
-                    <small>@item.RunnerName · @item.At.Humanize()</small>
-                </div>
-            </MudMenuItem>
+            <div class="attention-row" @key="item.Token">
+                <MudMenuItem Href="@($"agents/{item.AgentId}")">
+                    <div class="attention-item">
+                        <strong>@item.Name · @Label(item.Kind)</strong>
+                        <span>@item.Reason</span>
+                        <small>@item.RunnerName · @item.At.Humanize()</small>
+                    </div>
+                </MudMenuItem>
+                <span @onclick:stopPropagation="true">
+                    <MudIconButton Icon="@Icons.Material.Rounded.Close" Size="Size.Small" Disabled="@_dismissing.Contains(item.Token)"
+                        OnClick="@(() => DismissAsync(item))" title="Dismiss notification" aria-label="@($"Dismiss {item.Name} notification")" />
+                </span>
+            </div>
         }
     </ChildContent>
 </MudMenu>
 @code {
     private List<AgentAttentionDto> _items = [];
+    private readonly HashSet<string> _dismissing = [];
+    private async Task DismissAsync(AgentAttentionDto item)
+    {
+        if (!_dismissing.Add(item.Token)) return;
+        try { await Api.DismissAttentionAsync(item.AgentId, item.Token); await ReloadAsync(); }
+        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        finally { _dismissing.Remove(item.Token); }
+    }
     private readonly CancellationTokenSource _stop = new();
     protected override async Task OnInitializedAsync() { await base.OnInitializedAsync(); _ = TickAsync(); }
     protected override async Task LoadAsync() => _items = await Api.ListAttentionAsync();
