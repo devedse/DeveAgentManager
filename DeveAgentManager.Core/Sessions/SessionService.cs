@@ -219,6 +219,7 @@ public sealed class SessionService(
                 var deve = _formats[session.HarnessId].Read(content);
                 await SaveAsync(session.Id, deve, cancellationToken);
                 Apply(session, deve, session.Agent?.Name);
+                if (session.Agent is { } agent) UpdateLastAssistantMessage(agent, deve);
                 session.SourcePath = file.Path;
                 session.SourceSize = file.Size;
                 session.LastSyncedAt = DateTime.UtcNow;
@@ -338,6 +339,31 @@ public sealed class SessionService(
         }
 
         throw new FormatException("This is not a DeveSession or a supported harness session file (pi .jsonl).");
+    }
+
+    internal static bool UpdateLastAssistantMessage(Agent agent, DeveSession session)
+    {
+        var latest = session.Entries.Where(e => e.Kind == DeveEntryKind.Message && e.Role == DeveRole.Assistant
+            && e.Timestamp != default && (!string.IsNullOrWhiteSpace(e.Text)
+                || e.Content?.Any(b => b.Type == "text" && !string.IsNullOrWhiteSpace(b.Text)) == true))
+            .Select(e => (DateTime?)e.Timestamp).Max();
+        if (latest is null || agent.LastAssistantMessageAt is { } previous && latest <= previous) return false;
+        agent.LastAssistantMessageAt = latest;
+        return true;
+    }
+
+    /// <summary>Populate existing agents from local saved conversations, including stopped/offline runners.</summary>
+    public async Task BackfillMessageTimesAsync(CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var existing = await db.Sessions.Include(s => s.Agent).Where(s => s.Agent != null && s.Agent.LastAssistantMessageAt == null).ToListAsync(ct);
+        foreach (var saved in existing)
+        {
+            try { UpdateLastAssistantMessage(saved.Agent!, await LoadAsync(saved.Id, ct)); }
+            catch (Exception ex) when (ex is IOException or JsonException or FormatException)
+            { logger.LogWarning(ex, "Could not read saved message timestamps for session {Session}", saved.Id); }
+        }
+        await db.SaveChangesAsync(ct);
     }
 
     private static void Apply(StoredSession stored, DeveSession session, string? agentName)

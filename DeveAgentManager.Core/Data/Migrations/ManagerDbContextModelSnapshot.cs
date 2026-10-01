@@ -88,6 +88,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<long?>("IconVersion")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime?>("LastAssistantMessageAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");

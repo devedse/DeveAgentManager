@@ -9,6 +9,11 @@
         <div class="usage-track"><div class="usage-fill usage-memory" style="width:@Percent(Memory)%"></div></div>
         <span class="usage-value">@(Compact ? $"{Memory:0}%" : MemoryText)</span>
     </div>
+    <div class="usage-item" title="Root filesystem (/) usage">
+        <span class="usage-label">Disk</span>
+        <div class="usage-track"><div class="usage-fill usage-disk" style="width:@Percent(Disk ?? 0)%"></div></div>
+        <span class="usage-value">@(Disk is { } percent ? Compact ? $"{percent:0}%" : DiskText : "–")</span>
+    </div>
 </div>
 
 @code {
@@ -17,6 +22,9 @@
 
     [Parameter]
     public bool Compact { get; set; }
+
+    private double? Disk => Status is { DiskUsedBytes: >= 0 and var used, DiskTotalBytes: > 0 and var total } ? used * 100.0 / total : null;
+    private string DiskText => $"{Status.DiskUsedBytes / 1073741824.0:0.0} / {Status.DiskTotalBytes / 1073741824.0:0.#} GB";
 
     private double Cpu => Status.CpuUsage ?? 0;
 

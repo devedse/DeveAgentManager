@@ -2707,3 +2707,12 @@ a {
 .nav-agent-dot.warning { background: var(--mud-palette-warning); }
 .nav-agent-dot.neutral { background: var(--mud-palette-text-disabled); }
 @media (max-width: 600px) { .terminal-name-row .agent-status-extra { display: none; } }
+
+.usage-disk { background: linear-gradient(90deg, #f59e0b, #fcd34d); }
+.usage-chart-key-disk::before { background: #f59e0b; }
+.usage-chart-line-disk { stroke: #f59e0b; }
+.usage-chart-dot-disk { fill: #f59e0b; }
+@media (max-width: 600px) { .usage-chart-legend { flex-wrap: wrap; } }
+
+.limit-schedule-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 8px; }
+@media (max-width: 400px) { .limit-schedule-fields { grid-template-columns: 1fr; } }

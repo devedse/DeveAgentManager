@@ -83,6 +83,8 @@ await using (var db = await app.Services.GetRequiredService<IDbContextFactory<Ma
     await db.Database.MigrateAsync();
 }
 
+await app.Services.GetRequiredService<DeveAgentManager.Core.Sessions.SessionService>().BackfillMessageTimesAsync();
+
 if (managerOptions.UsesDefaultAdminPassword)
 {
     app.Logger.LogWarning("ADMIN_PASSWORD is not set: the Portal login is {User} / {Password}. Set ADMIN_PASSWORD in the compose file.", managerOptions.AdminUsername, ManagerOptions.DefaultAdminPassword);

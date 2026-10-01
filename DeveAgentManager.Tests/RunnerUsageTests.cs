@@ -7,6 +7,20 @@ namespace DeveAgentManager.Tests;
 public sealed class RunnerUsageTests
 {
     [Fact]
+    public void DiskHistoryUsesFilesystemBytesAndStaysInFastSamplesUntilNextProbe()
+    {
+        var cache = new RunnerStatusCache(); var id = Guid.NewGuid(); var now = DateTime.UtcNow;
+        cache.Set(id, new MachineStatus(MachinePowerState.Running, CpuUsage: 10, DiskUsedBytes: 30, DiskTotalBytes: 60), now.AddSeconds(-2));
+        cache.RecordUsage(id, new MachineStatus(MachinePowerState.Running, CpuUsage: 20), now.AddSeconds(-1));
+        Assert.All(cache.History(id), sample => Assert.Equal(50d, sample.DiskPercent));
+        cache.Set(id, new MachineStatus(MachinePowerState.Stopped), now);
+        Assert.Null(cache.History(id)[^1].DiskPercent);
+        Assert.Equal((30L, 60L), RunnerMonitor.ParseDiskUsage(" 30 60\n"));
+        Assert.Throws<FormatException>(() => RunnerMonitor.ParseDiskUsage("300 60"));
+        Assert.Throws<FormatException>(() => RunnerMonitor.ParseDiskUsage("unknown"));
+    }
+
+    [Fact]
     public void KeepsOneHourOfCpuAndMemoryReadings_WithGapsWhenMetricsDisappear()
     {
         var cache = new RunnerStatusCache();

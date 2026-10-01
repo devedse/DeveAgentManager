@@ -5,6 +5,7 @@ using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Sessions;
+using DeveAgentManager.Core.Ssh;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -27,15 +28,16 @@ public sealed class RunnerStatusCache
 
     private sealed class UsageBucket
     {
-        public double CpuSum, MemorySum;
-        public int CpuCount, MemoryCount;
+        public double CpuSum, MemorySum, DiskSum;
+        public int CpuCount, MemoryCount, DiskCount;
         public void Add(RunnerUsageSample sample)
         {
             if (sample.CpuPercent is { } cpu) { CpuSum += cpu; CpuCount++; }
             if (sample.MemoryPercent is { } memory) { MemorySum += memory; MemoryCount++; }
+            if (sample.DiskPercent is { } disk) { DiskSum += disk; DiskCount++; }
         }
         public RunnerUsageSample Sample(long ticks) => new(new DateTime(ticks, DateTimeKind.Utc),
-            CpuCount == 0 ? null : CpuSum / CpuCount, MemoryCount == 0 ? null : MemorySum / MemoryCount);
+            CpuCount == 0 ? null : CpuSum / CpuCount, MemoryCount == 0 ? null : MemorySum / MemoryCount, DiskCount == 0 ? null : DiskSum / DiskCount);
     }
 
     public MachineStatus? Get(Guid runnerId) => _statuses.GetValueOrDefault(runnerId);
@@ -51,7 +53,9 @@ public sealed class RunnerStatusCache
         var cpu = Valid(status.CpuUsage);
         var memory = status is { MemoryUsedBytes: { } used, MemoryTotalBytes: > 0 and var total }
             ? Valid(used * 100.0 / total) : null;
-        if (cpu is null && memory is null && !_history.ContainsKey(runnerId))
+        var disk = status is { DiskUsedBytes: { } diskUsed, DiskTotalBytes: > 0 and var diskTotal } ? Valid(diskUsed * 100.0 / diskTotal) : null;
+        if (disk is null && status.PowerState == MachinePowerState.Running && Get(runnerId) is { DiskUsedBytes: { } cachedUsed, DiskTotalBytes: > 0 and var cachedTotal }) disk = Valid(cachedUsed * 100.0 / cachedTotal);
+        if (cpu is null && memory is null && disk is null && !_history.ContainsKey(runnerId))
         {
             return;
         }
@@ -62,7 +66,7 @@ public sealed class RunnerStatusCache
         var history = _history.GetOrAdd(runnerId, _ => new UsageHistory());
         lock (history)
         {
-            var sample = new RunnerUsageSample(time, cpu, memory);
+            var sample = new RunnerUsageSample(time, cpu, memory, disk);
             var recent = history.Recent;
             if (time < now - FullResolution)
             {
@@ -142,6 +146,7 @@ public sealed class RunnerMonitor(
     RunnerService runners,
     AgentService agents,
     SessionService sessions,
+    RunnerShell shell,
     RunnerStatusCache statusCache,
     ManagerEvents events,
     ILogger<RunnerMonitor> logger) : BackgroundService
@@ -176,6 +181,14 @@ public sealed class RunnerMonitor(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
+    internal static (long Used, long Total) ParseDiskUsage(string output)
+    {
+        var parts = output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2 || !long.TryParse(parts[0], out var used) || !long.TryParse(parts[1], out var total) || used < 0 || total <= 0 || used > total)
+            throw new FormatException("Invalid root filesystem usage reading.");
+        return (used, total);
+    }
+
     private async Task PollAsync(CancellationToken cancellationToken)
     {
         var full = _pass++ % FullPassEvery == 0;
@@ -186,34 +199,59 @@ public sealed class RunnerMonitor(
         }
         await Parallel.ForEachAsync(all, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (runner, ct) =>
         {
-            if (runners.CurrentOperation(runner.Id) is not null)
+            if (runners.CurrentOperation(runner.Id) is not null && runner.State != RunnerState.Ready)
             {
                 return;
             }
 
             try
             {
+                if (runner.State == RunnerState.Ready && runner.Agents.Count > 0)
+                {
+                    try { await agents.RefreshRunnerAsync(runner, ct); }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        logger.LogWarning(ex, "Could not observe terminal state for runner {Runner}", runner.Name);
+                        await agents.MarkObservationUnavailableAsync(runner.Id, ct);
+                    }
+                }
+
                 var provider = runners.FindProvider(runner.ProviderId);
                 if (full && provider is not null && runner.MachineId is not null && runner.State is RunnerState.Ready or RunnerState.Stopped or RunnerState.Error)
                 {
-                    var status = await provider.GetStatusAsync(runner.ToMachine(), ct);
-                    statusCache.Set(runner.Id, status);
+                    try
+                    {
+                        var status = await provider.GetStatusAsync(runner.ToMachine(), ct);
+                        statusCache.Set(runner.Id, status);
+                        await runners.ApplyObservedStatusAsync(runner.Id, status, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    { logger.LogWarning(ex, "Provider status unavailable for runner {Runner}; terminal observation will still run", runner.Name); }
+                }
+                if (full && runner.State == RunnerState.Ready)
+                {
+                    try
+                    {
+                        var result = (await shell.RunAsync(runner, "df -B1 --output=used,size / | tail -n 1", TimeSpan.FromSeconds(10), ct)).EnsureSuccess("Reading root disk usage");
+                        var disk = ParseDiskUsage(result.Output);
+                        var status = statusCache.Get(runner.Id) ?? new MachineStatus(MachinePowerState.Running);
+                        statusCache.Set(runner.Id, status with { DiskUsedBytes = disk.Used, DiskTotalBytes = disk.Total });
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        if (statusCache.Get(runner.Id) is { } status) statusCache.Set(runner.Id, status with { DiskUsedBytes = null, DiskTotalBytes = null });
+                        logger.LogDebug(ex, "Root disk usage unavailable for runner {Runner}", runner.Name);
+                    }
                     events.RunnerChanged(runner.Id);
-                    await runners.ApplyObservedStatusAsync(runner.Id, status, ct);
                 }
 
-                if (runner.State == RunnerState.Ready && runner.Agents.Count > 0)
-                {
-                    await agents.RefreshRunnerAsync(runner, ct);
-                    if (full)
-                    {
-                        await sessions.SyncRunnerAsync(runner, ct);
-                    }
-                }
+                if (full && runner.State == RunnerState.Ready && runner.Agents.Count > 0)
+                    await sessions.TrySyncRunnerAsync(runner, ct);
+
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                logger.LogDebug(ex, "Could not refresh runner {Runner}", runner.Name);
+                logger.LogWarning(ex, "Could not refresh runner {Runner}", runner.Name);
             }
         });
     }

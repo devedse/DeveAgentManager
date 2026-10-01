@@ -109,6 +109,8 @@ public class RunnerActivity
 
 public class Agent
 {
+    /// <summary>Timestamp of the latest assistant text in the synced conversation.</summary>
+    public DateTime? LastAssistantMessageAt { get; set; }
     /// <summary>Durable semantic observation and transition bookkeeping, independent of process lifecycle.</summary>
     public string? ActivityJson { get; set; }
     public long SeenCompletionSequence { get; set; }

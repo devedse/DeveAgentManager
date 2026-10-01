@@ -36,7 +36,7 @@ public static class UsageLimitParser
         if (message.Length > 1800) return null;
         var native = nativeFooter is not null || message.Contains("continuing automatically", StringComparison.OrdinalIgnoreCase);
         var marker = Match(message, @"(?:try again at|will reset at|\bresets|continuing automatically at)\s+(?<reset>.+)$");
-        if (!marker.Success) return new(message, null, processTimeZone, native, "No unambiguous reset time was found. Enter a reset time to schedule a continuation.");
+        if (!marker.Success) return new(message, null, processTimeZone, native, "No unambiguous reset time was found. Choose a reset date and time or a continuation duration.");
         var reset = marker.Groups["reset"].Value.Split('·')[0].Trim().TrimEnd('.');
         var zoneMatch = Match(reset, @"\s*\((?<zone>[^()]+)\)$");
         var zoneId = zoneMatch.Success ? zoneMatch.Groups["zone"].Value.Trim() : processTimeZone;
@@ -50,7 +50,7 @@ public static class UsageLimitParser
         }
         catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
         {
-            return new(message, null, zoneId, native, "The timezone is unknown or ambiguous. Enter the reset in UTC.");
+            return new(message, null, zoneId, native, "The timezone is unknown or ambiguous. Choose the reset time manually.");
         }
 
         var localNow = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, zone);
@@ -66,6 +66,7 @@ public static class UsageLimitParser
         }
         var dateText = reset[..clock.Index].Trim().TrimEnd(',').Trim();
         dateText = Regex.Replace(dateText, @"\s+at$", "", RegexOptions.IgnoreCase).Trim();
+        dateText = Regex.Replace(dateText, @"\b(\d{1,2})(?:st|nd|rd|th)\b", "$1", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         DateTime date;
         if (dateText.Length == 0 || dateText.Equals("today", StringComparison.OrdinalIgnoreCase)) date = localNow.Date;
         else if (dateText.Equals("tomorrow", StringComparison.OrdinalIgnoreCase)) date = localNow.Date.AddDays(1);
@@ -88,12 +89,12 @@ public static class UsageLimitParser
             if (localReset > localNow.AddHours(6)) return Unknown();
         }
         if (zone.IsInvalidTime(localReset) || zone.IsAmbiguousTime(localReset))
-            return new(message, null, zoneId, native, "This reset falls in a daylight-saving clock change. Enter the exact UTC time.");
+            return new(message, null, zoneId, native, "This reset falls in a daylight-saving clock change. Use a duration to choose an exact continuation time.");
         var utc = TimeZoneInfo.ConvertTimeToUtc(localReset, zone);
         if (utc < nowUtc.AddMinutes(-5) || utc > nowUtc.AddDays(32)) return Unknown();
         return new(message, utc, zoneId, native, null);
 
         ParsedUsageLimit Unknown() => new(message, null, zoneId, native,
-            "The reset date or time is uncertain. Enter the exact reset in UTC before scheduling.");
+            "The reset date or time is uncertain. Choose the reset time manually before scheduling.");
     }
 }

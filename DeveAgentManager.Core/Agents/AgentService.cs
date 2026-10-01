@@ -431,6 +431,17 @@ public sealed partial class AgentService(
         foreach (var id in changedAgents) events.AgentChanged(runner.Id, id);
     }
 
+    public async Task MarkObservationUnavailableAsync(Guid runnerId, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var agents = await db.Agents.Where(a => a.RunnerId == runnerId && a.State == AgentState.Running).ToListAsync(ct);
+        var changed = new List<Guid>();
+        foreach (var agent in agents)
+            if (AgentActivityTracker.Apply(agent, new(AgentActivityStatus.Unknown, "Terminal observation failed. Check the Runner connection and Manager logs.", "observation-failed"), AgentActivityTracker.Read(agent).Identity, DateTime.UtcNow)) changed.Add(agent.Id);
+        await db.SaveChangesAsync(ct);
+        foreach (var id in changed) events.AgentChanged(runnerId, id);
+    }
+
     public async Task MarkAllStoppedAsync(Guid runnerId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);

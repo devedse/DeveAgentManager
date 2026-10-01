@@ -152,6 +152,32 @@ public sealed class AgentContinuationTests
         Assert.Equal(0, rig.Terminal.Sends);
     }
 
+    [Fact]
+    public async Task RelativeScheduleUsesManagerClockAndSendsAfterExactDuration()
+    {
+        await using var rig = await Rig.Create();
+        var now = rig.Clock.Utc;
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 5);
+        Assert.Equal(now.AddMinutes(5).UtcDateTime, (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt);
+        rig.Clock.Utc = now.AddMinutes(4);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+        rig.Clock.Utc = now.AddMinutes(5);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(46081)]
+    [InlineData(double.NaN)]
+    public async Task RejectsInvalidRelativeSchedule(double minutes)
+    {
+        await using var rig = await Rig.Create();
+        await Assert.ThrowsAsync<ArgumentException>(() => rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: minutes));
+        Assert.Equal(0, rig.Terminal.Sends);
+    }
+
     private sealed class FakeClock : TimeProvider
     {
         public DateTimeOffset Utc = new(2026, 9, 30, 14, 0, 0, TimeSpan.Zero);

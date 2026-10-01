@@ -7,7 +7,7 @@ public sealed record TimeZoneRequest(string? TimeZoneId);
 public sealed record TimeZoneConfigDto(string DefaultTimeZoneId, string? OverrideTimeZoneId);
 public sealed record AgentLimitDto(string Message, string? TimeZoneId, DateTime DetectedAt, DateTime? ResetAt,
     DateTime? ContinueAt, string Status, string? Detail, bool NativeAutoContinue);
-public sealed record ScheduleContinueRequest(DateTime? ResetAtUtc = null, DateTime? ExpectedDetectedAt = null);
+public sealed record ScheduleContinueRequest(DateTime? ResetAtUtc = null, DateTime? ExpectedDetectedAt = null, double? ContinueAfterMinutes = null);
 
 // What the Manager's API returns to the browser app. Built from the database entities on the server, without their
 // secrets: no account logins, no Runner passwords, no GitHub token.
@@ -88,7 +88,7 @@ public sealed record RunnerDto(
 public sealed record RunnerActivityDto(long Id, string Name, DateTime StartedAt, DateTime? FinishedAt, RunnerActivityOutcome? Outcome, string? Error);
 
 /// <summary>One provider reading for a Runner. A missing value leaves a gap in its usage graph.</summary>
-public sealed record RunnerUsageSample(DateTime At, double? CpuPercent, double? MemoryPercent);
+public sealed record RunnerUsageSample(DateTime At, double? CpuPercent, double? MemoryPercent, double? DiskPercent = null);
 
 /// <param name="AccountId">The account the agent picked; null uses the harness's default account.</param>
 public sealed record AgentDto(
@@ -112,7 +112,8 @@ public sealed record AgentDto(
     DateTime UpdatedAt,
     long? IconVersion = null,
     bool Working = false,
-    AgentActivityDto? Activity = null);
+    AgentActivityDto? Activity = null,
+    DateTime? LastAssistantMessageAt = null);
 
 /// <summary>An image in an agent's folder, for the icon picker. <paramref name="Path"/> is relative to the folder.</summary>
 /// <param name="Automatic">What the Manager would pick by itself.</param>

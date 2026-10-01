@@ -143,7 +143,7 @@ public static class ManagerApi
         agents.MapPost("/{agentId:guid}/limit/continue", async (Guid agentId, ScheduleContinueRequest request, AgentContinuations limits, CancellationToken ct) =>
         {
             if (request.ExpectedDetectedAt is null) throw new ArgumentException("Review the current usage limit before scheduling.");
-            await limits.ScheduleAsync(agentId, request.ResetAtUtc, ct, request.ExpectedDetectedAt);
+            await limits.ScheduleAsync(agentId, request.ResetAtUtc, ct, request.ExpectedDetectedAt, request.ContinueAfterMinutes);
             return Results.NoContent();
         });
         agents.MapDelete("/{agentId:guid}/limit/continue", async (Guid agentId, AgentContinuations limits, CancellationToken ct) =>

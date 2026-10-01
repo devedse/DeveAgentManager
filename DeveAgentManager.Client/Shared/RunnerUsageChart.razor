@@ -1,11 +1,12 @@
 @inherits LiveComponent
 @using System.Globalization
 
-<div class="usage-chart" aria-label="Runner CPU and memory usage">
+<div class="usage-chart" aria-label="Runner CPU, memory and disk usage">
     <div class="usage-chart-heading">
         <div class="usage-chart-legend">
             <span class="usage-chart-key usage-chart-key-cpu">CPU <strong>@Latest(s => s.CpuPercent)</strong></span>
             <span class="usage-chart-key usage-chart-key-memory">RAM <strong>@Latest(s => s.MemoryPercent)</strong></span>
+            <span class="usage-chart-key usage-chart-key-disk" title="Root filesystem (/)">Disk <strong>@Latest(s => s.DiskPercent)</strong></span>
         </div>
         <div class="usage-chart-ranges" role="group" aria-label="Graph time range">
             <button type="button" class="@(_minutes == 1 ? "selected" : "")" aria-pressed="@(_minutes == 1)" @onclick="() => ChangeRangeAsync(1)">1 min</button>
@@ -23,9 +24,10 @@
         var start = end.AddMinutes(-_minutes);
         var cpu = Segments(start, end, s => s.CpuPercent);
         var memory = Segments(start, end, s => s.MemoryPercent);
+        var disk = Segments(start, end, s => s.DiskPercent);
         <div class="usage-chart-plot">
             <div class="usage-chart-y-labels"><span>100%</span><span>50%</span><span>0%</span></div>
-            <svg viewBox="0 0 600 150" preserveAspectRatio="none" role="img" aria-label="CPU and memory percentages over the last @(_minutes == 1 ? "minute" : "hour")">
+            <svg viewBox="0 0 600 150" preserveAspectRatio="none" role="img" aria-label="CPU, memory and disk percentages over the last @(_minutes == 1 ? "minute" : "hour")">
                 <defs>
                     <linearGradient id="@_cpuFillId" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--dam-primary)" stop-opacity=".26" /><stop offset="100%" stop-color="var(--dam-primary)" stop-opacity="0" /></linearGradient>
                     <linearGradient id="@_memoryFillId" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--dam-teal)" stop-opacity=".18" /><stop offset="100%" stop-color="var(--dam-teal)" stop-opacity="0" /></linearGradient>
@@ -40,6 +42,14 @@
                 {
                     <path d="@Area(segment)" fill="url(#@_cpuFillId)" />
                     <path class="usage-chart-line usage-chart-line-cpu" d="@Line(segment)" />
+                }
+                @foreach (var segment in disk)
+                {
+                    <path class="usage-chart-line usage-chart-line-disk" d="@Line(segment)" />
+                }
+                @foreach (var point in Markers(disk))
+                {
+                    <circle class="usage-chart-dot usage-chart-dot-disk" cx="@Number(point.X)" cy="@Number(point.Y)" r="3"><title>Disk @point.Value.ToString("0.#")% · @point.At.ToLocalTime().ToString("T")</title></circle>
                 }
                 @foreach (var point in Markers(cpu))
                 {

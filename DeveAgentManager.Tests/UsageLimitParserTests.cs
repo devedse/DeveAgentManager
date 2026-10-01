@@ -9,6 +9,8 @@ public sealed class UsageLimitParserTests
     internal static string Claude(string message) => $"{message}\n\n❯ \n  bypass permissions on";
 
     [Theory]
+    [InlineData("codex", "Oct 1st, 2026 12:30 AM", "Europe/Amsterdam", "2026-09-30T21:26:00Z", "2026-09-30T22:30:00Z")]
+    [InlineData("codex", "October 2nd, 2026 1:30 PM", "UTC", "2026-09-30T21:26:00Z", "2026-10-02T13:30:00Z")]
     [InlineData("codex", "9:37 PM", "UTC", "2026-09-29T20:47:00Z", "2026-09-29T21:37:00Z")]
     [InlineData("codex", "9:37 PM", "Europe/Amsterdam", "2026-09-29T18:47:00Z", "2026-09-29T19:37:00Z")]
     [InlineData("codex", "12:15 AM", "Europe/Amsterdam", "2026-09-29T21:50:00Z", "2026-09-29T22:15:00Z")]

@@ -1,5 +1,6 @@
 @using System.Globalization
 @inject ManagerApi Api
+@inject IJSRuntime Js
 
 <MudDialog>
     <DialogContent>
@@ -10,15 +11,33 @@
         }
         else if (Limit.Status == "Scheduled")
         {
-            <MudText>Continue is scheduled for <b>@Format(Limit.ContinueAt)</b> (one minute after reset).</MudText>
+            <MudText>Continue is scheduled for <b>@_continueDescription</b> (one minute after reset).</MudText>
             <MudText Class="mt-2">You can close this page. Using the terminal cancels this schedule.</MudText>
         }
         else
         {
-            <MudText Typo="Typo.body2" Class="mb-2">@ResetDescription</MudText>
+            <MudText Typo="Typo.body2" Class="mb-2">@_resetDescription</MudText>
             @if (Limit.Detail is not null) { <MudAlert Severity="Severity.Info" Class="mb-3">@Limit.Detail</MudAlert> }
-            <MudTextField @bind-Value="_reset" Label="Reset time (UTC)" HelperText="yyyy-MM-dd HH:mm — change this if the detected reset is incorrect." Immediate="true" Variant="Variant.Outlined" />
-            <MudText Class="mt-3">The Manager will type and send <b>continue</b> once, one minute after this reset. It only sends while the same limit is still shown and the prompt is empty.</MudText>
+            <MudSwitch T="bool" @bind-Value="_relative" Color="Color.Primary" Label="Continue after a duration" />
+            @if (_relative)
+            {
+                <div class="limit-schedule-fields">
+                    <MudNumericField T="double" @bind-Value="_amount" Label="Continue in" Min="1" Max="@(_hours ? 768 : 46080)" Variant="Variant.Outlined" />
+                    <MudSelect T="bool" @bind-Value="_hours" Label="Unit" Variant="Variant.Outlined">
+                        <MudSelectItem T="bool" Value="false">Minutes</MudSelectItem>
+                        <MudSelectItem T="bool" Value="true">Hours</MudSelectItem>
+                    </MudSelect>
+                </div>
+            }
+            else
+            {
+                <div class="limit-schedule-fields">
+                    <MudDatePicker @bind-Date="_date" Label="Reset date" DateFormat="yyyy-MM-dd" Editable="true" PickerVariant="PickerVariant.Dialog" Variant="Variant.Outlined" />
+                    <MudTimePicker @bind-Time="_time" Label="Reset time" Editable="true" AmPm="false" PickerVariant="PickerVariant.Dialog" Variant="Variant.Outlined" />
+                </div>
+                <MudText Typo="Typo.caption">Your local timezone: @_zone</MudText>
+            }
+            <MudText Class="mt-3">The Manager will type and send <b>continue</b> once, @(_relative ? "after this duration" : "one minute after this reset"). It only sends while the same limit is still shown and the prompt is empty.</MudText>
         }
         @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert> }
     </DialogContent>
@@ -30,7 +49,7 @@
         }
         else if (!Limit.NativeAutoContinue && Limit.Status is "Detected" or "Cancelled")
         {
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="ScheduleAsync">Schedule continue</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || !_loaded" OnClick="ScheduleAsync">Schedule continue</MudButton>
         }
     </DialogActions>
 </MudDialog>
@@ -39,28 +58,57 @@
     [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
     [Parameter] public Guid AgentId { get; set; }
     [Parameter, EditorRequired] public AgentLimitDto Limit { get; set; } = default!;
-    private string? _reset;
+    private DateTime? _date;
+    private TimeSpan? _time;
+    private string _zone = "Loading…";
+    private string _resetDescription = "The reset time needs confirmation.";
+    private string? _continueDescription;
     private string? _error;
-    private bool _busy;
-    private static string Format(DateTime? date) => date?.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture) ?? "unknown";
-    private string ResetDescription
+    private bool _busy, _loaded, _relative, _hours;
+    private double _amount = 5;
+    private sealed record LocalParts(string Date, string Time, string Zone);
+    private sealed record Conversion(string? Utc, string? Error);
+
+    protected override async Task OnInitializedAsync()
     {
-        get
+        try
         {
-            if (Limit.ResetAt is not { } utc) return "The reset time needs confirmation.";
-            try
+            var local = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", Limit.ResetAt ?? DateTime.UtcNow);
+            _zone = local.Zone;
+            if (Limit.ResetAt is not null)
             {
-                var zone = TimeZoneInfo.FindSystemTimeZoneById(Limit.TimeZoneId ?? "UTC");
-                return $"Detected reset: {TimeZoneInfo.ConvertTimeFromUtc(utc, zone):yyyy-MM-dd HH:mm} ({zone.Id}) · {Format(utc)}";
+                _date = DateTime.ParseExact(local.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+                _time = TimeSpan.Parse(local.Time, CultureInfo.InvariantCulture);
+                _resetDescription = $"Detected reset: {local.Date} {local.Time} ({_zone}). Message timezone: {Limit.TimeZoneId ?? "unknown"}.";
             }
-            catch (TimeZoneNotFoundException) { return $"Detected reset: {Format(utc)}"; }
+            if (Limit.ContinueAt is { } scheduled)
+            {
+                var next = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", scheduled);
+                _continueDescription = $"{next.Date} {next.Time} ({next.Zone})";
+            }
+            _loaded = true;
         }
+        catch (JSException) { _error = "Could not read your local timezone. Reopen this dialog to try again."; }
     }
-    protected override void OnInitialized() => _reset = Limit.ResetAt?.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
     private async Task ScheduleAsync()
     {
-        if (!DateTime.TryParseExact(_reset, "yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var reset))
-        { _error = "Enter the reset as yyyy-MM-dd HH:mm in UTC."; return; }
+        DateTime reset;
+        if (_relative)
+        {
+            if (!double.IsFinite(_amount) || _amount < 1 || (_hours ? _amount * 60 : _amount) > 46080)
+            { _error = "Enter a duration from one minute up to 32 days."; return; }
+            await RunAsync(() => Api.ScheduleContinueAsync(AgentId, null, Limit.DetectedAt, _hours ? _amount * 60 : _amount));
+            return;
+        }
+        else
+        {
+            if (_date is null || _time is null) { _error = "Choose the local reset date and time."; return; }
+            var result = await Js.InvokeAsync<Conversion>("damSchedule.toUtc", _date.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), _time.Value.ToString(@"hh\:mm", CultureInfo.InvariantCulture));
+            if (result.Error is { } error) { _error = error; return; }
+            if (!DateTime.TryParse(result.Utc, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out reset))
+            { _error = "The local reset time could not be converted."; return; }
+        }
         await RunAsync(() => Api.ScheduleContinueAsync(AgentId, reset == Limit.ResetAt ? null : reset, Limit.DetectedAt));
     }
     private Task CancelAsync() => RunAsync(() => Api.CancelContinueAsync(AgentId));

@@ -27,7 +27,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
 
     private static AgentLimitDto Dto(AgentLimit l) => new(l.Message, l.TimeZoneId, l.DetectedAt, l.ResetAt, l.ContinueAt, l.Status, l.Detail, l.NativeAutoContinue);
 
-    public async Task ScheduleAsync(Guid id, DateTime? resetOverride, CancellationToken ct, DateTime? expectedDetectedAt = null)
+    public async Task ScheduleAsync(Guid id, DateTime? resetOverride, CancellationToken ct, DateTime? expectedDetectedAt = null, double? continueAfterMinutes = null)
     {
         var gate = Gate(id);
         await gate.WaitAsync(ct);
@@ -44,6 +44,12 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             var screen = await terminal.ReadAsync(agent, ct);
             if (!screen.InputEmpty || screen.Identity != limit.PaneIdentity || agent.Working)
                 throw new InvalidOperationException("The harness must be idle with an empty prompt before scheduling.");
+            if (continueAfterMinutes is { } duration)
+            {
+                if (!double.IsFinite(duration) || duration < 1 || duration > 46080 || resetOverride is not null)
+                    throw new ArgumentException("Choose either a reset time or a continuation duration from 1 minute to 32 days.");
+                resetOverride = Now.AddMinutes(duration - 1);
+            }
             var reset = resetOverride ?? limit.ResetAt ?? throw new ArgumentException("Enter the exact reset time in UTC.");
             if (reset.Kind != DateTimeKind.Utc || reset.AddMinutes(1) <= Now || reset > Now.AddDays(32))
                 throw new ArgumentException("The reset must be UTC, with its continuation in the future and within 32 days.");

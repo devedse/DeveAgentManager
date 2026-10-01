@@ -45,4 +45,6 @@ public sealed record MachineStatus(
     long? MemoryUsedBytes = null,
     long? MemoryTotalBytes = null,
     TimeSpan? Uptime = null,
-    string? Detail = null);
+    string? Detail = null,
+    long? DiskUsedBytes = null,
+    long? DiskTotalBytes = null);

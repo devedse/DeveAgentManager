@@ -30,7 +30,7 @@ else
                 </a>
                 <div class="agent-row-state">
                     <AgentStatus Agent="agent" />
-                    <span class="list-time">@agent.CreatedAt.Humanize()</span>
+                    <span class="list-time" title="@(agent.LastAssistantMessageAt is { } messageAt ? $"Last agent message: {messageAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}" : "No agent message has been recorded yet")">@(agent.LastAssistantMessageAt is { } last ? $"Last reply {last.Humanize()}" : "No reply yet")</span>
                 </div>
                 <div class="agent-row-actions">
                     @if (busy)
