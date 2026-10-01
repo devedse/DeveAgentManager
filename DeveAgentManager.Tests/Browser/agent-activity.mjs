@@ -35,10 +35,24 @@ await page.route('**/api/**',async route=>{
  else return route.continue();
  await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
 });
+await page.goto(base+'/activity');
+await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor({timeout:60000});
+await page.getByText(activity.reason,{exact:true}).waitFor();
+assert.equal(seen.length,0,'activity overview must not mark results seen');
+activity.status='Working';activity.reason='The agent is working in the background.';
+await page.getByRole('button',{name:'Explain Example agent status: Working'}).waitFor({timeout:15000});
+await page.getByText(activity.reason,{exact:true}).waitFor();
+await page.setViewportSize({width:390,height:844});
+await page.waitForTimeout(500);
+await page.screenshot({path:'/tmp/dam-activity-overview-phone.png'});
+assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,'activity overview overflows on phone');
+activity.status='Ready';activity.reason='Codex returned a response and its prompt is ready.';
+await page.setViewportSize({width:1280,height:900});
 await page.goto(base+'/agents');
 await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor({timeout:60000});
 await page.getByText('Last reply', {exact:false}).waitFor();
 await page.getByLabel('Agents needing attention: 1',{exact:true}).click();
+await page.getByRole('menuitem',{name:'View all agent statuses'}).waitFor();
 await page.getByText('Example agent · Finished',{exact:true}).waitFor();
 await page.keyboard.press('Escape');
 await page.getByRole('button',{name:'Explain Example agent status: Ready'}).click();
@@ -95,5 +109,5 @@ await page.locator('.usage-chart-line-disk').first().waitFor({state:'attached'})
 assert.equal(await page.locator('.usage-chart-line-disk').first().evaluate(p=>getComputedStyle(p).stroke),'rgb(245, 158, 11)');
 await page.screenshot({path:'/tmp/dam-disk-phone.png'});
 assert.deepEqual(errors,[]);
-console.log('Passed: attention and completion guards, latest reply label, local reset picker, duration scheduling, disk bars on all pages and disk graph on phone.');
+console.log('Passed: activity overview polling without a terminal, phone layout, attention and completion guards, latest reply label, local reset picker, duration scheduling, disk bars and graph.');
 } finally { await browser.close(); }

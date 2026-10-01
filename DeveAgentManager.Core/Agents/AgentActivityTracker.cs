@@ -14,9 +14,10 @@ public static class AgentActivityTracker
 
     public static Observation Read(Agent agent)
     {
-        try { if (agent.ActivityJson is { } json && JsonSerializer.Deserialize<Observation>(json) is { } saved) return saved; }
+        try { if (agent.ActivityJson is { } json && JsonSerializer.Deserialize<Observation>(json) is { Snapshot: not null } saved) return saved; }
         catch (JsonException) { }
-        return new(new(AgentActivityStatus.Unknown, "The harness has not been observed yet.", "not-observed", null,
+        var invalid = agent.ActivityJson is not null;
+        return new(new(AgentActivityStatus.Unknown, invalid ? "The saved activity observation could not be read. Waiting for the Manager to observe the terminal again." : "The harness has not been observed yet.", invalid ? "observation-invalid" : "not-observed", null,
             null, agent.UpdatedAt, agent.SeenCompletionSequence, false, null, agent.SeenCompletionSequence, agent.SeenCompletionSequence), "", false, null, null, null);
     }
 
@@ -24,6 +25,8 @@ public static class AgentActivityTracker
     {
         var snapshot = Read(agent).Snapshot with { SeenCompletionSequence = agent.SeenCompletionSequence };
         var now = at ?? DateTime.UtcNow;
+        if (agent.State == AgentState.Running && snapshot.Rule == "not-observed" && now - snapshot.Since > TimeSpan.FromSeconds(30))
+            snapshot = snapshot with { Reason = "The Manager has not saved a terminal observation for this running agent. Check the Runner connection and Manager monitor logs." };
         if (agent.State == AgentState.Running && ((runnerState ?? agent.Runner?.State) is { } state && state != RunnerState.Ready || snapshot.ObservedAt is { } observed && now - observed > TimeSpan.FromSeconds(30)))
             return snapshot with { Status = AgentActivityStatus.Unknown, Rule = "observation-stale",
                 Reason = "A fresh terminal observation is unavailable. The previous status may be out of date.",

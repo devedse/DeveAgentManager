@@ -2716,3 +2716,7 @@ a {
 
 .limit-schedule-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 8px; }
 @media (max-width: 400px) { .limit-schedule-fields { grid-template-columns: 1fr; } }
+.activity-card { padding: 20px; margin-bottom: 16px; }
+.activity-card-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.activity-card-name { flex: 1; min-width: 150px; overflow-wrap: anywhere; }
+.activity-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 12px; }

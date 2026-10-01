@@ -1,5 +1,9 @@
 # Agent activity and attention
 
+The Agent activity page (`/activity`) is available from the sidebar, dashboard and notification menu. It shows every agent's status, explanation, latest reply and observation age without opening a terminal or acknowledging completion. It, the dashboard and agent list refresh every five seconds in addition to live events. All terminal observations run on the Manager, independently of browser viewers.
+
+An observation that has never been saved is distinct from an invalid saved observation, a failed connection or a stale observation. If initial observation remains missing after 30 seconds, its explanation directs the operator to the Runner connection and Manager monitor logs. A command timeout reported as cancellation is recorded as an observation failure unless the monitor itself is stopping.
+
 Process state and activity are separate. An agent can have a running process while it is ready for input, blocked by an approval, or waiting for its usage allowance to reset. The status button opens an explanation showing the process state, last observation, matched rule, and a short excerpt of the evidence.
 
 The Manager reads the visible tmux screen every five seconds, alongside pane metadata. It does not use output volume as proof that an agent is working: typing a draft also produces terminal output. Named rules inspect the current composer, live activity indicators, control hints, and current errors. Rules have explicit priority and screen regions. Usage errors and interactive controls take priority over activity and ready prompts. Queued questions remain an additional indicator while an agent works. Unknown screens and observations older than 30 seconds are shown as **Unclear**.

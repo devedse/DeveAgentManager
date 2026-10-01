@@ -14,6 +14,29 @@ public class AgentActivityTests
     private static AgentScreenDetection Ready(string response = "done") => new(AgentActivityStatus.Ready, "ready", "prompt", CompletionEvidence: response);
 
     [Theory]
+    [InlineData("invalid json")]
+    [InlineData("{}")]
+    [InlineData("null")]
+    public void InvalidSavedObservationIsDistinctFromNeverObserved(string json)
+    {
+        var agent = NewAgent();
+        agent.ActivityJson = json;
+        var status = AgentActivityTracker.GetDto(agent, Now);
+        Assert.Equal("observation-invalid", status.Rule);
+        AgentActivityTracker.Apply(agent, Working, "process", Now);
+        Assert.Equal(AgentActivityStatus.Working, AgentActivityTracker.GetDto(agent, Now).Status);
+    }
+
+    [Fact]
+    public void OverdueInitialObservationExplainsBackgroundMonitorProblem()
+    {
+        var agent = NewAgent();
+        Assert.Equal("The harness has not been observed yet.", AgentActivityTracker.GetDto(agent, Now).Reason);
+        Assert.Contains("Manager monitor logs", AgentActivityTracker.GetDto(agent, Now.AddMinutes(1)).Reason);
+        Assert.Equal("not-observed", AgentActivityTracker.GetDto(agent, Now.AddMinutes(1)).Rule);
+    }
+
+    [Theory]
     [InlineData("pi-working", AgentActivityStatus.Working)]
     [InlineData("pi-idle", AgentActivityStatus.Ready)]
     [InlineData("claude-working", AgentActivityStatus.Working)]

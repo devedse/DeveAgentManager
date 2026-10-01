@@ -7,6 +7,7 @@
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page">
     <PageHeader Title="Dashboard" Subtitle="Your coding agents and the machines they run on.">
         <Actions>
+            <MudButton Href="activity" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.MonitorHeart">Agent activity</MudButton>
             <MudButton Variant="Variant.Outlined" Color="Color.Default" StartIcon="@Icons.Material.Rounded.AddToQueue" OnClick="NewRunnerAsync">New Runner</MudButton>
             <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
         </Actions>
@@ -132,6 +133,7 @@
 </MudContainer>
 
 @code {
+    protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
     private ManagerInfoDto? _info;
     private List<RunnerDto> _runners = [];
     private List<AgentDto> _agents = [];

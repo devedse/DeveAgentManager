@@ -16,6 +16,9 @@ public abstract class LiveComponent : ComponentBase, IDisposable
 
     private int _reloadPending;
     private bool _disposed;
+    private readonly CancellationTokenSource _refreshStop = new();
+
+    protected virtual TimeSpan? RefreshInterval => null;
 
     [Inject]
     protected LiveUpdates Live { get; set; } = default!;
@@ -39,6 +42,17 @@ public abstract class LiveComponent : ComponentBase, IDisposable
         Live.Reconnected += OnReconnected;
         await SafeLoadAsync();
         Loaded = true;
+        if (RefreshInterval is { } interval) _ = RefreshPeriodicallyAsync(interval);
+    }
+
+    private async Task RefreshPeriodicallyAsync(TimeSpan interval)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(interval);
+            while (await timer.WaitForNextTickAsync(_refreshStop.Token)) await ReloadAsync();
+        }
+        catch (OperationCanceledException) when (_refreshStop.IsCancellationRequested) { }
     }
 
     protected Task ReloadAsync() => InvokeAsync(async () =>
@@ -94,6 +108,7 @@ public abstract class LiveComponent : ComponentBase, IDisposable
     public virtual void Dispose()
     {
         _disposed = true;
+        _refreshStop.Cancel();
         Live.Changed -= OnManagerEvent;
         Live.Reconnected -= OnReconnected;
         GC.SuppressFinalize(this);

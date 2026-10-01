@@ -6,6 +6,8 @@
         </MudBadge>
     </ActivatorContent>
     <ChildContent>
+        <MudMenuItem Href="activity" Icon="@Icons.Material.Rounded.MonitorHeart">View all agent statuses</MudMenuItem>
+        <MudDivider />
         @if (_items.Count == 0)
         {
             <MudMenuItem Disabled="true">Nothing needs attention</MudMenuItem>

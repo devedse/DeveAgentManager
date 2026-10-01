@@ -36,6 +36,7 @@
 </MudContainer>
 
 @code {
+    protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
     private List<AgentDto> _agents = [];
     private string? _search;
     private string? _filter = "all";

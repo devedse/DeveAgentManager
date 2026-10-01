@@ -209,7 +209,7 @@ public sealed class RunnerMonitor(
                 if (runner.State == RunnerState.Ready && runner.Agents.Count > 0)
                 {
                     try { await agents.RefreshRunnerAsync(runner, ct); }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
                         logger.LogWarning(ex, "Could not observe terminal state for runner {Runner}", runner.Name);
                         await agents.MarkObservationUnavailableAsync(runner.Id, ct);
