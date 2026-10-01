@@ -38,6 +38,11 @@ public static class UsageLimitParser
         var marker = Match(message, @"(?:try again at|will reset at|\bresets|continuing automatically at)\s+(?<reset>.+)$");
         if (!marker.Success) return new(message, null, processTimeZone, native, "No unambiguous reset time was found. Choose a reset date and time or a continuation duration.");
         var reset = marker.Groups["reset"].Value.Split('·')[0].Trim().TrimEnd('.');
+        // Claude can append a subscription action on the same or a wrapped line. It is not part of
+        // the reset timestamp. Keep it in Message, but remove only this known suffix when parsing.
+        if (harness == "claude")
+            reset = Regex.Replace(reset, @"\s*/\s*upgrade\s+to increase your usage limit\.?$", "",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)).Trim();
         var zoneMatch = Match(reset, @"\s*\((?<zone>[^()]+)\)$");
         var zoneId = zoneMatch.Success ? zoneMatch.Groups["zone"].Value.Trim() : processTimeZone;
         if (zoneMatch.Success) reset = reset[..zoneMatch.Index].Trim();

@@ -154,6 +154,26 @@ public sealed class AgentContinuationTests
     }
 
     [Fact]
+    public async Task RefreshRepairsPreviouslyUnparsedResetWithoutANewLimitMessage()
+    {
+        await using var rig = await Rig.Create();
+        await using (var db = rig.Factory.CreateDbContext())
+            await db.Agents.Where(a => a.Id == rig.Id).ExecuteUpdateAsync(s => s.SetProperty(a => a.HarnessId, "claude"), Ct);
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.Claude(
+            "└ You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam) /upgrade to increase your usage limit.") };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var detected = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        await using (var db = rig.Factory.CreateDbContext())
+            await db.AgentLimits.Where(l => l.AgentId == rig.Id).ExecuteUpdateAsync(s =>
+                s.SetProperty(l => l.ResetAt, (DateTime?)null).SetProperty(l => l.Detail, "Previously unparsed"), Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var repaired = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal(detected.DetectedAt, repaired.DetectedAt);
+        Assert.Equal(new DateTime(2026, 10, 4, 1, 0, 0, DateTimeKind.Utc), repaired.ResetAt);
+        Assert.Null(repaired.Detail);
+    }
+
+    [Fact]
     public async Task RelativeScheduleUsesManagerClockAndSendsAfterExactDuration()
     {
         await using var rig = await Rig.Create();

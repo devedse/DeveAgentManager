@@ -193,6 +193,13 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                 row.Status = "Detected";
                 row.Detail = parsed.Detail;
             }
+            // A parser update can resolve an already-detected message without changing its text.
+            // Repair only an unresolved detection, never a chosen reset or an armed schedule.
+            if (row.Status == "Detected" && row.ResetAt is null && parsed.ResetAt is not null)
+            {
+                row.ResetAt = parsed.ResetAt;
+                row.Detail = parsed.Detail;
+            }
             row.NativeAutoContinue = parsed.NativeAutoContinue;
         }
         if (db.ChangeTracker.HasChanges())
