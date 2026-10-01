@@ -130,6 +130,20 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
     }
 
     [Fact]
+    public async Task ManualScheduleDoesNotRequireADetectedLimitTimestamp()
+    {
+        var client = await SignedInAsync();
+        client.DefaultRequestHeaders.Add(ApiHeaders.Request, "1");
+        var path = $"/api/agents/{Guid.NewGuid()}/limit/continue";
+        var manual = await client.PostAsJsonAsync(path, new ScheduleContinueRequest(ContinueAfterMinutes: 1, Manual: true), ApiJson.Options);
+        Assert.Equal(HttpStatusCode.NotFound, manual.StatusCode);
+        Assert.Contains("Agent not found", await manual.Content.ReadAsStringAsync());
+        var detected = await client.PostAsJsonAsync(path, new ScheduleContinueRequest(ContinueAfterMinutes: 1), ApiJson.Options);
+        Assert.Equal(HttpStatusCode.BadRequest, detected.StatusCode);
+        Assert.Contains("Review the current usage limit", await detected.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task Changes_FromAnotherOrigin_AreRefused()
     {
         var client = await SignedInAsync();

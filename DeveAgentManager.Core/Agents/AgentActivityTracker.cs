@@ -47,18 +47,21 @@ public static class AgentActivityTracker
         var reason = detection.Reason;
         // Readiness and completion are independent: a recognized idle composer needs no response
         // fingerprint. Only confirmed completion evidence can produce a Finished notification.
-        if (!changedProcess && previous.Status == AgentActivityStatus.Working && status is AgentActivityStatus.Ready or AgentActivityStatus.Unknown)
+        if (status is AgentActivityStatus.Ready or AgentActivityStatus.Unknown)
         {
             var pendingSince = observation.Pending == status && (status != AgentActivityStatus.Ready || observation.PendingCompletion == fingerprint) ? observation.PendingSince ?? now : now;
             observation = observation with { Pending = status, PendingSince = pendingSince, PendingCompletion = fingerprint };
             var delay = status == AgentActivityStatus.Ready ? TimeSpan.FromSeconds(5) : TimeSpan.FromSeconds(10);
-            if (now - pendingSince < delay)
+            if (!changedProcess && previous.Status == AgentActivityStatus.Working && now - pendingSince < delay)
             { status = AgentActivityStatus.Working; reason = "The live activity indicator changed; waiting for a stable observation."; }
         }
         else observation = observation with { Pending = null, PendingSince = null };
-        if (detection.Status == AgentActivityStatus.Working) observation = observation with { TurnObserved = true };
+        if (detection.Status == AgentActivityStatus.Working)
+            observation = observation with { TurnObserved = true,
+                LastCompletion = !observation.TurnObserved && fingerprint is not null ? fingerprint : observation.LastCompletion };
         var completed = !changedProcess && status == AgentActivityStatus.Ready && observation.TurnObserved
-            && fingerprint is not null && fingerprint != observation.LastCompletion;
+            && fingerprint is not null && fingerprint != observation.LastCompletion
+            && observation.PendingSince is { } stableSince && now - stableSince >= TimeSpan.FromSeconds(5);
         var meaningfulChange = changedProcess || status != previous.Status || detection.QuestionWaiting != previous.QuestionWaiting
             || reason != previous.Reason || detection.Rule != previous.Rule || completed;
         var sequence = previous.Sequence + (meaningfulChange ? 1 : 0);
@@ -66,7 +69,7 @@ public static class AgentActivityTracker
             changedProcess || status != previous.Status ? now : previous.Since, sequence,
             status == AgentActivityStatus.Working && detection.QuestionWaiting,
             completed ? now : previous.CompletedAt, completed ? sequence : previous.CompletionSequence, agent.SeenCompletionSequence);
-        if (status == AgentActivityStatus.Ready && fingerprint is not null)
+        if (status == AgentActivityStatus.Ready && fingerprint is not null && (completed || !observation.TurnObserved))
             observation = observation with { LastCompletion = fingerprint, TurnObserved = false, Pending = null, PendingSince = null };
         observation = observation with { Snapshot = snapshot };
         agent.ActivityJson = JsonSerializer.Serialize(observation);

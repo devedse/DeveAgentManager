@@ -10,7 +10,7 @@ const base=process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
 await context.request.post(base+'/account/login',{form:{username:'admin',password:process.env.DAM_TEST_PASSWORD ?? 'preview-test-only',returnUrl:'/'}});
 const info=await (await context.request.get(base+'/api/info')).json();
 const id='00000000-0000-0000-0000-000000000001', now=new Date().toISOString();
-let seen=[], schedules=[];
+let seen=[], schedules=[], limitStatus='Detected', limitDetail=null;
 const activity={status:'Ready',reason:"Codex returned a response and its prompt is ready.",rule:'codex/codex-ready-prompt · composer and latest response',evidence:'• done',observedAt:now,since:now,sequence:5,questionWaiting:false,completedAt:now,completionSequence:5,seenCompletionSequence:0,unseenCompletion:true};
 const agent={id,runnerId:'00000000-0000-0000-0000-000000000002',runnerName:'runner-01',runnerState:'Ready',runnerHarnessIds:['codex','claude'],runnerToolIds:[],name:'Example agent',harnessId:'codex',workingDirectory:'/work/example',state:'Running',accountName:'Personal',createdAt:now,updatedAt:now,working:false,activity,lastAssistantMessageAt:now};
 const runner={id:agent.runnerId,name:'runner-01',providerId:'proxmox',kind:'Headless',state:'Ready',host:'10.0.0.2',sshPort:22,username:'test',cores:4,memoryMb:8192,diskGb:64,harnessIds:['codex','claude'],toolIds:[],agents:[agent],createdAt:now,updatedAt:now,status:{powerState:'Running',cpuUsage:18,memoryUsedBytes:4294967296,memoryTotalBytes:8589934592,diskUsedBytes:21474836480,diskTotalBytes:68719476736}};
@@ -22,7 +22,7 @@ await page.route('**/api/**',async route=>{
  else if(path===`/api/agents/${id}/limit/continue`){schedules.push(route.request().postDataJSON());return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}/seen`){seen.push(route.request().postDataJSON());activity.unseenCompletion=false;activity.seenCompletionSequence=5;return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}`)body=agent;
- else if(path===`/api/agents/${id}/limit`)body=agent.harnessId==='claude'?{message:"You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)",timeZoneId:'Europe/Amsterdam',detectedAt:now,resetAt:'2026-10-04T01:00:00Z',status:'Detected',nativeAutoContinue:false}:null;
+ else if(path===`/api/agents/${id}/limit`)body=agent.harnessId==='claude'?{message:"You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)",timeZoneId:'Europe/Amsterdam',detectedAt:now,resetAt:'2026-10-04T01:00:00Z',status:limitStatus,detail:limitDetail,nativeAutoContinue:false}:null;
  else if(path==='/api/agents')body=[agent];
  else if(path.includes('/session'))body=null;
  else if(path.includes('/viewers'))body=[];
@@ -35,6 +35,7 @@ await page.route('**/api/**',async route=>{
  else return route.continue();
  await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
 });
+console.log('Checking activity overview');
 await page.goto(base+'/activity');
 await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor({timeout:60000});
 await page.getByText(activity.reason,{exact:true}).waitFor();
@@ -74,6 +75,17 @@ assert.equal(seen.length,0,'unfocused terminal acknowledged completion');
 await page.evaluate(()=>{document.hasFocus=()=>true;});
 await page.waitForTimeout(5500);
 assert.deepEqual(seen,[{completionSequence:5}]);
+console.log('Checking manual schedule');
+// No limit is required for an explicit manual test.
+await page.getByRole('button',{name:'Schedule continue',exact:true}).click();
+await page.getByText('Manual continuation — no usage limit is required.',{exact:true}).waitFor();
+assert.equal(await page.getByRole('spinbutton',{name:'Continue in',exact:true}).inputValue(),'1');
+await page.locator('.mud-dialog').getByRole('button',{name:'Schedule continue',exact:true}).click();
+await page.waitForTimeout(300);
+assert.equal(schedules[0].manual,true);
+assert.equal(schedules[0].continueAfterMinutes,1);
+schedules=[];
+console.log('Checking detected limits and outcomes');
 // Claude limit UI, including the phone toolbar.
 agent.harnessId='claude';activity.status='UsageLimited';activity.reason='The harness has reached its usage allowance.';activity.rule='claude/usage-limit · current error';
 await page.setViewportSize({width:390,height:844});
@@ -97,6 +109,15 @@ await page.getByRole('spinbutton',{name:'Continue in',exact:true}).fill('5');
 await page.getByRole('button',{name:'Schedule continue',exact:true}).click();
 await page.waitForTimeout(300);
 assert.equal(schedules[1].continueAfterMinutes,5,'duration must be sent to the Manager for calculation using its clock');
+for (const [status,hint] of [['Sent','Continue submitted; view result'],['Cancelled','Continue cancelled; view reason'],['Uncertain','Continue delivery uncertain; check the terminal']]) {
+ limitStatus=status; limitDetail='Result of scheduled attempt: '+status+'.';
+ await page.getByRole('button',{name:hint,exact:true}).waitFor({timeout:15000});
+ await page.getByRole('button',{name:hint,exact:true}).click();
+ await page.getByText(limitDetail,{exact:true}).waitFor();
+ assert.equal(await page.getByRole('button',{name:'Schedule continue',exact:true}).count(),status==='Cancelled'?1:0);
+ await page.getByRole('button',{name:'Close',exact:true}).last().click();
+}
+
 for (const path of ['/', '/runners', `/runners/${runner.id}`]) {
  await page.goto(base+path);
  await page.locator('.usage-label').filter({hasText:'Disk'}).first().waitFor();

@@ -1,28 +1,38 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
 
-@if (_limit is not null)
-{
-    <MudTooltip Text="@Hint">
-        <MudIconButton Icon="@(_limit.Status == "Scheduled" ? Icons.Material.Rounded.Schedule : Icons.Material.Rounded.HourglassBottom)"
-                       Class="@(_limit.Status == "Detected" && !_limit.NativeAutoContinue ? "limit-alert-blink" : "")"
-                       Color="Color.Warning" Size="Size.Small" OnClick="OpenAsync" aria-label="@Hint" />
-    </MudTooltip>
-}
+<MudTooltip Text="@Hint">
+    <MudIconButton Icon="@StatusIcon"
+                   Class="@(_limit?.Status == "Detected" && !_limit.NativeAutoContinue ? "limit-alert-blink" : "")"
+                   Color="@(_limit is null ? Color.Default : Color.Warning)" Size="Size.Small" OnClick="OpenAsync" aria-label="@Hint" />
+</MudTooltip>
 
 @code {
     [Parameter] public Guid AgentId { get; set; }
     private AgentLimitDto? _limit;
-    private string Hint => _limit?.NativeAutoContinue == true ? "Usage limit: Claude will continue automatically"
+    protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
+    private string StatusIcon => _limit?.Status switch
+    {
+        "Scheduled" => Icons.Material.Rounded.Schedule,
+        "Sending" => Icons.Material.Rounded.Sync,
+        "Sent" => Icons.Material.Rounded.CheckCircle,
+        "Cancelled" => Icons.Material.Rounded.EventBusy,
+        "Uncertain" => Icons.Material.Rounded.ErrorOutline,
+        _ => Icons.Material.Rounded.HourglassBottom
+    };
+    private string Hint => _limit is null ? "Schedule continue" : _limit?.NativeAutoContinue == true ? "Usage limit: Claude will continue automatically"
         : _limit?.Status == "Scheduled" ? $"Continue scheduled for {_limit.ContinueAt:yyyy-MM-dd HH:mm} UTC"
-        : "Usage limit: schedule continue after reset";
+        : _limit?.Status == "Sending" ? "Sending scheduled continue"
+        : _limit?.Status == "Sent" ? "Continue submitted; view result"
+        : _limit?.Status == "Cancelled" ? "Continue cancelled; view reason"
+        : _limit?.Status == "Uncertain" ? "Continue delivery uncertain; check the terminal"
+        : _limit?.Manual == true ? "Schedule continue" : "Usage limit: schedule continue after reset";
     protected override bool IsRelevant(ManagerEvent change) => change.AgentId == AgentId;
     protected override async Task LoadAsync() => _limit = await Api.GetAgentLimitAsync(AgentId);
     private async Task OpenAsync()
     {
-        if (_limit is null) return;
-        var dialog = await Dialogs.ShowAsync<ContinueAfterLimitDialog>("Continue after usage limit", new DialogParameters
-        { [nameof(ContinueAfterLimitDialog.AgentId)] = AgentId, [nameof(ContinueAfterLimitDialog.Limit)] = _limit },
+        var dialog = await Dialogs.ShowAsync<ContinueAfterLimitDialog>(_limit is null || _limit.Manual ? "Schedule continue" : "Continue after usage limit", new DialogParameters
+        { [nameof(ContinueAfterLimitDialog.AgentId)] = AgentId, [nameof(ContinueAfterLimitDialog.Limit)] = _limit ?? new AgentLimitDto("Manual continuation — no usage limit is required.", null, DateTime.UtcNow, null, null, "Detected", null, false, true) },
             new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
         await dialog.Result;
         await ReloadAsync();

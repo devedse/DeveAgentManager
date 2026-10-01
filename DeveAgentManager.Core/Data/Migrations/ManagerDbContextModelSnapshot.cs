@@ -180,6 +180,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<DateTime>("DetectedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("Manual")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Message")
                         .IsRequired()
                         .HasColumnType("TEXT");

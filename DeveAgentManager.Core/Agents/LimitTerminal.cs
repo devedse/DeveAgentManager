@@ -41,7 +41,7 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
             prompt=re.match(r'^(\s*[›❯] ?)(.*)$',line)
             # capture-pane trims the trailing space of an empty prompt, although the cursor is still after it.
             empty=bool(prompt and int(cx)<=len(prompt[1].rstrip())+1 and prompt[2].strip() in ('','Ask Codex to do anything'))
-            return dict(Screen=screen,Identity=identity,TimeZone=zone,InputEmpty=empty,Hash=hashlib.sha256(screen.encode()).hexdigest())
+            return dict(Screen=screen,Identity=identity,TimeZone=zone,InputEmpty=empty,InputText=prompt[2] if prompt else None,Hash=hashlib.sha256(screen.encode()).hexdigest())
         state=snapshot()
         """;
 
@@ -68,8 +68,17 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
                 print('CHANGED')
             else:
                 pane=state['Identity'].split(':')[0]
-                tmux('send-keys','-t',pane,'-l','continue',';','send-keys','-t',pane,'Enter')
-                print('SENT')
+                tmux('send-keys','-t',pane,'-l','continue')
+                # Codex's paste detection can absorb an Enter delivered in the same input burst.
+                # Wait for the text to settle, then confirm nobody edited or replaced the prompt.
+                import time
+                time.sleep(0.35)
+                ready=snapshot()
+                if ready['Identity']!=expected['Identity'] or ready['InputText']!='continue':
+                    print('CHANGED')
+                else:
+                    tmux('send-keys','-t',pane,'Enter')
+                    print('SENT')
             """;
         return Script(session, code);
     }

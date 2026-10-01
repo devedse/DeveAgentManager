@@ -42,7 +42,7 @@
         <MudIcon Icon="@Icons.Material.Rounded.AttachFile" Size="Size.Small" />
     </button>
     <button type="button" class="terminal-key @(_touchInput ? "terminal-key-on" : "")"
-            title="@(_touchInput ? "Phone keyboard fix is on: autocorrect, swipe typing and Backspace work as in other apps. Tap to type straight into the terminal." : "Phone keyboard fix is off. Tap to turn it on.")"
+            title="@(_touchInput ? "Phone keyboard input is on. Tap to use direct terminal input." : "Direct terminal input is on. Tap to enable phone keyboard input.")"
             aria-label="Phone keyboard fix" aria-pressed="@(_touchInput ? "true" : "false")"
             @onclick="ToggleTouchInputAsync" @onclick:preventDefault="true">
         <MudIcon Icon="@(_touchInput ? Icons.Material.Rounded.Keyboard : Icons.Material.Rounded.KeyboardHide)" Size="Size.Small" />

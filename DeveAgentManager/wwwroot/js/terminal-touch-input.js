@@ -14,7 +14,8 @@
 //
 // The field always starts with a few spaces (the "cushion"), so Backspace on an empty line still deletes something
 // the keyboard can see; deleting into the cushion sends Backspaces for text that was on the line before. The cushion
-// is refilled afterwards.
+// is refilled after deleting padding alone. If an IME strips it while editing a word, it stays virtual: rewriting
+// the field behind the keyboard's back would make its next replacement or Backspace use stale context.
 (function (root) {
     const CUSHION = 8;
     const BACKSPACE = "\x7f";
@@ -110,7 +111,9 @@
         let resetPending = false;
         let writing = false;
         let composing = false;
-        let virtualPadding = 0; // Cushion stripped by an IME, retained logically until composition finishes.
+        let virtualPadding = 0; // Cushion stripped by an IME; keep it virtual without rewriting the keyboard's context.
+        let disposed = false;
+        let compositionTimer;
 
         function write(text, caretAtEnd = true) {
             writing = true;
@@ -146,21 +149,22 @@
         }
 
         function handleChange(event) {
-            if (writing || !enabled) {
+            if (writing || !enabled || disposed) {
                 return;
             }
 
             // IMEs can replace their field context along with the corrected word. The leading cushion was never
             // sent to the terminal: losing it during an insertion must not erase text from an earlier draft.
-            // Explicit deletion still consumes the cushion, so Backspace can reach text predating this field.
-            if (event?.inputType?.startsWith("insert") && before.slice(0, CUSHION).join("") === cushion) {
+            // Backspace in a padding-only field still reaches text predating this field.
+            if (before.slice(0, CUSHION).join("") === cushion) {
                 let spaces = 0;
                 while (spaces < box.value.length && box.value[spaces] === " ") spaces++;
-                if (spaces < CUSHION) {
-                    const missing = CUSHION - spaces;
-                    virtualPadding = missing;
-                } else {
+                if (spaces >= CUSHION) {
                     virtualPadding = 0;
+                } else if (virtualPadding > 0 || before.length > CUSHION || event?.inputType?.startsWith("insert")) {
+                    // Deleting or replacing tracked text must never delete our synthetic prefix. Only an
+                    // explicit Backspace in a padding-only field can reach an earlier, untracked draft.
+                    virtualPadding = CUSHION - spaces;
                 }
             }
 
@@ -199,7 +203,7 @@
             while (spaces < text.length && text[spaces] === " ") {
                 spaces++;
             }
-            if (spaces < CUSHION && !composing) {
+            if (spaces < CUSHION && !composing && virtualPadding === 0) {
                 const start = box.selectionStart;
                 const end = box.selectionEnd;
                 const missing = CUSHION - spaces;
@@ -221,13 +225,23 @@
         box.addEventListener("compositionstart", () => composing = true);
         box.addEventListener("compositionend", () => {
             composing = false;
-            // After the input event of the final composition; also empties the field when a reset is waiting.
-            setTimeout(handleChange, 0);
+            // After the input event of the final composition; only an explicit pending reset rewrites the field.
+            clearTimeout(compositionTimer);
+            compositionTimer = setTimeout(handleChange, 0);
+        });
+
+        box.addEventListener("beforeinput", event => {
+            // Once the IME removed the physical cushion, an empty field has no DOM edit to diff.
+            if (enabled && !disposed && box.value === "" && virtualPadding === CUSHION
+                && event.inputType === "deleteContentBackward") {
+                event.preventDefault();
+                send(BACKSPACE);
+            }
         });
 
         box.addEventListener("input", handleChange);
 
-        document.addEventListener("selectionchange", () => {
+        const selectionChanged = () => {
             // The caret was moved without typing (arrow keys, dragging over the space bar): move the terminal's cursor.
             if (!enabled || writing || document.activeElement !== box || " ".repeat(virtualPadding) + box.value !== before.join("")) {
                 return;
@@ -237,7 +251,8 @@
             if (data) {
                 send(data);
             }
-        });
+        };
+        document.addEventListener("selectionchange", selectionChanged);
 
         box.addEventListener("keydown", event => {
             if (!enabled || event.keyCode === 229) {
@@ -293,11 +308,12 @@
 
         // Tapping the terminal focuses xterm.js's own textarea; hand the keyboard to ours instead.
         const xtermInput = terminal.textarea;
-        xtermInput?.addEventListener("focus", () => {
+        const redirectFocus = () => {
             if (enabled) {
                 box.focus({ preventScroll: true });
             }
-        });
+        };
+        xtermInput?.addEventListener("focus", redirectFocus);
 
         return {
             get enabled() {
@@ -325,6 +341,15 @@
                 } else {
                     terminal.focus();
                 }
+            },
+
+            dispose() {
+                disposed = true;
+                enabled = false;
+                clearTimeout(compositionTimer);
+                document.removeEventListener("selectionchange", selectionChanged);
+                xtermInput?.removeEventListener("focus", redirectFocus);
+                box.remove();
             },
         };
     }

@@ -16,8 +16,14 @@ public static class AgentScreenDetector
     private static string? Find(string text, string pattern) => Regex.Match(text, pattern,
         RegexOptions.Multiline | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)) is { Success: true } m ? m.Value.Trim() : null;
     private static string Evidence(string value) => value.Length <= 240 ? value : value[..240] + "…";
+    private const string PromptPattern = @"^\s*(?:[›❯](?:\s|$)|›[⠁⠂⠄⠈⠐⠠⡀⢀])";
+    private static string? CodexCompletion(string text) => text.Split('\n').LastOrDefault(line =>
+        Has(line, @"^\s*Worked for [0-9][^\n]*·\s*[0-9]{1,2}:[0-9]{2}[^\n]*$"))?.Trim();
     private static readonly Rule[] Rules =
     [
+        new("codex-transcript-viewer", 110, "viewer controls", c => c.Harness == "codex"
+            && Has(c.After, "↑/↓ to scroll") && Has(c.After, "q to quit") && Has(c.After, "pgup/pgdn|home/end")
+            ? new(AgentActivityStatus.Unknown, "Codex is showing conversation history; this view does not establish live activity.", "") : null),
         new("usage-limit", 100, "current error", c =>
             UsageLimitParser.Parse(c.Harness, string.Join('\n', c.Lines), "UTC", c.Now) is { } limit
                 ? new(AgentActivityStatus.UsageLimited, "The harness has reached its usage allowance.", "", Evidence(limit.Message)) : null),
@@ -33,8 +39,18 @@ public static class AgentScreenDetector
 
     public static AgentScreenDetection Detect(string harness, string screen, DateTime now)
     {
+        try { return DetectScreen(harness, screen, now); }
+        catch (RegexMatchTimeoutException)
+        {
+            // A pathological screen must not discard the other agents in the Runner's observation batch.
+            return new(AgentActivityStatus.Unknown, "Status matching timed out for this screen; it will be checked again.", $"{harness}/matching-timeout");
+        }
+    }
+
+    private static AgentScreenDetection DetectScreen(string harness, string screen, DateTime now)
+    {
         var lines = screen.Replace('\u00a0', ' ').Split('\n').TakeLast(100).ToArray();
-        var prompt = Array.FindLastIndex(lines, l => Has(l, @"^\s*[›❯](?:\s|$)"));
+        var prompt = Array.FindLastIndex(lines, l => Has(l, PromptPattern));
         var before = string.Join('\n', prompt >= 0 ? lines.Take(prompt) : lines);
         var after = prompt >= 0 ? string.Join('\n', lines.Skip(prompt + 1)) : "";
         var tail = string.Join('\n', lines.Where(l => !string.IsNullOrWhiteSpace(l)).TakeLast(15));
@@ -69,18 +85,19 @@ public static class AgentScreenDetector
     {
         if (c.Harness != "codex" || c.Prompt < 0) return null;
         var lines = c.Before.Split('\n');
-        var start = Array.FindLastIndex(lines, l => Has(l, @"^\s*[•◦] [^\n]+ \([0-9]"));
+        var start = Array.FindLastIndex(lines, l => Has(l, @"^\s*(?:[•◦]\s+)?[^\s›❯•◦■✗✓─][^\n]+ \([0-9]"));
         if (start < 0) return null;
         var line = lines[start].Trim();
         // A later tool result, response or submitted prompt invalidates a historical activity line.
-        if (lines.Skip(start + 1).Any(l => Has(l, @"^\s*[›❯■✗✓]|^\s*Worked for [0-9]|^\s*[•◦] (?!Queued follow-up inputs|Messages to be submitted)"))) return null;
-        var knownTruncated = Has(line, @"^[•◦] (?:Working|Compacting context|Waiting for background terminal) \([0-9]");
-        var timed = Has(line, @"^[•◦] [^\n]+ \((?:[0-9]+[hm] )*[0-9]+s(?: • [^\n]*to interrupt)\)(?: · [^\n]*)?$");
+        if (lines.Skip(start + 1).Any(l => Has(l, @"^\s*(?:[›❯](?![⠁⠂⠄⠈⠐⠠⡀⢀])|[■✗✓])|^\s*Worked for [0-9]|^\s*[•◦] (?!Queued follow-up inputs|Messages to be submitted)"))) return null;
+        var knownTruncated = Has(line, @"^(?:[•◦]\s+)?(?:Working|Compacting context|Waiting for background terminal) \([0-9]");
+        var timed = Has(line, @"^(?:[•◦]\s+)?[^\n]+ \((?:[0-9]+[hm] )*[0-9]+s(?: • [^\n]*to interrupt)?\)(?: · [^\n]*)?$");
         if (!knownTruncated && !timed) return null;
-        if (Has(line, @"^.*Reconnect failed")) return null;
+        if (Has(line, @"^(?:[•◦]\s+)?(?:Reconnect failed|Compacted context|Done\b|Completed\b|Finished\b|Ran |Edited |Added |Deleted |Updated |Failed \(exit)")) return null;
         var waiting = Has(string.Join('\n', lines.Skip(start)), @"(?i)(Queued follow-up inputs|shift\+← to answer|shift\+left to answer)");
         return new(AgentActivityStatus.Working, line.Contains("Compacting context") ? "Codex is compacting context."
-            : line.Contains("Waiting for background terminal") ? "Codex is waiting for a background command." : "Codex is working.", "", Evidence(line), waiting);
+            : line.Contains("Waiting for background terminal") ? "Codex is waiting for a background command." : "Codex is working.", "", Evidence(line), waiting,
+            CompletionEvidence: CodexCompletion(c.Before));
     }
 
     private static AgentScreenDetection? ClaudeWorking(Context c)
@@ -98,7 +115,7 @@ public static class AgentScreenDetector
     private static string AfterLastSubmitted(Context c)
     {
         var lines = c.Before.Split('\n');
-        var submitted = Array.FindLastIndex(lines, l => Has(l, @"^\s*[›❯](?:\s|$)"));
+        var submitted = Array.FindLastIndex(lines, l => Has(l, PromptPattern));
         return string.Join('\n', lines.Skip(submitted + 1));
     }
 
@@ -106,20 +123,20 @@ public static class AgentScreenDetector
     {
         if (c.Harness != "codex" || c.Prompt < 0) return null;
         var content = AfterLastSubmitted(c);
-        var completed = Find(content, @"^\s*Worked for [0-9][^\n]*·\s*[0-9]{1,2}:[0-9]{2}[^\n]*$");
+        var completed = CodexCompletion(content);
         // The shortcuts hint can disappear while editing or be replaced by warning counters.
         var composerFooter = Has(c.After, @"\? for shortcuts")
             || Has(c.After, @"(?i)^\s*(?:GPT-\S+|o[134](?:-\S+)?)\s+(?:low|medium|high|xhigh|minimal|default)\b");
         if (!composerFooter && completed is null) return null;
         var current = c.Lines[c.Prompt].Trim();
         if (completed is not null)
-            return new(AgentActivityStatus.Ready, "Codex finished its turn and its prompt is ready for input.", "", Evidence(completed), CompletionEvidence: content.Trim());
+            return new(AgentActivityStatus.Ready, "Codex finished its turn and its prompt is ready for input.", "", Evidence(completed), CompletionEvidence: completed);
         if (current != "›" && current != "› Ask Codex to do anything")
             return new(AgentActivityStatus.Ready, "Codex's prompt contains a draft; it is ready for input.", "", Evidence(current));
         var response = Find(content, @"^\s*[•] (?!Ran |Running |Edited |Added |Deleted |Updated |Waiting |Working |Compacting |Queued |The status says |You)[^\n]+$");
         var lastMarker = content.Split('\n').LastOrDefault(l => Has(l, @"^\s*[•›■]"));
         if (response is not null && lastMarker is not null && Has(lastMarker, @"^\s*• (?!Ran |Running |Edited |Added |Deleted |Updated |Waiting |Working |Compacting |Queued |The status says )"))
-            return new(AgentActivityStatus.Ready, "Codex returned a response and its prompt is ready.", "", Evidence(lastMarker), CompletionEvidence: content.Trim());
+            return new(AgentActivityStatus.Ready, "Codex's prompt is ready for input; the visible text alone does not establish a finished turn.", "", Evidence(lastMarker));
         // The initial empty composer is ready, but a submitted prompt without a settled response is ambiguous.
         if (!Has(c.Before, @"^\s*› ") && !Has(c.Before, @"^\s*[•◦■] "))
             return new(AgentActivityStatus.Ready, "Codex's initial prompt is ready.", "", current);

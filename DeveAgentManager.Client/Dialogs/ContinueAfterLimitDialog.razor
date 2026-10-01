@@ -11,14 +11,21 @@
         }
         else if (Limit.Status == "Scheduled")
         {
-            <MudText>Continue is scheduled for <b>@_continueDescription</b> (one minute after reset).</MudText>
-            <MudText Class="mt-2">You can close this page. Using the terminal cancels this schedule.</MudText>
+            <MudText>Continue is scheduled for <b>@_continueDescription</b>.</MudText>
+            @if (Limit.Detail is not null) { <MudAlert Severity="Severity.Info" Class="mt-2">@Limit.Detail</MudAlert> }
+            <MudText Class="mt-2">You can close this page and keep using the terminal. Cancel the schedule here if you no longer want it.</MudText>
+        }
+        else if (Limit.Status is "Sending" or "Uncertain" || (Limit.Status == "Sent" && !Limit.Manual))
+        {
+            <MudAlert Severity="@(Limit.Status == "Uncertain" ? Severity.Warning : Severity.Info)">
+                @(Limit.Status == "Sending" ? "Submitting the scheduled continuation…" : Limit.Detail ?? "Check the terminal for the result of the scheduled continuation.")
+            </MudAlert>
         }
         else
         {
             <MudText Typo="Typo.body2" Class="mb-2">@_resetDescription</MudText>
             @if (Limit.Detail is not null) { <MudAlert Severity="Severity.Info" Class="mb-3">@Limit.Detail</MudAlert> }
-            <MudSwitch T="bool" @bind-Value="_relative" Color="Color.Primary" Label="Continue after a duration" />
+            @if (!Limit.Manual) { <MudSwitch T="bool" @bind-Value="_relative" Color="Color.Primary" Label="Continue after a duration" /> }
             @if (_relative)
             {
                 <div class="limit-schedule-fields">
@@ -37,7 +44,7 @@
                 </div>
                 <MudText Typo="Typo.caption">Your local timezone: @_zone</MudText>
             }
-            <MudText Class="mt-3">The Manager will type and send <b>continue</b> once, @(_relative ? "after this duration" : "one minute after this reset"). It only sends while the same limit is still shown and the prompt is empty.</MudText>
+            <MudText Class="mt-3">The Manager will type and send <b>continue</b> once, @(_relative ? "after this duration" : "one minute after this reset"). If the agent is busy or you have a draft, the schedule stays armed until the prompt is empty and the agent is ready.</MudText>
         }
         @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert> }
     </DialogContent>
@@ -47,7 +54,7 @@
         {
             <MudButton Color="Color.Warning" Disabled="_busy" OnClick="CancelAsync">Cancel scheduled continue</MudButton>
         }
-        else if (!Limit.NativeAutoContinue && Limit.Status is "Detected" or "Cancelled")
+        else if (!Limit.NativeAutoContinue && (Limit.Status is "Detected" or "Cancelled" || (Limit.Manual && Limit.Status == "Sent")))
         {
             <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || !_loaded" OnClick="ScheduleAsync">Schedule continue</MudButton>
         }
@@ -71,6 +78,8 @@
 
     protected override async Task OnInitializedAsync()
     {
+        _relative = Limit.Manual;
+        if (Limit.Manual) { _amount = 1; _resetDescription = "Test a one-time continuation without waiting for a usage limit."; }
         try
         {
             var local = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", Limit.ResetAt ?? DateTime.UtcNow);
@@ -98,7 +107,7 @@
         {
             if (!double.IsFinite(_amount) || _amount < 1 || (_hours ? _amount * 60 : _amount) > 46080)
             { _error = "Enter a duration from one minute up to 32 days."; return; }
-            await RunAsync(() => Api.ScheduleContinueAsync(AgentId, null, Limit.DetectedAt, _hours ? _amount * 60 : _amount));
+            await RunAsync(() => Api.ScheduleContinueAsync(AgentId, null, Limit.Manual ? null : Limit.DetectedAt, _hours ? _amount * 60 : _amount, Limit.Manual));
             return;
         }
         else

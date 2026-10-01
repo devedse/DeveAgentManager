@@ -38,7 +38,7 @@ public sealed class AgentContinuationTests
     [InlineData("working")]
     [InlineData("stopped")]
     [InlineData("native")]
-    public async Task CancelsWhenTheOriginalWaitingStateChanges(string change)
+    public async Task ScheduleSurvivesChangesAndWaitsWhenNotReady(string change)
     {
         await using var rig = await Rig.Create();
         await rig.Service.ScheduleAsync(rig.Id, null, Ct);
@@ -68,16 +68,17 @@ public sealed class AgentContinuationTests
         }
         rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
         await rig.Service.RefreshAsync(rig.Id, Ct);
-        Assert.Equal(0, rig.Terminal.Sends);
-        Assert.NotEqual("Scheduled", (await rig.Service.GetAsync(rig.Id, Ct))?.Status);
+        var ready = change is "restarted" or "changed-limit";
+        Assert.Equal(ready ? 1 : 0, rig.Terminal.Sends);
+        Assert.Equal(ready ? "Sent" : "Scheduled", (await rig.Service.GetAsync(rig.Id, Ct))?.Status);
     }
 
     [Fact]
-    public async Task UserInputCancelsAndUncertainDeliveryIsNeverRetried()
+    public async Task ExplicitCancelAndUncertainDeliveryIsNeverRetried()
     {
         await using var rig = await Rig.Create();
         await rig.Service.ScheduleAsync(rig.Id, null, Ct);
-        await rig.Service.OnUserInputAsync(rig.Id, Ct);
+        await rig.Service.CancelAsync(rig.Id, "Cancelled by you.", Ct);
         Assert.Equal("Cancelled", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
         await rig.Service.ScheduleAsync(rig.Id, null, Ct);
         rig.Terminal.ThrowOnSend = true;
@@ -99,14 +100,14 @@ public sealed class AgentContinuationTests
     }
 
     [Fact]
-    public async Task DoesNotSendLongAfterMissedSchedule()
+    public async Task OverdueScheduleRemainsArmedAndSendsWhenReady()
     {
         await using var rig = await Rig.Create();
         await rig.Service.ScheduleAsync(rig.Id, null, Ct);
         rig.Clock.Utc = rig.Clock.Utc.AddHours(1);
         await rig.Service.RefreshAsync(rig.Id, Ct);
-        Assert.Equal("Cancelled", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
-        Assert.Equal(0, rig.Terminal.Sends);
+        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        Assert.Equal(1, rig.Terminal.Sends);
     }
 
     [Fact]
@@ -159,6 +160,7 @@ public sealed class AgentContinuationTests
         var now = rig.Clock.Utc;
         await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 5);
         Assert.Equal(now.AddMinutes(5).UtcDateTime, (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt);
+        Assert.Equal(now.AddMinutes(2).UtcDateTime, (await rig.Service.GetAsync(rig.Id, Ct))!.ResetAt);
         rig.Clock.Utc = now.AddMinutes(4);
         await rig.Service.RefreshAsync(rig.Id, Ct);
         Assert.Equal(0, rig.Terminal.Sends);
@@ -178,6 +180,104 @@ public sealed class AgentContinuationTests
         Assert.Equal(0, rig.Terminal.Sends);
     }
 
+    [Fact]
+    public async Task ChangedScreenDuringSubmissionWaitsAndRetriesOnlyWhilePromptIsEmpty()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct);
+        rig.Terminal.SendResult = false;
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal("Scheduled", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        rig.Terminal.Screen = rig.Terminal.Screen with { InputEmpty = false };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        rig.Terminal.Screen = rig.Terminal.Screen with { InputEmpty = true };
+        rig.Terminal.SendResult = true;
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        Assert.Equal(2, rig.Terminal.Sends);
+    }
+
+    private static void ReadyWithoutLimit(Rig rig) => rig.Terminal.Screen = rig.Terminal.Screen with
+    { Screen = "› Ask Codex to do anything\nGPT-6 medium · /work/example\n? for shortcuts" };
+
+    [Fact]
+    public async Task ManualScheduleNeedsNoLimit_SurvivesRestart_AndSendsOnce()
+    {
+        await using var rig = await Rig.Create();
+        ReadyWithoutLimit(rig);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1));
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true);
+        Assert.True((await rig.Service.GetAsync(rig.Id, Ct))!.Manual);
+        rig.Service.Dispose(); rig.Service = rig.NewService();
+        rig.Clock.Utc = rig.Clock.Utc.AddSeconds(59);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+        rig.Clock.Utc = rig.Clock.Utc.AddSeconds(1);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        // A new explicit click may start another manual test.
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true);
+        Assert.Equal("Scheduled", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+    }
+
+    [Theory]
+    [InlineData("input")]
+    [InlineData("screen")]
+    [InlineData("process")]
+    [InlineData("stopped")]
+    [InlineData("working")]
+    [InlineData("limit")]
+    public async Task ManualScheduleSurvivesChangesAndWaitsForAnEmptyIdlePrompt(string change)
+    {
+        await using var rig = await Rig.Create();
+        ReadyWithoutLimit(rig);
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true);
+        switch (change)
+        {
+            case "input": rig.Terminal.Screen = rig.Terminal.Screen with { InputEmpty = false }; break;
+            case "screen": rig.Terminal.Screen = rig.Terminal.Screen with { Hash = "changed" }; break;
+            case "process": rig.Terminal.Screen = rig.Terminal.Screen with { Identity = "new" }; break;
+            case "limit": rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.Codex("2:02 PM") }; break;
+            default:
+                await using (var db = rig.Factory.CreateDbContext())
+                {
+                    var agent = await db.Agents.FindAsync([rig.Id], Ct);
+                    agent!.Working = change == "working";
+                    if (change == "stopped") agent.State = AgentState.Stopped;
+                    await db.SaveChangesAsync(Ct);
+                }
+                break;
+        }
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(1);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var ready = change is "screen" or "process" or "limit";
+        Assert.Equal(ready ? 1 : 0, rig.Terminal.Sends);
+        Assert.Equal(ready ? "Sent" : "Scheduled", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        if (change == "input")
+        {
+            rig.Terminal.Screen = rig.Terminal.Screen with { InputEmpty = true };
+            await rig.Service.RefreshAsync(rig.Id, Ct);
+            Assert.Equal(1, rig.Terminal.Sends);
+        }
+    }
+
+    [Fact]
+    public async Task ManualScheduleWaitsForUnclearPromptAndCannotBypassRealLimit()
+    {
+        await using var rig = await Rig.Create();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true));
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = "some unrecognized screen" };
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true);
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(1);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal("Scheduled", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        Assert.Equal(0, rig.Terminal.Sends);
+    }
+
     private sealed class FakeClock : TimeProvider
     {
         public DateTimeOffset Utc = new(2026, 9, 30, 14, 0, 0, TimeSpan.Zero);
@@ -189,12 +289,13 @@ public sealed class AgentContinuationTests
         public LimitScreen Screen = new(UsageLimitParserTests.Codex("2:02 PM"), "pane:pid:start:boot", "UTC", true, "hash");
         public int Sends;
         public bool ThrowOnSend;
+        public bool SendResult = true;
         public Task<LimitScreen> ReadAsync(Agent agent, CancellationToken ct) => Task.FromResult(Screen);
         public Task<bool> SendContinueAsync(Agent agent, LimitScreen expected, CancellationToken ct)
         {
             Sends++;
             if (ThrowOnSend) throw new IOException("Connection lost after sending");
-            return Task.FromResult(true);
+            return Task.FromResult(SendResult);
         }
     }
 

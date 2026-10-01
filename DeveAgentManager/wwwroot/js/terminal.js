@@ -688,6 +688,7 @@
             this.disconnect(id);
             observers.get(id)?.disconnect();
             observers.delete(id);
+            touchInputs.get(id)?.dispose();
             touchInputs.delete(id);
             layouts.delete(id);
             dotnets.delete(id);

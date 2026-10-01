@@ -168,6 +168,74 @@ public class AgentActivityTests
     }
 
     [Theory]
+    [InlineData("Exploring the project (12s)", "› Ask Codex to do anything")]
+    [InlineData("• Exploring the project (12s)", "› a draft")]
+    [InlineData("Exploring the project (1m 12s • ctrl+c to interrupt)", "›⠁a queued draft")]
+    [InlineData("Waiting for background terminal (23m…", "› Ask Codex to do anything")]
+    public void CodexLiveTimersDoNotDependOnBulletOrInterruptHint(string line, string prompt)
+    {
+        var screen = $"{line}\n{prompt}\nGPT-6.1-Sol medium · ~/work/project\n? for shortcuts";
+        Assert.Equal(AgentActivityStatus.Working, AgentScreenDetector.Detect("codex", screen, Now).Status);
+    }
+
+    [Fact]
+    public void TranscriptViewerCannotPublishHistoricalActivity()
+    {
+        var screen = "• Working (12s • esc to interrupt)\n› old input\n? for shortcuts\n↑/↓ to scroll · pgup/pgdn to page · home/end to jump · q to quit · esc to edit prev";
+        Assert.Equal(AgentActivityStatus.Unknown, AgentScreenDetector.Detect("codex", screen, Now).Status);
+    }
+
+    [Fact]
+    public void AssistantCommentaryIsNotCompletionEvidence()
+    {
+        var screen = "• I'll inspect those files now.\n› Ask Codex to do anything\n? for shortcuts";
+        Assert.Null(AgentScreenDetector.Detect("codex", screen, Now).CompletionEvidence);
+    }
+
+    [Fact]
+    public void CompletionAfterUnknownStillNeedsStableEvidence()
+    {
+        var agent = NewAgent();
+        AgentActivityTracker.Apply(agent, Working, "process", Now);
+        var unknown = new AgentScreenDetection(AgentActivityStatus.Unknown, "redraw", "unknown");
+        AgentActivityTracker.Apply(agent, unknown, "process", Now.AddSeconds(5));
+        AgentActivityTracker.Apply(agent, unknown, "process", Now.AddSeconds(15));
+        AgentActivityTracker.Apply(agent, Ready(), "process", Now.AddSeconds(20));
+        Assert.False(AgentActivityTracker.GetDto(agent, Now.AddSeconds(20)).UnseenCompletion);
+        AgentActivityTracker.Apply(agent, Ready(), "process", Now.AddSeconds(25));
+        Assert.True(AgentActivityTracker.GetDto(agent, Now.AddSeconds(25)).UnseenCompletion);
+    }
+
+    [Fact]
+    public void OldCompletionVisibleDuringWorkCannotCompleteTheNewTurn()
+    {
+        var agent = NewAgent();
+        const string previous = "• Old response\nWorked for 10s · 10:00\n";
+        const string composer = "› Ask Codex to do anything\n? for shortcuts";
+        var working = AgentScreenDetector.Detect("codex", previous + "• Working (5s • esc to interrupt)\n" + composer, Now);
+        AgentActivityTracker.Apply(agent, working, "process", Now);
+        var oldReady = AgentScreenDetector.Detect("codex", previous + composer, Now);
+        AgentActivityTracker.Apply(agent, oldReady, "process", Now.AddSeconds(5));
+        AgentActivityTracker.Apply(agent, oldReady, "process", Now.AddSeconds(10));
+        Assert.False(AgentActivityTracker.GetDto(agent, Now.AddSeconds(10)).UnseenCompletion);
+        var newReady = AgentScreenDetector.Detect("codex", previous.Replace("10:00", "10:01") + composer, Now);
+        AgentActivityTracker.Apply(agent, newReady, "process", Now.AddSeconds(15));
+        Assert.False(AgentActivityTracker.GetDto(agent, Now.AddSeconds(15)).UnseenCompletion);
+        AgentActivityTracker.Apply(agent, newReady, "process", Now.AddSeconds(20));
+        Assert.True(AgentActivityTracker.GetDto(agent, Now.AddSeconds(20)).UnseenCompletion);
+    }
+
+    [Fact]
+    public void CompletionEvidenceDoesNotChangeWhenTheViewportReflows()
+    {
+        var screen = Screen("codex-idle-draft-warnings");
+        var before = AgentScreenDetector.Detect("codex", screen, Now);
+        var after = AgentScreenDetector.Detect("codex", screen.Replace("Fixed in 1.0.63. Update the Manager\n  to that version", "Fixed in 1.0.63.\n  Update the Manager to that version"), Now);
+        Assert.NotNull(before.CompletionEvidence);
+        Assert.Equal(before.CompletionEvidence, after.CompletionEvidence);
+    }
+
+    [Theory]
     [InlineData("› a draft")]
     [InlineData("› Ask Codex to do anything")]
     [InlineData("›")]

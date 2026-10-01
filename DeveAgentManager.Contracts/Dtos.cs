@@ -6,8 +6,8 @@ namespace DeveAgentManager.Contracts;
 public sealed record TimeZoneRequest(string? TimeZoneId);
 public sealed record TimeZoneConfigDto(string DefaultTimeZoneId, string? OverrideTimeZoneId);
 public sealed record AgentLimitDto(string Message, string? TimeZoneId, DateTime DetectedAt, DateTime? ResetAt,
-    DateTime? ContinueAt, string Status, string? Detail, bool NativeAutoContinue);
-public sealed record ScheduleContinueRequest(DateTime? ResetAtUtc = null, DateTime? ExpectedDetectedAt = null, double? ContinueAfterMinutes = null);
+    DateTime? ContinueAt, string Status, string? Detail, bool NativeAutoContinue, bool Manual = false);
+public sealed record ScheduleContinueRequest(DateTime? ResetAtUtc = null, DateTime? ExpectedDetectedAt = null, double? ContinueAfterMinutes = null, bool Manual = false);
 
 // What the Manager's API returns to the browser app. Built from the database entities on the server, without their
 // secrets: no account logins, no Runner passwords, no GitHub token.

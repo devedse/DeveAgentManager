@@ -13,7 +13,6 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
     ManagerEvents events, TimeProvider clock, ILogger<AgentContinuations> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _gates = new();
-    private readonly ConcurrentDictionary<Guid, byte> _armed = new();
     private SemaphoreSlim Gate(Guid id) => _gates.GetOrAdd(id, _ => new(1, 1));
     private DateTime Now => clock.GetUtcNow().UtcDateTime;
     private static string Session(Agent a) => $"{a.HarnessId}|{a.HarnessSessionId}|{a.AccountId}";
@@ -25,9 +24,9 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         return row is null || row.Status == "Cleared" ? null : Dto(row);
     }
 
-    private static AgentLimitDto Dto(AgentLimit l) => new(l.Message, l.TimeZoneId, l.DetectedAt, l.ResetAt, l.ContinueAt, l.Status, l.Detail, l.NativeAutoContinue);
+    private static AgentLimitDto Dto(AgentLimit l) => new(l.Message, l.TimeZoneId, l.DetectedAt, l.ResetAt, l.ContinueAt, l.Status, l.Detail, l.NativeAutoContinue, l.Manual);
 
-    public async Task ScheduleAsync(Guid id, DateTime? resetOverride, CancellationToken ct, DateTime? expectedDetectedAt = null, double? continueAfterMinutes = null)
+    public async Task ScheduleAsync(Guid id, DateTime? resetOverride, CancellationToken ct, DateTime? expectedDetectedAt = null, double? continueAfterMinutes = null, bool manual = false)
     {
         var gate = Gate(id);
         await gate.WaitAsync(ct);
@@ -37,35 +36,57 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             await using var db = await factory.CreateDbContextAsync(ct);
             var agent = await db.Agents.Include(a => a.Runner).FirstOrDefaultAsync(a => a.Id == id, ct) ?? throw new KeyNotFoundException("Agent not found.");
             var limit = await db.AgentLimits.FindAsync([id], ct);
+            if (manual)
+            {
+                if (limit is { Manual: false } && limit.Status != "Cleared")
+                    throw new InvalidOperationException("A usage limit was detected. Reopen the dialog to review it.");
+                if (limit?.Status is "Scheduled" or "Sending" or "Uncertain")
+                    throw new InvalidOperationException("Review or cancel the existing continuation first.");
+                if (continueAfterMinutes is null || resetOverride is not null)
+                    throw new ArgumentException("Choose a duration for a manual continuation.");
+                if (agent.State != AgentState.Running || agent.Runner?.State != RunnerState.Ready || agent.HarnessId is not ("codex" or "claude"))
+                    throw new InvalidOperationException("Manual continuation requires a running Codex or Claude agent on a ready Runner.");
+                var initial = await terminal.ReadAsync(agent, ct);
+                if (limit is null) { limit = new AgentLimit { AgentId = id }; db.AgentLimits.Add(limit); }
+                limit.Manual = true;
+                limit.PaneIdentity = initial.Identity;
+                limit.SessionId = Session(agent);
+                limit.Message = "Manual continuation — no usage limit is required.";
+                limit.DetectedAt = Now;
+                limit.ResetAt = null;
+                limit.Status = "Detected";
+                limit.NativeAutoContinue = false;
+            }
             if (limit is null || limit.Status == "Cleared") throw new InvalidOperationException("No current usage-limit message was found.");
-            if (expectedDetectedAt is { } expected && expected != limit.DetectedAt) throw new InvalidOperationException("The usage limit changed while the dialog was open. Close it and review the new reset time.");
+            if (!manual && expectedDetectedAt is { } expected && expected != limit.DetectedAt) throw new InvalidOperationException("The usage limit changed while the dialog was open. Close it and review the new reset time.");
             if (limit.NativeAutoContinue) throw new InvalidOperationException("Claude is already continuing automatically; no second continuation will be scheduled.");
             if (limit.Status is "Scheduled" or "Sending" or "Sent" or "Uncertain") throw new InvalidOperationException("This limit already has a continuation. Cancel a pending one before changing its time.");
-            var screen = await terminal.ReadAsync(agent, ct);
-            if (!screen.InputEmpty || screen.Identity != limit.PaneIdentity || agent.Working)
-                throw new InvalidOperationException("The harness must be idle with an empty prompt before scheduling.");
+            var now = Now;
+            var reset = resetOverride ?? limit.ResetAt;
+            DateTime continueAt;
             if (continueAfterMinutes is { } duration)
             {
                 if (!double.IsFinite(duration) || duration < 1 || duration > 46080 || resetOverride is not null)
                     throw new ArgumentException("Choose either a reset time or a continuation duration from 1 minute to 32 days.");
-                resetOverride = Now.AddMinutes(duration - 1);
+                continueAt = now.AddMinutes(duration);
             }
-            var reset = resetOverride ?? limit.ResetAt ?? throw new ArgumentException("Enter the exact reset time in UTC.");
-            if (reset.Kind != DateTimeKind.Utc || reset.AddMinutes(1) <= Now || reset > Now.AddDays(32))
-                throw new ArgumentException("The reset must be UTC, with its continuation in the future and within 32 days.");
+            else
+            {
+                if (reset is null) throw new ArgumentException("Choose the reset date and time.");
+                if (reset.Value.Kind != DateTimeKind.Utc || reset.Value <= now.AddMinutes(-1) || reset > now.AddDays(32))
+                    throw new ArgumentException("The reset must be UTC, with its continuation in the future and within 32 days.");
+                continueAt = reset.Value.AddMinutes(1);
+            }
             limit.ResetAt = reset;
-            limit.ContinueAt = reset.AddMinutes(1);
+            limit.ContinueAt = continueAt;
             limit.Status = "Scheduled";
-            limit.Detail = resetOverride is null ? null : "Reset time confirmed manually in UTC.";
+            limit.Detail = continueAfterMinutes is not null ? "Continue scheduled after the chosen duration; the detected allowance reset is unchanged."
+                : resetOverride is null ? null : "Reset time confirmed manually.";
             await db.SaveChangesAsync(ct);
-            _armed[id] = 0;
             events.AgentChanged(agent.RunnerId, id);
         }
         finally { gate.Release(); }
     }
-
-    public Task OnUserInputAsync(Guid id, CancellationToken ct) => _armed.ContainsKey(id)
-        ? CancelAsync(id, "Cancelled because you used the terminal.", ct) : Task.CompletedTask;
 
     public async Task CancelAsync(Guid id, string reason, CancellationToken ct)
     {
@@ -76,7 +97,6 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             await using var db = await factory.CreateDbContextAsync(ct);
             var changed = await db.AgentLimits.Where(l => l.AgentId == id && l.Status == "Scheduled")
                 .ExecuteUpdateAsync(s => s.SetProperty(l => l.Status, "Cancelled").SetProperty(l => l.ContinueAt, (DateTime?)null).SetProperty(l => l.Detail, reason), ct);
-            _armed.TryRemove(id, out _);
             if (changed > 0 && await db.Agents.FindAsync([id], ct) is { } a) events.AgentChanged(a.RunnerId, id);
         }
         finally { gate.Release(); }
@@ -95,7 +115,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         await using var db = await factory.CreateDbContextAsync(ct);
         var agent = await db.Agents.Include(a => a.Runner).FirstOrDefaultAsync(a => a.Id == id, ct);
         var row = await db.AgentLimits.FindAsync([id], ct);
-        if (agent is null) { _armed.TryRemove(id, out _); return; }
+        if (agent is null) return;
         LimitScreen? screen = null;
         ParsedUsageLimit? parsed = null;
         if (agent.State == AgentState.Running && agent.Runner?.State == RunnerState.Ready && agent.HarnessId is "codex" or "claude")
@@ -104,22 +124,65 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             parsed = UsageLimitParser.Parse(agent.HarnessId, screen.Screen, screen.TimeZone, Now);
         }
 
-        if (parsed is null)
+        // An explicitly scheduled attempt is independent of later screen text or usage-limit detection.
+        // Only the user cancels it. If it is due but cannot safely submit, leave it armed and explain why.
+        if (row?.Status == "Sending")
         {
-            if (row is null || row.Status == "Cleared") return;
+            row.Status = "Uncertain";
+            row.Detail = "The Manager restarted during sending. Check the terminal; it will not send again automatically.";
+        }
+        else if (row?.Status == "Scheduled")
+        {
+            if (dispatch && row.ContinueAt <= Now)
+            {
+                var activity = screen is null ? AgentActivityStatus.Unknown
+                    : AgentScreenDetector.Detect(agent.HarnessId, screen.Screen, Now).Status;
+                row.Detail = Session(agent) != row.SessionId ? "Waiting: the agent's harness or session changed. Cancel this schedule to replace it."
+                    : screen is null ? "Waiting for the agent and Runner to be available."
+                    : !screen.InputEmpty ? "Waiting for an empty prompt. Your draft will not be submitted."
+                    : parsed?.NativeAutoContinue == true ? "Waiting while Claude handles its own automatic continuation."
+                    : agent.Working || activity is not (AgentActivityStatus.Ready or AgentActivityStatus.UsageLimited)
+                        ? "Waiting for the agent to be idle and ready for input." : null;
+                if (row.Detail is null)
+                {
+                    // Claim before the network side effect. Ambiguous delivery must never cause a duplicate send.
+                    var claimed = await db.AgentLimits.Where(l => l.AgentId == id && l.Status == "Scheduled")
+                        .ExecuteUpdateAsync(s => s.SetProperty(l => l.Status, "Sending"), ct);
+                    if (claimed == 0) return;
+                    try
+                    {
+                        var sent = await terminal.SendContinueAsync(agent, screen!, ct);
+                        row.Status = sent ? "Sent" : "Scheduled";
+                        // Force Scheduled to be written back after the database-only claim above.
+                        db.Entry(row).Property(l => l.Status).IsModified = true;
+                        row.Detail = sent ? "Submitted continue once. If the harness reaches its limit again, review the new reset before scheduling another attempt."
+                            : "Waiting because the terminal changed during submission. Check the prompt; inserted text may still be present.";
+                    }
+                    catch (Exception ex)
+                    {
+                        row.Status = "Uncertain";
+                        row.Detail = "Could not confirm delivery. Check the terminal; it will not send again automatically.";
+                        logger.LogWarning(ex, "Could not confirm scheduled continuation for agent {Agent}", id);
+                    }
+                }
+            }
+        }
+        else if (row?.Status is "Sent" or "Uncertain" && (parsed is null || parsed.Message == row.Message))
+        {
+            // Keep the outcome visible after the submitted input removes the limit from the live screen.
+        }
+        else if (parsed is null)
+        {
+            if (row is null || row.Status == "Cleared" || row.Manual) return;
             row.Status = "Cleared";
             row.ContinueAt = null;
-            _armed.TryRemove(id, out _);
         }
         else
         {
-            if (row is null)
+            if (row is null) { row = new AgentLimit { AgentId = id }; db.AgentLimits.Add(row); }
+            if (row.Manual || row.Message != parsed.Message || row.SessionId != Session(agent) || row.PaneIdentity != screen!.Identity || row.Status == "Cleared" || row.TimeZoneId != parsed.TimeZoneId)
             {
-                row = new AgentLimit { AgentId = id };
-                db.AgentLimits.Add(row);
-            }
-            if (row.Message != parsed.Message || row.SessionId != Session(agent) || row.PaneIdentity != screen!.Identity || row.Status == "Cleared" || row.TimeZoneId != parsed.TimeZoneId)
-            {
+                row.Manual = false;
                 row.Message = parsed.Message;
                 row.SessionId = Session(agent);
                 row.PaneIdentity = screen!.Identity;
@@ -129,49 +192,8 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                 row.ContinueAt = null;
                 row.Status = "Detected";
                 row.Detail = parsed.Detail;
-                _armed.TryRemove(id, out _);
             }
             row.NativeAutoContinue = parsed.NativeAutoContinue;
-            if (row.Status == "Sending")
-            {
-                row.Status = "Uncertain";
-                row.Detail = "The Manager restarted during sending. Check the terminal; it will not send again automatically.";
-            }
-            if (row.Status == "Scheduled" && (!screen!.InputEmpty || agent.Working || parsed.NativeAutoContinue))
-            {
-                row.Status = "Cancelled";
-                row.Detail = "Cancelled because the prompt changed or the harness resumed.";
-                row.ContinueAt = null;
-                _armed.TryRemove(id, out _);
-            }
-            if (dispatch && row.Status == "Scheduled" && row.ContinueAt <= Now)
-            {
-                if (row.ContinueAt < Now.AddMinutes(-15))
-                {
-                    row.Status = "Cancelled";
-                    row.Detail = "The scheduled time was missed by more than 15 minutes. Continue manually.";
-                }
-                else
-                {
-                    // Claim before the network side effect. A crash or uncertain SSH result must never cause a duplicate send.
-                    var claimed = await db.AgentLimits.Where(l => l.AgentId == id && l.Status == "Scheduled")
-                        .ExecuteUpdateAsync(s => s.SetProperty(l => l.Status, "Sending"), ct);
-                    if (claimed == 0) return;
-                    try
-                    {
-                        var sent = await terminal.SendContinueAsync(agent, screen!, ct);
-                        row.Status = sent ? "Sent" : "Cancelled";
-                        row.Detail = sent ? "Sent continue once." : "The terminal changed before sending; nothing was typed.";
-                    }
-                    catch (Exception ex)
-                    {
-                        row.Status = "Uncertain";
-                        row.Detail = "Could not confirm delivery. Check the terminal; it will not send again automatically.";
-                        logger.LogWarning(ex, "Could not confirm scheduled continuation for agent {Agent}", id);
-                    }
-                }
-                _armed.TryRemove(id, out _);
-            }
         }
         if (db.ChangeTracker.HasChanges())
         {
@@ -182,8 +204,6 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await using (var db = await factory.CreateDbContextAsync(stoppingToken))
-            foreach (var id in await db.AgentLimits.Where(l => l.Status == "Scheduled").Select(l => l.AgentId).ToListAsync(stoppingToken)) _armed[id] = 0;
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
         do
         {

@@ -8,6 +8,57 @@ namespace DeveAgentManager.Tests;
 
 public sealed class LimitTerminalTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ContinueSeparatesTextFromEnterAndRechecksTheDraft(bool edited)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var temp = Directory.CreateTempSubdirectory("dam-submit-").FullName;
+        var fake = Path.Combine(temp, "tmux");
+        await File.WriteAllTextAsync(fake, $$"""
+            #!/usr/bin/python3
+            import json,pathlib,sys,time
+            root=pathlib.Path(__file__).parent
+            args=sys.argv[1:]
+            path=root/'state.json'
+            state=json.loads(path.read_text()) if path.exists() else {'text':''}
+            if args[0]=='display-message':
+                print('%1|{{Environment.ProcessId}}|0|1|'+str(2+len(state['text'])))
+            elif args[0]=='capture-pane':
+                print("■ You've hit your usage limit. Try again at 9:37 PM.\n› "+state['text'])
+            elif args[0]=='send-keys':
+                if '-l' in args:
+                    state['text']='continue' + (' edited' if {{(edited ? "True" : "False")}} else '')
+                    state['typed']=time.monotonic()
+                if 'Enter' in args: state['entered']=time.monotonic()
+                path.write_text(json.dumps(state))
+            """, TestContext.Current.CancellationToken);
+        File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        try
+        {
+            var ready = JsonSerializer.Deserialize<LimitScreen>(await Run(LimitTerminal.BuildReadScript("limit")))!;
+            Assert.True(ready.InputEmpty);
+            Assert.Equal(edited ? "CHANGED" : "SENT", (await Run(LimitTerminal.BuildContinueScript("limit", ready))).Trim());
+            using var state = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(temp, "state.json"), TestContext.Current.CancellationToken));
+            if (edited) Assert.False(state.RootElement.TryGetProperty("entered", out _));
+            else Assert.True(state.RootElement.GetProperty("entered").GetDouble() - state.RootElement.GetProperty("typed").GetDouble() >= 0.3);
+        }
+        finally { Directory.Delete(temp, true); }
+
+        async Task<string> Run(string script)
+        {
+            var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true, RedirectStandardError = true };
+            start.Environment["PATH"] = temp + ":" + Environment.GetEnvironmentVariable("PATH");
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+            var error = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+            await process.WaitForExitAsync(TestContext.Current.CancellationToken);
+            Assert.True(process.ExitCode == 0, await error);
+            return await output;
+        }
+    }
+
     [Fact]
     public async Task RealTmuxProbeFindsTimezone_AndGuardPreservesDraftBeforeSendingContinue()
     {
