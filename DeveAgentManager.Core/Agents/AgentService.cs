@@ -493,11 +493,15 @@ public sealed partial class AgentService(
                         target='='+session+':'
                         meta=subprocess.check_output(['tmux','display-message','-p','-t',target,'#{pane_id}|#{pane_pid}'],text=True,stderr=subprocess.DEVNULL).strip()
                         pane,pid=meta.split('|')
+                        # display-message can succeed with empty fields for a missing session.
+                        # Never interpret an empty pid as /proc/stat (the system's statistics).
+                        if not pane or not pid.isdecimal() or int(pid) <= 0:
+                            raise ValueError('No live pane process')
                         start=pathlib.Path('/proc',pid,'stat').read_text().rsplit(')',1)[1].split()[19]
                         identity=meta+'|'+start+'|'+pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
                         screen=subprocess.check_output(['tmux','capture-pane','-p','-J','-t',target],text=True,stderr=subprocess.DEVNULL)[-32768:]
                         print(json.dumps(dict(Session=session,Identity=identity,Screen=screen)))
-                    except (OSError,ValueError,subprocess.CalledProcessError):
+                    except (OSError,ValueError,IndexError,subprocess.CalledProcessError):
                         print(json.dumps(dict(Session=session,Identity=None,Screen=None)))
                 """).Append("\nDAM_STATE\n");
         }

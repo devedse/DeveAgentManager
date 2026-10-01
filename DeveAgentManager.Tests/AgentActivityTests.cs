@@ -184,4 +184,33 @@ public class AgentActivityTests
         finally { Directory.Delete(folder, true); }
     }
 
+    [Fact]
+    public async Task MissingSessionDoesNotDiscardRunningAgentObservation()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var folder = Directory.CreateTempSubdirectory("dam-missing-pane-").FullName;
+        try
+        {
+            var tmux = Path.Combine(folder, "tmux");
+            // tmux reports success and empty metadata when the requested session has disappeared.
+            File.WriteAllText(tmux, $"#!/bin/sh\ncase \"$1\" in list-panes) echo 'running|0||123' ;; display-message) case \"$*\" in *missing*) echo '|' ;; *) echo '%1|{Environment.ProcessId}' ;; esac ;; capture-pane) printf '• Working (5s • esc to interrupt)\\n› Ask Codex to do anything\\n? for shortcuts\\n' ;; esac\n");
+            File.SetUnixFileMode(tmux, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var start = new System.Diagnostics.ProcessStartInfo("bash", ["-c", AgentService.BuildStateScript([("missing-before", null), ("running", null), ("missing-after", null)], captureScreens: true)]) { RedirectStandardOutput = true, RedirectStandardError = true };
+            start.Environment["PATH"] = folder + ":" + Environment.GetEnvironmentVariable("PATH");
+            using var process = System.Diagnostics.Process.Start(start)!;
+            var output = await process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+            var error = await process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+            await process.WaitForExitAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(error);
+            var screens = AgentService.ParseScreens(output);
+            Assert.Equal(3, screens.Count);
+            Assert.Null(screens["missing-before"].Screen);
+            Assert.Null(screens["missing-after"].Identity);
+            Assert.Equal(AgentActivityStatus.Working, AgentScreenDetector.Detect("codex", screens["running"].Screen!, Now).Status);
+            Assert.True(AgentService.ParsePanes(output).Panes.ContainsKey("running"));
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
 }

@@ -4,6 +4,8 @@ The Agent activity page (`/activity`) is available from the sidebar, dashboard a
 
 An observation that has never been saved is distinct from an invalid saved observation, a failed connection or a stale observation. If initial observation remains missing after 30 seconds, its explanation directs the operator to the Runner connection and Manager monitor logs. A command timeout reported as cancellation is recorded as an observation failure unless the monitor itself is stopping.
 
+Missing tmux sessions can return empty metadata with a successful command exit. The snapshot reader validates the pane and PID before reading `/proc`, and treats missing or disappearing processes as an unavailable snapshot for that session. They cannot abort observations for other running agents in the same batch.
+
 Process state and activity are separate. An agent can have a running process while it is ready for input, blocked by an approval, or waiting for its usage allowance to reset. The status button opens an explanation showing the process state, last observation, matched rule, and a short excerpt of the evidence.
 
 The Manager reads the visible tmux screen every five seconds, alongside pane metadata. It does not use output volume as proof that an agent is working: typing a draft also produces terminal output. Named rules inspect the current composer, live activity indicators, control hints, and current errors. Rules have explicit priority and screen regions. Usage errors and interactive controls take priority over activity and ready prompts. Queued questions remain an additional indicator while an agent works. Unknown screens and observations older than 30 seconds are shown as **Unclear**.
