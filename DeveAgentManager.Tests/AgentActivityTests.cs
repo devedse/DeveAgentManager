@@ -295,6 +295,14 @@ public class AgentActivityTests
             var snapshot = AgentService.ParseScreens(output)["agent"];
             Assert.Equal("• done\n❯\n", snapshot.Screen);
             Assert.StartsWith($"%1|{Environment.ProcessId}|", snapshot.Identity);
+            Assert.NotNull(snapshot.ObservedAt);
+            Assert.Equal(DateTimeKind.Utc, snapshot.ObservedAt.Value.Kind);
+            // Usage-limit parsing converts from UTC; a +00:00 JSON DateTime becomes Local
+            // in System.Text.Json and used to throw, aborting the entire runner pass.
+            var limitScreen = "■ You've hit your usage limit. Try again at 11:49 PM.\n› Ask Codex to do anything\n? for shortcuts";
+            Assert.Equal(AgentActivityStatus.UsageLimited,
+                AgentScreenDetector.Detect("codex", limitScreen, snapshot.ObservedAt.Value).Status);
+            Assert.NotNull(UsageLimitParser.Parse("codex", limitScreen, "Europe/Amsterdam", snapshot.ToLimitScreen()!.ObservedAt!.Value));
         }
         finally { Directory.Delete(folder, true); }
     }

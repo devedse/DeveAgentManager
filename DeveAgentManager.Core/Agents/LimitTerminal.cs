@@ -60,7 +60,8 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
                 if above is not None and below is not None:
                     input_text='\n'.join(raw[above+1:below]).strip()
                     empty=not input_text
-            return dict(Screen=screen,Identity=identity,TimeZone=zone,InputEmpty=empty,InputText=input_text,Hash=hashlib.sha256(screen.encode()).hexdigest(),ObservedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
+            # System.Text.Json reads +00:00 as DateTimeKind.Local; Z preserves Utc for reset parsing.
+            return dict(Screen=screen,Identity=identity,TimeZone=zone,InputEmpty=empty,InputText=input_text,Hash=hashlib.sha256(screen.encode()).hexdigest(),ObservedAt=datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'))
         """;
 
     public async Task<LimitScreen> ReadAsync(Agent agent, CancellationToken ct)
