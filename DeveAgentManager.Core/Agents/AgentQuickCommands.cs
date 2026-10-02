@@ -31,14 +31,11 @@ public sealed class AgentQuickCommands(IDbContextFactory<ManagerDbContext> facto
             if (agent.State != AgentState.Running || agent.Runner?.State != RunnerState.Ready)
                 throw new InvalidOperationException("Start the agent on a ready Runner first.");
             var screen = await terminal.ReadAsync(agent, ct);
-            var activity = AgentScreenDetector.Detect(agent.HarnessId, screen.Screen, DateTime.UtcNow);
             if (!screen.InputEmpty) throw new InvalidOperationException("The terminal has a draft or an open menu. Clear it before sending a quick command.");
-            if (activity.Status is not (AgentActivityStatus.Ready or AgentActivityStatus.UsageLimited))
-                throw new InvalidOperationException("Wait for the agent's prompt to be ready before sending a quick command.");
             diagnostics.Record(id, "Command", $"Sending {request.Command}");
             try
             {
-                var result = (await shell.RunAsync(agent.Runner!, LimitTerminal.BuildSubmitScript(agent.TmuxSession, screen, request.Command), TimeSpan.FromSeconds(10), ct)).EnsureSuccess("Sending quick command");
+                var result = (await shell.RunAsync(agent.Runner!, LimitTerminal.BuildSubmitScript(agent.TmuxSession, screen, request.Command, requireUnchangedScreen: false), TimeSpan.FromSeconds(10), ct)).EnsureSuccess("Sending quick command");
                 if (result.Output.Trim() != "SENT") throw new InvalidOperationException("The prompt changed. Enter was not sent; check the terminal before trying again.");
                 diagnostics.Record(id, "Command", $"Submitted {request.Command}");
             }

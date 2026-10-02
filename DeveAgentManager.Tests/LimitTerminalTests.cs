@@ -13,7 +13,10 @@ public sealed class LimitTerminalTests
     [InlineData(true, "continue")]
     [InlineData(false, "/model")]
     [InlineData(true, "/status")]
-    public async Task ContinueSeparatesTextFromEnterAndRechecksTheDraft(bool edited, string command)
+    [InlineData(false, "/status", true)]
+    [InlineData(true, "/status", true)]
+    [InlineData(false, "continue", true)]
+    public async Task ContinueSeparatesTextFromEnterAndRechecksTheDraft(bool edited, string command, bool outputChanged = false)
     {
         if (OperatingSystem.IsWindows()) return;
         var temp = Directory.CreateTempSubdirectory("dam-submit-").FullName;
@@ -41,7 +44,16 @@ public sealed class LimitTerminalTests
         {
             var ready = JsonSerializer.Deserialize<LimitScreen>(await Run(LimitTerminal.BuildReadScript("limit")))!;
             Assert.True(ready.InputEmpty);
-            Assert.Equal(edited ? "CHANGED" : "SENT", (await Run(LimitTerminal.BuildSubmitScript("limit", ready, command))).Trim());
+            // Working output changed since observation; slash commands should still reach the empty prompt.
+            if (outputChanged) ready = ready with { Hash = "older-output" };
+            var guardedScreen = command == "continue";
+            var rejected = edited || (outputChanged && guardedScreen);
+            Assert.Equal(rejected ? "CHANGED" : "SENT", (await Run(LimitTerminal.BuildSubmitScript("limit", ready, command, guardedScreen))).Trim());
+            if (outputChanged && guardedScreen)
+            {
+                Assert.False(File.Exists(Path.Combine(temp, "state.json")));
+                return;
+            }
             using var state = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(temp, "state.json"), TestContext.Current.CancellationToken));
             if (edited) Assert.False(state.RootElement.TryGetProperty("entered", out _));
             else Assert.True(state.RootElement.GetProperty("entered").GetDouble() - state.RootElement.GetProperty("typed").GetDouble() >= 0.3);

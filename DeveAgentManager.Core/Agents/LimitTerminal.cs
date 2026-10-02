@@ -90,7 +90,7 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
 
     internal static string BuildContinueScript(string session, LimitScreen expected) => BuildSubmitScript(session, expected, "continue");
 
-    internal static string BuildSubmitScript(string session, LimitScreen expected, string command)
+    internal static string BuildSubmitScript(string session, LimitScreen expected, string command, bool requireUnchangedScreen = true)
     {
         var expectedJson = JsonSerializer.Serialize(new { expected.Identity, expected.Hash });
         var code = $"""
@@ -106,7 +106,7 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
             state=snapshot()
             command={JsonSerializer.Serialize(command)}
             expected=json.loads({JsonSerializer.Serialize(expectedJson)})
-            if state['Identity']!=expected['Identity'] or state['Hash']!=expected['Hash'] or not state['InputEmpty']:
+            if state['Identity']!=expected['Identity'] or ({(requireUnchangedScreen ? "True" : "False")} and state['Hash']!=expected['Hash']) or not state['InputEmpty']:
                 print('CHANGED')
             else:
                 pane=state['Identity'].split(':')[0]

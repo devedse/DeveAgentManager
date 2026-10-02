@@ -58,7 +58,7 @@ The activity page sorts agents needing attention first, provides status filters 
 
 ## Harness quick commands
 
-The terminal key row has a **/** menu; desktop terminals also have it in the toolbar. Selecting a command types it and submits Enter after the text settles. An existing draft, an open menu or a busy/unrecognized prompt prevents submission. Commands are allowlisted for the actual harness on the server, and a harness switch invalidates an old menu request. Interrupted or ambiguous submissions are not retried automatically.
+The terminal key row has a **/** menu; desktop terminals also have it in the toolbar. Selecting a command types it and submits Enter after the text settles. An existing draft or an unrecognized input area prevents submission. Quick commands also work while the agent is busy: changing output does not block them, and the harness decides how to handle each command. Process identity and prompt contents are still checked before submission; scheduled continuations retain their stricter screen check. Commands are allowlisted for the actual harness on the server, and a harness switch invalidates an old menu request. Interrupted or ambiguous submissions are not retried automatically.
 
 - Codex: `/model`, `/status`, `/diff`, `/permissions`.
 - Claude Code: `/model`, `/usage`, `/status`, `/help`.
