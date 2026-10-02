@@ -43,3 +43,5 @@ Scheduling is always available through the terminal toolbar. Without a detected 
 See [the input and activity review](input-and-activity-review.md) for the reproduced bugs, design assessment and remaining limitations.
 
 Reset parsing excludes Codex background-terminal footers and Claude upgrade hints. The schedule dialog keeps the original detected reset distinct from the selected reset; “Use detected reset (+1 minute)” restores the pickers to that reset and previews delivery one minute later. Both the schedule tooltip and dialog display the device timezone. Resource bars share one value-column width, keeping CPU, RAM and disk tracks aligned.
+
+A sent continuation stops showing as an active limit once the live screen confirms normal Ready or Working activity without a limit message. This returns the toolbar button to the neutral manual scheduler. Missing connections or unrecognized screens do not by themselves prove recovery; uncertain delivery is still kept for review.

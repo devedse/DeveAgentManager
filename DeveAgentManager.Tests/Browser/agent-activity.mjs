@@ -10,7 +10,7 @@ const base=process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
 await context.request.post(base+'/account/login',{form:{username:'admin',password:process.env.DAM_TEST_PASSWORD ?? 'preview-test-only',returnUrl:'/'}});
 const info=await (await context.request.get(base+'/api/info')).json();
 const id='00000000-0000-0000-0000-000000000001', now=new Date().toISOString();
-let dismissed=false;
+let dismissed=false, limitVisible=true;
 let seen=[], schedules=[], limitStatus='Detected', limitDetail=null;
 const activity={status:'Ready',reason:"Codex returned a response and its prompt is ready.",rule:'codex/codex-ready-prompt · composer and latest response',evidence:'• done',observedAt:now,since:now,sequence:5,questionWaiting:false,completedAt:now,completionSequence:5,seenCompletionSequence:0,unseenCompletion:true};
 const agent={id,runnerId:'00000000-0000-0000-0000-000000000002',runnerName:'runner-01',runnerState:'Ready',runnerHarnessIds:['codex','claude'],runnerToolIds:[],name:'Example agent',harnessId:'codex',workingDirectory:'/work/example',state:'Running',accountName:'Personal',createdAt:now,updatedAt:now,working:false,activity,lastAssistantMessageAt:now};
@@ -24,7 +24,7 @@ await page.route('**/api/**',async route=>{
  else if(path===`/api/agents/${id}/limit/continue`){schedules.push(route.request().postDataJSON());return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}/seen`){seen.push(route.request().postDataJSON());activity.unseenCompletion=false;activity.seenCompletionSequence=5;return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}`)body=agent;
- else if(path===`/api/agents/${id}/limit`)body=agent.harnessId==='claude'?{message:"You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)",timeZoneId:'Europe/Amsterdam',detectedAt:now,resetAt:'2026-10-04T02:00:00Z',detectedResetAt:'2026-10-04T01:00:00Z',continueAt:limitStatus==='Scheduled'?'2026-10-04T01:01:00Z':null,status:limitStatus,detail:limitDetail,nativeAutoContinue:false}:null;
+ else if(path===`/api/agents/${id}/limit`)body=agent.harnessId==='claude'&&limitVisible?{message:"You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)",timeZoneId:'Europe/Amsterdam',detectedAt:now,resetAt:'2026-10-04T02:00:00Z',detectedResetAt:'2026-10-04T01:00:00Z',continueAt:limitStatus==='Scheduled'?'2026-10-04T01:01:00Z':null,status:limitStatus,detail:limitDetail,nativeAutoContinue:false}:null;
  else if(path==='/api/agents')body=[agent];
  else if(path.includes('/session'))body=null;
  else if(path.includes('/viewers'))body=[];
@@ -137,6 +137,14 @@ limitStatus='Scheduled';limitDetail=null;
 await page.getByRole('button',{name:'Continue scheduled for 2026-10-04 03:01 (Europe/Amsterdam)',exact:true}).waitFor({timeout:15000});
 await page.getByRole('button',{name:'Continue scheduled for 2026-10-04 03:01 (Europe/Amsterdam)',exact:true}).click();
 await page.getByText('2026-10-04 03:01 (Europe/Amsterdam)',{exact:true}).waitFor();
+await page.getByRole('button',{name:'Close',exact:true}).last().click();
+
+limitVisible=false;
+await page.getByRole('button',{name:'Schedule continue',exact:true}).waitFor({timeout:15000});
+assert.equal(await page.getByRole('button',{name:'Schedule continue',exact:true}).evaluate(e=>e.classList.contains('mud-warning-text')),false);
+await page.getByRole('button',{name:'Schedule continue',exact:true}).click();
+await page.getByText('Manual continuation — no usage limit is required.',{exact:true}).waitFor();
+assert.equal(await page.getByText("You've hit your weekly limit",{exact:false}).count(),0);
 await page.getByRole('button',{name:'Close',exact:true}).last().click();
 
 for (const path of ['/', '/runners', `/runners/${runner.id}`]) {

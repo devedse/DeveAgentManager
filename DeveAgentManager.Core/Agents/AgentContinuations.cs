@@ -174,9 +174,18 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                 }
             }
         }
+        else if (row?.Status == "Sent" && parsed is null && screen is not null &&
+            AgentScreenDetector.Detect(agent.HarnessId, screen.Screen, Now).Status is AgentActivityStatus.Ready or AgentActivityStatus.Working)
+        {
+            // A successful continuation is no longer an active limit once normal activity resumes.
+            // Require positive live evidence: a missing connection or unrecognized screen is not recovery.
+            row.Status = "Cleared";
+            row.ContinueAt = null;
+            row.Detail = null;
+        }
         else if (row?.Status is "Sent" or "Uncertain" && (parsed is null || parsed.Message == row.Message))
         {
-            // Keep the outcome visible after the submitted input removes the limit from the live screen.
+            // Retain delivery uncertainty, or a sent result until the limit clears and normal activity is observed.
         }
         else if (parsed is null)
         {

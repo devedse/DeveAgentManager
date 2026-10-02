@@ -234,6 +234,40 @@ public sealed class AgentContinuationTests
         Assert.Equal(2, rig.Terminal.Sends);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SentLimitClearsWhenNormalActivityResumesWithoutSendingAgain(bool working)
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct);
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        ReadyWithoutLimit(rig);
+        if (working) rig.Terminal.Screen = rig.Terminal.Screen with { Screen = "• Working (2s • esc to interrupt)\n" + rig.Terminal.Screen.Screen };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        // The normal manual scheduler is available again.
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true);
+        Assert.True((await rig.Service.GetAsync(rig.Id, Ct))!.Manual);
+    }
+
+    [Fact]
+    public async Task SentResultIsNotClearedByAnUnrecognizedScreen()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct);
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = "unrecognized screen" };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        Assert.Equal(1, rig.Terminal.Sends);
+    }
+
     private static void ReadyWithoutLimit(Rig rig) => rig.Terminal.Screen = rig.Terminal.Screen with
     { Screen = "› Ask Codex to do anything\nGPT-6 medium · /work/example\n? for shortcuts" };
 
@@ -253,7 +287,7 @@ public sealed class AgentContinuationTests
         await rig.Service.RefreshAsync(rig.Id, Ct);
         await rig.Service.RefreshAsync(rig.Id, Ct);
         Assert.Equal(1, rig.Terminal.Sends);
-        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
         // A new explicit click may start another manual test.
         await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true);
         Assert.Equal("Scheduled", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
