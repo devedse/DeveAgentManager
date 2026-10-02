@@ -26,7 +26,8 @@ public sealed partial class AgentService(
     Accounts.AccountService accounts,
     Setup.SettingsStore settings,
     ManagerEvents events,
-    ILogger<AgentService> logger)
+    ILogger<AgentService> logger,
+    AgentContinuations? continuations = null, AgentDiagnostics? diagnostics = null)
 {
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
 
@@ -396,12 +397,13 @@ public sealed partial class AgentService(
                 if (!pane.Dead)
                 {
                     var screen = screens.GetValueOrDefault(agent.TmuxSession);
-                    var detection = screen?.Screen is { } text ? AgentScreenDetector.Detect(agent.HarnessId, text, DateTime.UtcNow)
+                    var observedAt = screen?.ObservedAt ?? DateTime.UtcNow;
+                    var detection = screen?.Screen is { } text ? AgentScreenDetector.Detect(agent.HarnessId, text, observedAt)
                         : new AgentScreenDetection(AgentActivityStatus.Unknown, "The terminal snapshot could not be read.", "snapshot-unavailable");
                     if (screen?.Screen is { } currentScreen)
                         detection = UsageLimitState.ApplyExpiry(agent, knownLimits.GetValueOrDefault(agent.Id), currentScreen, screen.Identity, detection, DateTime.UtcNow);
                     activityChanged = AgentActivityTracker.Apply(agent, detection,
-                        screen?.Identity ?? AgentActivityTracker.Read(agent).Identity, DateTime.UtcNow);
+                        screen?.Identity ?? AgentActivityTracker.Read(agent).Identity, observedAt);
                     working = agent.Working;
                 }
             }
@@ -432,6 +434,28 @@ public sealed partial class AgentService(
 
         await db.SaveChangesAsync(cancellationToken);
         foreach (var id in changedAgents) events.AgentChanged(runner.Id, id);
+        foreach (var agent in agents)
+        {
+            if (changedAgents.Contains(agent.Id))
+            {
+                var activity = AgentActivityTracker.Read(agent).Snapshot;
+                diagnostics?.Record(agent.Id, "Activity", $"{agent.State} / {activity.Status}: {activity.Reason}", activity.Rule);
+            }
+        }
+        if (continuations is null) return;
+        await Parallel.ForEachAsync(agents.Where(a => a.HarnessId is "codex" or "claude"),
+            new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (agent, ct) =>
+        {
+            var snapshot = screens.GetValueOrDefault(agent.TmuxSession)?.ToLimitScreen();
+            // Missing snapshots are not evidence that a limit cleared. Retry on the next runner pass.
+            if (snapshot is null) return;
+            try { await continuations.ObserveAsync(agent.Id, snapshot, ct, UsageLimitState.Session(agent)); }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                diagnostics?.Record(agent.Id, "Observation", "Could not process the usage-limit observation; retrying.");
+                logger.LogWarning(ex, "Could not process usage limit for {Agent}", agent.Id);
+            }
+        });
     }
 
     public async Task MarkObservationUnavailableAsync(Guid runnerId, CancellationToken ct)
@@ -442,7 +466,11 @@ public sealed partial class AgentService(
         foreach (var agent in agents)
             if (AgentActivityTracker.Apply(agent, new(AgentActivityStatus.Unknown, "Terminal observation failed. Check the Runner connection and Manager logs.", "observation-failed"), AgentActivityTracker.Read(agent).Identity, DateTime.UtcNow)) changed.Add(agent.Id);
         await db.SaveChangesAsync(ct);
-        foreach (var id in changed) events.AgentChanged(runnerId, id);
+        foreach (var id in changed)
+        {
+            diagnostics?.Record(id, "Connection", "Terminal observation failed. Retrying on the next monitor pass.");
+            events.AgentChanged(runnerId, id);
+        }
     }
 
     public async Task MarkAllStoppedAsync(Guid runnerId, CancellationToken cancellationToken = default)
@@ -489,31 +517,19 @@ public sealed partial class AgentService(
         {
             script.Append("echo '--screens--'\npython3 - ");
             foreach (var target in targets) script.Append(ShellQuote.Quote(target.Session)).Append(' ');
-            script.Append("<<'DAM_STATE'\n").Append("""
-                import json,pathlib,subprocess,sys
-                for session in sys.argv[1:]:
-                    try:
-                        target='='+session+':'
-                        meta=subprocess.check_output(['tmux','display-message','-p','-t',target,'#{pane_id}|#{pane_pid}'],text=True,stderr=subprocess.DEVNULL).strip()
-                        pane,pid=meta.split('|')
-                        # display-message can succeed with empty fields for a missing session.
-                        # Never interpret an empty pid as /proc/stat (the system's statistics).
-                        if not pane or not pid.isdecimal() or int(pid) <= 0:
-                            raise ValueError('No live pane process')
-                        start=pathlib.Path('/proc',pid,'stat').read_text().rsplit(')',1)[1].split()[19]
-                        identity=meta+'|'+start+'|'+pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
-                        screen=subprocess.check_output(['tmux','capture-pane','-p','-J','-t',target],text=True,stderr=subprocess.DEVNULL)[-32768:]
-                        print(json.dumps(dict(Session=session,Identity=identity,Screen=screen)))
-                    except (OSError,ValueError,IndexError,subprocess.CalledProcessError):
-                        print(json.dumps(dict(Session=session,Identity=None,Screen=None)))
-                """).Append("\nDAM_STATE\n");
+            script.Append("<<'DAM_STATE'\n").Append(LimitTerminal.BatchProbe).Append("\nDAM_STATE\n");
         }
 
         return script.ToString();
     }
 
     internal const string BusyMarker = "--busy--";
-    internal sealed record ObservedScreen(string Session, string? Identity, string? Screen);
+    internal sealed record ObservedScreen(string Session, string? Identity, string? Screen,
+        string? TimeZone = null, bool InputEmpty = false, string? Hash = null, DateTime? ObservedAt = null)
+    {
+        internal LimitScreen? ToLimitScreen() => Screen is not null && Identity is not null && Hash is not null
+            ? new(Screen, Identity.Replace('|', ':'), TimeZone, InputEmpty, Hash, ObservedAt) : null;
+    }
     internal static Dictionary<string, ObservedScreen> ParseScreens(string output)
     {
         var screens = new Dictionary<string, ObservedScreen>();

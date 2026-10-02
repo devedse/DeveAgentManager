@@ -5,15 +5,22 @@
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page">
     <PageHeader Title="Agent activity" Subtitle="Status for every agent, observed by the Manager even with all terminals closed. Updates every five seconds.">
         <Actions>
+            <MudButton Href="@NextAttention" Disabled="@(NextAttention is null)" Color="Color.Primary">Next needing attention</MudButton>
             <MudButton Href="agents" Variant="Variant.Outlined">Manage agents</MudButton>
         </Actions>
     </PageHeader>
     <div class="filter-bar">
         <MudTextField @bind-Value="_search" Immediate="true" Placeholder="Search agents or Runners" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Rounded.Search" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Class="filter-search" />
     </div>
-    @if (Loaded && _agents.Count == 0)
+    <div class="activity-filters">
+        @foreach (var filter in Filters)
+        {
+            <MudButton Size="Size.Small" Variant="@(_filter == filter ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" OnClick="() => _filter = filter">@filter (@_agents.Count(a => Matches(a, filter)))</MudButton>
+        }
+    </div>
+    @if (Loaded && !Filtered.Any())
     {
-        <MudText>No agents yet.</MudText>
+        <MudText>No agents match this filter.</MudText>
     }
     @foreach (var agent in Filtered)
     {
@@ -27,6 +34,10 @@
                 <AgentStatus Agent="agent" />
             </div>
             <MudText Class="mt-3">@(agent.State == AgentState.Running ? agent.Activity?.Reason ?? "No activity observation is available." : agent.StateMessage ?? $"The agent is {agent.State.ToString().ToLowerInvariant()}.")</MudText>
+            @if (_previews.GetValueOrDefault(agent.Id) is { } preview)
+            {
+                <MudText Typo="Typo.body2" Class="reply-preview">@preview</MudText>
+            }
             <div class="activity-card-footer">
                 <MudText Typo="Typo.caption" Class="mud-text-secondary">Last reply: @(agent.LastAssistantMessageAt?.Humanize() ?? "No reply yet") · Observed: @(agent.Activity?.ObservedAt?.Humanize() ?? "Not yet")</MudText>
                 <MudButton Href="@($"agents/{agent.Id}")" Size="Size.Small">Open terminal</MudButton>
@@ -38,9 +49,33 @@
     private List<AgentDto> _agents = [];
     private string? _search;
     protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
-    protected override async Task LoadAsync() => _agents = await Api.ListAgentsAsync();
+    private static readonly string[] Filters = ["All", "Needs input", "Finished", "Usage limited", "Working", "Ready"];
+    private string _filter = "All";
+    private List<AgentAttentionDto> _attention = [];
+    private Dictionary<Guid, string> _previews = [];
+    private string? NextAttention => _attention.FirstOrDefault() is { } item ? $"agents/{item.AgentId}" : null;
+    protected override async Task LoadAsync()
+    {
+        var agents = Api.ListAgentsAsync();
+        var attention = Api.ListAttentionAsync();
+        var previews = Api.GetReplyPreviewsAsync();
+        await Task.WhenAll(agents, attention, previews);
+        _agents = await agents; _attention = await attention;
+        _previews = (await previews).ToDictionary(p => p.AgentId, p => p.Text);
+    }
+    private bool Matches(AgentDto agent, string filter) => filter switch
+    {
+        "Needs input" => agent.State == AgentState.Running && (agent.Activity?.Status == AgentActivityStatus.NeedsInput || agent.Activity?.QuestionWaiting == true),
+        "Finished" => agent.Activity?.UnseenCompletion == true,
+        "Usage limited" => agent.State == AgentState.Running && agent.Activity?.Status == AgentActivityStatus.UsageLimited,
+        "Working" => agent.State == AgentState.Running && agent.Activity?.Status == AgentActivityStatus.Working,
+        "Ready" => agent.State == AgentState.Running && agent.Activity?.Status == AgentActivityStatus.Ready,
+        _ => true
+    };
     private IEnumerable<AgentDto> Filtered => _agents
+        .Where(a => Matches(a, _filter))
         .Where(a => string.IsNullOrWhiteSpace(_search) || a.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) || a.RunnerName.Contains(_search, StringComparison.OrdinalIgnoreCase))
-        .OrderByDescending(a => a.State == AgentState.Running)
+        .OrderBy(a => _attention.FindIndex(i => i.AgentId == a.Id) is var index && index >= 0 ? index : int.MaxValue)
+        .ThenByDescending(a => a.State == AgentState.Running)
         .ThenBy(a => a.RunnerName).ThenBy(a => a.Name);
 }

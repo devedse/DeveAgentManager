@@ -750,7 +750,14 @@
         },
 
         async copy(text) {
-            await navigator.clipboard.writeText(text);
+            if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return; }
+            const input = document.createElement("textarea");
+            input.value = text;
+            input.style.position = "fixed";
+            input.style.opacity = "0";
+            document.body.appendChild(input);
+            try { input.select(); if (!document.execCommand("copy")) throw new Error("Clipboard unavailable"); }
+            finally { input.remove(); }
         },
 
         // Downloads a file the Manager serves (e.g. a session export); the login cookie goes along.

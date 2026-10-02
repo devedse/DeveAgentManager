@@ -154,7 +154,8 @@ public static class AgentScreenDetector
 
     private static AgentScreenDetection? PiReady(Context c)
     {
-        if (c.Harness != "pi" || !Has(c.Tail, @"^↑[0-9]+ .*↓[0-9]+") || !Has(c.Tail, @"^think:")) return null;
+        if (c.Harness != "pi" || !(Has(c.Tail, @"^↑[0-9]+ .*↓[0-9]+") && Has(c.Tail, @"^think:")
+            || Has(c.Tail, @"[0-9]+(?:\.[0-9]+)?%/[0-9].* ·|[0-9]+(?:\.[0-9]+)?%/[0-9].* •"))) return null;
         var separator = Array.FindLastIndex(c.Lines, l => Has(l, @"^─{4,}\s*$"));
         if (separator < 1 || !Has(c.Lines[separator - 1], @"^─{4,}\s*$")) return null;
         var body = c.Lines.Take(separator - 1).ToArray();

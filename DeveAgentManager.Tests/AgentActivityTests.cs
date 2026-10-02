@@ -283,7 +283,7 @@ public class AgentActivityTests
         try
         {
             var tmux = Path.Combine(folder, "tmux");
-            File.WriteAllText(tmux, $"#!/bin/sh\ncase \"$1\" in list-panes) echo 'agent|0||123' ;; display-message) echo '%1|{Environment.ProcessId}' ;; capture-pane) printf '• done\\n❯\\n' ;; esac\n");
+            File.WriteAllText(tmux, $"#!/bin/sh\ncase \"$1\" in list-panes) echo 'agent|0||123' ;; display-message) echo '%1|{Environment.ProcessId}|0|1|2' ;; capture-pane) printf '• done\\n❯\\n' ;; esac\n");
             File.SetUnixFileMode(tmux, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             var start = new System.Diagnostics.ProcessStartInfo("bash", ["-c", AgentService.BuildStateScript([("agent", null)], captureScreens: true)]) { RedirectStandardOutput = true };
             start.Environment["PATH"] = folder + ":" + Environment.GetEnvironmentVariable("PATH");
@@ -308,7 +308,7 @@ public class AgentActivityTests
         {
             var tmux = Path.Combine(folder, "tmux");
             // tmux reports success and empty metadata when the requested session has disappeared.
-            File.WriteAllText(tmux, $"#!/bin/sh\ncase \"$1\" in list-panes) echo 'running|0||123' ;; display-message) case \"$*\" in *missing*) echo '|' ;; *) echo '%1|{Environment.ProcessId}' ;; esac ;; capture-pane) printf '• Working (5s • esc to interrupt)\\n› Ask Codex to do anything\\n? for shortcuts\\n' ;; esac\n");
+            File.WriteAllText(tmux, $"#!/bin/sh\ncase \"$1\" in list-panes) echo 'running|0||123' ;; display-message) case \"$*\" in *missing*) echo '|' ;; *) echo '%1|{Environment.ProcessId}|0|1|2' ;; esac ;; capture-pane) printf '• Working (5s • esc to interrupt)\\n› Ask Codex to do anything\\n? for shortcuts\\n' ;; esac\n");
             File.SetUnixFileMode(tmux, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             var start = new System.Diagnostics.ProcessStartInfo("bash", ["-c", AgentService.BuildStateScript([("missing-before", null), ("running", null), ("missing-after", null)], captureScreens: true)]) { RedirectStandardOutput = true, RedirectStandardError = true };
             start.Environment["PATH"] = folder + ":" + Environment.GetEnvironmentVariable("PATH");

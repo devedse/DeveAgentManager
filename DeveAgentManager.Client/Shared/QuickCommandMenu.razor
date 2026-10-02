@@ -1,0 +1,33 @@
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+<MudMenu Class="quick-command-menu" Dense="true" AnchorOrigin="Origin.TopCenter" TransformOrigin="Origin.BottomCenter">
+    <ActivatorContent>
+        <button type="button" class="terminal-key" disabled="@(Disabled || _sending)" aria-label="Harness quick commands" title="Harness quick commands" @onclick="async () => { await LoadAsync(); await context.ToggleAsync(); }">/</button>
+    </ActivatorContent>
+    <ChildContent>
+        @foreach (var command in _commands)
+        {
+            <MudMenuItem Disabled="@_sending" OnClick="() => SendAsync(command.Command)">@command.Command · @command.Label</MudMenuItem>
+        }
+    </ChildContent>
+</MudMenu>
+@code {
+    [Parameter] public Guid AgentId { get; set; }
+    [Parameter] public string HarnessId { get; set; } = "";
+    [Parameter] public bool Disabled { get; set; }
+    private List<AgentQuickCommandDto> _commands = [];
+    private bool _sending;
+    private async Task LoadAsync()
+    {
+        try { _commands = await Api.GetQuickCommandsAsync(AgentId); }
+        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
+    }
+    private async Task SendAsync(string command)
+    {
+        if (_sending) return;
+        _sending = true;
+        try { await Api.SendQuickCommandAsync(AgentId, HarnessId, command); }
+        catch (Exception ex) { Snackbar.Add(ex.Message + " Check the terminal before trying again.", Severity.Warning); }
+        finally { _sending = false; }
+    }
+}

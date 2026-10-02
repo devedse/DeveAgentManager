@@ -47,3 +47,23 @@ Reset parsing excludes Codex background-terminal footers and Claude upgrade hint
 A sent continuation stops showing as an active limit once the live screen confirms normal Ready or Working activity without a limit message. This returns the toolbar button to the neutral manual scheduler. Missing connections or unrecognized screens do not by themselves prove recovery; uncertain delivery is still kept for review.
 
 A known usage-limit reset is anchored to the original detection time and message timezone. Once it passes, the old limit screen is treated as Ready (idle), without inferring completion. Its dismissible notification remains to explain that the prompt was paused; expiry does not revive an already dismissed notification. Unscheduled or completed limit alerts disappear from the continuation button at expiry. Explicit schedules remain armed for their chosen time (normally reset plus one minute), and uncertain delivery still requires review.
+
+## Shared observations and diagnostics
+
+The Runner monitor captures one observation per pane: joined screen text, process identity, timezone, prompt state, screen hash, and UTC observation time. Activity detection and continuation monitoring consume this same observation. Continuations no longer run a separate polling loop. Interactive scheduling still reads freshly, and every submission rechecks the process, screen and empty prompt on the Runner. A per-session lock serializes quick commands and scheduled continues. One missing pane cannot discard other observations.
+
+Click an agent status, then **Recent diagnostic history**, to see activity transitions, connection failures and continuation/command outcomes. **Copy diagnostics** includes the current detection and history. History survives Manager restarts, is capped at 100 entries per agent, and shows only the last seven days. Repeated identical events are collapsed. The history does not store full screens, prompts or credentials. Files are in `logs/agents/` under the Manager data directory.
+
+The activity page sorts agents needing attention first, provides status filters and a **Next needing attention** link, and shows a bounded preview of the latest assistant text from the active saved conversation branch. Opening this overview does not acknowledge completions. Previews are cached until the saved conversation changes; they update after session synchronization rather than streaming every token.
+
+## Harness quick commands
+
+The terminal key row has a **/** menu; desktop terminals also have it in the toolbar. Selecting a command types it and submits Enter after the text settles. An existing draft, an open menu or a busy/unrecognized prompt prevents submission. Commands are allowlisted for the actual harness on the server, and a harness switch invalidates an old menu request. Interrupted or ambiguous submissions are not retried automatically.
+
+- Codex: `/model`, `/status`, `/diff`, `/permissions`.
+- Claude Code: `/model`, `/usage`, `/status`, `/help`.
+- Pi: `/model`, `/session`, `/settings`, `/thinking`.
+
+Command references: [Codex commands](https://developers.openai.com/codex/cli/slash-commands/), [Claude Code commands](https://code.claude.com/docs/en/commands), and the installed Pi 0.87.1 `docs/slash-commands.md`. Pi's unprefixed editor is checked across its entire prompt box, including multiline drafts. The existing phone keyboard adapter remains enabled; these changes do not add a prompt composer.
+
+The terminal notification menu stays inside the visible viewport, including landscape and keyboard resizing. Long lists scroll within the popup instead of expanding the page. The browser layout check covers wide and narrow touch viewports, rotation, long names, and unchanged terminal geometry while the menu is open.

@@ -25,6 +25,47 @@ public sealed class SessionService(
     ManagerEvents events,
     ILogger<SessionService> logger)
 {
+    private readonly SemaphoreSlim _previewGate = new(1, 1);
+    private readonly Dictionary<Guid, (DateTime UpdatedAt, string Text)> _previews = new();
+    public async Task<List<DeveAgentManager.Contracts.AgentReplyPreviewDto>> ReplyPreviewsAsync(CancellationToken ct)
+    {
+        await _previewGate.WaitAsync(ct);
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            var saved = await db.Sessions.AsNoTracking().Where(s => s.AgentId != null).ToListAsync(ct);
+            var ids = saved.Select(s => s.Id).ToHashSet();
+            foreach (var id in _previews.Keys.Where(id => !ids.Contains(id)).ToArray()) _previews.Remove(id);
+            var result = new List<DeveAgentManager.Contracts.AgentReplyPreviewDto>();
+            foreach (var session in saved.OrderByDescending(s => s.UpdatedAt).DistinctBy(s => s.AgentId))
+            {
+                if (!_previews.TryGetValue(session.Id, out var cached) || cached.UpdatedAt != session.UpdatedAt)
+                {
+                    try
+                    {
+                        var conversation = await LoadAsync(session.Id, ct);
+                        cached = (session.UpdatedAt, ReplyPreview(conversation));
+                        _previews[session.Id] = cached;
+                    }
+                    catch (Exception ex) when (ex is IOException or JsonException or FormatException)
+                    { logger.LogDebug(ex, "Could not load reply preview for {Session}", session.Id); continue; }
+                }
+                if (cached.Text.Length > 0) result.Add(new(session.AgentId!.Value, cached.Text));
+            }
+            return result;
+        }
+        finally { _previewGate.Release(); }
+    }
+
+    internal static string ReplyPreview(DeveSession conversation)
+    {
+        var text = conversation.ActivePath().Where(e => e.Kind == DeveEntryKind.Message && e.Role == DeveRole.Assistant)
+            .Select(e => e.Text ?? string.Join("\n", (e.Content ?? []).Where(b => b.Type == "text").Select(b => b.Text)))
+            .LastOrDefault(t => !string.IsNullOrWhiteSpace(t)) ?? "";
+        text = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return text.Length > 280 ? text[..280] + "…" : text;
+    }
+
     private const string LocateMarker = "__DAM_SESSION__";
 
     private readonly Dictionary<string, ISessionFormat> _formats = formats.ToDictionary(f => f.HarnessId);

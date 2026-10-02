@@ -1,4 +1,6 @@
 @inject ManagerApi Api
+@inject IJSRuntime Js
+@inject ISnackbar Snackbar
 <MudDialog>
     <DialogContent>
         <MudText Typo="Typo.h6">@Agent.Name · @StateStyles.For(Agent).Text</MudText>
@@ -26,8 +28,19 @@
                 </MudExpansionPanel>
             </MudExpansionPanels>
         }
+        <MudExpansionPanels Class="mt-3">
+            <MudExpansionPanel Text="Recent diagnostic history">
+                <MudText Typo="Typo.caption">Last 100 changes, up to seven days. Full terminal screens and typed prompts are not recorded.</MudText>
+                @foreach (var entry in _history.AsEnumerable().Reverse())
+                {
+                    <div class="diagnostic-entry"><small>@entry.At.ToLocalTime().ToString("MMM d HH:mm:ss") · @entry.Category @entry.Rule</small><div>@entry.Message</div></div>
+                }
+                @if (_history.Count == 0) { <MudText>No diagnostic history recorded yet.</MudText> }
+            </MudExpansionPanel>
+        </MudExpansionPanels>
     </DialogContent>
     <DialogActions>
+        <MudButton OnClick="CopyAsync">Copy diagnostics</MudButton>
         <MudButton OnClick="() => Dialog.Close()">Close</MudButton>
         <MudButton Href="@($"agents/{Agent.Id}")" Color="Color.Primary" OnClick="() => Dialog.Close()">Open terminal</MudButton>
     </DialogActions>
@@ -35,8 +48,19 @@
 @code {
     protected override async Task OnInitializedAsync()
     {
-        try { Agent = await Api.GetAgentAsync(Agent.Id) ?? Agent; }
+        try { Agent = await Api.GetAgentAsync(Agent.Id) ?? Agent; _history = await Api.GetDiagnosticsAsync(Agent.Id); }
         catch (Exception ex) when (ex is ApiException or HttpRequestException) { }
+    }
+    private List<AgentDiagnosticDto> _history = [];
+    private async Task CopyAsync()
+    {
+        var report = System.Text.Json.JsonSerializer.Serialize(new {
+            ManagerVersion = typeof(AgentStatusDialog).Assembly.GetName().Version?.ToString(),
+            Agent = Agent.Name, Agent.HarnessId, Agent.RunnerName, Agent.State,
+            Agent.Activity, History = _history
+        }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        try { await Js.InvokeVoidAsync("damUi.copy", report); Snackbar.Add("Diagnostics copied", Severity.Success); }
+        catch (Exception) { Snackbar.Add("Clipboard unavailable. Select the diagnostic history to copy it.", Severity.Warning); }
     }
     [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
     [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;

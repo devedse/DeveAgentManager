@@ -1,5 +1,5 @@
 @inherits LiveComponent
-<MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+<MudMenu PopoverClass="agent-attention-popover" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
     <ActivatorContent>
         <MudBadge Content="@_items.Count" Visible="@(_items.Count > 0)" Color="Color.Warning" Overlap="true">
             <MudIconButton Icon="@Icons.Material.Rounded.Notifications" Size="Size.Small" OnClick="@context.ToggleAsync" aria-label="@($"Agents needing attention: {_items.Count}")" />

@@ -10,7 +10,7 @@ namespace DeveAgentManager.Core.Agents;
 
 /// <summary>Durable, opt-in, one-shot continuations. No browser timer and no automatic rearming after another limit.</summary>
 public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> factory, ILimitTerminal terminal,
-    ManagerEvents events, TimeProvider clock, ILogger<AgentContinuations> logger) : BackgroundService
+    ManagerEvents events, TimeProvider clock, ILogger<AgentContinuations> logger, AgentDiagnostics? diagnostics = null) : IDisposable
 {
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _gates = new();
     private SemaphoreSlim Gate(Guid id) => _gates.GetOrAdd(id, _ => new(1, 1));
@@ -95,6 +95,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             limit.Detail = continueAfterMinutes is not null ? "Continue scheduled after the chosen duration; the detected allowance reset is unchanged."
                 : resetOverride is null ? null : "Reset time confirmed manually.";
             await db.SaveChangesAsync(ct);
+            diagnostics?.Record(id, "Continuation", $"{limit.Status}: {limit.Detail ?? "Scheduled continuation"}");
             events.AgentChanged(agent.RunnerId, id);
         }
         finally { gate.Release(); }
@@ -109,7 +110,11 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             await using var db = await factory.CreateDbContextAsync(ct);
             var changed = await db.AgentLimits.Where(l => l.AgentId == id && l.Status == "Scheduled")
                 .ExecuteUpdateAsync(s => s.SetProperty(l => l.Status, "Cancelled").SetProperty(l => l.ContinueAt, (DateTime?)null).SetProperty(l => l.Detail, reason), ct);
-            if (changed > 0 && await db.Agents.FindAsync([id], ct) is { } a) events.AgentChanged(a.RunnerId, id);
+            if (changed > 0 && await db.Agents.FindAsync([id], ct) is { } a)
+            {
+                diagnostics?.Record(id, "Continuation", "Cancelled by you.");
+                events.AgentChanged(a.RunnerId, id);
+            }
         }
         finally { gate.Release(); }
     }
@@ -122,18 +127,27 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         finally { gate.Release(); }
     }
 
-    private async Task RefreshLockedAsync(Guid id, bool dispatch, CancellationToken ct)
+    public async Task ObserveAsync(Guid id, LimitScreen snapshot, CancellationToken ct, string? expectedSession = null)
+    {
+        var gate = Gate(id);
+        await gate.WaitAsync(ct);
+        try { await RefreshLockedAsync(id, true, ct, snapshot, expectedSession); }
+        finally { gate.Release(); }
+    }
+
+    private async Task RefreshLockedAsync(Guid id, bool dispatch, CancellationToken ct, LimitScreen? observed = null, string? expectedSession = null)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
         var agent = await db.Agents.Include(a => a.Runner).FirstOrDefaultAsync(a => a.Id == id, ct);
         var row = await db.AgentLimits.FindAsync([id], ct);
-        if (agent is null) return;
+        if (agent is null || expectedSession is not null && Session(agent) != expectedSession) return;
+        if (observed?.ObservedAt is { } at && Now - at > TimeSpan.FromSeconds(30)) return;
         LimitScreen? screen = null;
         ParsedUsageLimit? parsed = null;
         if (agent.State == AgentState.Running && agent.Runner?.State == RunnerState.Ready && agent.HarnessId is "codex" or "claude")
         {
-            screen = await terminal.ReadAsync(agent, ct);
-            parsed = UsageLimitParser.Parse(agent.HarnessId, screen.Screen, screen.TimeZone, Now);
+            screen = observed ?? await terminal.ReadAsync(agent, ct);
+            parsed = UsageLimitParser.Parse(agent.HarnessId, screen.Screen, screen.TimeZone, screen.ObservedAt ?? Now);
         }
 
         // An explicitly scheduled attempt is independent of later screen text or usage-limit detection.
@@ -215,7 +229,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                 row.SessionId = Session(agent);
                 row.PaneIdentity = screen!.Identity;
                 row.TimeZoneId = parsed.TimeZoneId;
-                row.DetectedAt = Now;
+                row.DetectedAt = screen!.ObservedAt ?? Now;
                 row.ResetAt = parsed.ResetAt;
                 row.ContinueAt = null;
                 row.Status = "Detected";
@@ -232,28 +246,14 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         }
         if (db.ChangeTracker.HasChanges())
         {
+            diagnostics?.Record(id, "Continuation", $"{row!.Status}: {row.Detail ?? "Usage limit detected"}");
             await db.SaveChangesAsync(ct);
             events.AgentChanged(agent.RunnerId, id);
         }
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public void Dispose()
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
-        do
-        {
-            try
-            {
-                await using var db = await factory.CreateDbContextAsync(stoppingToken);
-                var ids = await db.Agents.Where(a => a.HarnessId == "codex" || a.HarnessId == "claude").Select(a => a.Id).ToListAsync(stoppingToken);
-                await Parallel.ForEachAsync(ids, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = stoppingToken }, async (id, ct) =>
-                {
-                    try { await RefreshAsync(id, ct); }
-                    catch (Exception ex) when (!ct.IsCancellationRequested) { logger.LogDebug(ex, "Could not read usage limit for agent {Agent}", id); }
-                });
-            }
-            catch (Exception ex) when (!stoppingToken.IsCancellationRequested) { logger.LogWarning(ex, "Usage-limit monitor pass failed"); }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+        foreach (var gate in _gates.Values) gate.Dispose();
     }
 }

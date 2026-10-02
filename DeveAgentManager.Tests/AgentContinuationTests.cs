@@ -375,6 +375,21 @@ public sealed class AgentContinuationTests
         Assert.Equal(0, rig.Terminal.Sends);
     }
 
+    [Fact]
+    public async Task SharedObservationDetectsAndDispatchesWithoutAnotherRead()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.ObserveAsync(rig.Id, rig.Terminal.Screen, Ct);
+        Assert.Equal(0, rig.Terminal.Reads);
+        Assert.NotNull(await rig.Service.GetAsync(rig.Id, Ct));
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct);
+        var reads = rig.Terminal.Reads;
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.ObserveAsync(rig.Id, rig.Terminal.Screen, Ct);
+        Assert.Equal(reads, rig.Terminal.Reads);
+        Assert.Equal(1, rig.Terminal.Sends);
+    }
+
     private sealed class FakeClock : TimeProvider
     {
         public DateTimeOffset Utc = new(2026, 9, 30, 14, 0, 0, TimeSpan.Zero);
@@ -385,9 +400,10 @@ public sealed class AgentContinuationTests
     {
         public LimitScreen Screen = new(UsageLimitParserTests.Codex("2:02 PM"), "pane:pid:start:boot", "UTC", true, "hash");
         public int Sends;
+        public int Reads;
         public bool ThrowOnSend;
         public bool SendResult = true;
-        public Task<LimitScreen> ReadAsync(Agent agent, CancellationToken ct) => Task.FromResult(Screen);
+        public Task<LimitScreen> ReadAsync(Agent agent, CancellationToken ct) { Reads++; return Task.FromResult(Screen); }
         public Task<bool> SendContinueAsync(Agent agent, LimitScreen expected, CancellationToken ct)
         {
             Sends++;

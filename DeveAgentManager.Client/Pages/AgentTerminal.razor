@@ -36,6 +36,7 @@
             @if (running)
             {
                 <AgentLimitButton @key="AgentId" AgentId="AgentId" />
+                <span class="terminal-quick-desktop"><QuickCommandMenu AgentId="AgentId" HarnessId="@_agent.HarnessId" Disabled="_busy" /></span>
                 <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" />
                 <AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" />
                 @if (_agent.RunnerToolIds.Contains("vscode"))
@@ -85,7 +86,7 @@
     }
     else if (_agent.State is AgentState.Running or AgentState.Starting)
     {
-        <TerminalView @ref="_terminal" @key="_connectionKey" AgentId="_agent.Id" Disconnected="OnDisconnectedAsync" Connected="StateHasChanged" />
+        <TerminalView @ref="_terminal" @key="_connectionKey" AgentId="_agent.Id" HarnessId="@_agent.HarnessId" Disconnected="OnDisconnectedAsync" Connected="StateHasChanged" />
     }
     else
     {

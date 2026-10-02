@@ -5,12 +5,14 @@ try {
 let page;
 const context = await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Europe/Amsterdam'});
 page = await context.newPage();
+await page.routeWebSocket('**/ws/terminal?**', ws => { ws.send(JSON.stringify({type:'ready',tty:'/dev/pts/99'})); });
 const errors=[]; page.on('console', msg=>{if (msg.type()==='error' && msg.text().includes('Unhandled exception')) errors.push(msg.text());});page.on('pageerror', e=>errors.push(e.message));
 const base=process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
 await context.request.post(base+'/account/login',{form:{username:'admin',password:process.env.DAM_TEST_PASSWORD ?? 'preview-test-only',returnUrl:'/'}});
 const info=await (await context.request.get(base+'/api/info')).json();
 const id='00000000-0000-0000-0000-000000000001', now=new Date().toISOString();
 let dismissed=false, limitVisible=true;
+let commands=[];
 let seen=[], schedules=[], limitStatus='Detected', limitDetail=null;
 const activity={status:'Ready',reason:"Codex returned a response and its prompt is ready.",rule:'codex/codex-ready-prompt · composer and latest response',evidence:'• done',observedAt:now,since:now,sequence:5,questionWaiting:false,completedAt:now,completionSequence:5,seenCompletionSequence:0,unseenCompletion:true};
 const agent={id,runnerId:'00000000-0000-0000-0000-000000000002',runnerName:'runner-01',runnerState:'Ready',runnerHarnessIds:['codex','claude'],runnerToolIds:[],name:'Example agent',harnessId:'codex',workingDirectory:'/work/example',state:'Running',accountName:'Personal',createdAt:now,updatedAt:now,working:false,activity,lastAssistantMessageAt:now};
@@ -19,6 +21,9 @@ await page.route('**/api/**',async route=>{
  const url=new URL(route.request().url()),path=url.pathname;
  let body;
  if(path==='/api/info')body=info;
+ else if(path==='/api/agents/reply-previews')body=[{agentId:id,text:'Latest response preview for the activity queue.'}];
+ else if(path===`/api/agents/${id}/diagnostics`)body=[{at:now,category:'Activity',message:'Ready after completing the task.',rule:'codex-ready-prompt'}];
+ else if(path===`/api/agents/${id}/commands`){if(route.request().method()==='POST'){commands.push(route.request().postDataJSON());return route.fulfill({status:204});}body=[{command:'/model',label:'Choose model'},{command:'/status',label:'Usage and status'},{command:'/diff',label:'View changes'},{command:'/permissions',label:'Permissions'}];}
  else if(path==='/api/agents/attention') body=activity.unseenCompletion&&!dismissed?[{agentId:id,name:agent.name,runnerName:agent.runnerName,harnessId:'codex',kind:'Finished',reason:'Finished since you last viewed this agent.',at:now,completionSequence:5,token:'A'.repeat(64)}]:[];
  else if(path===`/api/agents/${id}/attention/dismiss`){assert.equal(route.request().postDataJSON().token,'A'.repeat(64));dismissed=true;return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}/limit/continue`){schedules.push(route.request().postDataJSON());return route.fulfill({status:204});}
@@ -42,6 +47,13 @@ await page.goto(base+'/activity');
 await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor({timeout:60000});
 await page.getByText(activity.reason,{exact:true}).waitFor();
 assert.equal(seen.length,0,'activity overview must not mark results seen');
+await page.getByText('Latest response preview for the activity queue.',{exact:true}).waitFor();
+assert.equal(await page.getByRole('link',{name:'Next needing attention'}).getAttribute('href'),`agents/${id}`);
+await page.getByRole('button',{name:'Needs input (0)',exact:true}).click();
+await page.getByText('No agents match this filter.',{exact:true}).waitFor();
+await page.getByRole('button',{name:'Finished (1)',exact:true}).click();
+await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor();
+await page.getByRole('button',{name:'All (1)',exact:true}).click();
 activity.status='Working';activity.reason='The agent is working in the background.';
 await page.getByRole('button',{name:'Explain Example agent status: Working'}).waitFor({timeout:15000});
 await page.getByText(activity.reason,{exact:true}).waitFor();
@@ -71,6 +83,9 @@ await page.getByRole('button',{name:'Explain Example agent status: Ready'}).clic
 await page.getByText(activity.reason,{exact:true}).waitFor();
 await page.getByText('Detection details',{exact:true}).click();
 await page.getByText('Rule: '+activity.rule,{exact:true}).waitFor();
+await page.getByText('Recent diagnostic history',{exact:true}).click();
+await page.getByText('Ready after completing the task.',{exact:true}).waitFor();
+await page.getByRole('button',{name:'Copy diagnostics',exact:true}).waitFor();
 await page.screenshot({path:'/tmp/dam-status-desktop.png'});
 await page.getByRole('button',{name:'Close',exact:true}).last().click();
 // A hidden terminal must not acknowledge completion, even with focus.
@@ -80,12 +95,24 @@ await page.goto(base+`/agents/${id}`);
 await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor();
 await page.waitForTimeout(5500);
 assert.equal(seen.length,0,'background/unfocused terminal acknowledged completion');
-await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'visible'}); document.hasFocus=()=>false;});
+await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'visible'}); document.hasFocus=()=>false;document.dispatchEvent(new Event('visibilitychange'));});
 await page.waitForTimeout(5500);
 assert.equal(seen.length,0,'unfocused terminal acknowledged completion');
 await page.evaluate(()=>{document.hasFocus=()=>true;});
 await page.waitForTimeout(5500);
 assert.deepEqual(seen,[{completionSequence:5}]);
+await page.locator('button[aria-label="Harness quick commands"]:visible').click();
+await page.getByRole('menuitem',{name:'/status · Usage and status',exact:true}).click();
+assert.deepEqual(commands,[{command:'/status',harnessId:'codex'}]);
+await page.setViewportSize({width:390,height:844});
+await page.waitForTimeout(500);
+await page.locator('button[aria-label="Harness quick commands"]:visible').click();
+await page.getByRole('menuitem',{name:'/model · Choose model',exact:true}).waitFor();
+assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'quick command menu overflows phone');
+await page.screenshot({path:'/tmp/dam-quick-commands-phone.png'});
+await page.getByRole('menuitem',{name:'/model · Choose model',exact:true}).click();
+assert.deepEqual(commands[1],{command:'/model',harnessId:'codex'});
+await page.setViewportSize({width:1280,height:900});
 console.log('Checking manual schedule');
 // No limit is required for an explicit manual test.
 await page.getByRole('button',{name:'Schedule continue',exact:true}).click();

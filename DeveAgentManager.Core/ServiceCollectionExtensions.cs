@@ -39,7 +39,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<ILimitTerminal, LimitTerminal>();
         services.AddSingleton<AgentContinuations>();
-        services.AddHostedService(sp => sp.GetRequiredService<AgentContinuations>());
+        services.AddSingleton<AgentDiagnostics>();
+        services.AddSingleton<AgentQuickCommands>();
         services.AddSingleton<RunnerSetupService>();
         services.AddSingleton<SessionService>();
         services.AddSingleton<Accounts.AccountService>();

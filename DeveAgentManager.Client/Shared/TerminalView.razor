@@ -37,6 +37,10 @@
     {
         <button type="button" class="terminal-key" title="@title" aria-label="@title" @onclick="() => SendAsync(sequence)" @onclick:preventDefault="true">@label</button>
     }
+    @if (AgentId is { } commandAgent && HarnessId is not null)
+    {
+        <QuickCommandMenu AgentId="commandAgent" HarnessId="@HarnessId" Disabled="@(_overlay is not null)" />
+    }
     @* Opened in the browser (terminal.js), so the file picker runs in the tap itself: browsers only open it for a user action. *@
     <button type="button" class="terminal-key" data-dam-action="image" title="Send an image (screenshot, photo)" aria-label="Send an image">
         <MudIcon Icon="@Icons.Material.Rounded.AttachFile" Size="Size.Small" />
@@ -93,6 +97,8 @@
     /// <summary>Attach to this agent's tmux session.</summary>
     [Parameter]
     public Guid? AgentId { get; set; }
+
+    [Parameter] public string? HarnessId { get; set; }
 
     /// <summary>Or open a plain shell on this Runner (or, with <see cref="Login"/>, a login on it).</summary>
     [Parameter]
