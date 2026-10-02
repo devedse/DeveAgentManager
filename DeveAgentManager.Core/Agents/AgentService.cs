@@ -379,6 +379,7 @@ public sealed partial class AgentService(
         var result = (await shell.RunAsync(runner, BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern)), captureScreens: true),
             TimeSpan.FromSeconds(30), cancellationToken)).EnsureSuccess("Reading agent state");
         var (_, panes, _) = ParsePanes(result.Output);
+        var knownLimits = await db.AgentLimits.AsNoTracking().Where(l => db.Agents.Any(a => a.Id == l.AgentId && a.RunnerId == runner.Id)).ToDictionaryAsync(l => l.AgentId, cancellationToken);
         var changedAgents = new List<Guid>();
         var screens = ParseScreens(result.Output);
 
@@ -397,6 +398,8 @@ public sealed partial class AgentService(
                     var screen = screens.GetValueOrDefault(agent.TmuxSession);
                     var detection = screen?.Screen is { } text ? AgentScreenDetector.Detect(agent.HarnessId, text, DateTime.UtcNow)
                         : new AgentScreenDetection(AgentActivityStatus.Unknown, "The terminal snapshot could not be read.", "snapshot-unavailable");
+                    if (screen?.Screen is { } currentScreen)
+                        detection = UsageLimitState.ApplyExpiry(agent, knownLimits.GetValueOrDefault(agent.Id), currentScreen, screen.Identity, detection, DateTime.UtcNow);
                     activityChanged = AgentActivityTracker.Apply(agent, detection,
                         screen?.Identity ?? AgentActivityTracker.Read(agent).Identity, DateTime.UtcNow);
                     working = agent.Working;

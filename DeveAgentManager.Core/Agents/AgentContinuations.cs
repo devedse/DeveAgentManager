@@ -15,22 +15,22 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _gates = new();
     private SemaphoreSlim Gate(Guid id) => _gates.GetOrAdd(id, _ => new(1, 1));
     private DateTime Now => clock.GetUtcNow().UtcDateTime;
-    private static string Session(Agent a) => $"{a.HarnessId}|{a.HarnessSessionId}|{a.AccountId}";
+    private static string Session(Agent a) => UsageLimitState.Session(a);
 
     public async Task<AgentLimitDto?> GetAsync(Guid id, CancellationToken ct)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
         var row = await db.AgentLimits.AsNoTracking().FirstOrDefaultAsync(l => l.AgentId == id, ct);
-        return row is null || row.Status == "Cleared" ? null : Dto(row);
+        return row is null || row.Status == "Cleared" ||
+            (row.Status is not ("Scheduled" or "Sending" or "Uncertain") && UsageLimitState.HasExpired(row, Now)) ? null : Dto(row);
     }
 
     private static AgentLimitDto Dto(AgentLimit l)
     {
         // Re-read the original message at its original observation time. ResetAt is the user's
         // selected reset and may have been overridden; it must never masquerade as detection.
-        var detected = l.Manual ? null : UsageLimitParser.Parse(l.SessionId.Split('|')[0],
-            l.Message + "\n❯ ", l.TimeZoneId, l.DetectedAt)?.ResetAt;
-        return new(l.Message, l.TimeZoneId, l.DetectedAt, l.ResetAt, l.ContinueAt, l.Status, l.Detail, l.NativeAutoContinue, l.Manual, detected);
+        var detected = l.Manual ? null : UsageLimitState.DetectedReset(l);
+        return new(l.Manual ? "Manual continuation — no usage limit is required." : l.Message, l.TimeZoneId, l.DetectedAt, l.ResetAt, l.ContinueAt, l.Status, l.Detail, l.NativeAutoContinue, l.Manual, detected);
     }
 
     public async Task ScheduleAsync(Guid id, DateTime? resetOverride, CancellationToken ct, DateTime? expectedDetectedAt = null, double? continueAfterMinutes = null, bool manual = false)
@@ -45,7 +45,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             var limit = await db.AgentLimits.FindAsync([id], ct);
             if (manual)
             {
-                if (limit is { Manual: false } && limit.Status != "Cleared")
+                if (limit is { Manual: false } && limit.Status != "Cleared" && !UsageLimitState.HasExpired(limit, Now))
                     throw new InvalidOperationException("A usage limit was detected. Reopen the dialog to review it.");
                 if (limit?.Status is "Scheduled" or "Sending" or "Uncertain")
                     throw new InvalidOperationException("Review or cancel the existing continuation first.");
@@ -55,11 +55,16 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                     throw new InvalidOperationException("Manual continuation requires a running Codex or Claude agent on a ready Runner.");
                 var initial = await terminal.ReadAsync(agent, ct);
                 if (limit is null) { limit = new AgentLimit { AgentId = id }; db.AgentLimits.Add(limit); }
+                var preserveExpiredMessage = UsageLimitState.HasExpired(limit, Now)
+                    && limit.SessionId == Session(agent) && limit.PaneIdentity == initial.Identity;
                 limit.Manual = true;
                 limit.PaneIdentity = initial.Identity;
                 limit.SessionId = Session(agent);
-                limit.Message = "Manual continuation — no usage limit is required.";
-                limit.DetectedAt = Now;
+                if (!preserveExpiredMessage)
+                {
+                    limit.Message = "Manual continuation — no usage limit is required.";
+                    limit.DetectedAt = Now;
+                }
                 limit.ResetAt = null;
                 limit.Status = "Detected";
                 limit.NativeAutoContinue = false;
@@ -173,6 +178,13 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                     }
                 }
             }
+        }
+        else if (row is not null && row.Status != "Uncertain" && UsageLimitState.HasExpired(row, Now)
+            && (parsed is null || (parsed.Message == row.Message && Session(agent) == row.SessionId && screen?.Identity == row.PaneIdentity)))
+        {
+            row.Status = "Expired";
+            row.ContinueAt = null;
+            row.Detail = "The detected reset has passed. The prompt was paused by a usage limit.";
         }
         else if (row?.Status == "Sent" && parsed is null && screen is not null &&
             AgentScreenDetector.Detect(agent.HarnessId, screen.Screen, Now).Status is AgentActivityStatus.Ready or AgentActivityStatus.Working)

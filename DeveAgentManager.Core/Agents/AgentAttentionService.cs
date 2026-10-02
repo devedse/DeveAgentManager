@@ -33,7 +33,7 @@ public sealed class AgentAttentionService(IDbContextFactory<ManagerDbContext> fa
         {
             if (activity.Status == AgentActivityStatus.NeedsInput) kind = AgentAttentionKind.NeedsInput;
             else if (activity.QuestionWaiting) { kind = AgentAttentionKind.QuestionWaiting; reason = "A queued question can be answered while the agent continues working."; }
-            else if (activity.Status == AgentActivityStatus.UsageLimited && !limitManaged) kind = AgentAttentionKind.UsageLimit;
+            else if ((activity.Status == AgentActivityStatus.UsageLimited && !limitManaged) || activity.Rule == "usage-limit-expired") kind = AgentAttentionKind.UsageLimit;
             else if (activity.UnseenCompletion) { kind = AgentAttentionKind.Finished; reason = "Finished since you last viewed this agent."; at = activity.CompletedAt!.Value; }
             else if (activity.Status == AgentActivityStatus.Unknown && now - activity.Since >= TimeSpan.FromSeconds(30)) kind = AgentAttentionKind.Unclear;
         }
@@ -41,7 +41,9 @@ public sealed class AgentAttentionService(IDbContextFactory<ManagerDbContext> fa
         // Poll timestamps and elapsed working timers must not revive a dismissed alert. A new
         // semantic observation, process or changed blocking message does create a new alert.
         var identity = AgentActivityTracker.Read(agent).Identity;
-        var key = kind == AgentAttentionKind.Finished
+        var key = kind == AgentAttentionKind.UsageLimit
+            ? JsonSerializer.Serialize(new object?[] { kind, identity, activity.Evidence })
+            : kind == AgentAttentionKind.Finished
             ? JsonSerializer.Serialize(new object?[] { kind, identity, activity.CompletionSequence })
             : JsonSerializer.Serialize(new object?[] { kind, identity, activity.Sequence,
                 kind is AgentAttentionKind.NeedsInput or AgentAttentionKind.UsageLimit ? activity.Evidence : null,
