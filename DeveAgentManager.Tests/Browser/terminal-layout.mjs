@@ -12,7 +12,7 @@ try {
  const alerts=Array.from({length:20},(_,i)=>({agentId:id,name:i===0?'queuecache':'LongProjectName'.repeat(8),runnerName:'runner-01',harnessId:'codex',kind:'UsageLimit',reason:'The harness has reached its usage allowance.',at:now,token:String(i).padStart(64,'0')}));
  await page.route('**/api/**',async route=>{
   const p=new URL(route.request().url()).pathname;
-  let body=p==='/api/info'?info:p==='/api/agents/attention'?alerts:p===`/api/agents/${id}`?agent:p===`/api/agents/${id}/limit`?null:p==='/api/agents'?[agent]:p.endsWith('/session')?null:[];
+  let body=p.endsWith('/commands')?[{command:'/model',label:'Choose model'},{command:'/status',label:'Usage and status'},{command:'/diff',label:'View changes'},{command:'/permissions',label:'Permissions'}]:p==='/api/info'?info:p==='/api/agents/attention'?alerts:p===`/api/agents/${id}`?agent:p===`/api/agents/${id}/limit`?null:p==='/api/agents'?[agent]:p.endsWith('/session')?null:[];
   await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
  });
  await page.routeWebSocket('**/ws/terminal?**',ws=>{ws.send(JSON.stringify({type:'ready',tty:'/dev/pts/99'}));});
@@ -36,5 +36,24 @@ try {
   await page.getByLabel('Agents needing attention: 20',{exact:true}).click();
   await page.locator('.agent-attention-popover.mud-popover-open').waitFor({state:'hidden'});
  }
+ for (const viewport of [{width:390,height:844},{width:320,height:640},{width:740,height:360},{width:390,height:380}]) {
+  await page.setViewportSize(viewport);
+  await page.waitForTimeout(500);
+  const before=await page.locator('.terminal-layout').boundingBox();
+  const button=page.locator('button[aria-label="Harness quick commands"]:visible');
+  await button.click();
+  await page.getByRole('menuitem',{name:'/permissions · Permissions',exact:true}).waitFor();
+  await page.waitForTimeout(300);
+  const menu=await page.locator('.quick-command-popover.mud-popover-open').boundingBox();
+  assert.ok(menu.x>=0 && menu.x+menu.width<=viewport.width,'quick commands overflow horizontally');
+  assert.ok(menu.y>=0 && menu.y+menu.height<=viewport.height,'quick commands overflow vertically');
+  assert.ok(menu.width>=260,'commands collapsed to the activator width');
+  assert.deepEqual(await page.locator('.terminal-layout').boundingBox(),before,'quick commands resize terminal');
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'quick commands expand document');
+  await page.screenshot({path:`/tmp/dam-commands-${viewport.width}-${viewport.height}.png`});
+  await button.click();
+  await page.locator('.quick-command-popover.mud-popover-open').waitFor({state:'hidden'});
+ }
+ console.log('Passed: quick commands fit phone, landscape and reduced keyboard-height viewports.');
  console.log('Passed: notification popover stays inside wide, narrow and rotated touch viewports without resizing the terminal.');
 }finally {await browser.close();}

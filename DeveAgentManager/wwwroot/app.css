@@ -2729,6 +2729,21 @@ a {
 .terminal-keys > .quick-command-menu { flex: 1 1 0; min-width: 0; max-width: 72px; }
 .terminal-keys .quick-command-menu .mud-menu-activator { display: flex; width: 100%; }
 .terminal-keys .quick-command-menu .terminal-key { width: 100%; }
+.quick-command-popover { width: min(280px, calc(100vw - 16px)); max-width: calc(100vw - 16px); }
+.quick-command-popover .mud-list-item { white-space: normal; overflow-wrap: anywhere; }
+@media (pointer: coarse), (max-width: 700px) {
+    .quick-command-popover {
+        position: fixed !important;
+        top: calc(var(--dam-vv-top, 0px) + var(--dam-vv-height, 100dvh) - 48px) !important;
+        left: auto !important;
+        right: 8px !important;
+        transform: translateY(-100%) !important;
+        max-height: max(48px, calc(var(--dam-vv-height, 100dvh) - 108px));
+        overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+    }
+}
 .terminal-key:disabled { opacity: .45; cursor: default; }
 .activity-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
 .reply-preview { margin-top: 12px; padding: 12px; background: var(--dam-surface-2); border-radius: 8px; overflow-wrap: anywhere; }

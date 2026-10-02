@@ -1,6 +1,6 @@
 @inject ManagerApi Api
 @inject ISnackbar Snackbar
-<MudMenu Class="quick-command-menu" Dense="true" AnchorOrigin="Origin.TopCenter" TransformOrigin="Origin.BottomCenter">
+<MudMenu Class="quick-command-menu" PopoverClass="quick-command-popover" Dense="true" AnchorOrigin="Origin.TopRight" TransformOrigin="Origin.BottomRight">
     <ActivatorContent>
         <button type="button" class="terminal-key" disabled="@(Disabled || _sending)" aria-label="Harness quick commands" title="Harness quick commands" @onclick="async () => { await LoadAsync(); await context.ToggleAsync(); }">/</button>
     </ActivatorContent>
