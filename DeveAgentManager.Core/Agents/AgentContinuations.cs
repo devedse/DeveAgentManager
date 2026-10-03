@@ -192,6 +192,23 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             parsed = UsageLimitParser.Parse(agent.HarnessId, screen.Screen, screen.TimeZone, screen.ObservedAt ?? Now);
         }
 
+        // Repair stored messages after parser improvements without moving their observation
+        // date or overwriting a manually selected reset / existing schedule.
+        if (row is { Manual: false } && parsed is not null && row.SessionId == Session(agent)
+            && row.PaneIdentity == screen?.Identity)
+        {
+            var original = UsageLimitParser.Parse(agent.HarnessId, row.Message + "\n❯ ", row.TimeZoneId, row.DetectedAt);
+            if (original?.Message == parsed.Message)
+            {
+                row.Message = original.Message;
+                if (row.Status == "Detected" && row.ResetAt is null)
+                {
+                    row.ResetAt = original.ResetAt;
+                    row.Detail = original.Detail;
+                }
+            }
+        }
+
         // Re-arm only for a detected reset, never by repeatedly reacting to an old screen.
         // The reset key is persisted before sending and survives process/Manager restarts.
         if (policy is { Enabled: true } && parsed is not null && !parsed.NativeAutoContinue

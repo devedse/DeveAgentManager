@@ -8,6 +8,19 @@ public sealed class UsageLimitParserTests
     internal static string Codex(string reset) => $"■ You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro),\nvisit https://chatgpt.com/codex/settings/usage to purchase more credits or try again\nat {reset}.\n\n› Ask Codex to do anything\n  ? for shortcuts";
     internal static string Claude(string message) => $"{message}\n\n❯ \n  bypass permissions on";
 
+    [Theory]
+    [InlineData("⚠ 5h limit: 48% left · /status")]
+    [InlineData("⚠ Weekly 48% left")]
+    public void CodexQuotaFooterDoesNotPollutePastReset(string footer)
+    {
+        var screen = Codex("7:23 PM").Replace("■ You've", "■ Error running remote compact task: You've")
+            .Replace("\n\n›", "\n" + footer + "\n\n›");
+        var now = new DateTime(2026, 10, 3, 19, 1, 0, DateTimeKind.Utc);
+        var parsed = UsageLimitParser.Parse("codex", screen, "Europe/Amsterdam", now)!;
+        Assert.Equal(new DateTime(2026, 10, 3, 17, 23, 0, DateTimeKind.Utc), parsed.ResetAt);
+        Assert.DoesNotContain("48%", parsed.Message);
+    }
+
     [Fact]
     public void DetectsRemoteCompactionUsageErrorAndItsReset()
     {
@@ -56,7 +69,6 @@ public sealed class UsageLimitParserTests
     [InlineData("You've hit your limit · resets 3pm (CST)", "2026-09-29T13:00:00Z")]
     [InlineData("You've hit your limit · resets 3pm (Not/AZone)", "2026-09-29T13:00:00Z")]
     [InlineData("You've hit your weekly limit · resets next week", "2026-09-29T13:00:00Z")]
-    [InlineData("You've hit your limit · resets 3pm", "2026-09-29T20:00:00Z")]
     [InlineData("You've hit your limit · resets 29:99", "2026-09-29T13:00:00Z")]
     public void RequiresConfirmationWhenDateOrTimezoneIsAmbiguous(string message, string now)
     {

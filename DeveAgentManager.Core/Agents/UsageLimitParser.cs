@@ -32,9 +32,11 @@ public static class UsageLimitParser
         bool CompletedFooter(string line) => harness == "claude" && Match(line,
             @"^\s*[✻✢✽✶✳*] .+ for \d+[smh](?: \d+[smh])*\s*·\s*done \d{1,2}:\d{2}(?: [AP]M)?\s*$").Success;
         if (following.Any(line => !CompletedFooter(line) && Match(line, @"^\s*[›❯•●◦■⎿└✻✢✽✶✳*]").Success)) return null;
-        var message = Regex.Replace(start < 0 ? nativeFooter! : string.Join(" ", new[] { lines[start] }.Concat(following.TakeWhile(line => !CompletedFooter(line)))), @"\s+", " ").Trim();
+        bool StatusFooter(string line) => harness == "codex" && Match(line,
+            @"^\s*(?:⚠(?:️)?\s*)?(?:[0-9]+ background terminals? running\b|(?:5h|weekly)\s+(?:limit:\s*)?[0-9]+%\s+left\b)").Success;
+        var message = Regex.Replace(start < 0 ? nativeFooter! : string.Join(" ", new[] { lines[start] }.Concat(following.TakeWhile(line => !CompletedFooter(line) && !StatusFooter(line)))), @"\s+", " ").Trim();
         if (harness == "codex")
-            message = Regex.Replace(message, @"\s+\d+ background terminals? running\b.*$", "",
+            message = Regex.Replace(message, @"\s+(?:\d+ background terminals? running\b|⚠(?:️)?\s*(?:5h|weekly)\s+(?:limit:\s*)?\d+%\s+left\b).*$", "",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)).Trim();
         if (message.Length > 1800) return null;
         var native = nativeFooter is not null || message.Contains("continuing automatically", StringComparison.OrdinalIgnoreCase);
@@ -92,14 +94,17 @@ public static class UsageLimitParser
         var localReset = DateTime.SpecifyKind(date.Date.AddHours(hour).AddMinutes(minute), DateTimeKind.Unspecified);
         if (dateText.Length == 0)
         {
-            if (localReset < localNow.AddMinutes(-5)) localReset = localReset.AddDays(1);
+            // Near midnight a morning reset may mean tomorrow. Otherwise retain a past
+            // time on the observation day so enabling auto mode after reset can catch up.
+            if (localReset < localNow.AddMinutes(-5) && localNow.Hour >= 18 && localReset.Hour < 6
+                && localReset.AddDays(1) <= localNow.AddHours(6)) localReset = localReset.AddDays(1);
             // A time-only message cannot establish a weekly reset or the date of an old error.
             if (localReset > localNow.AddHours(6)) return Unknown();
         }
         if (zone.IsInvalidTime(localReset) || zone.IsAmbiguousTime(localReset))
             return new(message, null, zoneId, native, "This reset falls in a daylight-saving clock change. Use a duration to choose an exact continuation time.");
         var utc = TimeZoneInfo.ConvertTimeToUtc(localReset, zone);
-        if (utc < nowUtc.AddMinutes(-5) || utc > nowUtc.AddDays(32)) return Unknown();
+        if ((dateText.Length != 0 && utc < nowUtc.AddMinutes(-5)) || utc > nowUtc.AddDays(32)) return Unknown();
         return new(message, utc, zoneId, native, null);
 
         ParsedUsageLimit Unknown() => new(message, null, zoneId, native,

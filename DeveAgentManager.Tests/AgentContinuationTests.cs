@@ -536,6 +536,32 @@ public sealed class AgentContinuationTests
         Assert.Equal("Cancelled", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AutoContinueCatchesUpPastResetWithQuotaFooter(bool alreadyStored)
+    {
+        await using var rig = await Rig.Create();
+        var screen = UsageLimitParserTests.Codex("2:02 PM").Replace("■ You've", "■ Error running remote compact task: You've")
+            .Replace("\n\n›", "\n⚠ 5h limit: 48% left · /status\n\n›");
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = screen };
+        if (alreadyStored)
+        {
+            await rig.Service.RefreshAsync(rig.Id, Ct);
+            await using var db = rig.Factory.CreateDbContext();
+            var row = (await db.AgentLimits.FindAsync([rig.Id], Ct))!;
+            row.Message += " ⚠ 5h limit: 48% left · /status";
+            row.ResetAt = null;
+            await db.SaveChangesAsync(Ct);
+        }
+        rig.Clock.Utc = rig.Clock.Utc.AddHours(2);
+        await rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct);
+        for (var i = 0; i < 4; i++) await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        Assert.True((await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Enabled);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+    }
+
     private sealed class FakeClock : TimeProvider
     {
         public DateTimeOffset Utc = new(2026, 9, 30, 14, 0, 0, TimeSpan.Zero);
