@@ -3,6 +3,8 @@ using DeveAgentManager.Core.Data;
 
 namespace DeveAgentManager.Contracts;
 
+public sealed record AutoContinueDto(bool Enabled = false, int? Remaining = null, int Sent = 0, string? Detail = null);
+public sealed record AutoContinueRequest(bool Enabled, int? Remaining = null);
 public sealed record TimeZoneRequest(string? TimeZoneId);
 public sealed record TimeZoneConfigDto(string DefaultTimeZoneId, string? OverrideTimeZoneId);
 public sealed record AgentLimitDto(string Message, string? TimeZoneId, DateTime DetectedAt, DateTime? ResetAt,

@@ -12,7 +12,7 @@ try {
  const alerts=Array.from({length:20},(_,i)=>({agentId:id,name:i===0?'queuecache':'LongProjectName'.repeat(8),runnerName:'runner-01',harnessId:'codex',kind:'UsageLimit',reason:'The harness has reached its usage allowance.',at:now,token:String(i).padStart(64,'0')}));
  await page.route('**/api/**',async route=>{
   const p=new URL(route.request().url()).pathname;
-  let body=p.endsWith('/commands')?[{command:'/model',label:'Choose model'},{command:'/status',label:'Usage and status'},{command:'/diff',label:'View changes'},{command:'/permissions',label:'Permissions'}]:p==='/api/info'?info:p==='/api/agents/attention'?alerts:p===`/api/agents/${id}`?agent:p===`/api/agents/${id}/limit`?null:p==='/api/agents'?[agent]:p.endsWith('/session')?null:[];
+  let body=p.endsWith('/limit/automatic')?{enabled:false,remaining:null,sent:0}:p.endsWith('/commands')?[{command:'/model',label:'Choose model'},{command:'/status',label:'Usage and status'},{command:'/diff',label:'View changes'},{command:'/permissions',label:'Permissions'}]:p==='/api/info'?info:p==='/api/agents/attention'?alerts:p===`/api/agents/${id}`?agent:p===`/api/agents/${id}/limit`?null:p==='/api/agents'?[agent]:p.endsWith('/session')?null:[];
   await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
  });
  await page.routeWebSocket('**/ws/terminal?**',ws=>{ws.send(JSON.stringify({type:'ready',tty:'/dev/pts/99'}));});

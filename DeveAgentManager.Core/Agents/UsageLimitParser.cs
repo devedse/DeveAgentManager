@@ -19,7 +19,7 @@ public static class UsageLimitParser
         var prompt = Array.FindLastIndex(lines, line => Match(line, @"^\s*[›❯](?:\s|$)").Success);
         if (prompt < 0) return null;
         var prefix = harness == "codex"
-            ? @"^\s*■\s*You've hit your usage limit\b"
+            ? @"^\s*■\s*(?:Error running remote compac(?:t|tion) task:\s*)?You've hit your usage limit\b"
             : @"^\s*(?:[⎿■└]\s*)?(?:You've hit your (?:(?:session|weekly|monthly|Opus|Sonnet) )?limit\b|Claude (?:AI )?usage limit reached\b|Usage limit reached\b)";
         var start = -1;
         for (var i = Math.Max(0, prompt - 16); i < prompt; i++)

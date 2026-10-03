@@ -4,6 +4,32 @@
 
 <MudDialog>
     <DialogContent>
+        <MudSelect T="bool" @bind-Value="_autoMode" Label="Continuation mode" Variant="Variant.Outlined" Class="mb-3">
+            <MudSelectItem T="bool" Value="false">One-time schedule</MudSelectItem>
+            <MudSelectItem T="bool" Value="true">Automatic after usage limits</MudSelectItem>
+        </MudSelect>
+        @if (_autoMode)
+        {
+            <MudSwitch T="bool" Value="_enabled" ValueChanged="ToggleAutomaticAsync" Disabled="_busy" Color="Color.Success" Label="Auto-continue enabled" />
+            <MudText>Send <b>continue</b> one minute after each detected usage-limit reset in this chat. Stays on until you switch it off, even with this page closed.</MudText>
+            <MudSwitch T="bool" @bind-Value="_limited" Disabled="_busy" Color="Color.Primary" Label="Limit the number of continuations" />
+            @if (_limited)
+            {
+                <MudNumericField T="int" @bind-Value="_remaining" Label="Continuations remaining" Min="1" Max="10000" Variant="Variant.Outlined" Disabled="_busy" />
+            }
+            else { <MudText Typo="Typo.body2">Unlimited continuations</MudText> }
+            @if (Automatic.Detail is not null) { <MudAlert Severity="Severity.Info" Class="mt-3">@Automatic.Detail</MudAlert> }
+            @if (_enabled && Limit.Status == "Scheduled") { <MudText Class="mt-2">Next continue: @_continueDescription</MudText> }
+            <MudText Class="mt-3" Typo="Typo.body2">Sends so far: @Automatic.Sent. Drafts and busy agents wait. Unknown reset times need your attention; no time is guessed.</MudText>
+            <MudText Typo="Typo.body2">Changing the conversation or uncertain delivery stops automatic mode. Claude's own automatic continuation takes priority.</MudText>
+        }
+        else if (_enabled)
+        {
+            <MudAlert Severity="Severity.Info">Automatic continuation is on. Switch it off before creating a one-time schedule.</MudAlert>
+            <MudButton OnClick="() => ToggleAutomaticAsync(false)" Disabled="_busy">Turn off automatic continuation</MudButton>
+        }
+        else
+        {
         <MudText Class="mb-3">@Limit.Message</MudText>
         @if (Limit.NativeAutoContinue)
         {
@@ -29,7 +55,7 @@
             {
                 <MudButton Color="Color.Primary" Disabled="!_loaded || _busy" OnClick="UseDetectedAsync">Use detected reset (+1 minute)</MudButton>
             }
-            @if (!Limit.Manual) { <MudSwitch T="bool" @bind-Value="_relative" Color="Color.Primary" Label="Continue after a duration" /> }
+            <MudSwitch T="bool" @bind-Value="_relative" Color="Color.Primary" Label="Continue after a duration" />
             @if (_relative)
             {
                 <div class="limit-schedule-fields">
@@ -54,15 +80,20 @@
             }
             <MudText Class="mt-3">The Manager will type and send <b>continue</b> once, @(_relative ? "after this duration" : "one minute after this reset"). If the agent is busy or you have a draft, the schedule stays armed until the prompt is empty and the agent is ready.</MudText>
         }
+        }
         @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert> }
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="() => MudDialog.Cancel()">Close</MudButton>
-        @if (!Limit.NativeAutoContinue && Limit.Status == "Scheduled")
+        @if (_autoMode)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="SaveAutomaticAsync">Save automatic settings</MudButton>
+        }
+        else if (!_enabled && !Limit.NativeAutoContinue && Limit.Status == "Scheduled")
         {
             <MudButton Color="Color.Warning" Disabled="_busy" OnClick="CancelAsync">Cancel scheduled continue</MudButton>
         }
-        else if (!Limit.NativeAutoContinue && (Limit.Status is "Detected" or "Cancelled" || (Limit.Manual && Limit.Status == "Sent")))
+        else if (!_enabled && !Limit.NativeAutoContinue && (Limit.Status is "Detected" or "Cancelled" || (Limit.Manual && Limit.Status == "Sent")))
         {
             <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || !_loaded" OnClick="ScheduleAsync">Schedule continue</MudButton>
         }
@@ -73,6 +104,9 @@
     [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
     [Parameter] public Guid AgentId { get; set; }
     [Parameter, EditorRequired] public AgentLimitDto Limit { get; set; } = default!;
+    [Parameter] public AutoContinueDto Automatic { get; set; } = new();
+    private bool _autoMode, _enabled, _limited;
+    private int _remaining = 1;
     private DateTime? _date;
     private TimeSpan? _time;
     private string _zone = "Loading…";
@@ -86,6 +120,9 @@
 
     protected override async Task OnInitializedAsync()
     {
+        _autoMode = _enabled = Automatic.Enabled;
+        _limited = Automatic.Remaining is not null;
+        _remaining = Math.Max(1, Automatic.Remaining ?? 1);
         _relative = Limit.Manual;
         if (Limit.Manual) { _amount = 1; _resetDescription = "Test a one-time continuation without waiting for a usage limit."; }
         try
@@ -114,6 +151,23 @@
         }
         catch (JSException) { _error = "Could not read your local timezone. Reopen this dialog to try again."; }
     }
+
+    private async Task ToggleAutomaticAsync(bool enabled)
+    {
+        _busy = true;
+        try
+        {
+            await Api.SetAutoContinueAsync(AgentId, enabled, _limited ? _remaining : null);
+            Automatic = await Api.GetAutoContinueAsync(AgentId);
+            _enabled = Automatic.Enabled;
+            Limit = await Api.GetAgentLimitAsync(AgentId) ?? new("Manual continuation — no usage limit is required.", null, DateTime.UtcNow, null, null, "Detected", null, false, true);
+            _relative = Limit.Manual;
+            _error = null;
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+    private Task SaveAutomaticAsync() => RunAsync(() => Api.SetAutoContinueAsync(AgentId, _enabled, _limited ? _remaining : null));
 
     private async Task UseDetectedAsync()
     {
@@ -147,7 +201,7 @@
             if (!DateTime.TryParse(result.Utc, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out reset))
             { _error = "The local reset time could not be converted."; return; }
         }
-        await RunAsync(() => Api.ScheduleContinueAsync(AgentId, reset == Limit.ResetAt ? null : reset, Limit.DetectedAt));
+        await RunAsync(() => Api.ScheduleContinueAsync(AgentId, reset, Limit.DetectedAt));
     }
     private Task CancelAsync() => RunAsync(() => Api.CancelContinueAsync(AgentId));
     private async Task RunAsync(Func<Task> action)

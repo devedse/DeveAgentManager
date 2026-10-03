@@ -47,6 +47,8 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     public Task<List<AgentQuickCommandDto>> GetQuickCommandsAsync(Guid id) => GetAsync<List<AgentQuickCommandDto>>($"api/agents/{id}/commands");
     public Task SendQuickCommandAsync(Guid id, string harness, string command) => SendAsync(HttpMethod.Post, $"api/agents/{id}/commands", new AgentQuickCommandRequest(command, harness));
     public Task<List<AgentReplyPreviewDto>> GetReplyPreviewsAsync() => GetAsync<List<AgentReplyPreviewDto>>("api/agents/reply-previews");
+    public Task<AutoContinueDto> GetAutoContinueAsync(Guid id) => GetAsync<AutoContinueDto>($"api/agents/{id}/limit/automatic");
+    public Task SetAutoContinueAsync(Guid id, bool enabled, int? remaining) => SendAsync(HttpMethod.Put, $"api/agents/{id}/limit/automatic", new AutoContinueRequest(enabled, remaining));
     public Task<AgentLimitDto?> GetAgentLimitAsync(Guid id) => FindAsync<AgentLimitDto>($"api/agents/{id}/limit");
     public Task ScheduleContinueAsync(Guid id, DateTime? reset, DateTime? detectedAt, double? continueAfterMinutes = null, bool manual = false) => SendAsync(HttpMethod.Post, $"api/agents/{id}/limit/continue", new ScheduleContinueRequest(reset, detectedAt, continueAfterMinutes, manual));
     public Task CancelContinueAsync(Guid id) => SendAsync(HttpMethod.Delete, $"api/agents/{id}/limit/continue");

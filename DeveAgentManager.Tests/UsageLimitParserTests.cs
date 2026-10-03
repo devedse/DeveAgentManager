@@ -8,6 +8,15 @@ public sealed class UsageLimitParserTests
     internal static string Codex(string reset) => $"■ You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro),\nvisit https://chatgpt.com/codex/settings/usage to purchase more credits or try again\nat {reset}.\n\n› Ask Codex to do anything\n  ? for shortcuts";
     internal static string Claude(string message) => $"{message}\n\n❯ \n  bypass permissions on";
 
+    [Fact]
+    public void DetectsRemoteCompactionUsageErrorAndItsReset()
+    {
+        var screen = Codex("7:23 PM").Replace("■ You've", "■ Error running remote compact task: You've");
+        var now = new DateTime(2026, 10, 3, 16, 12, 0, DateTimeKind.Utc);
+        Assert.Equal(new DateTime(2026, 10, 3, 17, 23, 0, DateTimeKind.Utc), UsageLimitParser.Parse("codex", screen, "Europe/Amsterdam", now)!.ResetAt);
+        Assert.Equal(DeveAgentManager.Contracts.AgentActivityStatus.UsageLimited, AgentScreenDetector.Detect("codex", screen, now).Status);
+    }
+
     [Theory]
     [InlineData("1 background terminal running · /ps to view · /stop to close")]
     [InlineData("1 background terminal\nrunning · /ps to view · /stop to close")]

@@ -111,15 +111,16 @@ public sealed class AgentContinuationTests
     }
 
     [Fact]
-    public async Task StaleDialogCannotApproveANewLimit()
+    public async Task ExplicitTimeFromDialogSurvivesChangedDetection()
     {
         await using var rig = await Rig.Create();
         await rig.Service.RefreshAsync(rig.Id, Ct);
         var viewed = (await rig.Service.GetAsync(rig.Id, Ct))!;
         rig.Clock.Utc = rig.Clock.Utc.AddSeconds(5);
         rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.Codex("3:00 PM") };
-        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.ScheduleAsync(rig.Id, null, Ct, viewed.DetectedAt));
-        Assert.Equal("Detected", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await rig.Service.ScheduleAsync(rig.Id, viewed.ResetAt, Ct, viewed.DetectedAt);
+        Assert.Equal(viewed.ResetAt!.Value.AddMinutes(1), (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt);
     }
 
     [Fact]
@@ -177,6 +178,7 @@ public sealed class AgentContinuationTests
     public async Task DetectedResetRemainsAvailableAfterManualOverrideAndCancellation()
     {
         await using var rig = await Rig.Create();
+        await rig.Service.RefreshAsync(rig.Id, Ct);
         var detectedReset = rig.Clock.Utc.AddMinutes(2).UtcDateTime;
         var selectedReset = rig.Clock.Utc.AddHours(1).UtcDateTime;
         await rig.Service.ScheduleAsync(rig.Id, selectedReset, Ct);
@@ -192,6 +194,7 @@ public sealed class AgentContinuationTests
     public async Task RelativeScheduleUsesManagerClockAndSendsAfterExactDuration()
     {
         await using var rig = await Rig.Create();
+        await rig.Service.RefreshAsync(rig.Id, Ct);
         var now = rig.Clock.Utc;
         await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 5);
         Assert.Equal(now.AddMinutes(5).UtcDateTime, (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt);
@@ -304,7 +307,6 @@ public sealed class AgentContinuationTests
     {
         await using var rig = await Rig.Create();
         ReadyWithoutLimit(rig);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1));
         await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true);
         Assert.True((await rig.Service.GetAsync(rig.Id, Ct))!.Manual);
         rig.Service.Dispose(); rig.Service = rig.NewService();
@@ -363,10 +365,9 @@ public sealed class AgentContinuationTests
     }
 
     [Fact]
-    public async Task ManualScheduleWaitsForUnclearPromptAndCannotBypassRealLimit()
+    public async Task ManualScheduleWaitsForUnclearPromptEvenWithNoDetection()
     {
         await using var rig = await Rig.Create();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true));
         rig.Terminal.Screen = rig.Terminal.Screen with { Screen = "some unrecognized screen" };
         await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true);
         rig.Clock.Utc = rig.Clock.Utc.AddMinutes(1);
@@ -388,6 +389,151 @@ public sealed class AgentContinuationTests
         await rig.Service.ObserveAsync(rig.Id, rig.Terminal.Screen, Ct);
         Assert.Equal(reads, rig.Terminal.Reads);
         Assert.Equal(1, rig.Terminal.Sends);
+    }
+
+    [Fact]
+    public async Task AutomaticRepeatsAcrossLimitsAndRestartUntilCountIsExhausted()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.SetAutomaticAsync(rig.Id, true, 2, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct); // detect
+        await rig.Service.RefreshAsync(rig.Id, Ct); // arm
+        Assert.Equal(0, rig.Terminal.Sends);
+        Assert.Equal(rig.Clock.Utc.AddMinutes(3).UtcDateTime, (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt);
+        rig.Service.Dispose(); rig.Service = rig.NewService();
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        Assert.Equal(1, (await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Remaining);
+        for (var i = 0; i < 3; i++) await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends); // the old error still on screen cannot trigger another send
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.Codex("3:00 PM") };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(58);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var policy = await rig.Service.GetAutomaticAsync(rig.Id, Ct);
+        Assert.False(policy.Enabled);
+        Assert.Equal(0, policy.Remaining);
+        Assert.Equal(2, policy.Sent);
+        Assert.Equal(2, rig.Terminal.Sends);
+    }
+
+    [Fact]
+    public async Task AutomaticUnlimitedWaitsForDraftAndCanBeTurnedOff()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        rig.Terminal.Screen = rig.Terminal.Screen with { InputEmpty = false };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+        Assert.True((await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Enabled);
+        await rig.Service.SetAutomaticAsync(rig.Id, false, null, Ct);
+        rig.Terminal.Screen = rig.Terminal.Screen with { InputEmpty = true };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+        await rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        Assert.True((await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Enabled);
+        Assert.Null((await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Remaining);
+    }
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("native")]
+    public async Task AutomaticDoesNotGuessOrDuplicateNativeContinuation(string kind)
+    {
+        await using var rig = await Rig.Create();
+        if (kind == "native")
+        {
+            await using var db = rig.Factory.CreateDbContext();
+            (await db.Agents.FindAsync([rig.Id], Ct))!.HarnessId = "claude";
+            await db.SaveChangesAsync(Ct);
+            rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.Claude("Usage limit reached · continuing automatically at 2:02pm · esc to cancel") };
+        }
+        else rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.Codex("an unknown time") };
+        await rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct);
+        for (var i = 0; i < 3; i++) await rig.Service.RefreshAsync(rig.Id, Ct);
+        rig.Clock.Utc = rig.Clock.Utc.AddHours(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+        Assert.NotEqual("Scheduled", await rig.StatusAsync());
+    }
+
+    [Theory]
+    [InlineData("session")]
+    [InlineData("uncertain")]
+    [InlineData("restart-sending")]
+    public async Task AutomaticStopsForChangedConversationOrUncertainDelivery(string change)
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.SetAutomaticAsync(rig.Id, true, 1, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            if (change == "session") (await db.Agents.FindAsync([rig.Id], Ct))!.HarnessSessionId = "different-chat";
+            if (change == "restart-sending") (await db.AgentLimits.FindAsync([rig.Id], Ct))!.Status = "Sending";
+            await db.SaveChangesAsync(Ct);
+        }
+        rig.Terminal.ThrowOnSend = change == "uncertain";
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var policy = await rig.Service.GetAutomaticAsync(rig.Id, Ct);
+        Assert.False(policy.Enabled);
+        Assert.Equal(1, policy.Remaining);
+        Assert.Equal(change == "uncertain" ? 1 : 0, rig.Terminal.Sends);
+    }
+
+    [Fact]
+    public async Task AutomaticAndOneTimeModesCannotCompete()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct));
+        await rig.Service.CancelAsync(rig.Id, "Cancelled", Ct);
+        await rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.ScheduleAsync(rig.Id, null, Ct));
+        await Assert.ThrowsAsync<ArgumentException>(() => rig.Service.SetAutomaticAsync(rig.Id, true, 0, Ct));
+    }
+
+    [Fact]
+    public async Task ChosenDateSchedulesEvenIfLimitClearedWhileDialogWasOpen()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var viewed = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        ReadyWithoutLimit(rig);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+        var reads = rig.Terminal.Reads;
+        await rig.Service.ScheduleAsync(rig.Id, viewed.ResetAt, Ct, viewed.DetectedAt);
+        Assert.Equal(reads, rig.Terminal.Reads); // no new detection gate for an explicit time
+        Assert.Equal(viewed.ResetAt!.Value.AddMinutes(1), (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt);
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+    }
+
+    [Fact]
+    public async Task ExplicitScheduleRemainsCancellableWhenNativeWaitingWasPreviouslyDetected()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            (await db.AgentLimits.FindAsync([rig.Id], Ct))!.NativeAutoContinue = true;
+            await db.SaveChangesAsync(Ct);
+        }
+        await rig.Service.ScheduleAsync(rig.Id, rig.Clock.Utc.AddHours(1).UtcDateTime, Ct);
+        Assert.False((await rig.Service.GetAsync(rig.Id, Ct))!.NativeAutoContinue);
+        await rig.Service.CancelAsync(rig.Id, "Cancelled by you.", Ct);
+        Assert.Equal("Cancelled", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
     }
 
     private sealed class FakeClock : TimeProvider

@@ -153,11 +153,16 @@ public static class ManagerApi
             await attention.MarkSeenAsync(agentId, request.CompletionSequence, ct);
             return Results.NoContent();
         });
+        agents.MapGet("/{agentId:guid}/limit/automatic", (Guid agentId, AgentContinuations limits, CancellationToken ct) => limits.GetAutomaticAsync(agentId, ct));
+        agents.MapPut("/{agentId:guid}/limit/automatic", async (Guid agentId, AutoContinueRequest request, AgentContinuations limits, CancellationToken ct) =>
+        {
+            await limits.SetAutomaticAsync(agentId, request.Enabled, request.Remaining, ct);
+            return Results.NoContent();
+        });
         agents.MapGet("/{agentId:guid}/limit", async (Guid agentId, AgentContinuations limits, CancellationToken ct) =>
             await limits.GetAsync(agentId, ct) is { } limit ? Results.Ok(limit) : Results.NotFound());
         agents.MapPost("/{agentId:guid}/limit/continue", async (Guid agentId, ScheduleContinueRequest request, AgentContinuations limits, CancellationToken ct) =>
         {
-            if (!request.Manual && request.ExpectedDetectedAt is null) throw new ArgumentException("Review the current usage limit before scheduling.");
             await limits.ScheduleAsync(agentId, request.ResetAtUtc, ct, request.ExpectedDetectedAt, request.ContinueAfterMinutes, request.Manual);
             return Results.NoContent();
         });

@@ -2769,3 +2769,8 @@ body:has(.terminal-layout) .agent-attention-popover {
     overflow-x: hidden;
     overscroll-behavior: contain;
 }
+
+/* Persistent automatic mode remains visibly distinct from a one-time schedule. */
+.auto-continue-active { animation: auto-continue-pulse 2s ease-in-out infinite; }
+@keyframes auto-continue-pulse { 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .auto-continue-active { animation: none; } }

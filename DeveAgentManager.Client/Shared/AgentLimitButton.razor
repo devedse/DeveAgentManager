@@ -4,16 +4,17 @@
 
 <MudTooltip Text="@Hint">
     <MudIconButton Icon="@StatusIcon"
-                   Class="@(_limit?.Status == "Detected" && !_limit.NativeAutoContinue ? "limit-alert-blink" : "")"
-                   Color="@(_limit is null ? Color.Default : Color.Warning)" Size="Size.Small" OnClick="OpenAsync" aria-label="@Hint" />
+                   Class="@(_automatic.Enabled ? "auto-continue-active" : _limit?.Status == "Detected" && !_limit.NativeAutoContinue ? "limit-alert-blink" : "")"
+                   Color="@(_automatic.Enabled ? Color.Success : _limit is null ? Color.Default : Color.Warning)" Size="Size.Small" OnClick="OpenAsync" aria-label="@Hint" />
 </MudTooltip>
 
 @code {
     [Parameter] public Guid AgentId { get; set; }
     private AgentLimitDto? _limit;
+    private AutoContinueDto _automatic = new();
     private string? _scheduledLocal;
     protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
-    private string StatusIcon => _limit?.Status switch
+    private string StatusIcon => _automatic.Enabled ? Icons.Material.Rounded.Autorenew : _limit?.Status switch
     {
         "Scheduled" => Icons.Material.Rounded.Schedule,
         "Sending" => Icons.Material.Rounded.Sync,
@@ -22,7 +23,7 @@
         "Uncertain" => Icons.Material.Rounded.ErrorOutline,
         _ => Icons.Material.Rounded.HourglassBottom
     };
-    private string Hint => _limit is null ? "Schedule continue" : _limit?.NativeAutoContinue == true ? "Usage limit: Claude will continue automatically"
+    private string Hint => _automatic.Enabled ? $"Auto-continue on · {(_automatic.Remaining is { } count ? $"{count} remaining" : "unlimited")}" : _limit is null ? "Schedule continue" : _limit?.NativeAutoContinue == true ? "Usage limit: Claude will continue automatically"
         : _limit?.Status == "Scheduled" ? $"Continue scheduled for {_scheduledLocal ?? "your chosen time"}"
         : _limit?.Status == "Sending" ? "Sending scheduled continue"
         : _limit?.Status == "Sent" ? "Continue submitted; view result"
@@ -33,12 +34,13 @@
     protected override async Task LoadAsync()
     {
         _limit = await Api.GetAgentLimitAsync(AgentId);
+        _automatic = await Api.GetAutoContinueAsync(AgentId);
         _scheduledLocal = _limit?.ContinueAt is { } at ? await Js.InvokeAsync<string>("damSchedule.describe", at) : null;
     }
     private async Task OpenAsync()
     {
         var dialog = await Dialogs.ShowAsync<ContinueAfterLimitDialog>(_limit is null || _limit.Manual ? "Schedule continue" : "Continue after usage limit", new DialogParameters
-        { [nameof(ContinueAfterLimitDialog.AgentId)] = AgentId, [nameof(ContinueAfterLimitDialog.Limit)] = _limit ?? new AgentLimitDto("Manual continuation — no usage limit is required.", null, DateTime.UtcNow, null, null, "Detected", null, false, true) },
+        { [nameof(ContinueAfterLimitDialog.Automatic)] = _automatic, [nameof(ContinueAfterLimitDialog.AgentId)] = AgentId, [nameof(ContinueAfterLimitDialog.Limit)] = _limit ?? new AgentLimitDto("Manual continuation — no usage limit is required.", null, DateTime.UtcNow, null, null, "Detected", null, false, true) },
             new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
         await dialog.Result;
         await ReloadAsync();

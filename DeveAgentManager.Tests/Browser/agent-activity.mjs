@@ -13,6 +13,7 @@ const info=await (await context.request.get(base+'/api/info')).json();
 const id='00000000-0000-0000-0000-000000000001', now=new Date().toISOString();
 let dismissed=false, limitVisible=true;
 let commands=[];
+let automatic={enabled:false,remaining:null,sent:0,detail:null};
 let seen=[], schedules=[], limitStatus='Detected', limitDetail=null;
 const activity={status:'Ready',reason:"Codex returned a response and its prompt is ready.",rule:'codex/codex-ready-prompt · composer and latest response',evidence:'• done',observedAt:now,since:now,sequence:5,questionWaiting:false,completedAt:now,completionSequence:5,seenCompletionSequence:0,unseenCompletion:true};
 const agent={id,runnerId:'00000000-0000-0000-0000-000000000002',runnerName:'runner-01',runnerState:'Ready',runnerHarnessIds:['codex','claude'],runnerToolIds:[],name:'Example agent',harnessId:'codex',workingDirectory:'/work/example',state:'Running',accountName:'Personal',createdAt:now,updatedAt:now,working:false,activity,lastAssistantMessageAt:now};
@@ -20,7 +21,8 @@ const runner={id:agent.runnerId,name:'runner-01',providerId:'proxmox',kind:'Head
 await page.route('**/api/**',async route=>{
  const url=new URL(route.request().url()),path=url.pathname;
  let body;
- if(path==='/api/info')body=info;
+ if(path===`/api/agents/${id}/limit/automatic`){if(route.request().method()==='PUT'){automatic={...automatic,...route.request().postDataJSON()};return route.fulfill({status:204});}body=automatic;}
+ else if(path==='/api/info')body=info;
  else if(path==='/api/agents/reply-previews')body=[{agentId:id,text:'Latest response preview for the activity queue.'}];
  else if(path===`/api/agents/${id}/diagnostics`)body=[{at:now,category:'Activity',message:'Ready after completing the task.',rule:'codex-ready-prompt'}];
  else if(path===`/api/agents/${id}/commands`){if(route.request().method()==='POST'){commands.push(route.request().postDataJSON());return route.fulfill({status:204});}body=[{command:'/model',label:'Choose model'},{command:'/status',label:'Usage and status'},{command:'/diff',label:'View changes'},{command:'/permissions',label:'Permissions'}];}
@@ -123,6 +125,28 @@ await page.waitForTimeout(300);
 assert.equal(schedules[0].manual,true);
 assert.equal(schedules[0].continueAfterMinutes,1);
 schedules=[];
+console.log('Checking persistent automatic mode');
+await page.getByRole('button',{name:'Schedule continue',exact:true}).click();
+await page.getByRole('combobox',{name:'Continuation mode'}).click();
+await page.getByRole('option',{name:'Automatic after usage limits',exact:true}).click();
+await page.getByRole('switch',{name:'Auto-continue enabled',exact:true}).check();
+await page.getByRole('switch',{name:'Limit the number of continuations',exact:true}).check();
+assert.equal(await page.getByRole('spinbutton',{name:'Continuations remaining',exact:true}).inputValue(),'1');
+await page.getByRole('spinbutton',{name:'Continuations remaining',exact:true}).fill('2');
+await page.getByRole('button',{name:'Save automatic settings',exact:true}).click();
+assert.equal(automatic.enabled,true);
+assert.equal(automatic.remaining,2);
+await page.getByRole('button',{name:'Auto-continue on · 2 remaining',exact:true}).waitFor();
+assert.equal(await page.locator('.auto-continue-active').count(),1);
+await page.setViewportSize({width:390,height:844});
+await page.getByRole('button',{name:'Auto-continue on · 2 remaining',exact:true}).click();
+await page.getByRole('switch',{name:'Auto-continue enabled',exact:true}).waitFor();
+assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'automatic settings overflow phone');
+await page.screenshot({path:'/tmp/dam-auto-phone.png'});
+await page.getByRole('switch',{name:'Auto-continue enabled',exact:true}).uncheck();
+await page.getByRole('button',{name:'Close',exact:true}).last().click();
+await page.getByRole('button',{name:'Schedule continue',exact:true}).waitFor();
+assert.equal(automatic.enabled,false);
 console.log('Checking detected limits and outcomes');
 // Claude limit UI, including the phone toolbar.
 agent.harnessId='claude';activity.status='UsageLimited';activity.reason='The harness has reached its usage allowance.';activity.rule='claude/usage-limit · current error';

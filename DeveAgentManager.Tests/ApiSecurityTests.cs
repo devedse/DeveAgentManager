@@ -140,8 +140,8 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
         Assert.Equal(HttpStatusCode.NotFound, manual.StatusCode);
         Assert.Contains("Agent not found", await manual.Content.ReadAsStringAsync());
         var detected = await client.PostAsJsonAsync(path, new ScheduleContinueRequest(ContinueAfterMinutes: 1), ApiJson.Options);
-        Assert.Equal(HttpStatusCode.BadRequest, detected.StatusCode);
-        Assert.Contains("Review the current usage limit", await detected.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.NotFound, detected.StatusCode);
+        Assert.Contains("Agent not found", await detected.Content.ReadAsStringAsync());
     }
 
     [Fact]

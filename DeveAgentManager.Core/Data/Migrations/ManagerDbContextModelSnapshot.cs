@@ -142,6 +142,35 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.ToTable("Agents");
                 });
 
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentAutoContinue", b =>
+                {
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Detail")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LastLimitKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Remaining")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Sent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("AgentId");
+
+                    b.ToTable("AgentAutoContinues");
+                });
+
             modelBuilder.Entity("DeveAgentManager.Core.Data.AgentIcon", b =>
                 {
                     b.Property<Guid>("AgentId")
@@ -173,6 +202,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                 {
                     b.Property<Guid>("AgentId")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("Automatic")
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("ContinueAt")
                         .HasColumnType("TEXT");
@@ -441,6 +473,15 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Navigation("Account");
 
                     b.Navigation("Runner");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentAutoContinue", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.Agent", null)
+                        .WithOne()
+                        .HasForeignKey("DeveAgentManager.Core.Data.AgentAutoContinue", "AgentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.AgentIcon", b =>

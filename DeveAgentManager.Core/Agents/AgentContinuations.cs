@@ -3,12 +3,11 @@ using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace DeveAgentManager.Core.Agents;
 
-/// <summary>Durable, opt-in, one-shot continuations. No browser timer and no automatic rearming after another limit.</summary>
+/// <summary>Durable one-time schedules and opt-in recurring usage-limit continuation.</summary>
 public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> factory, ILimitTerminal terminal,
     ManagerEvents events, TimeProvider clock, ILogger<AgentContinuations> logger, AgentDiagnostics? diagnostics = null) : IDisposable
 {
@@ -16,6 +15,45 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
     private SemaphoreSlim Gate(Guid id) => _gates.GetOrAdd(id, _ => new(1, 1));
     private DateTime Now => clock.GetUtcNow().UtcDateTime;
     private static string Session(Agent a) => UsageLimitState.Session(a);
+
+    public async Task<AutoContinueDto> GetAutomaticAsync(Guid id, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var policy = await db.AgentAutoContinues.AsNoTracking().FirstOrDefaultAsync(p => p.AgentId == id, ct);
+        return policy is null ? new() : new(policy.Enabled, policy.Remaining, policy.Sent, policy.Detail);
+    }
+
+    public async Task SetAutomaticAsync(Guid id, bool enabled, int? remaining, CancellationToken ct)
+    {
+        if (remaining is < 1 or > 10000) throw new ArgumentException("Choose from 1 to 10,000 continuations, or unlimited.");
+        var gate = Gate(id);
+        await gate.WaitAsync(ct);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var agent = await db.Agents.FindAsync([id], ct) ?? throw new KeyNotFoundException("Agent not found.");
+            if (enabled && agent.HarnessId is not ("codex" or "claude")) throw new ArgumentException("Automatic continuation supports Codex and Claude.");
+            var limit = await db.AgentLimits.FindAsync([id], ct);
+            if (enabled && (limit?.Status is "Sending" or "Uncertain" || limit is { Automatic: false, Status: "Scheduled" }))
+                throw new InvalidOperationException("Cancel or resolve the existing one-time continuation first.");
+            var policy = await db.AgentAutoContinues.FindAsync([id], ct);
+            if (policy is null) { policy = new() { AgentId = id }; db.AgentAutoContinues.Add(policy); }
+            policy.Enabled = enabled;
+            policy.Remaining = remaining;
+            policy.SessionId = Session(agent);
+            policy.Detail = enabled ? "Waiting for a detected usage limit." : "Automatic continuation is off.";
+            if (!enabled && limit is { Automatic: true, Status: "Scheduled" })
+            {
+                limit.Status = "Cancelled";
+                limit.ContinueAt = null;
+                limit.Detail = "Automatic continuation switched off.";
+                policy.LastLimitKey = null; // An unsent attempt may be re-enabled explicitly.
+            }
+            await db.SaveChangesAsync(ct);
+            events.AgentChanged(agent.RunnerId, id);
+        }
+        finally { gate.Release(); }
+    }
 
     public async Task<AgentLimitDto?> GetAsync(Guid id, CancellationToken ct)
     {
@@ -39,40 +77,34 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         await gate.WaitAsync(ct);
         try
         {
-            await RefreshLockedAsync(id, false, ct);
+            if ((await GetAutomaticAsync(id, ct)).Enabled)
+                throw new InvalidOperationException("Switch off automatic continuation before scheduling once.");
             await using var db = await factory.CreateDbContextAsync(ct);
             var agent = await db.Agents.Include(a => a.Runner).FirstOrDefaultAsync(a => a.Id == id, ct) ?? throw new KeyNotFoundException("Agent not found.");
+            if (agent.HarnessId is not ("codex" or "claude")) throw new InvalidOperationException("Continuation supports Codex and Claude.");
             var limit = await db.AgentLimits.FindAsync([id], ct);
-            if (manual)
+            // A chosen time is an explicit instruction, independent of current terminal detection.
+            // Older clients may omit a reset when accepting detection; resolve that stored value once.
+            if (resetOverride is null && continueAfterMinutes is null && (limit is null || limit.Status == "Cleared"))
             {
-                if (limit is { Manual: false } && limit.Status != "Cleared" && !UsageLimitState.HasExpired(limit, Now))
-                    throw new InvalidOperationException("A usage limit was detected. Reopen the dialog to review it.");
-                if (limit?.Status is "Scheduled" or "Sending" or "Uncertain")
-                    throw new InvalidOperationException("Review or cancel the existing continuation first.");
-                if (continueAfterMinutes is null || resetOverride is not null)
-                    throw new ArgumentException("Choose a duration for a manual continuation.");
-                if (agent.State != AgentState.Running || agent.Runner?.State != RunnerState.Ready || agent.HarnessId is not ("codex" or "claude"))
-                    throw new InvalidOperationException("Manual continuation requires a running Codex or Claude agent on a ready Runner.");
-                var initial = await terminal.ReadAsync(agent, ct);
-                if (limit is null) { limit = new AgentLimit { AgentId = id }; db.AgentLimits.Add(limit); }
-                var preserveExpiredMessage = UsageLimitState.HasExpired(limit, Now)
-                    && limit.SessionId == Session(agent) && limit.PaneIdentity == initial.Identity;
-                limit.Manual = true;
-                limit.PaneIdentity = initial.Identity;
-                limit.SessionId = Session(agent);
-                if (!preserveExpiredMessage)
-                {
-                    limit.Message = "Manual continuation — no usage limit is required.";
-                    limit.DetectedAt = Now;
-                }
-                limit.ResetAt = null;
-                limit.Status = "Detected";
-                limit.NativeAutoContinue = false;
+                await RefreshLockedAsync(id, false, ct);
+                db.ChangeTracker.Clear();
+                limit = await db.AgentLimits.FindAsync([id], ct);
             }
-            if (limit is null || limit.Status == "Cleared") throw new InvalidOperationException("No current usage-limit message was found.");
-            if (!manual && expectedDetectedAt is { } expected && expected != limit.DetectedAt) throw new InvalidOperationException("The usage limit changed while the dialog was open. Close it and review the new reset time.");
-            if (limit.NativeAutoContinue) throw new InvalidOperationException("Claude is already continuing automatically; no second continuation will be scheduled.");
-            if (limit.Status is "Scheduled" or "Sending" or "Sent" or "Uncertain") throw new InvalidOperationException("This limit already has a continuation. Cancel a pending one before changing its time.");
+            if (limit?.Status is "Scheduled" or "Sending" or "Uncertain")
+                throw new InvalidOperationException("Review or cancel the existing continuation first.");
+            if (resetOverride is null && continueAfterMinutes is null && expectedDetectedAt is { } expected && limit?.DetectedAt != expected)
+                throw new InvalidOperationException("The detected reset changed. Choose a time before scheduling.");
+            if (limit is null) { limit = new AgentLimit { AgentId = id }; db.AgentLimits.Add(limit); }
+            if (limit.Status == "Cleared" || limit.Message.Length == 0 || limit.SessionId != Session(agent))
+            {
+                limit.Manual = true;
+                limit.Message = "One-time continuation at your chosen time.";
+                limit.DetectedAt = Now;
+                limit.ResetAt = null;
+            }
+            limit.Manual |= manual;
+            limit.SessionId = Session(agent);
             var now = Now;
             var reset = resetOverride ?? limit.ResetAt;
             DateTime continueAt;
@@ -89,6 +121,9 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                     throw new ArgumentException("The reset must be UTC, with its continuation in the future and within 32 days.");
                 continueAt = reset.Value.AddMinutes(1);
             }
+            limit.Automatic = false;
+            // This is now the user's schedule; native waiting is rechecked at delivery time.
+            limit.NativeAutoContinue = false;
             limit.ResetAt = reset;
             limit.ContinueAt = continueAt;
             limit.Status = "Scheduled";
@@ -142,6 +177,13 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         var row = await db.AgentLimits.FindAsync([id], ct);
         if (agent is null || expectedSession is not null && Session(agent) != expectedSession) return;
         if (observed?.ObservedAt is { } at && Now - at > TimeSpan.FromSeconds(30)) return;
+        var policy = await db.AgentAutoContinues.FindAsync([id], ct);
+        if (policy is { Enabled: true } && policy.SessionId != Session(agent))
+        {
+            policy.Enabled = false;
+            policy.Detail = "Automatic continuation stopped because the conversation or harness changed.";
+            if (row is { Automatic: true, Status: "Scheduled" }) { row.Status = "Cancelled"; row.ContinueAt = null; }
+        }
         LimitScreen? screen = null;
         ParsedUsageLimit? parsed = null;
         if (agent.State == AgentState.Running && agent.Runner?.State == RunnerState.Ready && agent.HarnessId is "codex" or "claude")
@@ -150,11 +192,34 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             parsed = UsageLimitParser.Parse(agent.HarnessId, screen.Screen, screen.TimeZone, screen.ObservedAt ?? Now);
         }
 
+        // Re-arm only for a detected reset, never by repeatedly reacting to an old screen.
+        // The reset key is persisted before sending and survives process/Manager restarts.
+        if (policy is { Enabled: true } && parsed is not null && !parsed.NativeAutoContinue
+            && row is not null && row.Status is not ("Scheduled" or "Sending" or "Uncertain" or "Sent")
+            && row.Message == parsed.Message && row.SessionId == Session(agent) && !row.Manual
+            && UsageLimitState.DetectedReset(row) is { } reset)
+        {
+            var key = Session(agent) + "|" + reset.ToString("O");
+            if (policy.LastLimitKey != key)
+            {
+                row.Automatic = true;
+                row.ContinueAt = reset.AddMinutes(1);
+                row.Status = "Scheduled";
+                row.Detail = null;
+                policy.LastLimitKey = key;
+                policy.Detail = "Waiting until one minute after the detected reset.";
+                // The claim below must find Scheduled in the database even on an already-expired reset.
+                await db.SaveChangesAsync(ct);
+                events.AgentChanged(agent.RunnerId, id);
+            }
+        }
+
         // An explicitly scheduled attempt is independent of later screen text or usage-limit detection.
         // Only the user cancels it. If it is due but cannot safely submit, leave it armed and explain why.
         if (row?.Status == "Sending")
         {
             row.Status = "Uncertain";
+            if (row.Automatic && policy is not null) { policy.Enabled = false; policy.Detail = "Delivery is uncertain after a restart. Check the terminal."; }
             row.Detail = "The Manager restarted during sending. Check the terminal; it will not send again automatically.";
         }
         else if (row?.Status == "Scheduled")
@@ -179,14 +244,22 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                     {
                         var sent = await terminal.SendContinueAsync(agent, screen!, ct);
                         row.Status = sent ? "Sent" : "Scheduled";
+                        if (sent && row.Automatic && policy is not null)
+                        {
+                            policy.Sent++;
+                            if (policy.Remaining is { } count) policy.Remaining = Math.Max(0, count - 1);
+                            if (policy.Remaining == 0) policy.Enabled = false;
+                            policy.Detail = policy.Enabled ? "Continue sent. Waiting for the next usage limit." : "The chosen number of continuations has been sent.";
+                        }
                         // Force Scheduled to be written back after the database-only claim above.
                         db.Entry(row).Property(l => l.Status).IsModified = true;
-                        row.Detail = sent ? "Submitted continue once. If the harness reaches its limit again, review the new reset before scheduling another attempt."
+                        row.Detail = sent ? (row.Automatic ? policy?.Detail : "Submitted continue once. If the harness reaches its limit again, review the new reset before scheduling another attempt.")
                             : "Waiting because the terminal changed during submission. Check the prompt; inserted text may still be present.";
                     }
                     catch (Exception ex)
                     {
                         row.Status = "Uncertain";
+                        if (row.Automatic && policy is not null) { policy.Enabled = false; policy.Detail = "Delivery is uncertain. Check the terminal before enabling again."; }
                         row.Detail = "Could not confirm delivery. Check the terminal; it will not send again automatically.";
                         logger.LogWarning(ex, "Could not confirm scheduled continuation for agent {Agent}", id);
                     }
@@ -215,7 +288,11 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         }
         else if (parsed is null)
         {
-            if (row is null || row.Status == "Cleared" || row.Manual) return;
+            if (row is null || row.Status == "Cleared" || row.Manual)
+            {
+                if (db.ChangeTracker.HasChanges()) { await db.SaveChangesAsync(ct); events.AgentChanged(agent.RunnerId, id); }
+                return;
+            }
             row.Status = "Cleared";
             row.ContinueAt = null;
         }
@@ -224,6 +301,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             if (row is null) { row = new AgentLimit { AgentId = id }; db.AgentLimits.Add(row); }
             if (row.Manual || row.Message != parsed.Message || row.SessionId != Session(agent) || row.PaneIdentity != screen!.Identity || row.Status == "Cleared" || row.TimeZoneId != parsed.TimeZoneId)
             {
+                row.Automatic = false;
                 row.Manual = false;
                 row.Message = parsed.Message;
                 row.SessionId = Session(agent);
@@ -244,9 +322,16 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             }
             row.NativeAutoContinue = parsed.NativeAutoContinue;
         }
+        if (policy is { Enabled: true })
+        {
+            if (parsed?.NativeAutoContinue == true) policy.Detail = "Waiting while Claude continues automatically.";
+            else if (parsed is not null && row?.Status == "Detected" && UsageLimitState.DetectedReset(row) is null)
+                policy.Detail = "The reset time is uncertain. Switch to a one-time schedule to choose it manually.";
+            else if (row is { Automatic: true, Status: "Scheduled", Detail: not null }) policy.Detail = row.Detail;
+        }
         if (db.ChangeTracker.HasChanges())
         {
-            diagnostics?.Record(id, "Continuation", $"{row!.Status}: {row.Detail ?? "Usage limit detected"}");
+            diagnostics?.Record(id, "Continuation", $"{row?.Status}: {row?.Detail ?? policy?.Detail ?? "Usage limit detected"}");
             await db.SaveChangesAsync(ct);
             events.AgentChanged(agent.RunnerId, id);
         }

@@ -72,8 +72,20 @@ public class Runner
 }
 
 /// <summary>One observed limit and an optional, explicitly armed, single continuation.</summary>
+public class AgentAutoContinue
+{
+    public Guid AgentId { get; set; }
+    public string SessionId { get; set; } = "";
+    public bool Enabled { get; set; }
+    public int? Remaining { get; set; }
+    public int Sent { get; set; }
+    public string? LastLimitKey { get; set; }
+    public string? Detail { get; set; }
+}
+
 public class AgentLimit
 {
+    public bool Automatic { get; set; }
     public bool Manual { get; set; }
     public Guid AgentId { get; set; }
     public string SessionId { get; set; } = "";
