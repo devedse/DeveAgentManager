@@ -6,7 +6,7 @@
 <PageTitle>Sessions · DeveAgentManager</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page">
-    <PageHeader Title="Sessions" Subtitle="Every agent's conversation, stored by the Manager. It stays after the agent or its Runner is gone, and can be continued on any Runner.">
+    <PageHeader Title="Sessions" Help="Every agent's conversation, stored by the Manager. It stays after the agent or its Runner is gone, and can be continued on any Runner. Sizes are synced file sizes, including saved backups, not the model's context window.">
         <Actions>
             <MudFileUpload T="IBrowserFile" FilesChanged="ImportAsync" Accept=".jsonl,.json" MaximumFileCount="1">
                 <CustomContent Context="upload">

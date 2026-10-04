@@ -9,7 +9,7 @@
 <PageTitle>Settings · DeveAgentManager</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.Large" Class="page">
-    <PageHeader Title="Settings" Subtitle="Values set in the compose file are shown read-only. Everything else is stored encrypted in /data." />
+    <PageHeader Title="Settings" Help="Values set in the compose file are shown read-only. Everything else is stored encrypted in /data." />
 
     <div class="panel panel-flush">
         <MudTabs Elevation="0" ApplyEffectsToContainer="true" Class="panel-tabs" TabPanelsClass="panel-tab-content" KeepPanelsAlive="true" MinimumTabWidth="0">
@@ -22,10 +22,8 @@
                     <div class="settings-section">
                         <div class="settings-section-header">
                             <div>
-                                <MudText Typo="Typo.h6">@provider.DisplayName</MudText>
-                                <MudText Typo="Typo.body2" Class="mud-text-secondary">
-                                    @(provider.Capabilities.RequiresConnectionDetails ? "Add a Linux machine you already have. Nothing to configure." : "Clones Runners from a template VM over the Proxmox API.")
-                                </MudText>
+                                <div class="help-heading"><MudText Typo="Typo.h6">@provider.DisplayName</MudText>
+                                    <HelpTip Label="@provider.DisplayName">@(provider.Capabilities.RequiresConnectionDetails ? "Add a Linux machine you already have. Nothing to configure." : "Clones Runners from a template VM over the Proxmox API.")</HelpTip></div>
                             </div>
                             <StatusPill Style="@(provider.IsConfigured ? new StateStyle("Configured", Tone.Success) : new StateStyle("Not configured", Tone.Warning))" />
                         </div>
@@ -69,9 +67,9 @@
             <MudTabPanel Text="Setup Profile" Icon="@Icons.Material.Rounded.Checklist">
                 @if (_profile is not null)
                 {
-                    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
-                        Applied to every Runner when it is set up, and again when you use <b>Re-run setup</b>: git identity, API keys, login and settings files, and a script. Packages and the default model are on the harness's own tab (e.g. <b>pi</b>).
-                    </MudText>
+                    <div class="help-heading mb-3"><MudText Typo="Typo.subtitle1">Setup Profile</MudText>
+                        <HelpTip Label="Setup Profile">Applied to every Runner during setup and Re-run setup: Git identity, environment variables, login and settings files, and a script. Packages and default models are on each harness's tab.</HelpTip>
+                    </div>
 
                     <div class="settings-section">
                         <MudText Typo="Typo.subtitle1" Class="section-title">Git identity</MudText>
@@ -83,10 +81,10 @@
 
                     <div class="settings-section">
                         <div class="section-title-row">
-                            <MudText Typo="Typo.subtitle1" Class="section-title">Environment variables</MudText>
+                            <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Environment variables</MudText>
+                                <HelpTip Label="Environment variables">Available to every agent, for example <code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code> for pi.</HelpTip></div>
                             <MudSwitch T="bool" @bind-Value="_showSecrets" Color="Color.Primary" Label="Show values" Size="Size.Small" />
                         </div>
-                        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">Available to every agent, for example <code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code> for pi.</MudText>
                         @foreach (var variable in _profile.EnvironmentVariables)
                         {
                             <div class="form-row form-row-center">
@@ -100,10 +98,8 @@
                     </div>
 
                     <div class="settings-section">
-                        <MudText Typo="Typo.subtitle1" Class="section-title">Files</MudText>
-                        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
-                            Written to every Runner before the harnesses are configured, e.g. <code>~/.pi/agent/AGENTS.md</code> with your instructions or <code>~/.pi/agent/keybindings.json</code>.
-                        </MudText>
+                        <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Files</MudText>
+                            <HelpTip Label="Files">Written to every Runner before the harnesses are configured, e.g. <code>~/.pi/agent/AGENTS.md</code> with your instructions or <code>~/.pi/agent/keybindings.json</code>.</HelpTip></div>
 
                         <div class="import-box">
                             <MudIcon Icon="@Icons.Material.Rounded.Download" Color="Color.Primary" />
@@ -145,8 +141,8 @@
                     </div>
 
                     <div class="settings-section">
-                        <MudText Typo="Typo.subtitle1" Class="section-title">Script</MudText>
-                        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">Bash, run as the Runner Account at the end of setup. For example <code>sudo apt-get install -y dotnet-sdk-10.0</code>.</MudText>
+                        <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Script</MudText>
+                            <HelpTip Label="Script">Bash, run as the Runner Account at the end of setup. For example <code>sudo apt-get install -y dotnet-sdk-10.0</code>.</HelpTip></div>
                         <MudTextField @bind-Value="_profile.Script" Variant="Variant.Outlined" Lines="6" MaxLines="30" Placeholder="#!/usr/bin/env bash" Class="mono-input" />
                     </div>
 
@@ -165,9 +161,9 @@
                 <MudTabPanel Text="@harness.DisplayName" Icon="@(harness.Icon ?? Icons.Material.Rounded.Extension)">
                     @if (_profile is not null)
                     {
-                        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
-                            Part of the Setup Profile: applied to every Runner with @harness.DisplayName when it is set up. Use <b>Save and apply</b> to update the Runners now.
-                        </MudText>
+                        <div class="help-heading mb-3"><MudText Typo="Typo.subtitle1">@harness.DisplayName settings</MudText>
+                            <HelpTip Label="@($"{harness.DisplayName} settings")">Part of the Setup Profile, applied to every Runner with @harness.DisplayName during setup. Use <b>Save and apply</b> to update Runners now.</HelpTip>
+                        </div>
 
                         <HarnessConfigEditor Harness="harness" Config="_profile.GetHarness(harness.Id)"
                                              Models="@(_models.GetValueOrDefault(harness.Id) ?? [])" ModelsLoading="@_modelsLoading.Contains(harness.Id)" />
@@ -200,11 +196,10 @@
 
             <MudTabPanel Text="GitHub" Icon="@Icons.Custom.Brands.GitHub">
                 <div class="settings-section">
-                    <MudText Typo="Typo.subtitle1" Class="section-title">Personal access token</MudText>
-                    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
-                        Used on Runners to clone and push private repositories. Prefer a fine-grained token limited to the repositories agents may work on,
-                        because agents can read it. Applied on the next setup of each Runner.
-                    </MudText>
+                    <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Personal access token</MudText>
+                        <HelpTip Label="Personal access token">Used on Runners to clone and push private repositories. Prefer a fine-grained token limited to the repositories agents may work on.
+                        Applied on the next setup of each Runner.</HelpTip></div>
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">Agents can read this token. Limit its repository access.</MudText>
                     @if (_info?.GitHubPatFromCompose == true)
                     {
                         <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">Set with <code>GITHUB_PAT</code> in the compose file.</MudAlert>
@@ -227,11 +222,9 @@
 
             <MudTabPanel Text="Appearance" Icon="@Icons.Material.Rounded.Contrast">
                 <div class="settings-section">
-                    <MudText Typo="Typo.subtitle1" Class="section-title">Theme</MudText>
-                    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
-                        Saved in this browser. <b>System</b> follows the device's light or dark mode, also when it changes. Terminals and logs stay dark,
-                        and VS Code follows the device.
-                    </MudText>
+                    <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Theme</MudText>
+                        <HelpTip Label="Theme">Saved in this browser. <b>System</b> follows the device's light or dark mode, also when it changes. Terminals and logs stay dark,
+                        and VS Code follows the device.</HelpTip></div>
                     <MudToggleGroup T="string" Value="Theme.Mode" ValueChanged="Theme.SetModeAsync" Color="Color.Primary" Outlined="true" Class="theme-choice">
                         <MudToggleItem Value="ThemeService.System"><MudIcon Icon="@Icons.Material.Rounded.BrightnessAuto" Size="Size.Small" Class="mr-2" />System</MudToggleItem>
                         <MudToggleItem Value="ThemeService.Light"><MudIcon Icon="@Icons.Material.Rounded.LightMode" Size="Size.Small" Class="mr-2" />Light</MudToggleItem>
@@ -242,15 +235,16 @@
 
             <MudTabPanel Text="Manager" Icon="@Icons.Material.Rounded.Info">
                 <div class="settings-section">
-                    <MudText Typo="Typo.subtitle1" Class="section-title">SSH key</MudText>
-                    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">The Manager logs in to Runners with this key. It is injected into new VMs automatically; add it to <code>~/.ssh/authorized_keys</code> to use a machine without a password.</MudText>
+                    <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">SSH key</MudText>
+                        <HelpTip Label="SSH key">The Manager logs in to Runners with this key. It is injected into new VMs automatically; add it to <code>~/.ssh/authorized_keys</code> to use a machine without a password.</HelpTip></div>
                     <div class="code-box">
                         <code>@_info?.SshPublicKey</code>
                         <MudIconButton Icon="@Icons.Material.Rounded.ContentCopy" Size="Size.Small" OnClick="CopyKeyAsync" aria-label="Copy" />
                     </div>
                 </div>
                 <div class="settings-section">
-                    <MudText Typo="Typo.subtitle1" Class="section-title">Configuration</MudText>
+                    <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Configuration</MudText>
+                        <HelpTip Label="Manager backups">The data folder holds the database, the SSH key and the keys that decrypt stored secrets. Include the entire folder in backups.</HelpTip></div>
                     <dl class="details details-wide">
                         <dt class="mono">RUNNER_USERNAME</dt>
                         <dd class="mono">@_info?.RunnerUsername</dd>
@@ -263,7 +257,7 @@
                         <dt class="mono">DATA_DIR</dt>
                         <dd class="mono">@_info?.DataDirectory</dd>
                     </dl>
-                    <MudText Typo="Typo.body2" Class="mud-text-secondary mt-3">Back up the data folder: it holds the database, the SSH key and the keys that decrypt the stored secrets.</MudText>
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary mt-3">Back up the data folder.</MudText>
                 </div>
             </MudTabPanel>
         </MudTabs>

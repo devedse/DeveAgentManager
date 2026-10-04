@@ -11,6 +11,10 @@
             }
             <div class="page-title-row">
                 <MudText Typo="Typo.h4" Class="page-title">@Title</MudText>
+                @if (Help is not null)
+                {
+                    <HelpTip Label="@Title" Text="@Help" />
+                }
                 @TitleContent
             </div>
             @if (Subtitle is not null)
@@ -34,6 +38,9 @@
 
     [Parameter]
     public string? Subtitle { get; set; }
+
+    [Parameter]
+    public string? Help { get; set; }
 
     [Parameter]
     public string? BackHref { get; set; }

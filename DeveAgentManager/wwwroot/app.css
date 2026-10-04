@@ -2828,3 +2828,15 @@ body:has(.terminal-layout) .agent-attention-popover {
 }
 
 .session-workspace-name { overflow-wrap: anywhere; }
+
+/* Explanations beside headings, with bounded help on phones as well as desktops. */
+.help-heading { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.help-heading > :first-child { min-width: 0; }
+.help-tip { display: inline-flex; flex: 0 0 auto; vertical-align: middle; }
+.help-tip .help-tip-button { color: var(--mud-palette-text-secondary); padding: 6px; }
+.help-tip .help-tip-button:focus-visible { outline: 2px solid var(--mud-palette-primary); outline-offset: 2px; }
+.help-tooltip { max-width: min(360px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; white-space: normal; }
+.help-tip-content { font-size: .875rem; line-height: 1.5; text-align: left; overflow-wrap: anywhere; }
+.help-tip-content p + p { margin-top: 8px; }
+.help-heading .section-title { margin-bottom: 0; }
+.settings-section > .help-heading { margin-bottom: 8px; }

@@ -3,12 +3,10 @@
 @if (Support.HasPackages)
 {
 <div class="settings-section">
-    <MudText Typo="Typo.subtitle1" Class="section-title">Packages</MudText>
-    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
-        Installed on every Runner with <code>@(Harness.Id) install</code>: extensions, skills, prompt templates and themes.
-        Packages you remove here are removed from the Runners too. Browse packages on <a href="@Support.DocsUrl" target="_blank" rel="noopener">@Support.DocsUrl.Replace("https://", "")</a>.
-        Running agents load new packages after a restart (or <code>/reload</code> in pi).
-    </MudText>
+    <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Packages</MudText>
+        <HelpTip Label="Packages">Installed on every Runner with <code>@(Harness.Id) install</code>: extensions, skills, prompt templates and themes.
+        Packages you remove here are removed from the Runners too.
+        Running agents load new packages after a restart (or <code>/reload</code> in pi).</HelpTip></div>
 
     @for (var i = 0; i < Config.Packages.Count; i++)
     {
@@ -21,6 +19,7 @@
         </div>
     }
     <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Rounded.Add" Size="Size.Small" OnClick="() => Config.Packages.Add(string.Empty)">Add package</MudButton>
+    <span class="mud-text-secondary ml-2">Browse <a href="@Support.DocsUrl" target="_blank" rel="noopener">@Support.DocsUrl.Replace("https://", "")</a></span>
 
     @if (Support.SuggestedPackages.Where(p => !Config.Packages.Contains(p.Source)).ToList() is { Count: > 0 } suggestions)
     {
@@ -41,15 +40,13 @@
 }
 
 <div class="settings-section">
-    <MudText Typo="Typo.subtitle1" Class="section-title">Default model</MudText>
-    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
-        What new agents start with. <b>Leave empty to let @Harness.DisplayName choose</b>: it picks what fits your plan and moves on to new models by itself.
+    <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Default model</MudText>
+        <HelpTip Label="Default model">What new agents start with. <b>Leave empty to let @Harness.DisplayName choose</b>: it picks what fits your plan and moves on to new models by itself.
         @if (Support.ModelSuggestions is { Count: > 0 })
         {
             <span>Aliases like <code>@Support.ModelSuggestions[0].Id</code> always mean the latest model of that family, so agents move on to a new one by themselves.</span>
         }
-        You can still switch in a session (<code>/model</code>).
-    </MudText>
+        You can still switch in a session (<code>/model</code>).</HelpTip></div>
     <div class="form-row">
         @if (Support.HasProvider)
         {
@@ -79,11 +76,9 @@
 @if (Support.HasExtraSettings)
 {
 <div class="settings-section">
-    <MudText Typo="Typo.subtitle1" Class="section-title">Extra settings</MudText>
-    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
-        JSON merged into <code>@Support.SettingsFile</code> on every Runner: objects are merged, other values replaced, settings you don't list are kept.
-        For example <code>@Support.SettingsExample</code>@(Support.HasPackages ? " or a package's own settings" : "").
-    </MudText>
+    <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Extra settings</MudText>
+        <HelpTip Label="Extra settings">JSON merged into <code>@Support.SettingsFile</code> on every Runner: objects are merged, other values replaced, settings you don't list are kept.
+        For example <code>@Support.SettingsExample</code>@(Support.HasPackages ? " or a package's own settings" : "").</HelpTip></div>
     <MudTextField @bind-Value="Config.Settings" Variant="Variant.Outlined" Lines="5" MaxLines="30" Placeholder="{ }" Class="mono-input"
                   Error="@(SettingsError is not null)" ErrorText="@SettingsError" Immediate="true" DebounceInterval="400" />
 </div>
@@ -93,11 +88,9 @@
 @if (Support.HasKeybindings)
 {
 <div class="settings-section">
-    <MudText Typo="Typo.subtitle1" Class="section-title">Keybindings</MudText>
-    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
-        JSON merged into <code>@Support.KeybindingsFile</code>, like <code>{ "app.clipboard.pasteImage": [] }</code>.
-        With <code>@@pi-archimedes/image-paste</code> in the packages, pi's own image paste binding is cleared automatically (as that package asks), unless you set it here.
-    </MudText>
+    <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Keybindings</MudText>
+        <HelpTip Label="Keybindings">JSON merged into <code>@Support.KeybindingsFile</code>, like <code>{ "app.clipboard.pasteImage": [] }</code>.
+        With <code>@@pi-archimedes/image-paste</code> in the packages, pi's own image paste binding is cleared automatically (as that package asks), unless you set it here.</HelpTip></div>
     <MudTextField @bind-Value="Config.Keybindings" Variant="Variant.Outlined" Lines="3" MaxLines="20" Placeholder="{ }" Class="mono-input"
                   Error="@(KeybindingsError is not null)" ErrorText="@KeybindingsError" Immediate="true" DebounceInterval="400" />
 </div>

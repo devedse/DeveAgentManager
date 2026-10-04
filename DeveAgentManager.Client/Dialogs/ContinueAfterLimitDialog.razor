@@ -4,14 +4,20 @@
 
 <MudDialog>
     <DialogContent>
-        <MudSelect T="bool" @bind-Value="_autoMode" Label="Continuation mode" Variant="Variant.Outlined" Class="mb-3">
+        <div class="help-heading mb-3">
+        <MudSelect T="bool" @bind-Value="_autoMode" Label="Continuation mode" Variant="Variant.Outlined" Class="flex-grow-1">
             <MudSelectItem T="bool" Value="false">One-time schedule</MudSelectItem>
             <MudSelectItem T="bool" Value="true">Automatic after usage limits</MudSelectItem>
         </MudSelect>
+        <HelpTip Label="Continuation modes">A one-time schedule types and sends <b>continue</b> once: one minute after the chosen reset, or after the chosen duration. If the agent is busy or you have a draft, it stays armed until the prompt is empty and the agent is ready. Automatic mode repeats after detected usage-limit resets until disabled or its count is reached.</HelpTip>
+        </div>
         @if (_autoMode)
         {
-            <MudSwitch T="bool" Value="_enabled" ValueChanged="ToggleAutomaticAsync" Disabled="_busy" Color="Color.Success" Label="Auto-continue enabled" />
-            <MudText>Send <b>continue</b> one minute after each detected usage-limit reset in this chat. Stays on until you switch it off, even with this page closed.</MudText>
+            <div class="help-heading"><MudSwitch T="bool" Value="_enabled" ValueChanged="ToggleAutomaticAsync" Disabled="_busy" Color="Color.Success" Label="Auto-continue enabled" />
+                <HelpTip Label="Automatic continuation">
+                    <p>Send <b>continue</b> one minute after each detected usage-limit reset in this chat. Stays on until you switch it off, even with this page closed.</p>
+                    <p>Drafts and busy agents wait. Unknown reset times need your attention; no time is guessed. Changing the conversation or uncertain delivery stops automatic mode. Claude's own automatic continuation takes priority.</p>
+                </HelpTip></div>
             <MudSwitch T="bool" @bind-Value="_limited" Disabled="_busy" Color="Color.Primary" Label="Limit the number of continuations" />
             @if (_limited)
             {
@@ -20,8 +26,7 @@
             else { <MudText Typo="Typo.body2">Unlimited continuations</MudText> }
             @if (Automatic.Detail is not null) { <MudAlert Severity="Severity.Info" Class="mt-3">@Automatic.Detail</MudAlert> }
             @if (_enabled && Limit.Status == "Scheduled") { <MudText Class="mt-2">Next continue: @_continueDescription</MudText> }
-            <MudText Class="mt-3" Typo="Typo.body2">Sends so far: @Automatic.Sent. Drafts and busy agents wait. Unknown reset times need your attention; no time is guessed.</MudText>
-            <MudText Typo="Typo.body2">Changing the conversation or uncertain delivery stops automatic mode. Claude's own automatic continuation takes priority.</MudText>
+            <MudText Class="mt-3" Typo="Typo.body2">Sends so far: @Automatic.Sent.</MudText>
         }
         else if (_enabled)
         {
@@ -37,9 +42,9 @@
         }
         else if (Limit.Status == "Scheduled")
         {
-            <MudText>Continue is scheduled for <b>@_continueDescription</b>.</MudText>
+            <div class="help-heading"><MudText>Continue is scheduled for <b>@_continueDescription</b>.</MudText>
+                <HelpTip Label="Scheduled continuation" Text="You can close this page and keep using the terminal. Cancel the schedule here if you no longer want it." /></div>
             @if (Limit.Detail is not null) { <MudAlert Severity="Severity.Info" Class="mt-2">@Limit.Detail</MudAlert> }
-            <MudText Class="mt-2">You can close this page and keep using the terminal. Cancel the schedule here if you no longer want it.</MudText>
         }
         else if (Limit.Status is "Sending" or "Uncertain" || (Limit.Status == "Sent" && !Limit.Manual))
         {
@@ -78,7 +83,6 @@
                     <MudText Typo="Typo.body2">Continue at @date.Date.Add(time).AddMinutes(1).ToString("yyyy-MM-dd HH:mm") (@_zone).</MudText>
                 }
             }
-            <MudText Class="mt-3">The Manager will type and send <b>continue</b> once, @(_relative ? "after this duration" : "one minute after this reset"). If the agent is busy or you have a draft, the schedule stays armed until the prompt is empty and the agent is ready.</MudText>
         }
         }
         @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert> }

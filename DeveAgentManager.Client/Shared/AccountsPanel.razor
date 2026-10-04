@@ -3,10 +3,8 @@
 @inject ISnackbar Snackbar
 
 @* Settings → Accounts: the subscriptions and API keys harnesses run with. *@
-<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
-    Log in once here and every Runner can use the account; nothing to set up per Runner. A harness can have several
-    accounts: when one runs out, switch the agent to another one (or to another harness) from its terminal.
-</MudText>
+<div class="help-heading mb-3"><MudText Typo="Typo.subtitle1">Accounts</MudText><HelpTip Label="Accounts">Log in once here and every Runner can use the account; nothing to set up per Runner. A harness can have several
+    accounts: when one runs out, switch the agent to another one (or to another harness) from its terminal.</HelpTip></div>
 
 @foreach (var harness in _harnesses)
 {

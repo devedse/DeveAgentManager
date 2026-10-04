@@ -1,0 +1,33 @@
+@* Static help for mouse, keyboard and touch. Keep input events in one place so focus and tap cannot toggle twice. *@
+<span class="help-tip" @onmouseenter="Hover" @onmouseleave="Leave" @onfocusin="Focus" @onfocusout="Blur"
+      @onkeydown="OnKeyDown" @onclick:stopPropagation="true">
+    <MudTooltip Visible="@Visible" ShowOnHover="false" ShowOnFocus="false" ShowOnClick="false"
+                Placement="Placement.Bottom" Arrow="true" Class="help-tooltip">
+        <ChildContent>
+            <MudIconButton Icon="@Icons.Material.Rounded.HelpOutline" Size="Size.Small" Class="help-tip-button"
+                           OnClick="Toggle" aria-label="@($"Help about {Label}")" />
+        </ChildContent>
+        <TooltipContent>
+            <div class="help-tip-content" @onclick="Hide">@Text@ChildContent</div>
+        </TooltipContent>
+    </MudTooltip>
+</span>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public string? Text { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    private bool _hovered, _focused, _pinned, _dismissed;
+    private bool Visible => !_dismissed && (_hovered || _focused || _pinned);
+
+    private void Hover() { _hovered = true; _dismissed = false; }
+    private void Leave() => _hovered = false;
+    private void Focus() { _focused = true; _dismissed = false; }
+    private void Blur() { _focused = false; Hide(); }
+    private void Toggle() { _pinned = !_pinned; _dismissed = !_pinned; }
+    private void Hide() { _pinned = false; _dismissed = true; }
+    private void OnKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") Hide();
+    }
+}

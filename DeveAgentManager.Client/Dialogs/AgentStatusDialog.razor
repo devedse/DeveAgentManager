@@ -19,18 +19,17 @@
             }
             <MudExpansionPanels Class="mt-3">
                 <MudExpansionPanel Text="Detection details">
-                    <MudText Typo="Typo.body2">Rule: @activity.Rule</MudText>
+                    <div class="help-heading"><MudText Typo="Typo.body2">Rule: @activity.Rule</MudText><HelpTip Label="Detection details" Text="Activity is inferred from the current terminal screen. Unrecognized or stale screens are shown as unclear; they do not establish completion." /></div>
                     @if (activity.Evidence is { } evidence)
                     {
                         <pre class="status-evidence">@evidence</pre>
                     }
-                    <MudText Typo="Typo.caption">Activity is inferred from the current terminal screen. Unrecognized or stale screens are shown as unclear; they do not establish completion.</MudText>
                 </MudExpansionPanel>
             </MudExpansionPanels>
         }
         <MudExpansionPanels Class="mt-3">
             <MudExpansionPanel Text="Recent diagnostic history">
-                <MudText Typo="Typo.caption">Last 100 changes, up to seven days. Full terminal screens and typed prompts are not recorded.</MudText>
+                <div class="d-flex justify-end"><HelpTip Label="Recent diagnostic history" Text="Last 100 changes, up to seven days. Full terminal screens and typed prompts are not recorded." /></div>
                 @foreach (var entry in _history.AsEnumerable().Reverse())
                 {
                     <div class="diagnostic-entry"><small>@entry.At.ToLocalTime().ToString("MMM d HH:mm:ss") · @entry.Category @entry.Rule</small><div>@entry.Message</div></div>

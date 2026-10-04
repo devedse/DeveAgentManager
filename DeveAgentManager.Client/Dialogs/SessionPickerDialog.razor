@@ -2,10 +2,11 @@
 @inject IDialogService Dialogs
 
 <MudDialog>
-    <TitleContent><MudText Typo="Typo.h6">Sessions</MudText></TitleContent>
+    <TitleContent><div class="help-heading"><MudText Typo="Typo.h6">Sessions</MudText>
+        <HelpTip Label="Sessions">One session runs at a time in this workspace. Switching saves and stops the current chat; project files are shared. Sessions open in the current harness (@Agent.HarnessId). Select another session before deleting the active one.</HelpTip>
+    </div></TitleContent>
     <DialogContent>
         <MudText Typo="Typo.subtitle2" Class="session-workspace-name">@Agent.Name</MudText>
-        <MudText Typo="Typo.body2" Class="mb-3">One session runs at a time in this workspace. Switching saves and stops the current chat; project files are shared. Sessions open in the current harness (@Agent.HarnessId).</MudText>
         @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
         @if (_busy) { <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="my-2" /> }
         <MudTextField @bind-Value="_newTitle" Label="New session name (optional)" MaxLength="200" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" />
@@ -17,7 +18,8 @@
                     <div class="session-picker-summary">
                         <strong>@session.Title</strong>
                         <small>@(session.AgentId == Agent.Id ? "Active · " : "")@session.HarnessId · @session.MessageCount messages · @session.UpdatedAt.Humanize()</small>
-                        <small>@SessionSize.Text(session)</small>
+                        <div class="help-heading"><small>@SessionSize.Text(session)</small>
+                            <HelpTip Label="Session size" Text="Sizes are the latest synced files, not the model's context window. Saved history includes backups." /></div>
                     </div>
                     <div class="session-picker-actions">
                         <MudButton Size="Size.Small" Disabled="@(_busy || session.AgentId == Agent.Id)" OnClick="() => SelectAsync(session.Id)" Color="Color.Primary">Select</MudButton>
@@ -28,7 +30,6 @@
                 </div>
             }
         </div>
-        <MudText Typo="Typo.caption">Sizes are the latest synced files, not the model's context window. Select another session before deleting the active one.</MudText>
     </DialogContent>
     <DialogActions><MudButton OnClick="Close" Disabled="_busy">Close</MudButton></DialogActions>
 </MudDialog>

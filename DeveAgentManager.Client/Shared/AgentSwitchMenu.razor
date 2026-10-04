@@ -12,8 +12,8 @@
     </ActivatorContent>
     <ChildContent>
         <div class="switch-menu">
-            <div class="viewers-title">Continue with</div>
-            <div class="viewers-hint">Same folder, same conversation. Another harness gets the conversation as text.</div>
+            <div class="viewers-title help-heading">Continue with
+                <HelpTip Label="Switching harness or account" Text="Same folder, same conversation. Another harness gets the conversation as text." /></div>
             @foreach (var harness in _harnesses.Where(h => Agent.RunnerHarnessIds.Contains(h.Id)))
             {
                 <div class="switch-harness harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</div>

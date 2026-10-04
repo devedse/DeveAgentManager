@@ -7,6 +7,7 @@
         <div class="dialog-title">
             <MudIcon Icon="@Icons.Material.Rounded.Image" Color="Color.Primary" />
             <span>Icon for '@Agent.Name'</span>
+            <HelpTip Label="Project icon">Automatic selection looks for the project's own icon, named in its project files or matching the project, icon or logo; small square images rank higher. Best matches come first. Dependency and build folders are skipped.</HelpTip>
         </div>
     </TitleContent>
     <DialogContent>
@@ -17,10 +18,7 @@
         }
         else
         {
-            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
-                @(_choices.ChosenByUser ? "Picked by you." : "Picked by the Manager: it looks for the project's own icon (named in its project files, or called like the project, icon or logo; square and small).")
-                The best matches come first.
-            </MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">@(_choices.ChosenByUser ? "Picked by you." : "Picked automatically.")</MudText>
             <div class="icon-choices">
                 <button type="button" class="icon-choice @(_choices.Current is null ? "selected" : "")" disabled="@_busy" @onclick="() => ChooseAsync(null)">
                     <span class="icon-choice-image"><HarnessLogo HarnessId="@Agent.HarnessId" Size="Size.Large" /></span>
@@ -37,7 +35,7 @@
             </div>
             @if (_choices.Images.Count == 0)
             {
-                <MudText Typo="Typo.body2" Class="mud-text-secondary mt-3">No images in the folder (dependency and build folders are skipped).</MudText>
+                <MudText Typo="Typo.body2" Class="mud-text-secondary mt-3">No images in the folder.</MudText>
             }
         }
     </DialogContent>

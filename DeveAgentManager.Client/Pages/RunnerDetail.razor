@@ -175,8 +175,7 @@
                             <div class="operation">
                                 <MudIcon Icon="@(harness.Icon ?? Icons.Material.Rounded.Upgrade)" Class="operation-icon" />
                                 <div class="operation-text">
-                                    <div class="operation-name">Update @harness.DisplayName</div>
-                                    <div class="operation-description">The latest @harness.DisplayName and its packages, then Settings → @harness.DisplayName (packages, model, settings).</div>
+                                    <div class="operation-name help-heading"><span>Update @harness.DisplayName</span><HelpTip Label="Maintenance operation">The latest @harness.DisplayName and its packages, then Settings → @harness.DisplayName (packages, model, settings).</HelpTip></div>
                                 </div>
                                 <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => UpdateHarnessAsync(harness)">Update</MudButton>
                             </div>
@@ -186,8 +185,7 @@
                             <div class="operation">
                                 <MudIcon Icon="@(harness.Icon ?? Icons.Material.Rounded.AddCircleOutline)" Class="operation-icon" />
                                 <div class="operation-text">
-                                    <div class="operation-name">Install @harness.DisplayName</div>
-                                    <div class="operation-description">@harness.Description</div>
+                                    <div class="operation-name help-heading"><span>Install @harness.DisplayName</span><HelpTip Label="Maintenance operation">@harness.Description</HelpTip></div>
                                 </div>
                                 <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => InstallHarnessAsync(harness)">Install</MudButton>
                             </div>
@@ -198,8 +196,7 @@
                             <div class="operation">
                                 <MudIcon Icon="@(tool.Icon ?? Icons.Material.Rounded.Extension)" Class="operation-icon" />
                                 <div class="operation-text">
-                                    <div class="operation-name">@(installed ? "Update" : "Install") @tool.DisplayName</div>
-                                    <div class="operation-description">@(installed ? $"The latest {tool.DisplayName}. If it is open, it reloads with the new version." : tool.Description)</div>
+                                    <div class="operation-name help-heading"><span>@(installed ? "Update" : "Install") @tool.DisplayName</span><HelpTip Label="Maintenance operation">@(installed ? $"The latest {tool.DisplayName}. If it is open, it reloads with the new version." : tool.Description)</HelpTip></div>
                                 </div>
                                 <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => InstallToolAsync(tool, installed)">@(installed ? "Update" : "Install")</MudButton>
                             </div>
@@ -207,8 +204,7 @@
                         <div class="operation">
                             <MudIcon Icon="@Icons.Material.Rounded.Build" Class="operation-icon" />
                             <div class="operation-text">
-                                <div class="operation-name">Re-run setup</div>
-                                <div class="operation-description">Everything again: tools, tmux and git config, the Setup Profile, harnesses and their packages. Safe to repeat.</div>
+                                <div class="operation-name help-heading"><span>Re-run setup</span><HelpTip Label="Re-run setup">Everything again: tools, tmux and git config, the Setup Profile, harnesses and their packages. Safe to repeat.</HelpTip></div>
                             </div>
                             <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="operation is not null || _runner.State == RunnerState.Stopped" OnClick="RerunSetupAsync">Run</MudButton>
                         </div>

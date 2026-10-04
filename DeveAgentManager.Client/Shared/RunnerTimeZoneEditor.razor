@@ -4,8 +4,9 @@
 @if (_config is not null)
 {
     <div class="settings-section">
-        <MudText Typo="Typo.h6">@(RunnerId is null ? "Default runner timezone" : "Runner timezone")</MudText>
-        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">Used by newly started harnesses. Restart running agents to apply a change. The Runner's system clock is not changed.</MudText>
+        <div class="help-heading"><MudText Typo="Typo.h6">@(RunnerId is null ? "Default runner timezone" : "Runner timezone")</MudText>
+            <HelpTip Label="Runner timezone">Used by newly started harnesses. Restart running agents to apply a change. The Runner's system clock is not changed.</HelpTip></div>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">Restart running agents to apply changes.</MudText>
         @if (RunnerId is not null)
         {
             <MudCheckBox T="bool" @bind-Value="_inherit" Label="@($"Use default ({_config.DefaultTimeZoneId})")" />
