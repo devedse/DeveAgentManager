@@ -150,6 +150,7 @@ public sealed partial class AgentService(
     /// </summary>
     public async Task StartAsync(Guid agentId, bool restart = false, CancellationToken cancellationToken = default)
     {
+        using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         var runner = RequireReady(agent.Runner!);
@@ -171,6 +172,7 @@ public sealed partial class AgentService(
     /// </summary>
     public async Task SwitchAsync(Guid agentId, string harnessId, Guid? accountId, CancellationToken cancellationToken = default)
     {
+        using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         var runner = RequireReady(agent.Runner!);
@@ -193,8 +195,8 @@ public sealed partial class AgentService(
         if (changesHarness)
         {
             // The latest messages first, then the conversation moves to the new harness's own format.
-            await sessions.SyncRunnerAsync(runner, cancellationToken);
-            var sessionId = target.NewSessionId(agent.Id);
+            await sessions.SyncRunnerLockedAsync(runner, cancellationToken, agent.Id);
+            var sessionId = target.NewSessionId(Guid.NewGuid());
             await sessions.MoveToHarnessAsync(runner, agent, harnessId, sessionId, cancellationToken);
             agent.HarnessId = harnessId;
             agent.HarnessSessionId = sessionId;
@@ -216,6 +218,54 @@ public sealed partial class AgentService(
         events.AgentChanged(runner.Id, agent.Id);
     }
 
+    /// <summary>Selects a saved chat or starts an empty chat in the same workspace and harness.</summary>
+    public async Task SelectSessionAsync(Guid agentId, Guid? sessionId, string? title, CancellationToken ct = default)
+    {
+        using var lease = await sessions.LockAsync(ct);
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var agent = await db.Agents.Include(a => a.Runner).SingleAsync(a => a.Id == agentId, ct);
+        var runner = RequireReady(agent.Runner!);
+        if (sessionId is { } id)
+        {
+            var selected = await sessions.GetAsync(id, ct) ?? throw new ArgumentException("Session not found.");
+            if (selected.WorkspaceAgentId != agent.Id) throw new InvalidOperationException("Choose a session from this workspace.");
+            if (selected.AgentId == agent.Id) return;
+        }
+        if (!string.IsNullOrWhiteSpace(title)) SessionService.ValidateTitle(title);
+        var nativeId = GetHarness(agent.HarnessId).NewSessionId(Guid.NewGuid());
+        try
+        {
+            agent.State = AgentState.Starting;
+            await db.SaveChangesAsync(ct);
+            events.AgentChanged(runner.Id, agent.Id);
+            (await shell.RunAsync(runner, BuildStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), ct))
+                .EnsureSuccess("Stopping the current session");
+            await sessions.SyncRunnerLockedAsync(runner, ct, agent.Id);
+            await sessions.SelectLockedAsync(runner, agent, sessionId, title, nativeId, ct);
+            AgentActivityTracker.Reset(agent);
+            agent.State = AgentState.Starting;
+            agent.StateMessage = null;
+            await db.SaveChangesAsync(ct);
+            events.AgentChanged(runner.Id, agent.Id);
+            await LaunchAsync(runner, agent, restart: true, ct);
+            agent.State = AgentState.Running;
+            agent.ExitCode = null;
+        }
+        catch (Exception ex)
+        {
+            // Selection is committed before launching. Start can retry the selected chat without losing either history.
+            agent.State = AgentState.Error;
+            agent.StateMessage = $"Session change failed: {ex.Message}. Use Start to resume the selected session.";
+            throw;
+        }
+        finally
+        {
+            agent.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(CancellationToken.None);
+            events.AgentChanged(runner.Id, agent.Id);
+        }
+    }
+
     /// <summary>Asks the harness in the agent's pane to exit (SIGTERM, then killed after the grace period). The pane stays.</summary>
     internal static string BuildStopScript(string target) => $$"""
         if tmux has-session -t {{target}} 2>/dev/null && [ "$(tmux display-message -p -t {{target}} '#{pane_dead}')" != 1 ]; then
@@ -234,6 +284,7 @@ public sealed partial class AgentService(
 
     public async Task StopAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
+        using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         var runner = RequireReady(agent.Runner!);
@@ -250,12 +301,14 @@ public sealed partial class AgentService(
     /// <summary>Stops the agent and forgets it. Its folder and the harness's own session files stay on the Runner.</summary>
     public async Task DeleteAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
+        using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         if (agent.Runner!.State == RunnerState.Ready)
         {
             // Keep the latest conversation: the session stays in the Manager after the agent is gone.
-            await sessions.TrySyncRunnerAsync(agent.Runner, cancellationToken);
+            try { await sessions.SyncRunnerLockedAsync(agent.Runner, cancellationToken); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Final session sync failed for {Agent}", agentId); }
             await shell.RunAsync(agent.Runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: cancellationToken);
         }
 
@@ -374,6 +427,7 @@ public sealed partial class AgentService(
     /// <summary>Reads process lifecycle and the current visible screen. Activity rules and stable completion tracking run in the Manager.</summary>
     public async Task RefreshRunnerAsync(Runner runner, CancellationToken cancellationToken = default)
     {
+        using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agents = await db.Agents.Where(a => a.RunnerId == runner.Id).ToListAsync(cancellationToken);
 

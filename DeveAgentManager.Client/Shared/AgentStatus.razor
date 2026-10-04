@@ -1,6 +1,6 @@
 @inject IDialogService Dialogs
 <button type="button" class="agent-status-button" title="@(Agent.Activity?.Reason ?? Agent.StateMessage ?? StateStyles.For(Agent).Text)" @onclick="OpenAsync" aria-label="@($"Explain {Agent.Name} status: {StateStyles.For(Agent).Text}")">
-    <StatusPill Style="StateStyles.For(Agent)" Class="Class" />
+    <StatusPill Style="StateStyles.For(Agent)" Class="@Class" />
     @if (Agent.Activity?.QuestionWaiting == true)
     {
         <span class="agent-status-extra">Question</span>

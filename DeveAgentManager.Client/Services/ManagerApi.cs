@@ -152,6 +152,11 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
         return (await response.Content.ReadFromJsonAsync<SessionDto>(ApiJson.Options))!;
     }
 
+    public Task SelectSessionAsync(Guid agentId, Guid? sessionId, string? title = null) =>
+        SendAsync(HttpMethod.Post, $"api/agents/{agentId}/session", new SelectSessionRequest(sessionId, title));
+    public Task RenameSessionAsync(Guid sessionId, string title) =>
+        SendAsync(HttpMethod.Put, $"api/sessions/{sessionId}/title", new RenameSessionRequest(title));
+
     public Task DeleteSessionAsync(Guid sessionId) => SendAsync(HttpMethod.Delete, $"api/sessions/{sessionId}");
 
     // Accounts

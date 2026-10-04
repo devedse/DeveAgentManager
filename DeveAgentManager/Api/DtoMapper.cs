@@ -137,7 +137,7 @@ public sealed class DtoMapper(
         session.MessageCount,
         session.CreatedAt,
         session.UpdatedAt,
-        session.LastSyncedAt);
+        session.LastSyncedAt, session.WorkspaceAgentId, session.WorkspaceAgent?.Name, session.SourceSize, session.SavedSize, session.TotalSize);
 
     public static AccountDto Account(Account account, int agentCount) => new(
         account.Id,

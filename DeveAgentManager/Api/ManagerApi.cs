@@ -255,6 +255,11 @@ public static class ManagerApi
             return Results.NoContent();
         });
 
+        agents.MapPost("/{agentId:guid}/session", async (Guid agentId, SelectSessionRequest request, AgentService service, CancellationToken ct) =>
+        {
+            await service.SelectSessionAsync(agentId, request.SessionId, request.Title, ct);
+            return Results.NoContent();
+        });
         agents.MapGet("/{agentId:guid}/session", async (Guid agentId, SessionService sessions, DtoMapper map, CancellationToken ct) =>
             await sessions.GetForAgentAsync(agentId, ct) is { } session && await sessions.GetAsync(session.Id, ct) is { } full
                 ? Results.Ok(DtoMapper.Session(full, await map.AccountNamesAsync(ct)))
@@ -294,6 +299,11 @@ public static class ManagerApi
             return DtoMapper.Session(session, await map.AccountNamesAsync(ct));
         });
 
+        sessions.MapPut("/{sessionId:guid}/title", async (Guid sessionId, RenameSessionRequest request, SessionService service, CancellationToken ct) =>
+        {
+            await service.RenameAsync(sessionId, request.Title, ct);
+            return Results.NoContent();
+        });
         sessions.MapDelete("/{sessionId:guid}", async (Guid sessionId, SessionService service, CancellationToken ct) =>
         {
             await service.DeleteAsync(sessionId, ct);

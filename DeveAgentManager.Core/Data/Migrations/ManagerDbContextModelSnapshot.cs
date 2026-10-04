@@ -434,6 +434,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<string>("RunnerName")
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("SavedSize")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("SourcePath")
                         .HasColumnType("TEXT");
 
@@ -444,15 +447,27 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("TitlePinned")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("TotalSize")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("WorkingDirectory")
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("WorkspaceAgentId")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("AgentId");
+                    b.HasIndex("AgentId")
+                        .IsUnique();
+
+                    b.HasIndex("WorkspaceAgentId");
 
                     b.ToTable("Sessions");
                 });
@@ -518,7 +533,14 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .HasForeignKey("AgentId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.HasOne("DeveAgentManager.Core.Data.Agent", "WorkspaceAgent")
+                        .WithMany()
+                        .HasForeignKey("WorkspaceAgentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.Navigation("Agent");
+
+                    b.Navigation("WorkspaceAgent");
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.Runner", b =>

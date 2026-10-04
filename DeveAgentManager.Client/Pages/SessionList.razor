@@ -33,8 +33,20 @@
         else
         {
             <div class="agent-table">
-                @foreach (var session in Filtered)
+                @foreach (var group in Filtered.GroupBy(s => s.WorkspaceAgentId?.ToString() ?? s.RepositoryUrl ?? "Imported"))
                 {
+                    var first = group.First();
+                    <div class="session-group-heading">
+                        <strong>@(first.WorkspaceName ?? first.RepositoryUrl ?? "Imported sessions")</strong>
+                        <span> · @group.Count() sessions</span>
+                        @if (first.WorkspaceAgentId is { } workspace)
+                        {
+                            <MudButton Size="Size.Small" OnClick="() => OpenWorkspaceAsync(workspace)">Manage sessions</MudButton>
+                        }
+                        <div class="list-subtitle">@first.RepositoryUrl · @first.RunnerName · @first.WorkingDirectory</div>
+                    </div>
+                    @foreach (var session in group.OrderByDescending(s => s.AgentId != null).ThenByDescending(s => s.UpdatedAt))
+                    {
                     var live = session.Agent is { State: AgentState.Running or AgentState.Starting };
                     <div class="agent-row">
                         <a class="agent-row-main" href="sessions/@session.Id">
@@ -47,7 +59,8 @@
                                 <div class="list-avatar list-avatar-logo"><HarnessLogo HarnessId="@session.HarnessId" Size="Size.Medium" /></div>
                             }
                             <div class="list-main">
-                                <div class="list-title">@session.Title</div>
+                                <div class="list-title">@session.Title@(session.AgentId is not null ? " · Active" : "")</div>
+                                <div class="list-subtitle">@SessionSize.Text(session)</div>
                                 <div class="list-subtitle">
                                     @if (session.Agent is { } agent)
                                     {
@@ -55,7 +68,7 @@
                                     }
                                     else
                                     {
-                                        <span>No agent@(session.RunnerName is null ? "" : $" · last on {session.RunnerName}")</span>
+                                        <span>@(session.WorkspaceAgentId is not null ? $"Saved · {session.WorkspaceName} on {session.RunnerName}" : session.RunnerName is null ? "Imported" : $"No workspace · last on {session.RunnerName}")</span>
                                     }
                                     @if (session.RepositoryUrl is not null)
                                     {
@@ -89,8 +102,11 @@
                                 </MudTooltip>
                             }
                             <SessionExportMenu SessionId="session.Id" Icon="true" />
+                            <MudIconButton Icon="@Icons.Material.Rounded.Edit" Size="Size.Small" aria-label="Rename session" OnClick="() => RenameAsync(session)" />
+                            <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Size="Size.Small" aria-label="Delete session" Disabled="@(session.AgentId != null)" OnClick="() => DeleteAsync(session)" />
                         </div>
                     </div>
+                }
                 }
             </div>
         }
@@ -136,6 +152,28 @@
         }
     }
 
-    private Task ContinueAsync(SessionDto session) =>
-        Dialogs.ShowAsync<NewAgentDialog>("Continue session", new DialogParameters<NewAgentDialog> { { d => d.ContinueSession, session } });
+    private async Task ContinueAsync(SessionDto session)
+    {
+        if (session.WorkspaceAgentId is { } workspace) await OpenWorkspaceAsync(workspace);
+        else await Dialogs.ShowAsync<NewAgentDialog>("Continue session", new DialogParameters<NewAgentDialog> { { d => d.ContinueSession, session } });
+    }
+    private async Task OpenWorkspaceAsync(Guid workspace)
+    {
+        if (await Api.GetAgentAsync(workspace) is not { } agent) return;
+        var dialog = await Dialogs.ShowAsync<SessionPickerDialog>("Sessions", new DialogParameters<SessionPickerDialog> { { d => d.Agent, agent } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        if (await dialog.Result is { Canceled: false }) Navigation.NavigateTo($"agents/{workspace}");
+        await ReloadAsync();
+    }
+    private async Task RenameAsync(SessionDto session)
+    {
+        var dialog = await Dialogs.ShowAsync<RenameSessionDialog>("Rename session", new DialogParameters<RenameSessionDialog> { { d => d.Session, session } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        await dialog.Result;
+        await ReloadAsync();
+    }
+    private async Task DeleteAsync(SessionDto session)
+    {
+        if (await Dialogs.ShowMessageBoxAsync("Delete session?", $"Delete '{session.Title}' and its saved backups from the Manager? Runner files stay untouched.", yesText: "Delete", cancelText: "Cancel") != true) return;
+        try { await Api.DeleteSessionAsync(session.Id); await ReloadAsync(); }
+        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
+    }
 }

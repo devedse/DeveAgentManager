@@ -22,8 +22,9 @@
                     <span class="terminal-name" title="@_agent.Name">@_agent.Name</span>
                     <AgentStatus Agent="_agent" Class="terminal-status" />
                 </div>
-                <span class="terminal-context"><HarnessLogo HarnessId="@_agent.HarnessId" Class="context-logo" />@(_agent.AccountName is { } account ? $"{account} · " : "")@_agent.RunnerName · <span class="mono">@(_agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
+                <span class="terminal-context"><HarnessLogo HarnessId="@_agent.HarnessId" Class="context-logo" />@(_agent.AccountName is { } account ? $"{account} · " : "")@_agent.RunnerName · <span class="mono">@(_sessionTitle ?? _agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
             </div>
+            <MudIconButton Icon="@Icons.Material.Rounded.FolderOpen" Class="session-picker-button" aria-label="Switch session" title="@(_sessionTitle ?? "Sessions")" OnClick="OpenSessionsAsync" />
             <AttentionMenu />
             <AgentSeenWatcher @key="(AgentId, nameof(AgentSeenWatcher))" Agent="_agent" />
             <span class="terminal-hint">Shift+drag selects · Ctrl+C copies a selection</span>
@@ -107,6 +108,7 @@
 
     private AgentDto? _agent;
     private Guid? _sessionId;
+    private string? _sessionTitle;
     private TerminalView? _terminal;
     private int _connectionKey;
     private bool _busy;
@@ -138,7 +140,9 @@
         var previous = _agent?.State;
         _vsCodeIcon ??= (await Api.InfoAsync()).Tools.FirstOrDefault(t => t.Id == "vscode")?.Icon;
         _agent = await Api.GetAgentAsync(AgentId);
-        _sessionId ??= (await Api.GetAgentSessionAsync(AgentId))?.Id;
+        var currentSession = await Api.GetAgentSessionAsync(AgentId);
+        _sessionId = currentSession?.Id;
+        _sessionTitle = currentSession?.Title;
         if (previous is not null && previous != AgentState.Running && _agent?.State == AgentState.Running)
         {
             // It was (re)started: attach a fresh terminal.
@@ -162,6 +166,14 @@
         }
 
         await ReloadAsync();
+    }
+
+    private async Task OpenSessionsAsync()
+    {
+        if (_agent is null) return;
+        var dialog = await Dialogs.ShowAsync<SessionPickerDialog>("Sessions", new DialogParameters<SessionPickerDialog> { { d => d.Agent, _agent } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        if (await dialog.Result is { Canceled: false }) await OnSwitchedAsync();
     }
 
     private Task StartAsync() => RunAsync(() => Api.StartAgentAsync(AgentId), reconnect: true);

@@ -1,0 +1,26 @@
+@inject ManagerApi Api
+<MudDialog>
+    <DialogContent>
+        <MudTextField @bind-Value="_title" Label="Session name" MaxLength="200" Variant="Variant.Outlined" />
+        @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()" Disabled="_busy">Cancel</MudButton>
+        <MudButton OnClick="SaveAsync" Disabled="_busy" Color="Color.Primary">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public SessionDto Session { get; set; } = default!;
+    private string _title = "";
+    private string? _error;
+    private bool _busy;
+    protected override void OnInitialized() => _title = Session.Title;
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        try { await Api.RenameSessionAsync(Session.Id, _title); Dialog.Close(DialogResult.Ok(true)); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

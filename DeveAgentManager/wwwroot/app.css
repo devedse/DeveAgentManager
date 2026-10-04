@@ -2774,3 +2774,57 @@ body:has(.terminal-layout) .agent-attention-popover {
 .auto-continue-active { animation: auto-continue-pulse 2s ease-in-out infinite; }
 @keyframes auto-continue-pulse { 50% { opacity: .5; } }
 @media (prefers-reduced-motion: reduce) { .auto-continue-active { animation: none; } }
+
+/* Resource readings get their own row instead of competing with the status badge. */
+.dashboard-runner {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    grid-template-areas: "avatar main status" ". usage usage";
+    align-items: start;
+    gap: 10px 14px;
+}
+.dashboard-runner > .list-avatar { grid-area: avatar; }
+.dashboard-runner > .list-main { grid-area: main; }
+.dashboard-runner > .list-meta { grid-area: status; }
+.dashboard-runner > .usage {
+    grid-area: usage;
+    margin: 0;
+    min-width: 0;
+    grid-template-columns: 34px minmax(0, 1fr) max-content;
+    gap: 8px;
+    align-items: center;
+}
+.dashboard-runner > .usage > .usage-item { display: contents; }
+@media (max-width: 600px) {
+    .dashboard-runner {
+        grid-template-columns: 38px minmax(0, 1fr);
+        grid-template-areas: "avatar main" ". status" "usage usage";
+    }
+    .dashboard-runner > .list-meta { align-items: flex-start; min-width: 0; }
+    .dashboard-runner .list-subtitle { white-space: normal; overflow-wrap: anywhere; }
+    .agent-row { display: grid; grid-template-columns: minmax(0, 1fr); }
+    .agent-row-state { flex-wrap: wrap; min-width: 0; }
+    .agent-row-actions { justify-content: flex-start; padding-left: 52px; }
+    .panel-header { flex-wrap: wrap; gap: 8px; }
+}
+
+/* Keep status and workspace controls inside the viewport, even with long session names. */
+.terminal-name-row > .agent-status-button { flex-shrink: 0; }
+.session-picker-list { margin: 12px 0; }
+.session-picker-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--mud-palette-divider); }
+.session-picker-summary { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.session-picker-summary small { display: block; color: var(--mud-palette-text-secondary); }
+.session-picker-actions { display: flex; flex-wrap: wrap; align-items: center; }
+.session-group-heading { padding: 16px; overflow-wrap: anywhere; border-bottom: 1px solid var(--mud-palette-divider); }
+@media (max-width: 600px) {
+    .terminal-toolbar { gap: 2px; }
+    .terminal-toolbar .mud-icon-button { padding: 6px; }
+    .terminal-name-row { gap: 4px; }
+    .terminal-name-row .agent-status-button { flex: 0 0 auto; }
+    .terminal-toolbar > .terminal-avatar { display: none; }
+}
+@media (max-width: 380px) {
+    .terminal-toolbar .viewers-chip { display: none; }
+}
+
+.session-workspace-name { overflow-wrap: anywhere; }

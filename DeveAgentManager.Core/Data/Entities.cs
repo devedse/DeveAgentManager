@@ -203,6 +203,13 @@ public class AgentIcon
 /// </summary>
 public class StoredSession
 {
+    // Workspace ownership survives deactivation; AgentId identifies only the selected conversation.
+    public Guid? WorkspaceAgentId { get; set; }
+    public Agent? WorkspaceAgent { get; set; }
+    public bool TitlePinned { get; set; }
+    public long SavedSize { get; set; }
+    public long TotalSize { get; set; }
+
     public Guid Id { get; set; }
 
     public string Title { get; set; } = "";

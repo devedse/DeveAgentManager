@@ -88,7 +88,8 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
         modelBuilder.Entity<StoredSession>(session =>
         {
             session.HasKey(s => s.Id);
-            session.HasIndex(s => s.AgentId);
+            session.HasIndex(s => s.AgentId).IsUnique();
+            session.HasOne(s => s.WorkspaceAgent).WithMany().HasForeignKey(s => s.WorkspaceAgentId).OnDelete(DeleteBehavior.SetNull);
             session.HasOne(s => s.Agent).WithMany().HasForeignKey(s => s.AgentId).OnDelete(DeleteBehavior.SetNull);
         });
 

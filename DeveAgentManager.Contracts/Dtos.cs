@@ -142,7 +142,12 @@ public sealed record SessionDto(
     int MessageCount,
     DateTime CreatedAt,
     DateTime UpdatedAt,
-    DateTime? LastSyncedAt);
+    DateTime? LastSyncedAt,
+    Guid? WorkspaceAgentId = null,
+    string? WorkspaceName = null,
+    long SourceSize = 0,
+    long SavedSize = 0,
+    long TotalSize = 0);
 
 public sealed record AccountDto(
     Guid Id,
@@ -239,3 +244,6 @@ public static class ApiHeaders
 {
     public const string Request = "X-DAM-Request";
 }
+
+public sealed record SelectSessionRequest(Guid? SessionId, string? Title = null);
+public sealed record RenameSessionRequest(string Title);

@@ -110,19 +110,19 @@
                         @foreach (var runner in _runners)
                         {
                             var status = runner.Status;
-                            <a class="list-row" href="runners/@runner.Id">
+                            <a class="list-row dashboard-runner" href="runners/@runner.Id">
                                 <div class="list-avatar list-avatar-icon"><MudIcon Icon="@(runner.Kind == RunnerKind.Desktop ? Icons.Material.Rounded.DesktopWindows : Icons.Material.Rounded.Dns)" Size="Size.Small" /></div>
                                 <div class="list-main">
                                     <div class="list-title">@runner.Name</div>
                                     <div class="list-subtitle">@(runner.Host ?? "no address yet") · @runner.Agents.Count @(runner.Agents.Count == 1 ? "agent" : "agents")</div>
-                                    @if (runner.State == RunnerState.Ready && status is { CpuUsage: not null })
-                                    {
-                                        <UsageBars Status="status" Compact="true" />
-                                    }
                                 </div>
                                 <div class="list-meta">
                                     <StatusPill Style="StateStyles.For(runner.State)" Text="@runner.Operation" />
                                 </div>
+                                @if (runner.State == RunnerState.Ready && status is { CpuUsage: not null })
+                                {
+                                    <UsageBars Status="status" Compact="true" />
+                                }
                             </a>
                         }
                     </div>

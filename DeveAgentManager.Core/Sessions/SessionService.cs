@@ -66,6 +66,15 @@ public sealed class SessionService(
         return text.Length > 280 ? text[..280] + "…" : text;
     }
 
+    // Serializes selection, final sync, rename and deletion. Never hold a DB transaction during SSH.
+    private readonly SemaphoreSlim _operations = new(1, 1);
+    internal async Task<IDisposable> LockAsync(CancellationToken ct)
+    {
+        await _operations.WaitAsync(ct);
+        return new Release(_operations);
+    }
+    private sealed class Release(SemaphoreSlim gate) : IDisposable { public void Dispose() => gate.Release(); }
+
     private const string LocateMarker = "__DAM_SESSION__";
 
     private readonly Dictionary<string, ISessionFormat> _formats = formats.ToDictionary(f => f.HarnessId);
@@ -77,15 +86,19 @@ public sealed class SessionService(
     public async Task<List<StoredSession>> ListAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.Sessions.AsNoTracking().Include(s => s.Agent).ThenInclude(a => a!.Runner)
+        var rows = await db.Sessions.AsNoTracking().Include(s => s.Agent).ThenInclude(a => a!.Runner).Include(s => s.WorkspaceAgent)
             .OrderByDescending(s => s.UpdatedAt).ToListAsync(cancellationToken);
+        foreach (var row in rows) UpdateSizes(row);
+        return rows;
     }
 
     public async Task<StoredSession?> GetAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.Sessions.AsNoTracking().Include(s => s.Agent).ThenInclude(a => a!.Runner)
+        var row = await db.Sessions.AsNoTracking().Include(s => s.Agent).ThenInclude(a => a!.Runner).Include(s => s.WorkspaceAgent)
             .FirstOrDefaultAsync(s => s.Id == sessionId, cancellationToken);
+        if (row != null) UpdateSizes(row);
+        return row;
     }
 
     public async Task<StoredSession?> GetForAgentAsync(Guid agentId, CancellationToken cancellationToken = default)
@@ -107,12 +120,13 @@ public sealed class SessionService(
     /// </summary>
     public async Task AttachToAgentAsync(Runner runner, Agent agent, Guid? continueSessionId, CancellationToken cancellationToken)
     {
+        using var lease = await LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         StoredSession stored;
         if (continueSessionId is { } existingId)
         {
             stored = await db.Sessions.FirstOrDefaultAsync(s => s.Id == existingId, cancellationToken) ?? throw new ArgumentException("Session not found.");
-            if (stored.AgentId is not null)
+            if (stored.AgentId is not null || stored.WorkspaceAgentId is not null)
             {
                 throw new InvalidOperationException("This session already belongs to a running agent. Open that agent instead.");
             }
@@ -121,11 +135,13 @@ public sealed class SessionService(
         }
         else
         {
-            stored = new StoredSession { Id = Guid.NewGuid(), Title = agent.Name, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
-            db.Sessions.Add(stored);
+            stored = await db.Sessions.FirstOrDefaultAsync(s => s.AgentId == agent.Id, cancellationToken)
+                ?? new StoredSession { Id = Guid.NewGuid(), Title = agent.Name, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            if (db.Entry(stored).State == EntityState.Detached) db.Sessions.Add(stored);
         }
 
         stored.AgentId = agent.Id;
+        stored.WorkspaceAgentId = agent.Id;
         stored.HarnessTrail ??= agent.HarnessId;
         stored.HarnessId = agent.HarnessId;
         stored.HarnessSessionId = agent.HarnessSessionId;
@@ -148,12 +164,9 @@ public sealed class SessionService(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var stored = await db.Sessions.FirstOrDefaultAsync(s => s.AgentId == agent.Id, cancellationToken)
             ?? throw new InvalidOperationException("This agent has no stored conversation to move.");
-        var before = PathFor(stored.Id);
-        if (File.Exists(before))
-        {
-            File.Copy(before, Path.Combine(options.SessionsDirectory, $"{stored.Id:N}.{DateTime.UtcNow:yyyyMMdd-HHmmss}.{stored.HarnessId}.json"), overwrite: true);
-        }
+        Backup(stored);
 
+        stored.TitlePinned = true; // Keep the conversation name across format conversion.
         await WriteForHarnessAsync(runner, stored, harnessId, harnessSessionId, agent.WorkingDirectory, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         events.SessionChanged(stored.Id, agent.Id);
@@ -166,7 +179,10 @@ public sealed class SessionService(
     private async Task WriteForHarnessAsync(Runner runner, StoredSession stored, string harnessId, string harnessSessionId, string workingDirectory, CancellationToken cancellationToken)
     {
         var format = _formats.GetValueOrDefault(harnessId) ?? throw new InvalidOperationException($"Conversations can't be continued in '{harnessId}' yet.");
+        if (stored.MessageCount > 0 && !File.Exists(PathFor(stored.Id)))
+            throw new IOException("The saved history is missing. Restore it before switching sessions.");
         var session = await LoadAsync(stored.Id, cancellationToken);
+        session.Title = stored.Title;
         var from = session.Sources.LastOrDefault()?.Harness ?? session.Entries.LastOrDefault(e => e.Harness is not null)?.Harness ?? stored.HarnessId;
         if (session.Entries.Count > 0 && from != harnessId)
         {
@@ -192,12 +208,26 @@ public sealed class SessionService(
         stored.HarnessSessionId = harnessSessionId;
         stored.SourcePath = null;
         stored.SourceSize = 0;
+        stored.LastSyncedAt = null;
+    }
+
+    private void Backup(StoredSession stored)
+    {
+        var before = PathFor(stored.Id);
+        if (File.Exists(before)) File.Copy(before, Path.Combine(options.SessionsDirectory,
+            $"{stored.Id:N}.{DateTime.UtcNow:yyyyMMdd-HHmmss-fffffff}.{stored.HarnessId}.json"));
     }
 
     private string DisplayName(string harnessId) => harnessDisplayNames.GetValueOrDefault(harnessId, harnessId);
 
     /// <summary>Copies the session files of all agents on a Runner that changed since the last sync. One SSH command when nothing changed.</summary>
     public async Task SyncRunnerAsync(Runner runner, CancellationToken cancellationToken = default)
+    {
+        using var lease = await LockAsync(cancellationToken);
+        await SyncRunnerLockedAsync(runner, cancellationToken);
+    }
+
+    internal async Task SyncRunnerLockedAsync(Runner runner, CancellationToken cancellationToken, Guid? strictAgentId = null)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
 
@@ -210,6 +240,7 @@ public sealed class SessionService(
                 Id = Guid.NewGuid(),
                 Title = agent.Name,
                 AgentId = agent.Id,
+                WorkspaceAgentId = agent.Id,
                 HarnessId = agent.HarnessId,
                 HarnessSessionId = agent.HarnessSessionId,
                 RunnerName = runner.Name,
@@ -241,10 +272,18 @@ public sealed class SessionService(
             script.Append($"echo {LocateMarker} {session.Id:N}; ").Append(_formats[session.HarnessId].LocateCommand(session.HarnessSessionId!)).Append('\n');
         }
 
-        var located = ParseLocated((await shell.RunAsync(runner, script.ToString(), TimeSpan.FromSeconds(30), cancellationToken)).Output);
+        var result = await shell.RunAsync(runner, script.ToString(), TimeSpan.FromSeconds(30), cancellationToken);
+        result.EnsureSuccess("Locating session histories");
+        var located = ParseLocated(result.Output);
         foreach (var session in sessions)
         {
-            if (!located.TryGetValue(session.Id, out var file) || (file.Size == session.SourceSize && file.Path == session.SourcePath))
+            if (!located.TryGetValue(session.Id, out var file))
+            {
+                if (session.AgentId == strictAgentId && (session.SourcePath != null || session.MessageCount > 0 || session.Agent?.LastAssistantMessageAt != null))
+                    throw new IOException("The current history could not be found. Session selection was not changed.");
+                continue;
+            }
+            if (file.Size == session.SourceSize && file.Path == session.SourcePath)
             {
                 continue;
             }
@@ -252,10 +291,7 @@ public sealed class SessionService(
             try
             {
                 var content = await shell.DownloadAsync(runner, file.Path, cancellationToken);
-                if (content is null)
-                {
-                    continue;
-                }
+                if (content is null) throw new IOException("Could not download the current conversation.");
 
                 var deve = _formats[session.HarnessId].Read(content);
                 await SaveAsync(session.Id, deve, cancellationToken);
@@ -263,6 +299,7 @@ public sealed class SessionService(
                 if (session.Agent is { } agent) UpdateLastAssistantMessage(agent, deve);
                 session.SourcePath = file.Path;
                 session.SourceSize = file.Size;
+                UpdateSizes(session);
                 session.LastSyncedAt = DateTime.UtcNow;
                 await db.SaveChangesAsync(cancellationToken);
                 events.SessionChanged(session.Id, session.AgentId);
@@ -270,6 +307,7 @@ public sealed class SessionService(
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning(ex, "Could not sync session {Session} from {Runner}", session.Id, runner.Name);
+                if (session.AgentId == strictAgentId) throw;
             }
         }
     }
@@ -311,6 +349,7 @@ public sealed class SessionService(
     {
         var stored = await GetAsync(sessionId, cancellationToken) ?? throw new ArgumentException("Session not found.");
         var session = await LoadAsync(sessionId, cancellationToken);
+        session.Title = stored.Title;
         var name = SafeFileName(stored.Title);
         if (format == "deve")
         {
@@ -326,9 +365,76 @@ public sealed class SessionService(
     public async Task DeleteAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        using var lease = await LockAsync(cancellationToken);
+        if (await db.Sessions.AnyAsync(s => s.Id == sessionId && s.AgentId != null, cancellationToken))
+            throw new InvalidOperationException("Select another session before deleting the active conversation.");
         await db.Sessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync(cancellationToken);
         File.Delete(PathFor(sessionId));
+        if (Directory.Exists(options.SessionsDirectory))
+            foreach (var backup in Directory.EnumerateFiles(options.SessionsDirectory, $"{sessionId:N}.*.json")) File.Delete(backup);
         events.Publish(new ManagerEvent(ManagerEventKind.SessionRemoved, SessionId: sessionId));
+    }
+
+    public async Task RenameAsync(Guid id, string title, CancellationToken ct)
+    {
+        title = ValidateTitle(title);
+        using var lease = await LockAsync(ct);
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var stored = await db.Sessions.FirstOrDefaultAsync(s => s.Id == id, ct) ?? throw new ArgumentException("Session not found.");
+        stored.Title = title;
+        stored.TitlePinned = true;
+        await db.SaveChangesAsync(ct);
+        events.SessionChanged(id, stored.WorkspaceAgentId);
+    }
+
+    internal static string ValidateTitle(string title)
+    {
+        title = title.Trim();
+        if (title.Length is 0 or > 200) throw new ArgumentException("Use a session name between 1 and 200 characters.");
+        return title;
+    }
+
+    private void UpdateSizes(StoredSession stored)
+    {
+        stored.SavedSize = File.Exists(PathFor(stored.Id)) ? new FileInfo(PathFor(stored.Id)).Length : 0;
+        stored.TotalSize = stored.SavedSize + (Directory.Exists(options.SessionsDirectory)
+            ? Directory.EnumerateFiles(options.SessionsDirectory, $"{stored.Id:N}.*.json").Sum(p => new FileInfo(p).Length) : 0);
+    }
+
+    // Caller holds LockAsync and has stopped and synced the outgoing harness.
+    internal async Task SelectLockedAsync(Runner runner, Agent agent, Guid? id, string? title, string nativeId, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var selected = id.HasValue ? await db.Sessions.SingleAsync(s => s.Id == id, ct) : new StoredSession
+        {
+            Id = Guid.NewGuid(), Title = string.IsNullOrWhiteSpace(title) ? "New session" : ValidateTitle(title),
+            TitlePinned = !string.IsNullOrWhiteSpace(title), CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            HarnessId = agent.HarnessId, WorkspaceAgentId = agent.Id
+        };
+        if (selected.WorkspaceAgentId != agent.Id) throw new InvalidOperationException("Choose a session from this workspace.");
+        if (selected.AgentId != null && selected.AgentId != agent.Id) throw new InvalidOperationException("Session is already active elsewhere.");
+        if (id.HasValue)
+        {
+            if (selected.HarnessId != agent.HarnessId) { Backup(selected); selected.TitlePinned = true; }
+            await WriteForHarnessAsync(runner, selected, agent.HarnessId, nativeId, agent.WorkingDirectory, ct);
+        }
+        else { selected.HarnessSessionId = nativeId; db.Sessions.Add(selected); }
+        selected.WorkingDirectory = agent.WorkingDirectory;
+        selected.RepositoryUrl = agent.RepositoryUrl;
+        selected.RepositoryBranch = agent.RepositoryBranch;
+        selected.RunnerName = runner.Name;
+        selected.HarnessTrail ??= agent.HarnessId;
+        // Detach and attach in one transaction, while satisfying the unique active-session index.
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await db.Sessions.Where(s => s.AgentId == agent.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.AgentId, (Guid?)null), ct);
+        selected.AgentId = agent.Id;
+        await db.Agents.Where(a => a.Id == agent.Id).ExecuteUpdateAsync(a => a
+            .SetProperty(x => x.HarnessSessionId, nativeId).SetProperty(x => x.LastAssistantMessageAt, (DateTime?)null), ct);
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        agent.HarnessSessionId = nativeId;
+        agent.LastAssistantMessageAt = null;
+        events.SessionChanged(selected.Id, agent.Id);
     }
 
     internal static Dictionary<Guid, (long Size, string Path)> ParseLocated(string output)
@@ -407,11 +513,11 @@ public sealed class SessionService(
         await db.SaveChangesAsync(ct);
     }
 
-    private static void Apply(StoredSession stored, DeveSession session, string? agentName)
+    internal static void Apply(StoredSession stored, DeveSession session, string? agentName)
     {
         // Agents start pi with --name <agent>; the first prompt says more than that, unless the user renamed the session.
         var title = session.Title is { Length: > 0 } name && name != agentName ? name : session.FirstPrompt() ?? session.Title;
-        if (!string.IsNullOrWhiteSpace(title))
+        if (!stored.TitlePinned && !string.IsNullOrWhiteSpace(title))
         {
             stored.Title = title;
         }

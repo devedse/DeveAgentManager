@@ -37,7 +37,8 @@
                 }
                 <SessionExportMenu SessionId="_stored.Id" />
                 <MudMenu Icon="@Icons.Material.Rounded.MoreVert" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
-                    <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="live" OnClick="DeleteAsync">Delete session</MudMenuItem>
+                    <MudMenuItem Icon="@Icons.Material.Rounded.Edit" OnClick="RenameAsync">Rename session</MudMenuItem>
+                    <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="@(_stored.AgentId != null)" OnClick="DeleteAsync">Delete session</MudMenuItem>
                 </MudMenu>
             </Actions>
         </PageHeader>
@@ -54,6 +55,7 @@
             {
                 <div><span class="fact-label">Usage</span><span>@FormatTokens(_tokens) tokens@(_cost > 0 ? $" · ${_cost:0.00}" : "")@(_models.Count > 0 ? $" · {string.Join(", ", _models)}" : "")</span></div>
             }
+            <div><span class="fact-label">Size</span><span>@SessionSize.Text(_stored)</span></div>
             <div><span class="fact-label">Updated</span><span>@_stored.UpdatedAt.Humanize()@(_stored.LastSyncedAt is { } synced ? $" · synced {synced.Humanize()}" : "")</span></div>
         </div>
 
@@ -111,8 +113,21 @@
         }
     }
 
-    private Task ContinueAsync() =>
-        Dialogs.ShowAsync<NewAgentDialog>("Continue session", new DialogParameters<NewAgentDialog> { { d => d.ContinueSession, _stored } });
+    private async Task ContinueAsync()
+    {
+        if (_stored?.WorkspaceAgentId is { } workspace && await Api.GetAgentAsync(workspace) is { } agent)
+        {
+            var dialog = await Dialogs.ShowAsync<SessionPickerDialog>("Sessions", new DialogParameters<SessionPickerDialog> { { d => d.Agent, agent } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+            if (await dialog.Result is { Canceled: false }) Navigation.NavigateTo($"agents/{workspace}");
+        }
+        else await Dialogs.ShowAsync<NewAgentDialog>("Continue session", new DialogParameters<NewAgentDialog> { { d => d.ContinueSession, _stored } });
+    }
+    private async Task RenameAsync()
+    {
+        var dialog = await Dialogs.ShowAsync<RenameSessionDialog>("Rename session", new DialogParameters<RenameSessionDialog> { { d => d.Session, _stored! } });
+        await dialog.Result;
+        await ReloadAsync();
+    }
 
     private async Task DeleteAsync()
     {

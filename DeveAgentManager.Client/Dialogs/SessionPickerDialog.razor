@@ -1,0 +1,68 @@
+@inject ManagerApi Api
+@inject IDialogService Dialogs
+
+<MudDialog>
+    <TitleContent><MudText Typo="Typo.h6">Sessions</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.subtitle2" Class="session-workspace-name">@Agent.Name</MudText>
+        <MudText Typo="Typo.body2" Class="mb-3">One session runs at a time in this workspace. Switching saves and stops the current chat; project files are shared. Sessions open in the current harness (@Agent.HarnessId).</MudText>
+        @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+        @if (_busy) { <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="my-2" /> }
+        <MudTextField @bind-Value="_newTitle" Label="New session name (optional)" MaxLength="200" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" />
+        <MudButton OnClick="NewAsync" Disabled="_busy" StartIcon="@Icons.Material.Rounded.Add" Color="Color.Primary">New session</MudButton>
+        <div class="session-picker-list">
+            @foreach (var session in _sessions)
+            {
+                <div class="session-picker-row" @key="session.Id">
+                    <div class="session-picker-summary">
+                        <strong>@session.Title</strong>
+                        <small>@(session.AgentId == Agent.Id ? "Active · " : "")@session.HarnessId · @session.MessageCount messages · @session.UpdatedAt.Humanize()</small>
+                        <small>@SessionSize.Text(session)</small>
+                    </div>
+                    <div class="session-picker-actions">
+                        <MudButton Size="Size.Small" Disabled="@(_busy || session.AgentId == Agent.Id)" OnClick="() => SelectAsync(session.Id)" Color="Color.Primary">Select</MudButton>
+                        <MudIconButton Icon="@Icons.Material.Rounded.Edit" Size="Size.Small" aria-label="Rename session" Disabled="_busy" OnClick="() => RenameAsync(session)" />
+                        <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Size="Size.Small" aria-label="Delete session" Disabled="@(_busy || session.AgentId != null)" OnClick="() => DeleteAsync(session)" />
+                        <MudIconButton Icon="@Icons.Material.Rounded.Forum" Size="Size.Small" aria-label="Read session" Href="@($"sessions/{session.Id}")" />
+                    </div>
+                </div>
+            }
+        </div>
+        <MudText Typo="Typo.caption">Sizes are the latest synced files, not the model's context window. Select another session before deleting the active one.</MudText>
+    </DialogContent>
+    <DialogActions><MudButton OnClick="Close" Disabled="_busy">Close</MudButton></DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
+    private List<SessionDto> _sessions = [];
+    private string? _newTitle;
+    private string? _error;
+    private bool _busy;
+    protected override async Task OnInitializedAsync() => await RunAsync(LoadAsync);
+    private async Task LoadAsync() => _sessions = (await Api.ListSessionsAsync()).Where(s => s.WorkspaceAgentId == Agent.Id || s.AgentId == Agent.Id).ToList();
+    private void Close() => Dialog.Cancel();
+    private Task NewAsync() => SelectAsync(null);
+    private async Task SelectAsync(Guid? id)
+    {
+        if (Agent.Working && await Dialogs.ShowMessageBoxAsync("Switch session?", "The current agent is working. Switching stops its current turn and saves the conversation.", yesText: "Switch", cancelText: "Cancel") != true) return;
+        await RunAsync(async () => { await Api.SelectSessionAsync(Agent.Id, id, id is null ? _newTitle : null); Dialog.Close(DialogResult.Ok(true)); });
+    }
+    private async Task RenameAsync(SessionDto session)
+    {
+        var dialog = await Dialogs.ShowAsync<RenameSessionDialog>("Rename session", new DialogParameters<RenameSessionDialog> { { d => d.Session, session } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        await dialog.Result;
+        await RunAsync(LoadAsync);
+    }
+    private async Task DeleteAsync(SessionDto session)
+    {
+        if (await Dialogs.ShowMessageBoxAsync("Delete session?", $"Delete '{session.Title}' and its saved backups from the Manager? Files on the Runner stay untouched.", yesText: "Delete", cancelText: "Cancel") != true) return;
+        await RunAsync(async () => { await Api.DeleteSessionAsync(session.Id); await LoadAsync(); });
+    }
+    private async Task RunAsync(Func<Task> action)
+    {
+        _busy = true; _error = null;
+        try { await action(); } catch (Exception ex) { _error = ex.Message; } finally { _busy = false; }
+    }
+}
