@@ -86,12 +86,13 @@ public sealed class ClaudeHarness : IHarness
     {
         var id = ShellQuote.Quote(launch.SessionId);
         var name = ShellQuote.Quote(launch.DisplayName);
+        var model = string.IsNullOrWhiteSpace(launch.Model) ? "" : " --model " + ShellQuote.Quote(launch.Model.Trim());
         var script = $"""
             node "{PrepareScript}" 2>/dev/null || true
             if ls "$HOME"/.claude/projects/*/{id}.jsonl >/dev/null 2>&1; then
-              exec claude --dangerously-skip-permissions --resume {id} --name {name}
+              exec claude --dangerously-skip-permissions --resume {id} --name {name}{model}
             fi
-            exec claude --dangerously-skip-permissions --session-id {id} --name {name}
+            exec claude --dangerously-skip-permissions --session-id {id} --name {name}{model}
             """;
         return "bash -c " + ShellQuote.Quote(script);
     }

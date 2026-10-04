@@ -1,3 +1,4 @@
+using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Harnesses.Claude;
 using DeveAgentManager.Harnesses.Codex;
@@ -53,7 +54,45 @@ public sealed class HarnessScriptTests : IDisposable
         Assert.Contains("--resume", command);
         Assert.Contains("--session-id", command);
         Assert.Contains("--dangerously-skip-permissions", command);
+        Assert.DoesNotContain("--model", command); // Ordinary restarts retain the session model.
     }
+
+    [Theory]
+    [InlineData(false, "opus")]
+    [InlineData(true, "opus")]
+    [InlineData(true, "default")]
+    [InlineData(true, "opus[1m]")]
+    [InlineData(true, "model with spaces; $(touch injected)")]
+    public void Claude_TransferLaunch_SelectsExplicitModelForNewAndResumedChats(bool exists, string model)
+    {
+        if (!HasTools()) return;
+        const string id = "11111111-2222-3333-4444-555555555555";
+        if (exists)
+        {
+            var directory = Path.Combine(_home, ".claude", "projects", "test");
+            Directory.CreateDirectory(directory);
+            // This is the compatibility model written for non-Anthropic assistant messages during conversion.
+            var imported = new DeveSession { Entries = [new() { Kind = DeveEntryKind.Message, Role = DeveRole.Assistant,
+                Content = [DeveBlock.OfText("Previous Codex response")], Model = new() { Provider = "openai", Id = "gpt-6" } }] };
+            File.WriteAllText(Path.Combine(directory, id + ".jsonl"), new ClaudeSessionFormat().Write(imported, id, _work));
+        }
+        File.WriteAllText(Path.Combine(_bin, "claude"), "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HOME/launch-args\"\n");
+        Run(new ClaudeHarness().BuildLaunchCommand(new(id, "test", _work, model)));
+        var args = File.ReadAllLines(Path.Combine(_home, "launch-args"));
+        Assert.Contains(exists ? "--resume" : "--session-id", args);
+        var position = Array.IndexOf(args, "--model");
+        Assert.True(position >= 0);
+        Assert.Equal(model, args[position + 1]);
+        Assert.Single(args, a => a == "--model");
+        Assert.False(File.Exists(Path.Combine(_work, "injected")));
+    }
+
+    [Theory]
+    [InlineData(null, "default")]
+    [InlineData("  ", "default")]
+    [InlineData(" opus ", "opus")]
+    public void Claude_TransferUsesConfiguredDefaultOrAccountDefault(string? configured, string expected) =>
+        Assert.Equal(expected, DeveAgentManager.Core.Agents.AgentService.TransferModel(configured));
 
     [Fact]
     public void Claude_Accounts_SubscriptionWinsOverAnApiKeyFromTheProfile()

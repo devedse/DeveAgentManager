@@ -104,6 +104,8 @@ public sealed partial class AgentService(
             UpdatedAt = now,
         };
 
+        var importingConversation = request.ContinueSessionId is { } continueId
+            && (await sessions.GetAsync(continueId, cancellationToken))?.HarnessId != agent.HarnessId;
         await PrepareWorkspaceAsync(runner, agent, request.Mode, cancellationToken);
 
         db.Agents.Add(agent);
@@ -124,7 +126,7 @@ public sealed partial class AgentService(
 
         try
         {
-            await LaunchAsync(runner, agent, restart: false, cancellationToken);
+            await LaunchAsync(runner, agent, restart: false, cancellationToken, useDefaultModel: importingConversation);
             agent.State = AgentState.Running;
         }
         catch (Exception ex)
@@ -209,7 +211,7 @@ public sealed partial class AgentService(
         await db.SaveChangesAsync(cancellationToken);
         events.AgentChanged(runner.Id, agent.Id);
 
-        await LaunchAsync(runner, agent, restart: true, cancellationToken);
+        await LaunchAsync(runner, agent, restart: true, cancellationToken, useDefaultModel: changesHarness);
         agent.State = AgentState.Running;
         agent.StateMessage = null;
         agent.ExitCode = null;
@@ -225,11 +227,13 @@ public sealed partial class AgentService(
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var agent = await db.Agents.Include(a => a.Runner).SingleAsync(a => a.Id == agentId, ct);
         var runner = RequireReady(agent.Runner!);
+        var importingConversation = false;
         if (sessionId is { } id)
         {
             var selected = await sessions.GetAsync(id, ct) ?? throw new ArgumentException("Session not found.");
             if (selected.WorkspaceAgentId != agent.Id) throw new InvalidOperationException("Choose a session from this workspace.");
             if (selected.AgentId == agent.Id) return;
+            importingConversation = selected.HarnessId != agent.HarnessId;
         }
         if (!string.IsNullOrWhiteSpace(title)) SessionService.ValidateTitle(title);
         var nativeId = GetHarness(agent.HarnessId).NewSessionId(Guid.NewGuid());
@@ -247,7 +251,7 @@ public sealed partial class AgentService(
             agent.StateMessage = null;
             await db.SaveChangesAsync(ct);
             events.AgentChanged(runner.Id, agent.Id);
-            await LaunchAsync(runner, agent, restart: true, ct);
+            await LaunchAsync(runner, agent, restart: true, ct, useDefaultModel: importingConversation);
             agent.State = AgentState.Running;
             agent.ExitCode = null;
         }
@@ -669,10 +673,15 @@ public sealed partial class AgentService(
         }
     }
 
-    private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken)
+    private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool useDefaultModel = false)
     {
         var harness = GetHarness(agent.HarnessId);
-        var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory));
+        // Claude restores a model from resumed transcripts before settings.json. Converted messages contain a
+        // compatibility model, not the user's choice, so use the Manager default explicitly on transfer.
+        var model = useDefaultModel && agent.HarnessId == "claude"
+            ? TransferModel((await settings.GetSetupProfileAsync(cancellationToken)).GetHarness("claude").DefaultModel)
+            : null;
+        var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model));
 
         // The account's environment comes after the Setup Profile's, so e.g. a subscription wins over an API key meant for pi.
         var account = await accounts.ResolveAsync(agent, cancellationToken);
@@ -702,6 +711,8 @@ public sealed partial class AgentService(
             logger.LogInformation("Agent {Agent} on {Runner} was already running; left it alone", agent.Name, runner.Name);
         }
     }
+
+    internal static string TransferModel(string? configured) => string.IsNullOrWhiteSpace(configured) ? "default" : configured.Trim();
 
     internal const string AlreadyRunningMarker = "DAM_ALREADY_RUNNING";
 

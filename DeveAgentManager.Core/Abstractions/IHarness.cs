@@ -71,4 +71,5 @@ public interface IHarness
 /// <param name="Script">Bash run after the files are written (e.g. links to shared folders).</param>
 public sealed record HarnessAccountSetup(IReadOnlyList<(string Path, string Content, string Mode)> Files, string Environment, string? Script);
 
-public sealed record HarnessLaunch(string SessionId, string DisplayName, string WorkingDirectory);
+/// <param name="Model">An explicit model for this launch, e.g. when importing a conversation whose recorded model is not a real user choice.</param>
+public sealed record HarnessLaunch(string SessionId, string DisplayName, string WorkingDirectory, string? Model = null);

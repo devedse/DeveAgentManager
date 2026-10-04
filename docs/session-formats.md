@@ -201,3 +201,10 @@ not rename the repository or guarantee that the harness's own resume menu adopts
 The picker shows the latest synced native harness file size, and the total Manager history plus conversion
 backups. These are file bytes, **not** model context-window capacity or remaining tokens. Context usage is not
 inferred from file size. Project files are shared across sessions; switching does not create a worktree.
+
+When transferring a conversation into Claude, the launch explicitly passes the Manager's Claude default
+model with `--model` (or `default` if none is configured). Claude's resume behavior can restore a model
+from the transcript ahead of `settings.json`; model fields inserted for compatibility during conversion
+must not choose the new session's model. This applies to harness switches, cross-harness session selection,
+and continuing an imported conversation on a new agent. Ordinary restarts and same-harness resumes keep
+the conversation's model choice. See https://code.claude.com/docs/en/model-config.
