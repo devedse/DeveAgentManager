@@ -100,6 +100,32 @@
                 </div>
             </MudItem>
             <MudItem xs="12" lg="4">
+                @if (_runner.Kind == RunnerKind.Desktop)
+                {
+                    <div class="panel mb-4">
+                        <div class="panel-header">
+                            <div class="help-heading"><MudText Typo="Typo.h6">Desktop</MudText>
+                                <HelpTip Label="Runner desktop">Desktop setup configures automatic login for the runner account and installs UI tools. Apps launched with <code>dam-desktop run --</code> use the real desktop visible through the VM console. Agents share this desktop; <code>dam-desktop batch</code> serializes clicks and typing. Re-run setup updates existing runners and preserves an already logged-in desktop. Restart agents to load the desktop instructions.</HelpTip></div>
+                            <MudIconButton Icon="@Icons.Material.Rounded.Refresh" Size="Size.Small" Disabled="_refreshingDesktop || !ready" OnClick="RefreshDesktopAsync" aria-label="Refresh desktop status" />
+                        </div>
+                        @if (_desktop is null || _refreshingDesktop)
+                        {
+                            <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
+                        }
+                        else
+                        {
+                            <MudText Color="@(_desktop.State == "ready" && _desktop.AutomationAvailable ? Color.Success : Color.Warning)">@DesktopTitle</MudText>
+                            @if (_desktop.State != "ready" || !_desktop.AutomationAvailable)
+                            {
+                                <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1">@_desktop.Message</MudText>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1">@_desktop.SessionType?.ToUpperInvariant() · @_desktop.Display</MudText>
+                            }
+                        }
+                    </div>
+                }
                 <div class="panel mb-4"><RunnerTimeZoneEditor RunnerId="RunnerId" /></div>
                 @if (_runner.State == RunnerState.Ready && status is { CpuUsage: not null })
                 {
@@ -237,6 +263,19 @@
 
     private ManagerInfoDto? _info;
     private RunnerDto? _runner;
+    private DesktopStatusDto? _desktop;
+    private DateTime _desktopReadAt;
+    private bool _refreshingDesktop;
+    private string DesktopTitle => _desktop?.State switch { "ready" => "Desktop ready", "login-required" => "Login required", "setup-required" => "Setup required", _ => "Desktop unavailable" };
+
+    private async Task RefreshDesktopAsync()
+    {
+        if (_refreshingDesktop) return;
+        _refreshingDesktop = true;
+        try { _desktop = await Api.GetDesktopStatusAsync(RunnerId); }
+        catch (Exception) { _desktop = new("unavailable", "Could not read desktop status. Check the runner connection."); }
+        finally { _desktopReadAt = DateTime.UtcNow; _refreshingDesktop = false; }
+    }
     private int _tab;
     private bool _tabChosen;
 
@@ -255,6 +294,8 @@
     {
         _info ??= await Api.InfoAsync();
         _runner = await Api.GetRunnerAsync(RunnerId);
+        if (_runner?.Kind == RunnerKind.Desktop && DateTime.UtcNow - _desktopReadAt >= TimeSpan.FromSeconds(15))
+            await RefreshDesktopAsync();
         if (_runner is not null && !_tabChosen)
         {
             // Show the log while a Runner is being set up, and the agents afterwards.
@@ -286,6 +327,7 @@
         var confirmed = await Dialogs.ShowMessageBoxAsync(
             $"Re-run setup on '{_runner.Name}'?",
             "Everything is installed and configured again: base packages, tmux and git config, the Setup Profile (variables, files, script), the harnesses and tools in their latest version, and the harnesses' packages. Each step is safe to repeat."
+            + (_runner.Kind == RunnerKind.Desktop ? " Desktop autologin and UI tools are configured too. An already logged-in desktop is left running; the login screen may restart to apply autologin." : "")
             + (running > 0 ? $" The {running} running {(running == 1 ? "agent keeps" : "agents keep")} running; restart {(running == 1 ? "it" : "them")} afterwards to use updated harnesses and packages." : ""),
             yesText: "Re-run setup", cancelText: "Cancel");
         if (confirmed == true)

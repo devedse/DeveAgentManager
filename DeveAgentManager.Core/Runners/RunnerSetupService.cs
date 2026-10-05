@@ -23,7 +23,7 @@ public sealed partial class RunnerSetupService(
     IEnumerable<IRunnerTool> tools)
 {
     /// <summary>Bump when runner-setup.sh changes, so the Portal can show that a Runner's setup is outdated.</summary>
-    public const int SetupVersion = 1;
+    public const int SetupVersion = 2;
 
     private static readonly Lazy<string> SetupScript = new(() => ReadResource("runner-setup.sh"));
 
@@ -85,7 +85,7 @@ public sealed partial class RunnerSetupService(
 
         log.Step("Uploading setup files");
         await shell.UploadAsync(runner, "~/.deveagentmanager/setup-vars.sh", BuildSetupVars(profile), "600", cancellationToken);
-        await shell.UploadAsync(runner, "~/.deveagentmanager/agent-env.sh", BuildAgentEnv(profile), "600", cancellationToken);
+        await shell.UploadAsync(runner, "~/.deveagentmanager/agent-env.sh", BuildAgentEnv(profile, runner.Kind == RunnerKind.Desktop), "600", cancellationToken);
         await shell.UploadAsync(runner, "~/.deveagentmanager/runner-setup.sh", SetupScript.Value, "700", cancellationToken);
         if (!string.IsNullOrEmpty(pat))
         {
@@ -97,6 +97,13 @@ public sealed partial class RunnerSetupService(
         }
 
         await RunScriptAsync(runner, log, "Base setup", "bash ~/.deveagentmanager/runner-setup.sh", TimeSpan.FromMinutes(30), cancellationToken);
+
+        if (runner.Kind == RunnerKind.Desktop)
+        {
+            await shell.UploadAsync(runner, "~/.deveagentmanager/desktop.py", ReadResource("desktop.py"), "700", cancellationToken);
+            await shell.UploadAsync(runner, "~/.deveagentmanager/desktop-setup.sh", ReadResource("desktop-setup.sh"), "700", cancellationToken);
+            await RunScriptAsync(runner, log, "Desktop autologin and UI tools", "bash ~/.deveagentmanager/desktop-setup.sh", TimeSpan.FromMinutes(15), cancellationToken);
+        }
 
         foreach (var file in profile.Files)
         {
@@ -137,6 +144,12 @@ public sealed partial class RunnerSetupService(
         {
             await shell.UploadAsync(runner, "~/.deveagentmanager/profile-script.sh", profile.Script.ReplaceLineEndings("\n"), "700", cancellationToken);
             await RunScriptAsync(runner, log, "Running the Setup Profile script", "bash -e ~/.deveagentmanager/profile-script.sh", TimeSpan.FromMinutes(30), cancellationToken);
+        }
+
+        if (runner.Kind == RunnerKind.Desktop)
+        {
+            // After profile files and harness configuration, so re-running setup cannot erase these instructions.
+            await RunScriptAsync(runner, log, "Desktop instructions for agents", "python3 ~/.deveagentmanager/desktop.py install-instructions", TimeSpan.FromSeconds(30), cancellationToken);
         }
 
         runner.InstalledVersions = await ReadVersionsAsync(runner, cancellationToken);
@@ -334,7 +347,7 @@ public sealed partial class RunnerSetupService(
         return builder.ToString();
     }
 
-    internal static string BuildAgentEnv(SetupProfile profile)
+    internal static string BuildAgentEnv(SetupProfile profile, bool desktop = false)
     {
         var builder = new StringBuilder("# Managed by DeveAgentManager: environment variables from the Setup Profile\n");
         foreach (var variable in profile.EnvironmentVariables)
@@ -348,13 +361,15 @@ public sealed partial class RunnerSetupService(
             builder.Append("export ").Append(name).Append('=').Append(ShellQuote.Quote(variable.Value)).Append('\n');
         }
 
+        if (desktop)
+            builder.Append("[ ! -f \"$HOME/.deveagentmanager/desktop-env.sh\" ] || . \"$HOME/.deveagentmanager/desktop-env.sh\"\n");
         return builder.ToString();
     }
 
     private static string NormalizeMode(string? mode) =>
         mode is not null && Regex.IsMatch(mode.Trim(), "^[0-7]{3,4}$") ? mode.Trim() : "600";
 
-    private static string ReadResource(string name)
+    internal static string ReadResource(string name)
     {
         var assembly = Assembly.GetExecutingAssembly();
         var resource = assembly.GetManifestResourceNames().Single(n => n.EndsWith(name, StringComparison.Ordinal));

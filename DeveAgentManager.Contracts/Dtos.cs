@@ -92,6 +92,9 @@ public sealed record RunnerActivityDto(long Id, string Name, DateTime StartedAt,
 /// <summary>One provider reading for a Runner. A missing value leaves a gap in its usage graph.</summary>
 public sealed record RunnerUsageSample(DateTime At, double? CpuPercent, double? MemoryPercent, double? DiskPercent = null);
 
+/// <summary>Live desktop availability; never includes authorization cookies or paths.</summary>
+public sealed record DesktopStatusDto(string State, string Message, string? SessionType = null, string? Display = null, bool AutomationAvailable = false);
+
 /// <param name="AccountId">The account the agent picked; null uses the harness's default account.</param>
 public sealed record AgentDto(
     Guid Id,

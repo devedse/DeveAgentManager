@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Scripts\*.sh" />
+    <EmbeddedResource Include="Scripts\*.py" />
     <InternalsVisibleTo Include="DeveAgentManager.Tests" />
   </ItemGroup>
 

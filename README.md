@@ -117,6 +117,9 @@ that's expected with Privilege Separation off.
 
 ### Template requirements
 
+Desktop VM autologin, connecting agents to the real display, and updating existing runners are described in
+[Desktop runners](docs/runner-desktop.md).
+
 Runners are full clones of `TEMPLATE_HEADLESS_VMID` (and `TEMPLATE_DESKTOP_VMID`). The template needs:
 
 - **A cloud-init drive**: on the template, **Hardware → Add → CloudInit Drive**. The Manager sets the Runner Account

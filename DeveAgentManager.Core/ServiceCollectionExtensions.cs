@@ -42,6 +42,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AgentDiagnostics>();
         services.AddSingleton<AgentQuickCommands>();
         services.AddSingleton<RunnerSetupService>();
+        services.AddSingleton<RunnerDesktop>();
         services.AddSingleton<SessionService>();
         services.AddSingleton<Accounts.AccountService>();
         services.AddSingleton<AgentService>();

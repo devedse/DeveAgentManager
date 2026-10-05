@@ -56,6 +56,7 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     public Task<List<RunnerDto>> ListRunnersAsync() => GetAsync<List<RunnerDto>>("api/runners");
 
     public Task<RunnerDto?> GetRunnerAsync(Guid runnerId) => FindAsync<RunnerDto>($"api/runners/{runnerId}");
+    public Task<DesktopStatusDto> GetDesktopStatusAsync(Guid runnerId) => GetAsync<DesktopStatusDto>($"api/runners/{runnerId}/desktop");
 
     public Task<List<RunnerUsageSample>> GetRunnerUsageAsync(Guid runnerId, int minutes = 60) => GetAsync<List<RunnerUsageSample>>($"api/runners/{runnerId}/usage?minutes={minutes}");
 

@@ -54,6 +54,8 @@ public static class ManagerApi
 
     private static void MapRunners(RouteGroupBuilder runners)
     {
+        runners.MapGet("/{runnerId:guid}/desktop", async (Guid runnerId, RunnerService service, RunnerDesktop desktop, CancellationToken ct) =>
+            await service.GetAsync(runnerId, ct) is { } runner ? Results.Ok(await desktop.ReadAsync(runner, ct)) : Results.NotFound());
         runners.MapGet("/{runnerId:guid}/timezone", (Guid runnerId, RunnerTimeZones zones, CancellationToken ct) => zones.GetAsync(runnerId, ct));
         runners.MapPut("/{runnerId:guid}/timezone", async (Guid runnerId, TimeZoneRequest request, RunnerTimeZones zones, CancellationToken ct) =>
         {
