@@ -694,7 +694,9 @@ public sealed partial class AgentService(
 
         // The browser terminal (xterm.js) and tmux support 24-bit color, but programs inside tmux only use it when told.
         var zone = Runners.RunnerTimeZones.Validate(runner.TimeZoneId ?? await settings.GetDefaultTimeZoneAsync(cancellationToken));
-        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; {accountEnvironment}export TZ={ShellQuote.Quote(zone)}; export COLORTERM=truecolor; exec {harnessCommand}");
+        var stored = await sessions.GetForAgentAsync(agent.Id, cancellationToken);
+        var imageContext = $"export DAM_AGENT_ID={ShellQuote.Quote(agent.Id.ToString("N"))}; export DAM_SESSION_ID={ShellQuote.Quote(stored?.Id.ToString("N") ?? "")}; ";
+        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; {accountEnvironment}{imageContext}export TZ={ShellQuote.Quote(zone)}; export COLORTERM=truecolor; exec {harnessCommand}");
         var session = ShellQuote.Quote("=" + agent.TmuxSession);
         var directory = ShellQuote.Quote(agent.WorkingDirectory);
 

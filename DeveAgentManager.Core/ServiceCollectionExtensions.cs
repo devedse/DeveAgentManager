@@ -23,6 +23,7 @@ public static class ServiceCollectionExtensions
         Directory.CreateDirectory(options.DataDirectory);
 
         services.AddSingleton(options);
+        services.AddMemoryCache();
         services.AddDbContextFactory<ManagerDbContext>(db => db.UseSqlite($"Data Source={options.DatabasePath}"));
         services.AddDataProtection()
             .SetApplicationName("DeveAgentManager")
@@ -44,6 +45,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RunnerSetupService>();
         services.AddSingleton<RunnerDesktop>();
         services.AddSingleton<SessionService>();
+        services.AddSingleton<SessionImageStore>();
+        services.AddSingleton<SessionImages>();
+        services.AddHostedService(sp => sp.GetRequiredService<SessionImages>());
         services.AddSingleton<Accounts.AccountService>();
         services.AddSingleton<AgentService>();
         services.AddSingleton<AgentAttentionService>();

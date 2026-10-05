@@ -60,6 +60,11 @@
         </div>
 
         <ConversationView Session="_session" />
+        <div class="panel mt-4">
+            <div class="help-heading mb-3"><MudText Typo="Typo.h6">Shared images</MudText>
+                <HelpTip Label="Shared images">Images published by the agent or saved from the desktop stay with this conversation across session and harness switches. Agents can publish a file with <code>dam-share /path/to/image.png --caption "Description"</code>.</HelpTip></div>
+            <SessionImagesView @key="SessionId" SessionId="SessionId" />
+        </div>
 
         @if (_session.Entries.Count > 8)
         {

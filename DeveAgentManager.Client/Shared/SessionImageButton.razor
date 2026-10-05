@@ -1,0 +1,14 @@
+@inherits LiveComponent
+@inject IDialogService Dialogs
+<MudBadge Content="@_count" Visible="@(_count > 0)" Color="Color.Primary" Overlap="true">
+    <MudIconButton Icon="@Icons.Material.Rounded.PhotoLibrary" Size="Size.Small" OnClick="OpenAsync" aria-label="@($"Shared images ({_count})")" title="Shared images" />
+</MudBadge>
+@code {
+    [Parameter] public Guid SessionId { get; set; }
+    private int _count;
+    protected override bool IsRelevant(ManagerEvent e) => e.SessionId == SessionId;
+    protected override async Task LoadAsync() => _count = (await Api.GetSessionImagesAsync(SessionId)).Count;
+    private Task OpenAsync() => Dialogs.ShowAsync<SharedImagesDialog>("Shared images",
+        new DialogParameters<SharedImagesDialog> { { d => d.SessionId, SessionId } },
+        new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Large, CloseButton = true });
+}

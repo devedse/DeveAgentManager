@@ -2840,3 +2840,20 @@ body:has(.terminal-layout) .agent-attention-popover {
 .help-tip-content p + p { margin-top: 8px; }
 .help-heading .section-title { margin-bottom: 0; }
 .settings-section > .help-heading { margin-bottom: 8px; }
+
+/* Desktop viewing and conversation images keep all controls within phone widths. */
+.desktop-view-actions, .desktop-save-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
+.desktop-view-actions { margin-bottom: 16px; }
+.desktop-interval { width: 170px; flex: 0 1 170px; }
+.desktop-session-select { min-width: 0; flex: 1 1 240px; }
+.desktop-frame { width: 100%; min-height: 120px; background: #0a0d13; border-radius: 8px; overflow: hidden; }
+.desktop-frame img { display: block; width: 100%; height: auto; }
+.desktop-frame img:not([src]) { visibility: hidden; }
+.session-image-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 16px; }
+.session-image-card { color: inherit; font: inherit; text-align: left; border: 1px solid var(--mud-palette-lines-default); background: var(--mud-palette-background); border-radius: 8px; overflow: hidden; cursor: pointer; min-width: 0; }
+.session-image-card:focus-visible { outline: 2px solid var(--mud-palette-primary); outline-offset: 2px; }
+.session-image-card img { display: block; width: 100%; height: 180px; object-fit: contain; background: #0a0d13; }
+.session-image-card span, .session-image-card small { display: block; margin: 8px 12px; overflow-wrap: anywhere; }
+.session-image-card small { color: var(--mud-palette-text-secondary); }
+.shared-image-preview { display: block; max-width: 100%; max-height: 75dvh; width: auto; height: auto; margin: auto; object-fit: contain; }
+@media (max-width: 420px) { .desktop-view-actions > .mud-button-root { flex: 1 1 auto; } .desktop-interval { flex-basis: 100%; width: 100%; } .desktop-save-actions > .mud-button-root { width: 100%; } }

@@ -1,0 +1,8 @@
+<MudDialog>
+    <DialogContent><SessionImagesView SessionId="SessionId" /></DialogContent>
+    <DialogActions><MudButton OnClick="() => Dialog.Close()">Close</MudButton></DialogActions>
+</MudDialog>
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Guid SessionId { get; set; }
+}

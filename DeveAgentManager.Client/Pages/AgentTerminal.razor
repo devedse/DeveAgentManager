@@ -30,9 +30,14 @@
             <span class="terminal-hint">Shift+drag selects · Ctrl+C copies a selection</span>
             @if (_sessionId is { } sessionId)
             {
+                <span class="toolbar-wide"><SessionImageButton @key="sessionId" SessionId="sessionId" /></span>
                 <span class="toolbar-wide"><MudTooltip Text="Conversation">
                     <MudIconButton Href="@($"sessions/{sessionId}")" Icon="@Icons.Material.Rounded.Forum" Size="Size.Small" aria-label="Conversation" />
                 </MudTooltip></span>
+            }
+            @if (_agent.RunnerKind == RunnerKind.Desktop)
+            {
+                <span class="toolbar-wide"><MudIconButton Href="@($"runners/{_agent.RunnerId}/desktop?agent={AgentId}")" Icon="@Icons.Material.Rounded.DesktopWindows" Size="Size.Small" aria-label="Runner desktop" title="Runner desktop" /></span>
             }
             @if (running)
             {
@@ -60,6 +65,11 @@
                         @if (_sessionId is { } menuSessionId)
                         {
                             <MudMenuItem Icon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{menuSessionId}")">Conversation</MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Rounded.PhotoLibrary" OnClick="OpenImagesAsync">Shared images</MudMenuItem>
+                        }
+                        @if (_agent.RunnerKind == RunnerKind.Desktop)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.DesktopWindows" Href="@($"runners/{_agent.RunnerId}/desktop?agent={AgentId}")">Runner desktop</MudMenuItem>
                         }
                         @if (running)
                         {
@@ -174,6 +184,13 @@
         var dialog = await Dialogs.ShowAsync<SessionPickerDialog>("Sessions", new DialogParameters<SessionPickerDialog> { { d => d.Agent, _agent } },
             new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
         if (await dialog.Result is { Canceled: false }) await OnSwitchedAsync();
+    }
+
+    private async Task OpenImagesAsync()
+    {
+        if (_sessionId is not { } id) return;
+        await Dialogs.ShowAsync<SharedImagesDialog>("Shared images", new DialogParameters<SharedImagesDialog> { { d => d.SessionId, id } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Large, CloseButton = true });
     }
 
     private Task StartAsync() => RunAsync(() => Api.StartAgentAsync(AgentId), reconnect: true);

@@ -1,0 +1,51 @@
+@page "/runners/{RunnerId:guid}/desktop"
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+<PageTitle>Desktop · DeveAgentManager</PageTitle>
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page">
+    <PageHeader Title="@(_runner is null ? "Desktop" : $"{_runner.Name} desktop")" BackHref="@($"runners/{RunnerId}")">
+        <TitleContent><HelpTip Label="Desktop viewer">This is the runner's shared desktop, including windows from other agents. Live refresh pauses while hidden. Frames are temporary; Save snapshot keeps an image with the selected conversation.</HelpTip></TitleContent>
+    </PageHeader>
+    @if (_error is not null) { <MudAlert Severity="Severity.Warning">@_error</MudAlert> }
+    @if (_runner is { Kind: RunnerKind.Desktop, State: RunnerState.Ready })
+    {
+        <div class="panel"><DesktopView @key="RunnerId" RunnerId="RunnerId" /></div>
+        <div class="desktop-save-actions mt-4">
+            <MudSelect T="Guid?" @bind-Value="_session" Label="Save to conversation" Variant="Variant.Outlined" Margin="Margin.Dense" Class="desktop-session-select">
+                @foreach (var session in _sessions) { <MudSelectItem T="Guid?" Value="@((Guid?)session.Id)">@session.Title</MudSelectItem> }
+            </MudSelect>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PhotoCamera" Disabled="@(_saving || _session is null)" OnClick="SaveAsync">@(_saving ? "Saving…" : "Save snapshot")</MudButton>
+        </div>
+    }
+</MudContainer>
+@code {
+    [Parameter] public Guid RunnerId { get; set; }
+    [SupplyParameterFromQuery(Name = "agent")] public Guid? AgentId { get; set; }
+    private RunnerDto? _runner;
+    private List<SessionDto> _sessions = [];
+    private Guid? _session;
+    private bool _saving;
+    private string? _error;
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            _error = null;
+            _runner = await Api.GetRunnerAsync(RunnerId);
+            if (_runner is null) { _error = "Runner not found."; return; }
+            if (_runner.Kind != RunnerKind.Desktop || _runner.State != RunnerState.Ready) { _error = "A ready desktop runner is required."; return; }
+            var owners = _runner.Agents.Select(a => a.Id).ToHashSet();
+            _sessions = (await Api.ListSessionsAsync()).Where(s => s.WorkspaceAgentId is { } id && owners.Contains(id)).ToList();
+            _session = _sessions.FirstOrDefault(s => s.AgentId == AgentId && AgentId is not null)?.Id ?? _sessions.FirstOrDefault()?.Id;
+        }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException) { _error = ex.Message; }
+    }
+    private async Task SaveAsync()
+    {
+        if (_session is not { } sessionId) return;
+        _saving = true;
+        try { await Api.SaveDesktopSnapshotAsync(RunnerId, sessionId); Snackbar.Add("Snapshot saved to the conversation's shared images.", Severity.Success); }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException) { Snackbar.Add(ex.Message, Severity.Error); }
+        finally { _saving = false; }
+    }
+}

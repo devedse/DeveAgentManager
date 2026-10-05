@@ -370,6 +370,7 @@ public sealed class SessionService(
             throw new InvalidOperationException("Select another session before deleting the active conversation.");
         await db.Sessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync(cancellationToken);
         File.Delete(PathFor(sessionId));
+        SessionImageStore.DeleteSession(options, sessionId);
         if (Directory.Exists(options.SessionsDirectory))
             foreach (var backup in Directory.EnumerateFiles(options.SessionsDirectory, $"{sessionId:N}.*.json")) File.Delete(backup);
         events.Publish(new ManagerEvent(ManagerEventKind.SessionRemoved, SessionId: sessionId));

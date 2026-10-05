@@ -21,20 +21,6 @@ KEYS = ("DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
 FOLDER = Path.home() / ".deveagentmanager"
 BEGIN = "<!-- DeveAgentManager desktop -->"
 END = "<!-- /DeveAgentManager desktop -->"
-INSTRUCTIONS = """This runner has a real shared desktop, visible through the VM console.
-Use `dam-desktop status` to check it. Launch GUI apps with `dam-desktop run -- <command>`
-(for example `dam-desktop run -- dotnet run --project MyApp`). This discovers fresh display
-credentials every time. Do not install or start Xvfb or a separate desktop to display an app.
-Use `dam-desktop screenshot /tmp/desktop.png`, then your image-reading tool to inspect it.
-Use `dam-desktop windows`, `click X Y [BUTTON]`, `type TEXT`, `key ctrl+l`, and `focus WINDOW_ID`.
-For a sequence of actions use `dam-desktop batch /tmp/actions.json`: a JSON array of objects
-such as {"action":"click","x":100,"y":200}, {"action":"type","text":"hello"},
-{"action":"key","keys":"Return"}, {"action":"wait","seconds":1},
-{"action":"screenshot","path":"/tmp/desktop.png"}. A batch holds the shared input lock
-so another agent cannot interleave clicks and typing. All agents on this runner share the
-desktop: avoid moving or closing another agent's windows. Check `dam-desktop --help` for details.
-If the desktop is unavailable, report the status; do not claim that the UI was tested.
-"""
 
 
 class DesktopError(Exception):
@@ -258,22 +244,20 @@ def configure(root, user):
     return manager, selected.stem
 
 
-def install_instructions(home):
+def remove_instructions(home):
     paths = [home / relative for relative in (".codex/AGENTS.md", ".claude/CLAUDE.md", ".pi/agent/AGENTS.md")]
-    global_codex = paths[0]
-    # Existing accounts skip account setup when their credentials have not changed.
-    # Repair their instruction link here without replacing custom account instructions.
     for account in (home / ".deveagentmanager/accounts").glob("*/codex"):
         path = account / "AGENTS.md"
-        if not path.exists() and not path.is_symlink():
-            path.symlink_to(global_codex)
-        elif not path.is_symlink():
+        if not path.is_symlink():
             paths.append(path)
     for path in paths:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        old = path.read_text() if path.exists() else ""
-        old = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END) + r"\n?", "", old, flags=re.S).rstrip()
-        path.write_text(old + ("\n\n" if old else "") + BEGIN + "\n" + INSTRUCTIONS + END + "\n")
+        if not path.exists():
+            continue
+        old = path.read_text()
+        if BEGIN not in old or END not in old:
+            continue
+        cleaned = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END) + r"\n?", "", old, flags=re.S).rstrip()
+        path.write_text(cleaned + ("\n" if cleaned else ""))
 
 
 @contextlib.contextmanager
@@ -335,7 +319,7 @@ def main():
     sub.add_parser("status", help="Check the real desktop and UI tools (JSON)")
     sub.add_parser("env", help="Print shell-quoted session exports")
     sub.add_parser("session-start", help="Capture the desktop login environment")
-    sub.add_parser("install-instructions", help="Update managed instructions without replacing user instructions")
+    sub.add_parser("remove-instructions", help="Remove only the old managed desktop instructions")
     configure_parser = sub.add_parser("configure", help="Configure autologin as root")
     configure_parser.add_argument("user")
     run = sub.add_parser("run", help="Launch an app using the latest desktop connection")
@@ -362,8 +346,8 @@ def main():
         pwd.getpwnam(args.user)
         print("Configured %s autologin with X11 session %s" % configure(Path("/"), args.user))
         return
-    if args.mode == "install-instructions":
-        install_instructions(Path.home())
+    if args.mode == "remove-instructions":
+        remove_instructions(Path.home())
         return
     if args.mode == "session-start":
         capture_session()

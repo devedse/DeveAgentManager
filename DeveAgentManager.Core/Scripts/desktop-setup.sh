@@ -6,6 +6,7 @@ if [ "$(id -u)" = 0 ]; then
   exit 10
 fi
 sudo -n true
+find "$HOME/.deveagentmanager" -maxdepth 1 -name 'desktop-frame-*.jpg' -type f -mmin +5 -delete
 echo '==> Installing desktop connection and UI tools'
 sudo -n env DEBIAN_FRONTEND=noninteractive apt-get -q -y \
   -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef \
@@ -24,16 +25,36 @@ escaped = path.replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').rep
 (Path.home() / '.config/autostart/deveagentmanager-desktop.desktop').write_text(
     '[Desktop Entry]\nType=Application\nName=DeveAgentManager desktop connection\n'
     f'Exec=python3 "{escaped}" session-start\nTerminal=false\nX-GNOME-Autostart-enabled=true\n')
+# Bash started by SSH may read .bashrc instead of BASH_ENV. Install before the
+# distro's noninteractive early return, retaining the rest of the user's file.
+import re
+rc = Path.home() / '.bashrc'
+old = rc.read_text() if rc.exists() else ''
+begin = '# >>> DeveAgentManager desktop shell >>>'
+end = '# <<< DeveAgentManager desktop shell <<<'
+old = re.sub(re.escape(begin) + r'.*?' + re.escape(end) + r'\n?', '', old, flags=re.S)
+block = '''# >>> DeveAgentManager desktop shell >>>
+if [ -f "$HOME/.deveagentmanager/desktop-shell.sh" ]; then
+  if [ "${BASH_ENV:-}" != "$HOME/.deveagentmanager/desktop-shell.sh" ]; then
+    export DAM_PREVIOUS_BASH_ENV="${BASH_ENV:-}"
+  fi
+  . "$HOME/.deveagentmanager/desktop-shell.sh"
+fi
+# <<< DeveAgentManager desktop shell <<<
+'''
+rc.write_text(block + old)
 PY
 cat > "$HOME/.deveagentmanager/desktop-env.sh" <<'EOF'
 # Refresh only display settings; do not evaluate any session file as shell code.
 if [ -x "$HOME/.deveagentmanager/desktop.py" ]; then
   dam_desktop_exports=$(python3 "$HOME/.deveagentmanager/desktop.py" env 2>/dev/null) || dam_desktop_exports=""
+  unset DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS XDG_SESSION_TYPE XDG_CURRENT_DESKTOP XDG_SESSION_ID
   if [ -n "$dam_desktop_exports" ]; then eval "$dam_desktop_exports"; fi
   unset dam_desktop_exports
 fi
 EOF
 chmod 600 "$HOME/.deveagentmanager/desktop-env.sh"
+python3 "$HOME/.deveagentmanager/desktop.py" remove-instructions
 
 # A running desktop must not be disconnected by Re-run setup. If only the greeter is running,
 # restart it to apply autologin now; any user's existing graphical session prevents a restart.

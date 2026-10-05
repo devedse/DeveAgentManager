@@ -76,39 +76,32 @@ class DesktopTests(unittest.TestCase):
         with self.assertRaisesRegex(desktop.DesktopError, "No X11"):
             desktop.configure(self.root, "runner")
 
-    def test_instruction_updates_preserve_user_text_without_duplicates(self):
-        for path in (".claude/CLAUDE.md", ".codex/AGENTS.md", ".pi/agent/AGENTS.md"):
-            self.file(path, "My custom instructions\n")
-        desktop.install_instructions(self.root)
-        desktop.install_instructions(self.root)
-        text = (self.root / ".codex/AGENTS.md").read_text()
-        self.assertTrue(text.startswith("My custom instructions\n"))
-        self.assertEqual(1, text.count(desktop.BEGIN))
-        self.assertIn("dam-desktop run", text)
-
-    def test_existing_codex_accounts_get_instructions_without_changing_credentials(self):
-        login = self.file(".deveagentmanager/accounts/personal/codex/auth.json", "secret-login")
-        custom = self.file(".deveagentmanager/accounts/custom/codex/AGENTS.md", "Custom account rules\n")
-        desktop.install_instructions(self.root)
-        desktop.install_instructions(self.root)
-        linked = login.parent / "AGENTS.md"
-        self.assertTrue(linked.is_symlink())
-        self.assertEqual(self.root / ".codex/AGENTS.md", linked.resolve())
-        self.assertIn("dam-desktop run", linked.read_text())
-        self.assertEqual("secret-login", login.read_text())
-        self.assertFalse(custom.is_symlink())
-        self.assertTrue(custom.read_text().startswith("Custom account rules\n"))
-        self.assertEqual(1, custom.read_text().count(desktop.BEGIN))
-
-    def test_existing_global_instruction_link_is_retained(self):
-        global_file = self.file(".codex/AGENTS.md", "Global custom rules\n")
-        account = self.root / ".deveagentmanager/accounts/personal/codex"
+    def test_removing_managed_instructions_preserves_custom_rules_and_links(self):
+        block = desktop.BEGIN + "\nOld desktop rules\n" + desktop.END + "\n"
+        paths = (".claude/CLAUDE.md", ".codex/AGENTS.md", ".pi/agent/AGENTS.md",
+                 ".deveagentmanager/accounts/custom/codex/AGENTS.md")
+        for path in paths:
+            self.file(path, "My custom rules\n\n" + block + "More custom rules\n")
+        account = self.root / ".deveagentmanager/accounts/linked/codex"
         account.mkdir(parents=True)
         linked = account / "AGENTS.md"
-        linked.symlink_to(global_file)
-        desktop.install_instructions(self.root)
+        linked.symlink_to(self.root / ".codex/AGENTS.md")
+        login = self.file(".deveagentmanager/accounts/custom/codex/auth.json", "login untouched")
+        desktop.remove_instructions(self.root)
+        desktop.remove_instructions(self.root)
+        for path in paths:
+            text = (self.root / path).read_text()
+            self.assertIn("My custom rules", text)
+            self.assertIn("More custom rules", text)
+            self.assertNotIn(desktop.BEGIN, text)
         self.assertTrue(linked.is_symlink())
-        self.assertEqual(1, linked.read_text().count(desktop.BEGIN))
+        self.assertEqual("login untouched", login.read_text())
+
+    def test_unmanaged_instructions_are_not_rewritten(self):
+        path = self.file(".claude/CLAUDE.md", "My rules\n\n")
+        desktop.remove_instructions(self.root)
+        self.assertEqual("My rules\n\n", path.read_text())
+        self.assertFalse((self.root / ".codex/AGENTS.md").exists())
 
     def test_logind_selects_only_active_local_runner_desktops(self):
         def fake(args, **kwargs):

@@ -56,6 +56,23 @@ public static class ManagerApi
     {
         runners.MapGet("/{runnerId:guid}/desktop", async (Guid runnerId, RunnerService service, RunnerDesktop desktop, CancellationToken ct) =>
             await service.GetAsync(runnerId, ct) is { } runner ? Results.Ok(await desktop.ReadAsync(runner, ct)) : Results.NotFound());
+        runners.MapGet("/{runnerId:guid}/desktop/frame", async (Guid runnerId, HttpContext context, RunnerService service, RunnerDesktop desktop, CancellationToken ct) =>
+        {
+            var runner = await service.GetAsync(runnerId, ct);
+            if (runner is null) return Results.NotFound();
+            var frame = await desktop.CaptureAsync(runner, ct);
+            context.Response.Headers["X-DAM-Captured-At"] = frame.CapturedAt.ToString("O");
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+            return Results.File(frame.Data, "image/jpeg");
+        });
+        runners.MapPost("/{runnerId:guid}/desktop/snapshot", async (Guid runnerId, SaveDesktopSnapshotRequest request, RunnerService service, RunnerDesktop desktop, SessionImages images, CancellationToken ct) =>
+        {
+            var runner = await service.GetAsync(runnerId, ct);
+            if (runner is null) return Results.NotFound();
+            var frame = await desktop.CaptureAsync(runner, ct);
+            return Results.Ok(await images.SaveSnapshotAsync(runnerId, request.SessionId, frame.Data, request.Caption, ct));
+        });
         runners.MapGet("/{runnerId:guid}/timezone", (Guid runnerId, RunnerTimeZones zones, CancellationToken ct) => zones.GetAsync(runnerId, ct));
         runners.MapPut("/{runnerId:guid}/timezone", async (Guid runnerId, TimeZoneRequest request, RunnerTimeZones zones, CancellationToken ct) =>
         {
@@ -270,6 +287,22 @@ public static class ManagerApi
 
     private static void MapSessions(RouteGroupBuilder sessions)
     {
+        sessions.MapGet("/{sessionId:guid}/images", async (Guid sessionId, SessionService service, SessionImageStore images, CancellationToken ct) =>
+            await service.GetAsync(sessionId, ct) is null ? Results.NotFound() : Results.Ok(await images.ListAsync(sessionId, ct)));
+        sessions.MapGet("/{sessionId:guid}/images/{imageId:guid}", async (Guid sessionId, Guid imageId, HttpContext context, SessionService service, SessionImageStore images, CancellationToken ct) =>
+        {
+            if (await service.GetAsync(sessionId, ct) is null) return Results.NotFound();
+            if (await images.ReadAsync(sessionId, imageId, ct) is not { } image) return Results.NotFound();
+            return Image(context, image.Data, image.Image.ContentType, TimeSpan.FromMinutes(5));
+        });
+        sessions.MapGet("/{sessionId:guid}/images/{imageId:guid}/download", async (Guid sessionId, Guid imageId, HttpContext context, SessionService service, SessionImageStore images, CancellationToken ct) =>
+        {
+            if (await service.GetAsync(sessionId, ct) is null) return Results.NotFound();
+            if (await images.ReadAsync(sessionId, imageId, ct) is not { } image) return Results.NotFound();
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+            context.Response.Headers.CacheControl = "private, no-store";
+            return Results.File(image.Data, image.Image.ContentType, image.Image.FileName);
+        });
         sessions.MapGet("/", async (SessionService service, DtoMapper map, CancellationToken ct) =>
         {
             var names = await map.AccountNamesAsync(ct);

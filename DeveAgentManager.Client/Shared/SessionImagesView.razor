@@ -1,0 +1,32 @@
+@inherits LiveComponent
+@inject IDialogService Dialogs
+
+@if (_images.Count > 0)
+{
+    <div class="session-image-gallery">
+        @foreach (var image in _images)
+        {
+            <button type="button" class="session-image-card" @key="image.Id" @onclick="() => OpenAsync(image)" aria-label="@($"View {Title(image)}")">
+                <img src="@($"api/sessions/{SessionId}/images/{image.Id}")" alt="@Title(image)" loading="lazy" />
+                <span>@Title(image)</span>
+                <small>@image.CreatedAt.Humanize() · @(image.Bytes / 1024) KiB</small>
+            </button>
+        }
+    </div>
+}
+else if (Loaded)
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary">No shared images yet.</MudText>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid SessionId { get; set; }
+    private List<SessionImageDto> _images = [];
+    protected override bool IsRelevant(ManagerEvent e) => e.SessionId == SessionId;
+    protected override Task LoadAsync() => LoadImagesAsync();
+    private async Task LoadImagesAsync() => _images = await Api.GetSessionImagesAsync(SessionId);
+    private static string Title(SessionImageDto image) => string.IsNullOrWhiteSpace(image.Caption) ? image.FileName : image.Caption;
+    private Task OpenAsync(SessionImageDto image) => Dialogs.ShowAsync<ImagePreviewDialog>(Title(image),
+        new DialogParameters<ImagePreviewDialog> { { d => d.Image, image } },
+        new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.ExtraLarge, CloseButton = true });
+}

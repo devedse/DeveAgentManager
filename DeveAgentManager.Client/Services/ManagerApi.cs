@@ -38,6 +38,9 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     }
 
     // Runners
+    public Task<List<SessionImageDto>> GetSessionImagesAsync(Guid sessionId) => GetAsync<List<SessionImageDto>>($"api/sessions/{sessionId}/images");
+    public Task<SessionImageDto> SaveDesktopSnapshotAsync(Guid runnerId, Guid sessionId) =>
+        SendAsync<SessionImageDto>(HttpMethod.Post, $"api/runners/{runnerId}/desktop/snapshot", new SaveDesktopSnapshotRequest(sessionId));
 
     public Task<List<string>> TimeZoneIdsAsync() => GetAsync<List<string>>("api/settings/timezones");
     public Task<TimeZoneConfigDto> GetTimeZoneAsync(Guid? runnerId) => GetAsync<TimeZoneConfigDto>(runnerId is { } id ? $"api/runners/{id}/timezone" : "api/settings/timezone");

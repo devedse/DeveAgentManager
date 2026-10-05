@@ -7,7 +7,7 @@ and an X11 session; setup reports missing or unsupported components rather than 
 
 ## Existing runners
 
-Update the Manager, then open the desktop runner and select **Operations → Re-run setup**. Setup version 2
+Update the Manager, then open the desktop runner and select **Operations → Re-run setup**. Setup version 3
 advertises this update. It uses the existing runner account, repository folders and conversations. Repeated setup
 preserves unrelated login-manager settings and keeps a backup of each original configuration file with the suffix
 `.before-deveagentmanager`.
@@ -17,9 +17,15 @@ restart a logged-in graphical session or stop agents. An existing login therefor
 backend until the next login or boot. If it is locked, unlock it once through the VM console. Desktop autostart
 captures the current environment and disables idle blanking and locking on supported GNOME/Xfce desktops.
 
-Restart agents to load the managed desktop instructions and initial graphical environment. Existing agents can
-already use `~/.local/bin/dam-desktop run -- …` after setup without restarting. No repository instructions are
-modified. A managed block is added to the harnesses' user-level instruction files, retaining custom instructions.
+Restart existing agents once to load the environment hook. Normal Bash commands, including `bash -lc`, refresh
+the graphical environment before execution, so `dotnet run` opens an Avalonia app on the real desktop. Nested Bash
+commands refresh again after a desktop restart. An existing `BASH_ENV` hook is preserved. A managed preamble in
+`.bashrc` also handles Bash's SSH startup path, before its noninteractive early return. Programs that spawn GUI
+processes directly without starting a shell retain their process's original environment; `dam-desktop run -- …`
+is available for that case. Missing or locked desktops clear stale graphical settings.
+
+No harness instructions are required or installed. Re-run setup removes only our previously managed desktop
+blocks from `CLAUDE.md` and the other harness instruction files; custom content and account links remain intact.
 
 The runner page reports **Desktop ready**, **Login required**, **Setup required** or **Desktop unavailable**.
 It refreshes with runner updates (at most once every 15 seconds) and has a manual refresh button. These are live
@@ -29,7 +35,7 @@ observations of the actual account's local session, not assumptions based on ins
 
 ```bash
 dam-desktop status
-dam-desktop run -- dotnet run --project MyAvaloniaApp
+dotnet run --project MyAvaloniaApp
 dam-desktop screenshot /tmp/app.png
 dam-desktop windows
 dam-desktop focus 0x0400001
@@ -61,3 +67,32 @@ steps together so another agent cannot interleave its input:
 Save this as `/tmp/actions.json` and run `dam-desktop batch /tmp/actions.json`. This coordinates input, but does
 not isolate windows or prevent applications themselves from changing focus. The normal VM console remains the
 place to watch and interact with the shared desktop.
+
+## View the desktop in the Manager
+
+Use **Desktop** on a runner or **Runner desktop** in an agent's toolbar (the More menu on phones). It initially
+shows a snapshot. **Live** refreshes every two seconds, or every five seconds on slower connections. Polling stops
+while the page is hidden and on navigation. Captures do not overlap; concurrent viewers share recent frames.
+The viewer is read-only and labels the last successful capture in the browser's local time. It shows the whole
+runner desktop, including other agents' windows.
+
+**Save snapshot** stores the desktop image with the selected conversation. Temporary frames are removed from
+the runner after transfer and expire from the Manager's memory after two seconds. Viewing requires a logged-in
+Manager session and an available X11 desktop.
+
+## Share images from an agent
+
+Image sharing is installed on both desktop and headless runners:
+
+```bash
+dam-share /tmp/screenshot.png --caption "Updated Avalonia interface"
+```
+
+The helper inherits the workspace and conversation IDs from the agent's launch environment. It takes a durable
+copy of the file, and the Manager collects it in the background, even when no browser is open. Outside an agent,
+supply `--agent <UUID> --session <UUID>`. PNG, JPEG, GIF and WebP images up to 10 MiB are supported; SVG is excluded.
+
+Images appear under **Shared images** in the agent toolbar and conversation page. Tap an image to enlarge or
+download it. Images stay with the conversation across harness/session switches and runner deletion. Deleting the
+conversation removes its saved images. After successful import, the copy queued on the runner is removed.
+The helper's `--help` documents its use; no `CLAUDE.md`, `AGENTS.md` or harness-specific prompt is added.

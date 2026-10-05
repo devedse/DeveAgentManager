@@ -94,6 +94,8 @@ public sealed record RunnerUsageSample(DateTime At, double? CpuPercent, double? 
 
 /// <summary>Live desktop availability; never includes authorization cookies or paths.</summary>
 public sealed record DesktopStatusDto(string State, string Message, string? SessionType = null, string? Display = null, bool AutomationAvailable = false);
+public sealed record SessionImageDto(Guid Id, Guid SessionId, string FileName, string Caption, string ContentType, long Bytes, DateTime CreatedAt);
+public sealed record SaveDesktopSnapshotRequest(Guid SessionId, string? Caption = null);
 
 /// <param name="AccountId">The account the agent picked; null uses the harness's default account.</param>
 public sealed record AgentDto(
@@ -118,7 +120,8 @@ public sealed record AgentDto(
     long? IconVersion = null,
     bool Working = false,
     AgentActivityDto? Activity = null,
-    DateTime? LastAssistantMessageAt = null);
+    DateTime? LastAssistantMessageAt = null,
+    RunnerKind? RunnerKind = null);
 
 /// <summary>An image in an agent's folder, for the icon picker. <paramref name="Path"/> is relative to the folder.</summary>
 /// <param name="Automatic">What the Manager would pick by itself.</param>

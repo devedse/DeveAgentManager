@@ -28,6 +28,10 @@
             </TitleContent>
             <Actions>
                 <MudButton Href="@($"runners/{_runner.Id}/shell")" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Terminal" Disabled="!ready">Shell</MudButton>
+                @if (_runner.Kind == RunnerKind.Desktop)
+                {
+                    <MudButton Href="@($"runners/{RunnerId}/desktop")" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.DesktopWindows" Disabled="!ready">Desktop</MudButton>
+                }
                 @if (_runner.ToolIds.Contains("vscode"))
                 {
                     <MudButton Href="@($"runners/{_runner.Id}/vscode")" Variant="Variant.Outlined" StartIcon="@(Tool("vscode")?.Icon ?? Icons.Material.Rounded.Code)" Disabled="!ready">VS Code</MudButton>
@@ -105,7 +109,7 @@
                     <div class="panel mb-4">
                         <div class="panel-header">
                             <div class="help-heading"><MudText Typo="Typo.h6">Desktop</MudText>
-                                <HelpTip Label="Runner desktop">Desktop setup configures automatic login for the runner account and installs UI tools. Apps launched with <code>dam-desktop run --</code> use the real desktop visible through the VM console. Agents share this desktop; <code>dam-desktop batch</code> serializes clicks and typing. Re-run setup updates existing runners and preserves an already logged-in desktop. Restart agents to load the desktop instructions.</HelpTip></div>
+                                <HelpTip Label="Runner desktop">Desktop setup configures automatic login and refreshes the display environment before Bash commands, so GUI apps open on the real shared desktop. Use Desktop to view it or save snapshots. Re-run setup updates existing runners and preserves a logged-in desktop. Restart existing agents to load the automatic environment refresh.</HelpTip></div>
                             <MudIconButton Icon="@Icons.Material.Rounded.Refresh" Size="Size.Small" Disabled="_refreshingDesktop || !ready" OnClick="RefreshDesktopAsync" aria-label="Refresh desktop status" />
                         </div>
                         @if (_desktop is null || _refreshingDesktop)

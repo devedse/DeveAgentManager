@@ -120,7 +120,8 @@ public sealed class DtoMapper(
         agent.IconVersion,
         agent.State == AgentState.Running && agent.Working,
         AgentActivityTracker.GetDto(agent, runnerState: runner.State),
-        agent.LastAssistantMessageAt);
+        agent.LastAssistantMessageAt,
+        runner.Kind);
 
     public static SessionDto Session(StoredSession session, IReadOnlyDictionary<Guid, string> accountNames) => new(
         session.Id,

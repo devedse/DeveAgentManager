@@ -1,0 +1,13 @@
+<MudDialog>
+    <DialogContent>
+        <img class="shared-image-preview" src="@($"api/sessions/{Image.SessionId}/images/{Image.Id}")" alt="@(Image.Caption.Length == 0 ? Image.FileName : Image.Caption)" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton Href="@($"api/sessions/{Image.SessionId}/images/{Image.Id}/download")" StartIcon="@Icons.Material.Rounded.Download">Download</MudButton>
+        <MudButton OnClick="() => Dialog.Close()">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public SessionImageDto Image { get; set; } = default!;
+}

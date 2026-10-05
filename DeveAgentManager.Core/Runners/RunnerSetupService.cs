@@ -23,7 +23,7 @@ public sealed partial class RunnerSetupService(
     IEnumerable<IRunnerTool> tools)
 {
     /// <summary>Bump when runner-setup.sh changes, so the Portal can show that a Runner's setup is outdated.</summary>
-    public const int SetupVersion = 2;
+    public const int SetupVersion = 3;
 
     private static readonly Lazy<string> SetupScript = new(() => ReadResource("runner-setup.sh"));
 
@@ -98,10 +98,14 @@ public sealed partial class RunnerSetupService(
 
         await RunScriptAsync(runner, log, "Base setup", "bash ~/.deveagentmanager/runner-setup.sh", TimeSpan.FromMinutes(30), cancellationToken);
 
+        await shell.UploadAsync(runner, "~/.deveagentmanager/share-image.py", ReadResource("share-image.py"), "700", cancellationToken);
+        await RunScriptAsync(runner, log, "Image sharing", "mkdir -p ~/.local/bin; ln -sf ~/.deveagentmanager/share-image.py ~/.local/bin/dam-share", TimeSpan.FromSeconds(30), cancellationToken);
+
         if (runner.Kind == RunnerKind.Desktop)
         {
             await shell.UploadAsync(runner, "~/.deveagentmanager/desktop.py", ReadResource("desktop.py"), "700", cancellationToken);
             await shell.UploadAsync(runner, "~/.deveagentmanager/desktop-setup.sh", ReadResource("desktop-setup.sh"), "700", cancellationToken);
+            await shell.UploadAsync(runner, "~/.deveagentmanager/desktop-shell.sh", ReadResource("desktop-shell.sh"), "600", cancellationToken);
             await RunScriptAsync(runner, log, "Desktop autologin and UI tools", "bash ~/.deveagentmanager/desktop-setup.sh", TimeSpan.FromMinutes(15), cancellationToken);
         }
 
@@ -148,8 +152,7 @@ public sealed partial class RunnerSetupService(
 
         if (runner.Kind == RunnerKind.Desktop)
         {
-            // After profile files and harness configuration, so re-running setup cannot erase these instructions.
-            await RunScriptAsync(runner, log, "Desktop instructions for agents", "python3 ~/.deveagentmanager/desktop.py install-instructions", TimeSpan.FromSeconds(30), cancellationToken);
+            await RunScriptAsync(runner, log, "Removing old desktop instructions", "python3 ~/.deveagentmanager/desktop.py remove-instructions", TimeSpan.FromSeconds(30), cancellationToken);
         }
 
         runner.InstalledVersions = await ReadVersionsAsync(runner, cancellationToken);
@@ -362,7 +365,16 @@ public sealed partial class RunnerSetupService(
         }
 
         if (desktop)
-            builder.Append("[ ! -f \"$HOME/.deveagentmanager/desktop-env.sh\" ] || . \"$HOME/.deveagentmanager/desktop-env.sh\"\n");
+        {
+            builder.Append("""
+                if [ "${BASH_ENV:-}" != "$HOME/.deveagentmanager/desktop-shell.sh" ]; then
+                  export DAM_PREVIOUS_BASH_ENV="${BASH_ENV:-}"
+                fi
+                export BASH_ENV="$HOME/.deveagentmanager/desktop-shell.sh"
+                [ ! -f "$HOME/.deveagentmanager/desktop-env.sh" ] || . "$HOME/.deveagentmanager/desktop-env.sh"
+
+                """);
+        }
         return builder.ToString();
     }
 
