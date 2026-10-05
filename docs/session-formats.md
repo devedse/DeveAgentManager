@@ -132,10 +132,14 @@ Content blocks: `text`, `image` (`mimeType`, base64 `data`), `thinking` (`text`,
 - The active branch becomes alternating user and assistant messages with **text and images only**. Tool calls become
   short lines like ▸ ran `dotnet test` or ▸ edited `src/Maze.cs`, with their output trimmed to about 1200 characters.
   Summaries become a user message ("Summary of the earlier conversation"), and pi's `!` shell runs are included.
+  Codex's code-mode `exec` scripts are read as the tools they call (each `exec_command`, `apply_patch`, `view_image`
+  and web search becomes its own line), and their JSON results are unwrapped to the command output, with
+  `(exit code N)` or `(still running)` where that applies.
 - **Thinking stays behind**: signatures (Anthropic) and encrypted reasoning (OpenAI) only work for the provider that
   made them.
 - The first message says where the conversation came from. Conversations longer than about 400k characters keep
-  their most recent part, with a note saying how many messages were left out.
+  their most recent part, with a note saying how many messages were left out. An image counts as 6,000 characters
+  (about what a model charges for it, whatever its file size), and only the 20 most recent images are kept.
 - The target harness gets it as its own session file under a new id, which it resumes: `claude --resume`,
   `codex resume` (the Manager writes Codex's `session_meta` header itself), and pi's `--session-id`. The stored
   conversation before the move is kept next to it in `/data/sessions` (`<id>.<time>.<harness>.json`).

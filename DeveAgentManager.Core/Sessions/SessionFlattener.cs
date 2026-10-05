@@ -16,8 +16,15 @@ public static class SessionFlattener
     /// <summary>About 100k tokens of text: leaves room in every current model's context for the work that follows.</summary>
     public const int MaxCharacters = 400_000;
 
+    /// <summary>What a model charges for one image (about 1,500 tokens), whatever its file size.</summary>
+    private const int ImageCharacters = 6_000;
+
+    /// <summary>Older images are left out: each one makes the request bigger, and providers limit images per request.</summary>
+    private const int MaxImages = 20;
+
     private const int MaxToolOutput = 1200;
     private const int MaxArguments = 300;
+    private const int MaxCommand = 500;
 
     public static DeveSession Flatten(DeveSession source, string fromHarness, string toHarness, int maxCharacters = MaxCharacters)
     {
@@ -47,6 +54,7 @@ public static class SessionFlattener
         }
 
         var note = $"(This conversation was moved from {fromHarness} to {toHarness} by DeveAgentManager. Tool calls from before the move are shown as text; what they changed is in the files.)";
+        LeaveOutOldImages(turns);
         var kept = FitToBudget(turns, maxCharacters, out var omitted);
         if (omitted > 0)
         {
@@ -127,6 +135,25 @@ public static class SessionFlattener
         turn.Model ??= entry.Model;
     }
 
+    private static void LeaveOutOldImages(List<Turn> turns)
+    {
+        var remaining = MaxImages;
+        for (var i = turns.Count - 1; i >= 0; i--)
+        {
+            var images = turns[i].Images;
+            var keep = Math.Min(images.Count, remaining);
+            remaining -= keep;
+            if (keep == images.Count)
+            {
+                continue;
+            }
+
+            var left = images.Count - keep;
+            images.RemoveRange(0, left);
+            turns[i].Text.Append(turns[i].Text.Length > 0 ? "\n\n" : "").Append(left == 1 ? "(An image was left out.)" : $"({left} images were left out.)");
+        }
+    }
+
     /// <summary>The most recent turns that fit, starting with a user turn.</summary>
     private static List<Turn> FitToBudget(List<Turn> turns, int maxCharacters, out int omitted)
     {
@@ -177,15 +204,24 @@ public static class SessionFlattener
 
     private static string DescribeCall(DeveBlock call)
     {
+        if (CodexCodeMode.IsScript(call, out var script) && CodexCodeMode.Describe(script) is { Count: > 0 } calls)
+        {
+            return string.Join("\n▸ ", calls.Select(c => Shorten(c, MaxCommand)));
+        }
+
         var arguments = call.Arguments as JsonObject;
         string? Arg(params string[] names) => names.Select(n => arguments?[n]).FirstOrDefault(v => v is JsonValue)?.ToString();
         return (call.ToolKind ?? ToolKinds.For(call.Name)) switch
         {
-            ToolKinds.Shell when Arg("command", "cmd") is { } command => $"ran `{OneLine(command)}`",
+            ToolKinds.Shell when Arg("command", "cmd") is { } command => $"ran `{Shorten(command, MaxCommand)}`",
             ToolKinds.Read when Arg("path", "file_path") is { } path => $"read {path}",
             ToolKinds.Write when Arg("path", "file_path") is { } path => $"wrote {path}",
             ToolKinds.Edit when Arg("path", "file_path") is { } path => $"edited {path}",
-            _ => $"{call.Name} {Truncate(OneLine(call.Arguments?.ToJsonString() ?? ""), MaxArguments)}".Trim(),
+            ToolKinds.Edit when Arg("input") is { } patch && CodexCodeMode.PatchFiles(patch) is { Count: > 0 } files => string.Join("\n▸ ", files),
+            ToolKinds.Search when Arg("pattern") is { } pattern => $"searched for `{OneLine(pattern)}`" + (Arg("path") is { } where ? $" in {where}" : ""),
+            ToolKinds.Web when Arg("query") is { } query => $"searched the web for {OneLine(query)}",
+            ToolKinds.Web when Arg("url") is { } url => $"fetched {url}",
+            _ => $"{call.Name} {Shorten(call.Arguments?.ToJsonString(CodexCodeMode.Relaxed) ?? "", MaxArguments)}".Trim(),
         };
     }
 
@@ -194,8 +230,10 @@ public static class SessionFlattener
         var text = new StringBuilder();
         foreach (var result in (content ?? []).Where(b => b.Type == "toolResult"))
         {
-            var output = Truncate(Text(result.Content), MaxToolOutput);
-            var label = result.IsError == true ? "error" : "output";
+            var (output, failed) = CodexCodeMode.TryReadResult(result.Content ?? [], out var script, out var scriptFailed)
+                ? (script, scriptFailed) : (Text(result.Content), result.IsError == true);
+            output = Truncate(output, MaxToolOutput);
+            var label = failed ? "error" : "output";
             text.Append(text.Length > 0 ? "\n" : "").Append(output.Length == 0 ? $"({label}: nothing)" : $"{label}:\n{Fence(output)}");
         }
 
@@ -206,9 +244,17 @@ public static class SessionFlattener
 
     private static string OneLine(string text) => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
+    /// <summary>For one line: the start, then how much was left out.</summary>
+    private static string Shorten(string text, int max)
+    {
+        text = OneLine(text);
+        return text.Length <= max ? text : $"{text[..max]} … ({text.Length - max} characters left out)";
+    }
+
     private static string Truncate(string text, int max)
     {
-        text = text.Trim();
+        // Leading spaces can be part of the first line, as in `git status --short`.
+        text = text.TrimEnd().TrimStart('\r', '\n');
         return text.Length <= max ? text : text[..(max / 2)] + $"\n… ({text.Length - max} characters left out) …\n" + text[^(max / 2)..];
     }
 
@@ -224,6 +270,6 @@ public static class SessionFlattener
 
         public DeveModel? Model { get; set; }
 
-        public int Size => Text.Length + Images.Sum(i => i.Data?.Length ?? 0) / 4;
+        public int Size => Text.Length + Images.Count * ImageCharacters;
     }
 }

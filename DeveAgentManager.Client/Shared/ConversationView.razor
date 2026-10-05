@@ -75,11 +75,11 @@ else
                                         </summary>
                                         <div class="conv-tool-body">
                                             <div class="conv-tool-label">Arguments</div>
-                                            <pre>@Pretty(block.Arguments)</pre>
+                                            <pre>@ArgumentsText(block)</pre>
                                             @if (result is not null)
                                             {
                                                 <div class="conv-tool-label">Result</div>
-                                                <pre>@Truncate(Text(result.Content), 12000)</pre>
+                                                <pre>@Truncate(ResultText(result), 12000)</pre>
                                             }
                                         </div>
                                     </details>
@@ -182,6 +182,12 @@ else
     /// <summary>The one argument that says what a call does: the command, the file, the query...</summary>
     private static string? ToolSummary(DeveBlock call)
     {
+        if (CodexCodeMode.IsScript(call, out var script) && CodexCodeMode.Describe(script) is { Count: > 0 } calls)
+        {
+            var described = string.Join("; ", calls).ReplaceLineEndings(" ");
+            return described.Length > 140 ? described[..140] + "…" : described;
+        }
+
         if (call.Arguments is not JsonObject arguments)
         {
             return null;
@@ -210,6 +216,13 @@ else
     };
 
     private static readonly JsonSerializerOptions PrettyOptions = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    /// <summary>A Codex code-mode script is shown as the script itself, not as an escaped JSON string.</summary>
+    private static string ArgumentsText(DeveBlock call) =>
+        CodexCodeMode.IsScript(call, out var script) ? Truncate(script, 12000) ?? "" : Pretty(call.Arguments);
+
+    private static string ResultText(DeveBlock result) =>
+        CodexCodeMode.TryReadResult(result.Content ?? [], out var output, out _) ? output : Text(result.Content);
 
     private static string Pretty(JsonNode? node) => node is null ? "" : Truncate(node.ToJsonString(PrettyOptions), 12000) ?? "";
 

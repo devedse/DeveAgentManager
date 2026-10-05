@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Harnesses.Claude;
 using DeveAgentManager.Harnesses.Codex;
@@ -161,6 +162,77 @@ public class HarnessFormatTests
         Assert.Equal(DeveRole.User, flat.Entries[0].Role);
         Assert.Contains("earlier messages were left out", flat.Entries[0].PlainText());
         Assert.Contains("Anything else?", string.Join("\n", flat.Entries.Select(e => e.PlainText())));
+    }
+
+    [Fact]
+    public void Flatten_CodexCodeMode_ShowsCommandsAndTheirOutput()
+    {
+        // Codex's code mode: one "exec" call runs JavaScript that calls the real tools and prints their JSON results.
+        const string script = """
+            const patch="*** Begin Patch\n*** Update File: /w/maze/Maze.cs\n@@\n-a\n+b\n*** Add File: /w/maze/New.cs\n+x\n*** End Patch";
+            text(await tools.apply_patch(patch));
+            const r=await Promise.allSettled([tools.exec_command({cmd:"git status --short && grep -n 'it\u0027s' a.txt","max_output_tokens":1000}),
+              tools.exec_command({cmd:'dotnet test'}),tools.write_stdin({session_id:5,chars:""})]);
+            r.forEach((x,i)=>text(JSON.stringify({i,result:x})));
+            """;
+        var outputs = new JsonArray(
+            new JsonObject { ["type"] = "input_text", ["text"] = "Script completed\nWall time 1.2 seconds\nOutput:\n" },
+            new JsonObject { ["type"] = "input_text", ["text"] = "{}" },
+            new JsonObject { ["type"] = "input_text", ["text"] = """{"i":0,"result":{"status":"fulfilled","value":{"chunk_id":"a1","wall_time_seconds":0.1,"exit_code":0,"original_token_count":3,"output":" M Maze.cs\n"}}}""" },
+            new JsonObject { ["type"] = "input_text", ["text"] = """{"i":1,"result":{"status":"fulfilled","value":{"chunk_id":"a2","wall_time_seconds":4.0,"exit_code":1,"original_token_count":3,"output":"Failed! 1 test"}}}""" },
+            new JsonObject { ["type"] = "input_text", ["text"] = """{"i":2,"result":{"status":"fulfilled","value":{"chunk_id":"a3","wall_time_seconds":1.0,"session_id":5,"original_token_count":0,"output":""}}}""" });
+        string Line(JsonObject payload) => new JsonObject { ["timestamp"] = "2026-09-26T09:00:04.000Z", ["type"] = "response_item", ["payload"] = payload }.ToJsonString();
+        var session = string.Join('\n',
+            CodexSession.Split('\n').Take(5).Append(Line(new JsonObject { ["type"] = "custom_tool_call", ["call_id"] = "call_2", ["name"] = "exec", ["input"] = script }))
+                .Append(Line(new JsonObject { ["type"] = "custom_tool_call_output", ["call_id"] = "call_2", ["output"] = outputs }))) + "\n";
+
+        var text = SessionFlattener.Flatten(_codex.Read(session), "Codex", "Claude Code").Entries[1].PlainText();
+
+        Assert.Contains("▸ edited /w/maze/Maze.cs\n▸ created /w/maze/New.cs\n▸ ran `git status --short && grep -n 'it's' a.txt`\n▸ ran `dotnet test`\n▸ waited for a running command", text);
+        Assert.Contains(" M Maze.cs\n\n(exit code 1)\nFailed! 1 test\n\n(still running)", text);
+        Assert.Contains("output:\n```\n M Maze.cs", text);
+        Assert.DoesNotContain("Script completed", text);
+        Assert.DoesNotContain("chunk_id", text);
+        Assert.DoesNotContain("\\u00", text);
+    }
+
+    [Fact]
+    public void Flatten_OtherTools_AreReadableJson()
+    {
+        var session = _codex.Read(CodexSession.Replace(
+            """{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"dotnet test\"}","call_id":"call_1"}""",
+            """{"type":"function_call","name":"request_user_input","arguments":"{\"title\":\"Use <b> & 'quotes'?\"}","call_id":"call_1"}"""));
+
+        var text = SessionFlattener.Flatten(session, "Codex", "Claude Code").Entries[1].PlainText();
+
+        Assert.Contains("""▸ request_user_input {"title":"Use <b> & 'quotes'?"}""", text);
+    }
+
+    [Fact]
+    public void Flatten_Screenshots_DoNotPushOutText_AndOnlyRecentOnesAreKept()
+    {
+        var session = new DeveSession { CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        for (var i = 0; i < 25; i++)
+        {
+            // A phone screenshot is about half a megabyte of base64.
+            Add(DeveRole.User, DeveBlock.OfText($"screenshot {i}"), new DeveBlock { Type = "image", MimeType = "image/jpeg", Data = new string('A', 500_000) });
+            Add(DeveRole.Assistant, DeveBlock.OfText($"reply {i}"));
+        }
+
+        var flat = SessionFlattener.Flatten(session, "Codex", "Claude Code");
+
+        Assert.Contains("screenshot 0", flat.Entries[0].PlainText());
+        Assert.Contains("(An image was left out.)", flat.Entries[0].PlainText());
+        Assert.DoesNotContain("left out to fit", flat.Entries[0].PlainText());
+        Assert.Equal(20, flat.Entries.Sum(e => e.Content!.Count(b => b.Type == "image")));
+        Assert.Single(flat.Entries[^2].Content!, b => b.Type == "image");
+
+        void Add(DeveRole role, params DeveBlock[] content)
+        {
+            var id = Guid.NewGuid().ToString("N");
+            session.Entries.Add(new DeveEntry { Id = id, ParentId = session.LeafId, Timestamp = DateTime.UtcNow, Kind = DeveEntryKind.Message, Role = role, Content = [.. content] });
+            session.LeafId = id;
+        }
     }
 
     [Fact]
