@@ -1483,6 +1483,14 @@ a {
 
 /* Sized to the visible part of the screen (terminal.js keeps --dam-vv-* up to date), so the text box and the key row
    sit right above a phone's on-screen keyboard instead of behind it. */
+/* These pages never scroll, so a downward swipe on the toolbar or key row is Chrome's pull-to-refresh, which reloads the
+   app and drops the terminal. Terminal swipes also cancel touch moves mid-gesture, which can leave a pull half-done:
+   after going back, the next tap anywhere then refreshed. Other pages keep pull-to-refresh. */
+html:has(.terminal-layout),
+html:has(.terminal-layout) body {
+    overscroll-behavior: none;
+}
+
 .terminal-layout {
     position: fixed;
     /* Pinned to the window's edges, so its bottom is the window's bottom, whatever a browser takes 100dvh to be.
