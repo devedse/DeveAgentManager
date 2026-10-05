@@ -76,7 +76,8 @@
         else if (_runner.State == RunnerState.Ready && _runner.SetupVersion < _info?.SetupVersion)
         {
             <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4" Dense="true">
-                This Runner was set up with an older setup script. Use <b>Re-run setup</b> under Operations to update it.
+                This Runner was set up with setup script version @_runner.SetupVersion; the current version is @_info!.SetupVersion.
+                Use <b>Re-run setup</b> under Operations to update it.
             </MudAlert>
         }
 
@@ -235,6 +236,7 @@
                             <MudIcon Icon="@Icons.Material.Rounded.Build" Class="operation-icon" />
                             <div class="operation-text">
                                 <div class="operation-name help-heading"><span>Re-run setup</span><HelpTip Label="Re-run setup">Everything again: tools, tmux and git config, the Setup Profile, harnesses and their packages. Safe to repeat.</HelpTip></div>
+                                <div class="operation-description">@SetupVersionText</div>
                             </div>
                             <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="operation is not null || _runner.State == RunnerState.Stopped" OnClick="RerunSetupAsync">Run</MudButton>
                         </div>
@@ -285,6 +287,14 @@
 
     /// <summary>Operations started here whose result is reported when they end.</summary>
     private readonly HashSet<string> _waitingFor = [];
+
+    private string SetupVersionText => (_runner?.SetupVersion, _info?.SetupVersion) switch
+    {
+        ({ } ran, { } current) when ran >= current => $"Setup script version {ran} (current).",
+        ({ } ran, { } current) => $"Set up with version {ran}; the current version is {current}.",
+        (null, { } current) => $"Setup script version unknown; the current version is {current}.",
+        _ => "",
+    };
 
     protected override async Task OnInitializedAsync()
     {
