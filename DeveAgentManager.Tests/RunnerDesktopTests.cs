@@ -9,7 +9,7 @@ public class RunnerDesktopTests
 {
     [Theory]
     [InlineData("desktop.test.py")]
-    [InlineData("share.test.py")]
+    [InlineData("dam-tools.test.py")]
     public void DesktopSetupAndConnectionRegressions(string name)
     {
         if (OperatingSystem.IsWindows()) return;

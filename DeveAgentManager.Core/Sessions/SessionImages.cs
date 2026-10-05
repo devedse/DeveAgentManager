@@ -43,7 +43,7 @@ public sealed class SessionImages(IDbContextFactory<ManagerDbContext> factory, R
     {
         // Only start Python when something was shared: this runs every few seconds on every runner.
         var result = await shell.RunAsync(runner,
-            "if [ -x ~/.deveagentmanager/share-image.py ] && [ -n \"$(ls -A ~/.deveagentmanager/shared-images 2>/dev/null)\" ]; then python3 ~/.deveagentmanager/share-image.py --pending; else printf '[]'; fi", TimeSpan.FromSeconds(15), ct);
+            "if [ -x ~/.deveagentmanager/dam-tools.py ] && [ -n \"$(ls -A ~/.deveagentmanager/shared-images 2>/dev/null)\" ]; then python3 ~/.deveagentmanager/dam-tools.py --pending-images; else printf '[]'; fi", TimeSpan.FromSeconds(15), ct);
         if (!result.Succeeded || result.Output.Length > 100_000) return;
         var publications = JsonSerializer.Deserialize<List<Publication>>(result.Output, ApiJson.Options) ?? [];
         foreach (var item in publications.Take(20))
@@ -77,7 +77,7 @@ public sealed class SessionImages(IDbContextFactory<ManagerDbContext> factory, R
             && db.Agents.Any(a => a.Id == agentId && a.RunnerId == runnerId), ct);
 
     private Task<CommandResult> AcknowledgeAsync(Runner runner, Guid id, CancellationToken ct) =>
-        shell.RunAsync(runner, $"python3 ~/.deveagentmanager/share-image.py --ack {id:N}", TimeSpan.FromSeconds(10), ct);
+        shell.RunAsync(runner, $"python3 ~/.deveagentmanager/dam-tools.py --ack-image {id:N}", TimeSpan.FromSeconds(10), ct);
 
     public async Task<SessionImageDto> SaveSnapshotAsync(Guid runnerId, Guid sessionId, byte[] data, string? caption, CancellationToken ct)
     {

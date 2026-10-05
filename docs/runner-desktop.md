@@ -24,7 +24,7 @@ commands refresh again after a desktop restart. An existing `BASH_ENV` hook is p
 processes directly without starting a shell retain their process's original environment; `dam-desktop run -- …`
 is available for that case. Missing or locked desktops clear stale graphical settings.
 
-No harness instructions are required or installed. Re-run setup removes only our previously managed desktop
+No harness instructions are needed for the desktop. Re-run setup removes only our previously managed desktop
 blocks from `CLAUDE.md` and the other harness instruction files; custom content and account links remain intact.
 
 The runner page reports **Desktop ready**, **Login required**, **Setup required** or **Desktop unavailable**.
@@ -80,19 +80,31 @@ runner desktop, including other agents' windows.
 the runner after transfer and expire from the Manager's memory after two seconds. Viewing requires a logged-in
 Manager session and an available X11 desktop.
 
-## Share images from an agent
+## Agent tools (`dam-tools`)
 
-Image sharing is installed on both desktop and headless runners:
+`dam-tools` is installed on both desktop and headless runners (`~/.local/bin/dam-tools`; the source is
+`DeveAgentManager.Core/Scripts/dam-tools.py`, Python 3 without dependencies). New commands go there as subcommands.
+`dam-tools --help` lists them.
+
+### Share images
 
 ```bash
-dam-share /tmp/screenshot.png --caption "Updated Avalonia interface"
+dam-tools share-image /tmp/screenshot.png --caption "Updated Avalonia interface"
 ```
 
-The helper inherits the workspace and conversation IDs from the agent's launch environment. It takes a durable
+The tool inherits the workspace and conversation IDs from the agent's launch environment. It takes a durable
 copy of the file, and the Manager collects it in the background, even when no browser is open. Outside an agent,
 supply `--agent <UUID> --session <UUID>`. PNG, JPEG, GIF and WebP images up to 10 MiB are supported; SVG is excluded.
 
 Images appear under **Shared images** in the agent toolbar and conversation page. Tap an image to enlarge or
 download it. Images stay with the conversation across harness/session switches and runner deletion. Deleting the
 conversation removes its saved images. After successful import, the copy queued on the runner is removed.
-The helper's `--help` documents its use; no `CLAUDE.md`, `AGENTS.md` or harness-specific prompt is added.
+
+### How agents know about it
+
+The Manager adds two sentences about `dam-tools` to the system prompt of each harness it starts
+(`--append-system-prompt` for Claude Code and pi, `-c developer_instructions=…` for Codex). Nothing is written to
+`CLAUDE.md`, `AGENTS.md` or any other file, so it can't end up in a repository, and a harness started by hand over
+SSH doesn't get it. The harnesses record the system prompt when a conversation starts, so conversations started
+before a runner had `dam-tools` keep the prompt they started with. Runners get the sentences once Re-run setup has
+installed `dam-tools` (setup script version 4).

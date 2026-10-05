@@ -87,6 +87,7 @@ public sealed class ClaudeHarness : IHarness
         var id = ShellQuote.Quote(launch.SessionId);
         var name = ShellQuote.Quote(launch.DisplayName);
         var model = string.IsNullOrWhiteSpace(launch.Model) ? "" : " --model " + ShellQuote.Quote(launch.Model.Trim());
+        model += string.IsNullOrWhiteSpace(launch.Instructions) ? "" : " --append-system-prompt " + ShellQuote.Quote(launch.Instructions);
         var script = $"""
             node "{PrepareScript}" 2>/dev/null || true
             if ls "$HOME"/.claude/projects/*/{id}.jsonl >/dev/null 2>&1; then

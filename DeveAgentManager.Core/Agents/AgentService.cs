@@ -673,6 +673,15 @@ public sealed partial class AgentService(
         }
     }
 
+    /// <summary>
+    /// Added to the system prompt of every harness the Manager starts, instead of a CLAUDE.md or AGENTS.md, so it never ends
+    /// up in a repository. Only on runners whose setup installed dam-tools.
+    /// </summary>
+    internal const string LaunchInstructions =
+        "This agent runs in DeveAgentManager. To show the user an image, such as a screenshot or chart, run "
+        + "`dam-tools share-image <file> --caption \"<what it shows>\"`; it appears in their conversation. "
+        + "Run `dam-tools --help` for other tools.";
+
     private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool useDefaultModel = false)
     {
         var harness = GetHarness(agent.HarnessId);
@@ -681,7 +690,8 @@ public sealed partial class AgentService(
         var model = useDefaultModel && agent.HarnessId == "claude"
             ? TransferModel((await settings.GetSetupProfileAsync(cancellationToken)).GetHarness("claude").DefaultModel)
             : null;
-        var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model));
+        var instructions = runner.SetupVersion >= Runners.RunnerSetupService.AgentToolsSetupVersion ? LaunchInstructions : null;
+        var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model, instructions));
 
         // The account's environment comes after the Setup Profile's, so e.g. a subscription wins over an API key meant for pi.
         var account = await accounts.ResolveAsync(agent, cancellationToken);

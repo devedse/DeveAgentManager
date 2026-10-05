@@ -2,6 +2,8 @@ using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Harnesses.Claude;
 using DeveAgentManager.Harnesses.Codex;
+using DeveAgentManager.Harnesses.Pi;
+using DeveAgentManager.Core.Abstractions;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Xunit;
@@ -85,6 +87,44 @@ public sealed class HarnessScriptTests : IDisposable
         Assert.Equal(model, args[position + 1]);
         Assert.Single(args, a => a == "--model");
         Assert.False(File.Exists(Path.Combine(_work, "injected")));
+    }
+
+    [Theory]
+    [InlineData("claude", "--append-system-prompt")]
+    [InlineData("codex", "-c")]
+    [InlineData("pi", "--append-system-prompt")]
+    public void Launch_PassesInstructionsUnchanged(string harnessId, string flag)
+    {
+        if (!HasTools() || !Which("python3")) return;
+        const string hint = "Run `dam-tools share-image <file> --caption \"x\"`; it's $(touch injected) C:\\tmp\nsecond line";
+        IHarness harness = harnessId switch { "claude" => new ClaudeHarness(), "codex" => new CodexHarness(), _ => new PiHarness() };
+        var stub = Path.Combine(_bin, harnessId);
+        // NUL-separated, so arguments with newlines stay whole. Codex's version check runs it with --help first.
+        File.WriteAllText(stub, "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nprintf '%s\\0' \"$@\" > \"$HOME/launch-args\"\n");
+        File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        Run($"cd {_work} && {harness.BuildLaunchCommand(new("11111111-2222-3333-4444-555555555555", "test", _work, Instructions: hint))}");
+
+        var args = File.ReadAllText(Path.Combine(_home, "launch-args")).TrimEnd('\0').Split('\0');
+        var value = args[Array.IndexOf(args, flag) + 1];
+        if (harnessId == "codex")
+        {
+            Assert.StartsWith("developer_instructions=", value);
+            value = Python("import sys, tomllib; sys.stdout.write(tomllib.loads(sys.argv[1])['developer_instructions'])", value);
+        }
+
+        Assert.Equal(hint, value);
+        Assert.False(File.Exists(Path.Combine(_work, "injected")));
+        Assert.DoesNotContain(flag == "-c" ? "developer_instructions" : flag,
+            harness.BuildLaunchCommand(new("11111111-2222-3333-4444-555555555555", "test", _work)));
+    }
+
+    private static string Python(string code, string argument)
+    {
+        using var process = Process.Start(new ProcessStartInfo("python3", ["-c", code, argument]) { RedirectStandardOutput = true })!;
+        var output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+        return output;
     }
 
     [Theory]

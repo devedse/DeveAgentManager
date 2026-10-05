@@ -44,7 +44,8 @@ public sealed class PiHarness : IHarness
     /// <c>--session-id</c> opens the session with that id or creates it, so the same command both starts and resumes.
     /// </summary>
     public string BuildLaunchCommand(HarnessLaunch launch) =>
-        $"pi --session-id {ShellQuote.Quote(launch.SessionId)} --name {ShellQuote.Quote(launch.DisplayName)}";
+        $"pi --session-id {ShellQuote.Quote(launch.SessionId)} --name {ShellQuote.Quote(launch.DisplayName)}"
+        + (string.IsNullOrWhiteSpace(launch.Instructions) ? "" : " --append-system-prompt " + ShellQuote.Quote(launch.Instructions));
 
     public IReadOnlyList<string> ConfigFiles { get; } = ["~/.pi/agent/auth.json", "~/.pi/agent/settings.json"];
 

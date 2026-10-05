@@ -72,4 +72,6 @@ public interface IHarness
 public sealed record HarnessAccountSetup(IReadOnlyList<(string Path, string Content, string Mode)> Files, string Environment, string? Script);
 
 /// <param name="Model">An explicit model for this launch, e.g. when importing a conversation whose recorded model is not a real user choice.</param>
-public sealed record HarnessLaunch(string SessionId, string DisplayName, string WorkingDirectory, string? Model = null);
+/// <param name="Instructions">Added to the harness's system prompt for this launch, never written to a file. Harnesses record it
+/// when a conversation starts, so a resumed conversation keeps the text it started with.</param>
+public sealed record HarnessLaunch(string SessionId, string DisplayName, string WorkingDirectory, string? Model = null, string? Instructions = null);

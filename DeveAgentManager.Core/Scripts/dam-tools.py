@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish an image to this agent's conversation in DeveAgentManager."""
+"""DeveAgentManager tools for agents running on this runner."""
 import argparse
 from datetime import datetime, timezone
 import json
@@ -94,30 +94,41 @@ def acknowledge(ident):
         shutil.rmtree(folder)
 
 
-def main():
-    # Internal transfer protocol; the Manager never asks the helper to read an arbitrary source path.
-    if sys.argv[1:] == ["--pending"]:
-        print(json.dumps(pending()))
-        return
-    if sys.argv[1:2] == ["--ack"] and len(sys.argv) == 3:
-        acknowledge(sys.argv[2])
-        return
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path", help="Local PNG, JPEG, GIF or WebP")
-    parser.add_argument("--caption", default="", help="Description shown with the image")
-    parser.add_argument("--agent", default=os.environ.get("DAM_AGENT_ID", ""))
-    parser.add_argument("--session", default=os.environ.get("DAM_SESSION_ID", ""))
-    args = parser.parse_args()
+def share_image(args, parser):
     if not args.agent or not args.session:
         parser.error("Run from an agent, or supply --agent and --session UUIDs.")
     record = publish(args.path, args.agent, args.session, args.caption)
     print("Image shared: " + (record["caption"] or record["fileName"]))
-    print("Open Shared images in the agent toolbar or conversation to view it.")
+    print("The user sees it under Shared images in this agent's conversation.")
+
+
+def main():
+    # Internal transfer protocol for the Manager; it never asks the tool to read an arbitrary source path.
+    if sys.argv[1:] == ["--pending-images"]:
+        print(json.dumps(pending()))
+        return
+    if sys.argv[1:2] == ["--ack-image"] and len(sys.argv) == 3:
+        acknowledge(sys.argv[2])
+        return
+    parser = argparse.ArgumentParser(prog="dam-tools", description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+
+    share = commands.add_parser("share-image", help="Show an image to the user in this agent's conversation",
+                                description="Show an image (a screenshot, chart or diagram) to the user. "
+                                            "It is copied, so the file can be deleted afterwards.")
+    share.add_argument("path", help="Local PNG, JPEG, GIF or WebP, up to 10 MiB")
+    share.add_argument("--caption", default="", help="What the image shows")
+    share.add_argument("--agent", default=os.environ.get("DAM_AGENT_ID", ""), help=argparse.SUPPRESS)
+    share.add_argument("--session", default=os.environ.get("DAM_SESSION_ID", ""), help=argparse.SUPPRESS)
+    share.set_defaults(run=lambda args: share_image(args, share))
+
+    args = parser.parse_args()
+    args.run(args)
 
 
 if __name__ == "__main__":
     try:
         main()
     except (OSError, ValueError) as ex:
-        print(f"Share image: {ex}", file=sys.stderr)
+        print(f"dam-tools: {ex}", file=sys.stderr)
         sys.exit(1)

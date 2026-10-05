@@ -100,15 +100,37 @@ public sealed class CodexHarness : IHarness
     public string BuildLaunchCommand(HarnessLaunch launch)
     {
         var id = ShellQuote.Quote(launch.SessionId);
+        // A -c value is parsed as TOML, so the instructions go in as a TOML string.
+        var instructions = string.IsNullOrWhiteSpace(launch.Instructions) ? ""
+            : " -c " + ShellQuote.Quote("developer_instructions=" + TomlString(launch.Instructions));
         // Without its background server: that listens on a socket in CODEX_HOME, and an account's folder is too long a
         // path for a socket (108 characters), so Codex would refuse to start. Older Codex versions don't have the flag.
         var script = $"""
             node "{PrepareScript}" {id}
             flags=""
             if codex --help 2>/dev/null | grep -q -- '--no-daemon'; then flags="--no-daemon"; fi
-            exec codex $flags --dangerously-bypass-approvals-and-sandbox resume {id}
+            exec codex $flags --dangerously-bypass-approvals-and-sandbox{instructions} resume {id}
             """;
         return "bash -c " + ShellQuote.Quote(script);
+    }
+
+    internal static string TomlString(string text)
+    {
+        var escaped = new System.Text.StringBuilder("\"");
+        foreach (var c in text)
+        {
+            escaped.Append(c switch
+            {
+                '"' => "\\\"",
+                '\\' => "\\\\",
+                '\n' => "\\n",
+                '\t' => "\\t",
+                _ when char.IsControl(c) => $"\\u{(int)c:X4}",
+                _ => c.ToString(),
+            });
+        }
+
+        return escaped.Append('"').ToString();
     }
 
     public IReadOnlyList<string> ConfigFiles { get; } = ["~/.codex/config.toml", "~/.codex/AGENTS.md"];

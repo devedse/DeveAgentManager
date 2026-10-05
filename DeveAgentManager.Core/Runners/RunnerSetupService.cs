@@ -23,7 +23,10 @@ public sealed partial class RunnerSetupService(
     IEnumerable<IRunnerTool> tools)
 {
     /// <summary>Bump when runner-setup.sh changes, so the Portal can show that a Runner's setup is outdated.</summary>
-    public const int SetupVersion = 3;
+    public const int SetupVersion = 4;
+
+    /// <summary>The first setup version that installs dam-tools.</summary>
+    public const int AgentToolsSetupVersion = 4;
 
     private static readonly Lazy<string> SetupScript = new(() => ReadResource("runner-setup.sh"));
 
@@ -98,8 +101,9 @@ public sealed partial class RunnerSetupService(
 
         await RunScriptAsync(runner, log, "Base setup", "bash ~/.deveagentmanager/runner-setup.sh", TimeSpan.FromMinutes(30), cancellationToken);
 
-        await shell.UploadAsync(runner, "~/.deveagentmanager/share-image.py", ReadResource("share-image.py"), "700", cancellationToken);
-        await RunScriptAsync(runner, log, "Image sharing", "mkdir -p ~/.local/bin; ln -sf ~/.deveagentmanager/share-image.py ~/.local/bin/dam-share", TimeSpan.FromSeconds(30), cancellationToken);
+        // dam-tools: commands for agents, e.g. dam-tools share-image. dam-share was its earlier name.
+        await shell.UploadAsync(runner, "~/.deveagentmanager/dam-tools.py", ReadResource("dam-tools.py"), "700", cancellationToken);
+        await RunScriptAsync(runner, log, "Agent tools", "mkdir -p ~/.local/bin; ln -sf ~/.deveagentmanager/dam-tools.py ~/.local/bin/dam-tools; rm -f ~/.local/bin/dam-share ~/.deveagentmanager/share-image.py", TimeSpan.FromSeconds(30), cancellationToken);
 
         if (runner.Kind == RunnerKind.Desktop)
         {
