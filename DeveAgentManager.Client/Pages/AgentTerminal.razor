@@ -9,7 +9,7 @@
     @* Narrower screens get a more compact header: the state becomes a dot, the name and context are cut off with "…",
        and on phones the less used actions move into the ⋮ menu (see app.css, "Terminal toolbar"). *@
     <div class="terminal-toolbar">
-        <MudIconButton Href="@(_agent is null ? "agents" : $"runners/{_agent.RunnerId}")" Icon="@Icons.Material.Rounded.ArrowBack" Size="Size.Small" aria-label="Back" />
+        <MudIconButton Href="agents" Icon="@Icons.Material.Rounded.ArrowBack" Size="Size.Small" aria-label="Back to agents" />
         @if (_agent is not null)
         {
             var running = _agent.State is AgentState.Running or AgentState.Starting;
