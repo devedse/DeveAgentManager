@@ -41,6 +41,7 @@ public class AgentActivityTests
     [InlineData("pi-idle", AgentActivityStatus.Ready)]
     [InlineData("claude-working", AgentActivityStatus.Working)]
     [InlineData("claude-working-narrow", AgentActivityStatus.Working)]
+    [InlineData("claude-working-feedback", AgentActivityStatus.Working)]
     [InlineData("claude-idle", AgentActivityStatus.Ready)]
     [InlineData("claude-idle-narrow", AgentActivityStatus.Ready)]
     [InlineData("codex-working", AgentActivityStatus.Working)]
@@ -69,6 +70,52 @@ public class AgentActivityTests
     public void HistoricalClaudeSpinnerDoesNotOverrideCompletedPrompt()
     {
         var screen = "❯ do it\n✻ Clauding… (5s · ↓ 77 tokens)\n● Done.\n✻ Crunched for 6s · done 10:58 PM\n─────────\n❯\n─────────\nbypass permissions on (shift+tab to cycle)";
+        Assert.Equal(AgentActivityStatus.Ready, AgentScreenDetector.Detect("claude", screen, Now).Status);
+    }
+
+    [Fact]
+    public void WrappedOptionalClaudeFeedbackDoesNotInterruptWorking()
+    {
+        var screen = Screen("claude-working-feedback")
+            .Replace("How is Claude doing this session? (optional)", "How is Claude doing this\n  session? (optional)")
+            .Replace("1: Bad    2: Fine   3: Good   0: Dismiss", "1: Bad    2: Fine\n  3: Good   0: Dismiss");
+        var result = AgentScreenDetector.Detect("claude", screen, Now);
+        Assert.Equal(AgentActivityStatus.Working, result.Status);
+        Assert.Contains("Transfiguring", result.Evidence);
+        Assert.Null(result.CompletionEvidence);
+    }
+
+    [Theory]
+    [InlineData("● Done.")]
+    [InlineData("✻ Crunched for 9m 21s · done 6:33 PM")]
+    [InlineData("● How is Claude doing this session? Please answer before I proceed.")]
+    [InlineData("❯ another prompt\n● Done.")]
+    public void ClaudeFeedbackDoesNotHideLaterTurnBoundaries(string following)
+    {
+        var screen = Screen("claude-working-feedback").Replace("───────────────────────── queuecache", following + "\n───────────────────────── queuecache");
+        Assert.Equal(AgentActivityStatus.Ready, AgentScreenDetector.Detect("claude", screen, Now).Status);
+    }
+
+    [Fact]
+    public void ClaudeApprovalStillNeedsInputWithOptionalFeedback()
+    {
+        var screen = Screen("claude-working-feedback") + "\n─────────\nBash command\nDo you want to proceed?\n❯ 1. Yes\n2. No\nEsc to cancel";
+        Assert.Equal(AgentActivityStatus.NeedsInput, AgentScreenDetector.Detect("claude", screen, Now).Status);
+    }
+
+    [Theory]
+    [InlineData("● Done.")]
+    [InlineData("✻ Crunched for 9m 21s · done 6:33 PM")]
+    public void ClaudeFeedbackDoesNotReviveAnAlreadyStaleSpinner(string completion)
+    {
+        var screen = Screen("claude-working-feedback").Replace("● How is Claude", completion + "\n● How is Claude");
+        Assert.Equal(AgentActivityStatus.Ready, AgentScreenDetector.Detect("claude", screen, Now).Status);
+    }
+
+    [Fact]
+    public void IncompleteOrChangedClaudeSurveyIsNotAssumedToBeOptional()
+    {
+        var screen = Screen("claude-working-feedback").Replace("0: Dismiss", "0: Proceed");
         Assert.Equal(AgentActivityStatus.Ready, AgentScreenDetector.Detect("claude", screen, Now).Status);
     }
 

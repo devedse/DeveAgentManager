@@ -22,6 +22,8 @@ Only a short evidence excerpt and the latest semantic observation are retained, 
 
 Claude usage limits support the `└` error marker and a completed elapsed-time footer after the error. A real response, submitted input, or live working indicator after the error invalidates it. An explicit IANA timezone in the reset message takes precedence over the process timezone. For example, `resets Oct 4, 3am (Europe/Amsterdam)` resolves to October 4 at 01:00 UTC in 2026; opting in schedules a single `continue` at 01:01 UTC. The existing empty-input, process-identity, and last-minute screen checks still apply.
 
+Claude's optional session-feedback survey can appear below a live spinner. Its complete heading and four rating choices are excluded from response-boundary detection, including wrapped lines. Actual replies, submitted prompts, completion footers and approval controls retain their normal meaning.
+
 ## Verification
 
 Run `dotnet test DeveAgentManager.slnx`. The captured-screen regressions cover ready and working states, compaction, background commands, queued questions, approval dialogs, historical indicators, and the Claude weekly limit. Tracker and SQLite tests cover stable completion, process restarts, stale observations, and delayed acknowledgement.

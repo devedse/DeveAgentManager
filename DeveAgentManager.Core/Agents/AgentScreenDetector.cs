@@ -106,7 +106,14 @@ public static class AgentScreenDetector
         var recent = AfterLastSubmitted(c).Split('\n');
         var spinner = Array.FindLastIndex(recent, l => Has(l, @"^\s*[✢✳✶✻✽*·] \S[^\n]*… (?:\([0-9]+[smh]|$)[^\n]*")
             || Has(l, @"^\s*[✢✳✶✻✽*·] Waiting for [1-9][0-9]* background agents? to finish\s*$"));
-        var stale = spinner >= 0 && recent.Skip(spinner + 1).Any(l => Has(l, @"^\s*[●❯]|^\s*[✢✳✶✻✽*·] .+ for [0-9]+[smh]"));
+        // The optional feedback survey shares the assistant's bullet, but can appear while
+        // work continues. Exclude only its complete panel, including wrapped choices;
+        // real responses, submitted prompts and completion footers still invalidate a spinner.
+        var following = spinner < 0 ? "" : string.Join('\n', recent.Skip(spinner + 1));
+        following = Regex.Replace(following,
+            @"^\s*●\s+How\s+is\s+Claude\s+doing\s+this\s+session\?\s*\(optional\)\s+1:\s*Bad\s+2:\s*Fine\s+3:\s*Good\s+0:\s*Dismiss[^\S\n]*(?=\n|$)", "",
+            RegexOptions.Multiline | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        var stale = spinner >= 0 && Has(following, @"^\s*[●❯]|^\s*[✢✳✶✻✽*·] .+ for [0-9]+[smh]");
         var line = spinner >= 0 && !stale ? recent[spinner].Trim()
             : Find(c.After, @"^\s*[⏵⏸][^\n]*esc to interrupt[^\n]*");
         return line is null ? null : new(AgentActivityStatus.Working, "Claude Code is working.", "", Evidence(line));

@@ -1,0 +1,19 @@
+❯ Review the provider implementation
+● The plan is complete enough to write down. Before coding, checking the
+  static-analysis probe in CI:
+
+  Waiting for probe CI and summarizing analysis warnings · 3m 7s
+  ⎿ Polling the CI result (3m 7s)
+    (ctrl+b ctrl+b (twice) to run in background)
+
+✢ Transfiguring… (9m 20s · ↓ 36.3k tokens)
+  ⎿ Tip: Use /btw to ask a quick side question without interrupting Claude’s current
+    work
+
+● How is Claude doing this session? (optional)
+  1: Bad    2: Fine   3: Good   0: Dismiss
+
+───────────────────────── queuecache ─
+❯
+─────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · install gh for PR status · esc t…
