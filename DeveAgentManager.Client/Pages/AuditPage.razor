@@ -1,0 +1,73 @@
+@page "/audit"
+@inherits LiveComponent
+@inject SignedInUser Me
+
+<PageTitle>Audit log · DeveAgentManager</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="page">
+    <PageHeader Title="Audit log" BackHref="users" Help="Sign-ins, users and roles, access to Runners, shares and Runner passwords, newest first. The last 10,000 entries are kept." />
+
+    @if (_me is not null && !_me.Has(UserRoles.UserManager))
+    {
+        <EmptyState Icon="@Icons.Material.Rounded.Lock" Title="For user managers" Text="Reading the audit log needs the User manager role." />
+    }
+    else
+    {
+        <div class="panel">
+            <div class="list">
+                @foreach (var entry in _entries)
+                {
+                    <div class="list-row audit-row">
+                        <div class="list-avatar list-avatar-icon"><MudIcon Icon="@Icon(entry.Action)" Size="Size.Small" /></div>
+                        <div class="list-main">
+                            <div class="list-title">@AuditActions.Describe(entry.Action)@if (entry.Target is not null) { <span class="mud-text-secondary"> · @entry.Target</span> }</div>
+                            <div class="list-subtitle">@(entry.ActorName ?? "The Manager")@(entry.Detail is null ? "" : $" · {entry.Detail}")</div>
+                        </div>
+                        <div class="list-meta list-time" title="@entry.At.ToLocalTime().ToString("f")">@entry.At.Humanize()</div>
+                    </div>
+                }
+            </div>
+            @if (_more)
+            {
+                <div class="settings-actions">
+                    <MudButton Variant="Variant.Text" OnClick="MoreAsync">Older entries</MudButton>
+                </div>
+            }
+        </div>
+    }
+</MudContainer>
+
+@code {
+    private const int Page = 100;
+    private CurrentUserDto? _me;
+    private List<AuditEventDto> _entries = [];
+    private bool _more;
+
+    protected override bool IsRelevant(ManagerEvent managerEvent) => false;
+
+    protected override async Task LoadAsync()
+    {
+        _me = await Me.GetAsync();
+        if (_me.Has(UserRoles.UserManager))
+        {
+            _entries = await Api.ListAuditAsync(0, Math.Max(Page, _entries.Count));
+            _more = _entries.Count % Page == 0 && _entries.Count > 0;
+        }
+    }
+
+    private async Task MoreAsync()
+    {
+        var older = await Api.ListAuditAsync(_entries.Count, Page);
+        _entries.AddRange(older);
+        _more = older.Count == Page;
+    }
+
+    private static string Icon(string action) => action switch
+    {
+        AuditActions.SignedIn or AuditActions.SignInFailed or AuditActions.SignInLocked => Icons.Material.Rounded.Login,
+        _ when action.Contains("password", StringComparison.Ordinal) || action == AuditActions.RunnerKeysOnlyChanged => Icons.Material.Rounded.Password,
+        _ when action.StartsWith("user", StringComparison.Ordinal) => Icons.Material.Rounded.Person,
+        _ when action.StartsWith("runner", StringComparison.Ordinal) => Icons.Material.Rounded.Dns,
+        _ => Icons.Material.Rounded.Share,
+    };
+}

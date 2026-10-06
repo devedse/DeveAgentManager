@@ -74,10 +74,10 @@ public static class SignIn
     {
         var path = context.Request.Path;
         if (Current(context) is { MustChangePassword: true } && HttpMethods.IsGet(context.Request.Method) && !RequestSecurity.IsMachinePath(path)
-            && !path.StartsWithSegments("/account") && !path.StartsWithSegments("/_framework") && !path.StartsWithSegments("/_content")
+            && !path.StartsWithSegments("/account") && !path.StartsWithSegments("/password") && !path.StartsWithSegments("/_framework") && !path.StartsWithSegments("/_content")
             && Path.GetExtension(path.Value) is null or "")
         {
-            context.Response.Redirect($"/account/password?returnUrl={Uri.EscapeDataString(path + context.Request.QueryString)}");
+            context.Response.Redirect($"/password?returnUrl={Uri.EscapeDataString(path + context.Request.QueryString)}");
             return;
         }
 
@@ -102,7 +102,7 @@ public static class SignIn
             }
 
             await SignInAsync(context, user.Id, user.Username, user.SecurityStamp, persistent: form["remember"] == "on");
-            return Results.LocalRedirect(user.MustChangePassword ? $"/account/password?returnUrl={Uri.EscapeDataString(returnUrl)}" : returnUrl);
+            return Results.LocalRedirect(user.MustChangePassword ? $"/password?returnUrl={Uri.EscapeDataString(returnUrl)}" : returnUrl);
         }).AllowAnonymous();
 
         app.MapPost("/account/password", async (HttpContext context, CurrentUser user, UserService users) =>
@@ -130,7 +130,7 @@ public static class SignIn
                 }
             }
 
-            return Results.LocalRedirect($"/account/password?error={Uri.EscapeDataString(error)}&returnUrl={Uri.EscapeDataString(returnUrl)}");
+            return Results.LocalRedirect($"/password?error={Uri.EscapeDataString(error)}&returnUrl={Uri.EscapeDataString(returnUrl)}");
         });
 
         app.MapPost("/account/logout", async (HttpContext context) =>

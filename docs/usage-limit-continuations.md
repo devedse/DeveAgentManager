@@ -1,6 +1,6 @@
 # Runner timezones and usage-limit continuations
 
-Settings → Timezones sets the default timezone for new harness processes. A Runner's page can override it or inherit the default. The Manager exports `TZ` after loading the runner/account environment. Restart an existing agent to apply a change; neither the VM's clock nor other programs on it are changed.
+Manager settings → Timezones sets the default timezone for new harness processes. A Runner's page can override it or inherit the default. The Manager exports `TZ` after loading the runner/account environment. Restart an existing agent to apply a change; neither the VM's clock nor other programs on it are changed.
 
 The terminal header shows an amber, gently blinking hourglass when it detects an active Codex or Claude usage-limit error. Click it to review the reset and schedule a single `continue` for reset + one minute. A scheduled button becomes a steady clock and lets you cancel. Reduced-motion preferences disable blinking.
 

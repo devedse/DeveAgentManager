@@ -1,0 +1,157 @@
+@page "/users"
+@inherits LiveComponent
+@inject IDialogService Dialogs
+@inject SignedInUser Me
+
+<PageTitle>Users · DeveAgentManager</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="page">
+    <PageHeader Title="Users" Help="Who can sign in, and their roles. You can give or take only roles you have yourself, and change only users whose roles you all have.">
+        <Actions>
+            @if (_me?.Has(UserRoles.UserManager) == true)
+            {
+                <MudButton Href="audit" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Policy">Audit log</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PersonAdd" OnClick="AddAsync">Add user</MudButton>
+            }
+        </Actions>
+    </PageHeader>
+
+    @if (_me is not null && !_me.Has(UserRoles.UserManager))
+    {
+        <EmptyState Icon="@Icons.Material.Rounded.Lock" Title="For user managers" Text="Managing users needs the User manager role." />
+    }
+    else
+    {
+        <div class="panel">
+            <div class="list">
+                @foreach (var user in _users)
+                {
+                    var manageable = (user.Roles & ~_me!.Roles) == 0;
+                    <div class="list-row user-row @(user.Disabled ? "user-disabled" : "")">
+                        <div class="list-avatar list-avatar-icon"><MudIcon Icon="@Icons.Material.Rounded.Person" Size="Size.Small" /></div>
+                        <div class="list-main">
+                            <div class="list-title">
+                                @user.DisplayName <span class="mud-text-secondary">(@user.Username)</span>
+                                @if (user.Id == _me.Id)
+                                {
+                                    <span class="account-badge">you</span>
+                                }
+                            </div>
+                            <div class="list-subtitle">
+                                @Roles.Describe(user.Roles)
+                                @if (user.Disabled)
+                                {
+                                    <span> · disabled</span>
+                                }
+                                @if (user.Locked)
+                                {
+                                    <span> · locked for a few minutes (wrong passwords)</span>
+                                }
+                                @if (user.MustChangePassword)
+                                {
+                                    <span> · chooses a new password at the next sign-in</span>
+                                }
+                            </div>
+                        </div>
+                        <div class="list-meta list-time">@(user.LastSignInAt is { } at ? $"signed in {at.Humanize()}" : "never signed in")</div>
+                        <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true"
+                                 Disabled="!manageable" aria-label="@($"Actions for {user.Username}")">
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Edit" OnClick="() => EditAsync(user)">Change name, roles…</MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Password" OnClick="() => ResetPasswordAsync(user)">Set a new password…</MudMenuItem>
+                            @if (user.Id != _me.Id)
+                            {
+                                <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => DeleteAsync(user)">Delete…</MudMenuItem>
+                            }
+                        </MudMenu>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</MudContainer>
+
+@code {
+    private CurrentUserDto? _me;
+    private List<UserDto> _users = [];
+
+    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.Kind is ManagerEventKind.UserChanged or ManagerEventKind.UserRemoved;
+
+    protected override async Task LoadAsync()
+    {
+        _me = await Me.GetAsync();
+        if (_me.Has(UserRoles.UserManager))
+        {
+            _users = (await Api.ListUsersAsync()).OrderBy(u => u.Disabled).ThenBy(u => u.DisplayName).ToList();
+        }
+    }
+
+    private async Task AddAsync()
+    {
+        var dialog = await Dialogs.ShowAsync<UserDialog>("Add user", new DialogParameters<UserDialog> { { d => d.ActorRoles, _me!.Roles }, { d => d.ActorId, _me.Id } });
+        if (await dialog.Result is { Canceled: false, Data: UserDialog.Result result })
+        {
+            await RunAsync(async () =>
+            {
+                var user = await Api.CreateUserAsync(new CreateUserRequest(result.Username, result.DisplayName, result.Password, result.Roles));
+                Snackbar.Add($"{user.DisplayName} can sign in as '{user.Username}' with the password you chose, then picks their own.", Severity.Success);
+            });
+        }
+    }
+
+    private async Task EditAsync(UserDto user)
+    {
+        var dialog = await Dialogs.ShowAsync<UserDialog>($"Change {user.Username}", new DialogParameters<UserDialog>
+        {
+            { d => d.User, user }, { d => d.ActorRoles, _me!.Roles }, { d => d.ActorId, _me.Id },
+        });
+        if (await dialog.Result is { Canceled: false, Data: UserDialog.Result result })
+        {
+            await RunAsync(() => Api.UpdateUserAsync(user.Id, new UpdateUserRequest(result.DisplayName, result.Roles, result.Disabled)));
+        }
+    }
+
+    private async Task ResetPasswordAsync(UserDto user)
+    {
+        var self = user.Id == _me!.Id;
+        var dialog = await Dialogs.ShowAsync<SetPasswordDialog>($"New password for {user.Username}", new DialogParameters<SetPasswordDialog>
+        {
+            { d => d.Intro, self ? "Your other sign-ins end." : $"Their sign-ins end, and they choose their own password at the next sign-in. Give this one to {user.DisplayName}." },
+        });
+        if (await dialog.Result is { Canceled: false, Data: string password })
+        {
+            await RunAsync(async () =>
+            {
+                await Api.ResetUserPasswordAsync(user.Id, password);
+                Snackbar.Add($"New password set for {user.Username}.", Severity.Success);
+            });
+        }
+    }
+
+    private async Task DeleteAsync(UserDto user)
+    {
+        var dialog = await Dialogs.ShowAsync<ChooseUserDialog>($"Delete {user.Username}", new DialogParameters<ChooseUserDialog>
+        {
+            { d => d.Intro, $"Who gets what {user.DisplayName} owns: their Runners, agents and conversations, and their access to other people's Runners?" },
+            { d => d.Warning, $"{user.DisplayName}'s harness logins, settings and shares are deleted. This can't be undone; disabling them keeps everything." },
+            { d => d.Exclude, new[] { user.Id } },
+            { d => d.Confirm, "Delete" },
+        });
+        if (await dialog.Result is { Canceled: false, Data: ChooseUserDialog.ChosenUser heir })
+        {
+            await RunAsync(() => Api.DeleteUserAsync(user.Id, heir.UserId));
+        }
+    }
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+            await ReloadAsync();
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+}

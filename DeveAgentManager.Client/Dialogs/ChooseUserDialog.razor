@@ -1,0 +1,98 @@
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+
+@* Picks someone to share with or give access to, with what they get (when there is a choice). Returns a ChosenUser. *@
+<MudDialog>
+    <DialogContent>
+        @if (Intro is not null)
+        {
+            <MudText Typo="Typo.body2" Class="mb-3">@Intro</MudText>
+        }
+        @if (_users is null)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (_users.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">There is nobody else to choose. A user manager can add people under Users.</MudText>
+        }
+        else
+        {
+            <MudSelect T="Guid?" @bind-Value="_userId" Label="Person" Variant="Variant.Outlined" Margin="Margin.Dense" AnchorOrigin="Origin.BottomCenter">
+                @foreach (var user in _users)
+                {
+                    <MudSelectItem T="Guid?" Value="user.Id">@user.DisplayName (@user.Username)</MudSelectItem>
+                }
+            </MudSelect>
+            @if (Levels.Count > 0)
+            {
+                <MudRadioGroup T="int" @bind-Value="_level" Class="choose-level mt-3">
+                    @foreach (var (value, label, help) in Levels)
+                    {
+                        <MudRadio T="int" Value="value" Color="Color.Primary">
+                            <span class="choose-level-label">@label</span>
+                            <span class="choose-level-help">@help</span>
+                        </MudRadio>
+                    }
+                </MudRadioGroup>
+            }
+        }
+        @if (Warning is not null)
+        {
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mt-3">@Warning</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_userId is null" OnClick="Choose">@Confirm</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<UserSummaryDto>? _users;
+    private Guid? _userId;
+    private int _level;
+
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public string? Intro { get; set; }
+
+    /// <summary>Shown under the choice, e.g. what sharing a Runner means.</summary>
+    [Parameter]
+    public string? Warning { get; set; }
+
+    [Parameter]
+    public string Confirm { get; set; } = "Share";
+
+    /// <summary>People who can't be chosen (the owner, who already has access).</summary>
+    [Parameter]
+    public IReadOnlyCollection<Guid> Exclude { get; set; } = [];
+
+    /// <summary>What they can get: value, label and explanation. Empty when there is no choice.</summary>
+    [Parameter]
+    public IReadOnlyList<(int Value, string Label, string Help)> Levels { get; set; } = [];
+
+    [Parameter]
+    public int Level { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _level = Levels.Count > 0 && Levels.All(l => l.Value != Level) ? Levels[0].Value : Level;
+        try
+        {
+            _users = (await Api.ListUserDirectoryAsync()).Where(u => !Exclude.Contains(u.Id)).OrderBy(u => u.DisplayName).ToList();
+        }
+        catch (ApiException ex)
+        {
+            _users = [];
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private void Choose() => MudDialog.Close(DialogResult.Ok(new ChosenUser(_userId!.Value, _level)));
+
+    /// <summary>The person, and the value of the level they get (0 without levels).</summary>
+    public sealed record ChosenUser(Guid UserId, int Level);
+}

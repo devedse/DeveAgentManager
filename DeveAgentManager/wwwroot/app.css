@@ -1418,6 +1418,7 @@ a {
 
     .code-box code {
         flex: 1;
+        color: var(--dam-console-text);
         background: none;
         border: 0;
         padding: 0;
@@ -1673,6 +1674,8 @@ html:has(.terminal-layout) body {
     flex: 1;
     display: grid;
     place-items: center;
+    /* On the terminal's dark background, also in the light theme. */
+    color: var(--dam-console-text);
 }
 
 .terminal-keys {
@@ -1857,6 +1860,11 @@ html:has(.terminal-layout) body {
     font-weight: 700;
 }
 
+/* At the start of a line. */
+.account-badge-lead {
+    margin: 0 6px 0 0;
+}
+
 .account-meta {
     color: var(--dam-muted);
     font-size: 0.8rem;
@@ -1876,6 +1884,66 @@ html:has(.terminal-layout) body {
     .login-terminal .terminal-keys {
         display: none;
     }
+
+/* ---------- Users, access and sharing ---------- */
+
+/* Roles, notes and audit details wrap instead of being cut off. */
+.user-row .list-subtitle,
+.audit-row .list-subtitle {
+    white-space: normal;
+}
+
+.audit-row {
+    align-items: flex-start;
+}
+
+.user-disabled .list-main,
+.user-disabled .list-avatar {
+    opacity: 0.55;
+}
+
+.role-choice {
+    padding: 4px 0 8px;
+    border-top: 1px solid var(--dam-border);
+}
+
+    .role-choice:first-of-type {
+        border-top: 0;
+    }
+
+.role-choice-help {
+    margin: -6px 0 0 42px;
+    color: var(--dam-muted);
+    font-size: 0.8rem;
+}
+
+.choose-level {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.choose-level-label {
+    font-weight: 600;
+}
+
+.choose-level-help {
+    display: block;
+    color: var(--dam-muted);
+    font-size: 0.8rem;
+}
+
+/* Above a terminal shared read-only. */
+.terminal-readonly-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--dam-border);
+    background: var(--dam-primary-soft);
+    color: var(--dam-primary-text);
+    font-size: 0.85rem;
+}
 
 /* ---------- Switching harness / account (terminal toolbar) ---------- */
 
@@ -1951,6 +2019,13 @@ html:has(.terminal-layout) body {
 .switch-connect {
     color: var(--mud-palette-primary);
     font-size: 0.85rem;
+}
+
+.switch-login-note {
+    max-width: 280px;
+    padding: 0 8px 4px;
+    color: var(--dam-muted);
+    font-size: 0.8rem;
 }
 
 /* ---------- Runner operations ---------- */
@@ -2139,6 +2214,56 @@ html:has(.terminal-layout) body {
     color: var(--dam-warning);
     font-size: 0.8rem;
     line-height: 1.5;
+}
+
+    .login-hint.login-hint-top {
+        margin: 0 0 12px;
+    }
+
+.login-note {
+    margin-top: 8px;
+    color: var(--dam-muted);
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+.login-link {
+    display: block;
+    margin: 12px auto 0;
+    padding: 6px 10px;
+    border: 0;
+    background: none;
+    color: var(--dam-muted);
+    font: inherit;
+    font-size: 0.875rem;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+    .login-link:hover {
+        color: var(--dam-text);
+    }
+
+.login-signout {
+    position: relative;
+    margin-top: 8px;
+}
+
+/* The signed-in user at the top of the user menu. */
+.menu-user {
+    padding: 8px 16px 10px;
+    border-bottom: 1px solid var(--dam-border);
+    margin-bottom: 4px;
+}
+
+.menu-user-name {
+    font-weight: 600;
+}
+
+.menu-user-meta {
+    color: var(--dam-muted);
+    font-size: 0.8rem;
 }
 
 /* ---------- Blazor error bar ---------- */

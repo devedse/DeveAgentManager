@@ -46,6 +46,10 @@ public static class EndpointAccess
     /// <summary>Whether an endpoint declared who may call it (for the tests).</summary>
     public static bool IsDeclared(Endpoint endpoint) => endpoint.Metadata.GetOrderedMetadata<Requirement>().Count > 0;
 
+    /// <summary>The roles an endpoint needs (any one of them), or null when it needs none (for the tests).</summary>
+    public static UserRoles? RequiredRoles(Endpoint endpoint) =>
+        endpoint.Metadata.GetOrderedMetadata<Requirement>().FirstOrDefault(r => r.Kind == Kind.Role)?.Roles;
+
     /// <summary>The filter on the /api group.</summary>
     public static async ValueTask<object?> CheckAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {

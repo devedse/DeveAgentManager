@@ -110,8 +110,9 @@ public sealed class SessionService(
         .Include(s => s.Agent).ThenInclude(a => a!.Runner).ThenInclude(r => r!.Members)
         .Include(s => s.Agent).ThenInclude(a => a!.Shares)
         .Include(s => s.Agent).ThenInclude(a => a!.Owner)
-        .Include(s => s.Agent).ThenInclude(a => a!.Account)
-        .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Shares);
+        .Include(s => s.Agent).ThenInclude(a => a!.Account).ThenInclude(a => a!.Owner)
+        .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Shares)
+        .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Runner).ThenInclude(r => r!.Members);
 
     public async Task<StoredSession?> GetForAgentAsync(Guid agentId, CancellationToken cancellationToken = default)
     {

@@ -438,7 +438,7 @@ public class AuditEvent
     /// <summary>The actor's username at the time, so the entry stays readable after the user is gone.</summary>
     public string? ActorName { get; set; }
 
-    /// <summary>What happened, e.g. "user.created" (see <see cref="Users.AuditActions"/>).</summary>
+    /// <summary>What happened, e.g. "user-created" (see <see cref="AuditActions"/>).</summary>
     public string Action { get; set; } = "";
 
     /// <summary>What it happened to, as the Portal shows it, e.g. "Runner runner-01" or "User ketty".</summary>

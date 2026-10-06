@@ -70,7 +70,7 @@
     private bool _drawerOpen = true;
     private CurrentUserDto? _user;
 
-    private string ChangePasswordUrl => $"account/password?returnUrl={Uri.EscapeDataString("/" + Navigation.ToBaseRelativePath(Navigation.Uri))}";
+    private string ChangePasswordUrl => $"password?returnUrl={Uri.EscapeDataString("/" + Navigation.ToBaseRelativePath(Navigation.Uri))}";
 
     protected override async Task OnInitializedAsync()
     {

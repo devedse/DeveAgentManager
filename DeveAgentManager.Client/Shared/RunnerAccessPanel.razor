@@ -1,0 +1,267 @@
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+@* A Runner's people (owner and members) and how to log in to it yourself (its password, keys only, SSH keys). *@
+<div class="panel mb-4">
+    <div class="panel-header">
+        <div class="help-heading"><MudText Typo="Typo.h6">Who has access</MudText>
+            <HelpTip Label="Who has access">Use: their own agents, the shell, VS Code and the desktop. Manage: also start, stop, set up, its password and who has access.
+            Everyone with access uses the same account on the Runner, so they can reach everything on it: share a Runner only with people you trust with your keys.</HelpTip></div>
+        @if (CanManage)
+        {
+            <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Rounded.PersonAdd" OnClick="AddAsync">Add</MudButton>
+        }
+    </div>
+    <div class="list">
+        <div class="list-row">
+            <div class="list-avatar list-avatar-icon"><MudIcon Icon="@Icons.Material.Rounded.Star" Size="Size.Small" /></div>
+            <div class="list-main">
+                <div class="list-title">@Runner.OwnerName @(Runner.OwnerId == UserId ? "(you)" : "")</div>
+                <div class="list-subtitle">Owner</div>
+            </div>
+            @if (CanChangeOwner)
+            {
+                <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" aria-label="Owner actions">
+                    <MudMenuItem Icon="@Icons.Material.Rounded.SwapHoriz" OnClick="ChangeOwnerAsync">Give to someone else…</MudMenuItem>
+                </MudMenu>
+            }
+        </div>
+        @foreach (var member in _members)
+        {
+            <div class="list-row">
+                <div class="list-avatar list-avatar-icon"><MudIcon Icon="@Icons.Material.Rounded.Person" Size="Size.Small" /></div>
+                <div class="list-main">
+                    <div class="list-title">@member.DisplayName @(member.UserId == UserId ? "(you)" : "")</div>
+                    <div class="list-subtitle">@(member.Access == RunnerAccess.Manage ? "Manage" : "Use") · since @member.GrantedAt.Humanize()</div>
+                </div>
+                @if (CanManage || member.UserId == UserId)
+                {
+                    <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true"
+                             aria-label="@($"Access of {member.Username}")">
+                        @if (CanManage)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Tune" OnClick="() => SetAsync(member.UserId, member.Access == RunnerAccess.Manage ? RunnerAccess.Use : RunnerAccess.Manage)">
+                                @(member.Access == RunnerAccess.Manage ? "Change to Use" : "Change to Manage")
+                            </MudMenuItem>
+                        }
+                        <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => RemoveAsync(member)">@(member.UserId == UserId ? "Leave this Runner…" : "Take access away…")</MudMenuItem>
+                    </MudMenu>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+<div class="panel mb-4">
+    <div class="panel-header">
+        <div class="help-heading"><MudText Typo="Typo.h6">Logging in yourself</MudText>
+            <HelpTip Label="Logging in yourself">Over SSH as <code>@Runner.Username</code>, with your SSH key (My settings → SSH keys; it is on every Runner you have access to) or, unless the Runner takes keys only, its password.
+            The Runner has a password of its own: it doesn't open any other Runner.</HelpTip></div>
+    </div>
+    <div class="code-box mb-3">
+        <code>ssh @(Runner.Username)@@@(Runner.Host ?? "<address>")@(Runner.SshPort == 22 ? "" : $" -p {Runner.SshPort}")</code>
+    </div>
+    @if (CanManage)
+    {
+        <div class="operation-list">
+            <div class="operation">
+                <MudIcon Icon="@Icons.Material.Rounded.Password" Class="operation-icon" />
+                <div class="operation-text">
+                    <div class="operation-name">Password</div>
+                    <div class="operation-description mono">@(_password ?? "••••••••••••")</div>
+                </div>
+                @if (_password is null)
+                {
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy" OnClick="ShowPasswordAsync">Show</MudButton>
+                }
+                else
+                {
+                    <MudIconButton Icon="@Icons.Material.Rounded.ContentCopy" Size="Size.Small" OnClick="CopyPasswordAsync" aria-label="Copy password" />
+                    <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => _password = null">Hide</MudButton>
+                }
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy || !Ready" OnClick="ChangePasswordAsync">Change</MudButton>
+            </div>
+            <div class="operation">
+                <MudIcon Icon="@Icons.Material.Rounded.Key" Class="operation-icon" />
+                <div class="operation-text">
+                    <div class="operation-name">Keys only</div>
+                    <div class="operation-description">SSH refuses passwords; only the Manager's key and the keys of the people with access log in.</div>
+                </div>
+                <MudSwitch T="bool" Value="Runner.KeysOnly" ValueChanged="SetKeysOnlyAsync" Disabled="_busy || !Ready" Color="Color.Primary" aria-label="Keys only" />
+            </div>
+        </div>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">@(Runner.KeysOnly ? "This Runner takes SSH keys only." : "People who manage this Runner can tell you its password.")</MudText>
+    }
+</div>
+
+@code {
+    private List<RunnerMemberDto> _members = [];
+    private string? _password;
+    private bool _busy;
+
+    [Parameter, EditorRequired]
+    public RunnerDto Runner { get; set; } = default!;
+
+    /// <summary>The signed-in user.</summary>
+    [Parameter, EditorRequired]
+    public CurrentUserDto User { get; set; } = default!;
+
+    private Guid UserId => User.Id;
+
+    private bool CanManage => Runner.Access >= RunnerAccess.Manage;
+
+    private bool CanChangeOwner => User.Has(UserRoles.RunnerManager);
+
+    private bool Ready => Runner.State == RunnerState.Ready && Runner.Operation is null;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            _members = await Api.ListRunnerMembersAsync(Runner.Id);
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private static readonly IReadOnlyList<(int, string, string)> Levels =
+    [
+        ((int)RunnerAccess.Use, "Use", "Their own agents, the shell, VS Code and the desktop."),
+        ((int)RunnerAccess.Manage, "Manage", "Also start, stop, set up, the password and who has access."),
+    ];
+
+    private async Task AddAsync()
+    {
+        var dialog = await Dialogs.ShowAsync<ChooseUserDialog>($"Give access to {Runner.Name}", new DialogParameters<ChooseUserDialog>
+        {
+            { d => d.Exclude, _members.Select(m => m.UserId).Append(Runner.OwnerId).ToList() },
+            { d => d.Levels, Levels },
+            { d => d.Level, (int)RunnerAccess.Use },
+            { d => d.Confirm, "Give access" },
+            { d => d.Warning, "Everyone with access uses the same account on the Runner and can reach everything on it: other people's agents, files, harness logins and GitHub tokens on it. Share it only with people you trust with your keys." },
+        });
+        if (await dialog.Result is { Canceled: false, Data: ChooseUserDialog.ChosenUser chosen })
+        {
+            await SetAsync(chosen.UserId, (RunnerAccess)chosen.Level);
+        }
+    }
+
+    private Task SetAsync(Guid userId, RunnerAccess access) => RunAsync(() => Api.SetRunnerAccessAsync(Runner.Id, userId, access));
+
+    private async Task RemoveAsync(RunnerMemberDto member)
+    {
+        var leaving = member.UserId == UserId;
+        var confirmed = await Dialogs.ShowMessageBoxAsync(
+            leaving ? $"Leave '{Runner.Name}'?" : $"Take {member.DisplayName}'s access away?",
+            $"{(leaving ? "Your" : $"{member.DisplayName}'s")} agents on this Runner are removed (their conversations stay), and {(leaving ? "your" : "their")} git identity, GitHub token, environment and SSH key are removed from it.",
+            yesText: leaving ? "Leave" : "Take away", cancelText: "Cancel");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        if (!leaving)
+        {
+            await RunAsync(() => Api.RemoveRunnerAccessAsync(Runner.Id, member.UserId));
+            return;
+        }
+
+        try
+        {
+            await Api.RemoveRunnerAccessAsync(Runner.Id, member.UserId);
+            Navigation.NavigateTo("runners");
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task ChangeOwnerAsync()
+    {
+        var dialog = await Dialogs.ShowAsync<ChooseUserDialog>($"Give {Runner.Name} to someone else", new DialogParameters<ChooseUserDialog>
+        {
+            { d => d.Intro, $"The new owner can delete the Runner and decide who has access. {Runner.OwnerName} keeps Manage access." },
+            { d => d.Exclude, new[] { Runner.OwnerId } },
+            { d => d.Confirm, "Give" },
+        });
+        if (await dialog.Result is { Canceled: false, Data: ChooseUserDialog.ChosenUser chosen })
+        {
+            await RunAsync(() => Api.ChangeRunnerOwnerAsync(Runner.Id, chosen.UserId));
+        }
+    }
+
+    private async Task ShowPasswordAsync()
+    {
+        _busy = true;
+        try
+        {
+            _password = (await Api.GetRunnerPasswordAsync(Runner.Id)).Password;
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task CopyPasswordAsync()
+    {
+        await JS.InvokeVoidAsync("damUi.copy", _password ?? "");
+        Snackbar.Add("Password copied.", Severity.Success);
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        var dialog = await Dialogs.ShowAsync<SetPasswordDialog>($"New password for {Runner.Name}", new DialogParameters<SetPasswordDialog>
+        {
+            { d => d.Intro, $"The password of {Runner.Username} on this Runner. It is set on the Runner now; agents keep running." },
+        });
+        if (await dialog.Result is { Canceled: false, Data: string password })
+        {
+            _busy = true;
+            await RunAsync(async () =>
+            {
+                await Api.SetRunnerPasswordAsync(Runner.Id, password);
+                _password = password;
+                Snackbar.Add("Password changed.", Severity.Success);
+            });
+            _busy = false;
+        }
+    }
+
+    private async Task SetKeysOnlyAsync(bool keysOnly)
+    {
+        _busy = true;
+        await RunAsync(async () =>
+        {
+            await Api.SetKeysOnlyAsync(Runner.Id, keysOnly);
+            Snackbar.Add(keysOnly ? "SSH takes keys only now." : "SSH takes the password again.", Severity.Success);
+        });
+        _busy = false;
+    }
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+            _members = await Api.ListRunnerMembersAsync(Runner.Id);
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+}

@@ -51,7 +51,7 @@ public sealed partial class AgentService(
 
     private static IQueryable<Agent> WithAccess(IQueryable<Agent> agents) => agents.AsNoTracking().AsSplitQuery()
         .Include(a => a.Runner).ThenInclude(r => r!.Members)
-        .Include(a => a.Account).Include(a => a.Owner).Include(a => a.Shares).ThenInclude(s => s.User);
+        .Include(a => a.Account).ThenInclude(a => a!.Owner).Include(a => a.Owner).Include(a => a.Shares).ThenInclude(s => s.User);
 
     /// <summary>
     /// Creates an agent owned by <paramref name="actor"/>, who needs Use access to the Runner. Its harness login is one of
@@ -59,7 +59,7 @@ public sealed partial class AgentService(
     /// </summary>
     public async Task<Agent> CreateAsync(CurrentUser actor, CreateAgentRequest request, CancellationToken cancellationToken = default)
     {
-        var name = request.Name.Trim().ToLowerInvariant();
+        var name = (request.Name ?? "").Trim().ToLowerInvariant();
         if (!AgentName().IsMatch(name))
         {
             throw new ArgumentException("Use lowercase letters, digits and dashes for the name, for example 'fix-maze-perf'.");

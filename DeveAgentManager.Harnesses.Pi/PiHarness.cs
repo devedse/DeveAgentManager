@@ -22,7 +22,7 @@ public sealed class PiHarness : IHarness
     /// <summary>The pi logo (https://pi.dev/logo-auto.svg), cropped to the mark.</summary>
     public string Icon => """<g transform="scale(0.051126) translate(-165.29 -165.29)"><path fill="#F09082" d="M165.29 165.29H517.36V400H400V282.65H165.29Z"/><path fill="#4D9ABF" d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z"/><path fill="#F1BE58" d="M517.36 400H634.72V634.72H517.36Z"/></g>""";
 
-    public string Description => "The pi coding agent. Log in with /login in a terminal, or set an API key in the Setup Profile.";
+    public string Description => "The pi coding agent. Log in with /login in a terminal, or set an API key under My settings → Environment.";
 
     public string InstallScript => $"""
         set -euo pipefail

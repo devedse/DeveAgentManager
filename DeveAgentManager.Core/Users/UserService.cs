@@ -100,6 +100,21 @@ public sealed partial class UserService(
         return user;
     }
 
+    /// <summary>
+    /// The first user's username while they still have the default password (no ADMIN_PASSWORD was set), for the hint on
+    /// the sign-in page; null otherwise.
+    /// </summary>
+    public async Task<string?> DefaultPasswordUserAsync(CancellationToken cancellationToken = default)
+    {
+        if (!options.UsesDefaultAdminPassword)
+        {
+            return null;
+        }
+
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.Users.Where(u => u.Id == User.BootstrapId && u.MustChangePassword && !u.Disabled).Select(u => u.Username).FirstOrDefaultAsync(cancellationToken);
+    }
+
     public async Task<List<User>> ListAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);

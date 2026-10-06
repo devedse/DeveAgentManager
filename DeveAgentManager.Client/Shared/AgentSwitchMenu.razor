@@ -1,8 +1,10 @@
 @inject ManagerApi Api
 @inject IDialogService Dialogs
 @inject ISnackbar Snackbar
+@inject SignedInUser Me
 
-@* The agent's harness and account, and switching to another one (e.g. when a subscription ran out). *@
+@* The agent's harness and login, and switching to another one (e.g. when a subscription ran out). Everyone with
+   read-write access can switch it, but only to their own logins: the owner's default is the owner's to pick. *@
 <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" @bind-Open="_open" @bind-Open:after="OnOpenChangedAsync">
     <ActivatorContent>
         <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Rounded.SwapHoriz" OnClick="@context.ToggleAsync"
@@ -14,6 +16,10 @@
         <div class="switch-menu">
             <div class="viewers-title help-heading">Continue with
                 <HelpTip Label="Switching harness or account" Text="Same folder, same conversation. Another harness gets the conversation as text." /></div>
+            @if (_me is { } me && Agent.LoginOwnerId != me.Id)
+            {
+                <div class="switch-login-note">Runs with @(Agent.LoginOwnerName)'s login. You can continue with one of your own.</div>
+            }
             @foreach (var harness in _harnesses.Where(h => Agent.RunnerHarnessIds.Contains(h.Id)))
             {
                 <div class="switch-harness harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</div>
@@ -26,12 +32,12 @@
                     var accounts = _accounts.Where(a => a.HarnessId == harness.Id).ToList();
                     @foreach (var account in accounts)
                     {
-                        @Option(harness, account, account.Name + (account.IsDefault ? " (default)" : ""))
+                        @Option(harness, account, account.Name + (account.IsDefault && IsOwner ? " (default)" : ""))
                     }
 
                     @if (accounts.Count == 0)
                     {
-                        <a class="switch-option switch-connect" href="settings">Connect an account in Settings → Accounts</a>
+                        <a class="switch-option switch-connect" href="settings">Connect a login in My settings → Harness logins</a>
                     }
                 }
             }
@@ -49,26 +55,38 @@
 
     private List<AccountDto> _accounts = [];
     private List<HarnessDto> _harnesses = [];
+    private CurrentUserDto? _me;
     private bool _open;
     private bool _busy;
+
+    private bool IsOwner => Agent.Access == AgentAccess.Owner;
 
     private string CurrentLabel
     {
         get
         {
-            var harness = _harnesses.FirstOrDefault(h => h.Id == Agent.HarnessId)?.DisplayName ?? Agent.HarnessId;
-            return CurrentAccount is { } account ? $"{harness} · {account.Name}" : harness;
+            var harness = _harnesses.FirstOrDefault(h => h.Id == Agent.HarnessId);
+            var name = harness?.DisplayName ?? Agent.HarnessId;
+            if (harness?.AccountSupport is null)
+            {
+                return name;
+            }
+
+            var login = Agent.AccountName ?? CurrentAccount?.Name ?? "default";
+            return _me is { } me && Agent.LoginOwnerId != me.Id ? $"{name} · {Agent.LoginOwnerName}'s {login}" : $"{name} · {login}";
         }
     }
 
-    /// <summary>The account the agent runs with: its own choice, or the harness's default.</summary>
-    private AccountDto? CurrentAccount =>
-        _accounts.FirstOrDefault(a => a.Id == Agent.AccountId) ?? _accounts.FirstOrDefault(a => a.HarnessId == Agent.HarnessId && a.IsDefault);
+    /// <summary>The user's own login the agent runs with: the one it was switched to, or (for its owner) their default.</summary>
+    private AccountDto? CurrentAccount => Agent.AccountId is { } id
+        ? _accounts.FirstOrDefault(a => a.Id == id)
+        : IsOwner ? _accounts.FirstOrDefault(a => a.HarnessId == Agent.HarnessId && a.IsDefault) : null;
 
     protected override async Task OnInitializedAsync()
     {
         _harnesses = (await Api.InfoAsync()).Harnesses.ToList();
         _accounts = await Api.ListAccountsAsync();
+        _me = await Me.GetAsync();
     }
 
     private async Task OnOpenChangedAsync()
@@ -101,6 +119,10 @@
             ? $"The agent's harness is stopped and the conversation moves to {harness.DisplayName}: your messages, the answers and what the tools did carry over as text, "
               + "the model's hidden thinking stays behind. It keeps working in the same folder, with the files as they are. This takes a few seconds; the full conversation stays in the Manager."
             : $"{harness.DisplayName} restarts with the account '{account?.Name}' and resumes the conversation.";
+        if (!IsOwner && account is not null)
+        {
+            message += $" It then runs with your login, also when {Agent.OwnerName} or others prompt it.";
+        }
         var confirmed = await Dialogs.ShowMessageBoxAsync($"Continue '{Agent.Name}' with {target}?", message, yesText: "Continue", cancelText: "Cancel");
         if (confirmed != true)
         {

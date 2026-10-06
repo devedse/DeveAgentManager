@@ -164,6 +164,8 @@ public sealed record AgentDto(
     int? ExitCode,
     Guid? AccountId,
     string? AccountName,
+    Guid LoginOwnerId,
+    string LoginOwnerName,
     DateTime CreatedAt,
     DateTime UpdatedAt,
     long? IconVersion = null,
@@ -183,6 +185,8 @@ public sealed record AgentIconChoicesDto(IReadOnlyList<AgentIconImageDto> Images
 public sealed record SetAgentIconRequest(string? Path, bool Automatic = false);
 
 /// <param name="Access">What the signed-in user may do with it.</param>
+/// <param name="WorkspaceAccess">What they may do with the agent whose workspace it is in: with read-write access, they pick it
+/// from the agent's sessions.</param>
 public sealed record SessionDto(
     Guid Id,
     Guid OwnerId,
@@ -204,6 +208,7 @@ public sealed record SessionDto(
     DateTime? LastSyncedAt,
     Guid? WorkspaceAgentId = null,
     string? WorkspaceName = null,
+    AgentAccess WorkspaceAccess = AgentAccess.None,
     long SourceSize = 0,
     long SavedSize = 0,
     long TotalSize = 0);

@@ -4,7 +4,7 @@ using Microsoft.JSInterop;
 namespace DeveAgentManager.Client.Services;
 
 /// <summary>
-/// Light or dark (Settings → Appearance), kept per browser. "system" follows the device, also when it changes (e.g. at
+/// Light or dark (My settings → Appearance), kept per browser. "system" follows the device, also when it changes (e.g. at
 /// night). The page's own colors switch in CSS (terminal.js sets data-theme); this tells MudBlazor.
 /// </summary>
 public sealed class ThemeService(IJSRuntime js)

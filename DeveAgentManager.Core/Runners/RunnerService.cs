@@ -88,7 +88,7 @@ public sealed partial class RunnerService(
         .Include(r => r.Owner).Include(r => r.Members).ThenInclude(m => m.User)
         .Include(r => r.Agents).ThenInclude(a => a.Shares)
         .Include(r => r.Agents).ThenInclude(a => a.Owner)
-        .Include(r => r.Agents).ThenInclude(a => a.Account);
+        .Include(r => r.Agents).ThenInclude(a => a.Account).ThenInclude(a => a!.Owner);
 
     /// <summary>The operations that ran on a Runner, newest first.</summary>
     public async Task<List<RunnerActivity>> ListActivityAsync(Guid runnerId, CancellationToken cancellationToken = default)

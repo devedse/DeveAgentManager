@@ -2,6 +2,7 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
 @inject NavigationManager Navigation
+@inject SignedInUser Me
 
 <PageTitle>@(_runner?.Name ?? "Runner") · DeveAgentManager</PageTitle>
 
@@ -21,6 +22,7 @@
         var provider = _info?.Providers.FirstOrDefault(p => p.Id == _runner.ProviderId);
         var status = _runner.Status;
         var ready = _runner.State == RunnerState.Ready && operation is null;
+        var manage = _runner.Access >= RunnerAccess.Manage;
 
         <PageHeader Title="@_runner.Name" Overline="Runner" BackHref="runners">
             <TitleContent>
@@ -36,7 +38,7 @@
                 {
                     <MudButton Href="@($"runners/{_runner.Id}/vscode")" Variant="Variant.Outlined" StartIcon="@(Tool("vscode")?.Icon ?? Icons.Material.Rounded.Code)" Disabled="!ready">VS Code</MudButton>
                 }
-                @if (provider?.Capabilities.CanStartStop == true)
+                @if (manage && provider?.Capabilities.CanStartStop == true)
                 {
                     @if (_runner.State is RunnerState.Stopped or RunnerState.Error)
                     {
@@ -67,13 +69,13 @@
                     <div class="progress-title">@(operation ?? StateStyles.For(_runner.State).Text)...</div>
                     <div class="progress-text">@(_runner.StateMessage ?? "Working")</div>
                 </div>
-                @if (operation is not null && operation != "Deleting")
+                @if (manage && operation is not null && operation != "Deleting")
                 {
                     <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => RunAsync(() => Api.CancelOperationAsync(RunnerId))">Cancel</MudButton>
                 }
             </div>
         }
-        else if (_runner.State == RunnerState.Ready && _runner.SetupVersion < _info?.SetupVersion)
+        else if (manage && _runner.State == RunnerState.Ready && _runner.SetupVersion < _info?.SetupVersion)
         {
             <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4" Dense="true">
                 This Runner was set up with setup script version @_runner.SetupVersion; the current version is @_info!.SetupVersion.
@@ -131,7 +133,11 @@
                         }
                     </div>
                 }
-                <div class="panel mb-4"><RunnerTimeZoneEditor RunnerId="RunnerId" /></div>
+                @if (_user is not null)
+                {
+                    <RunnerAccessPanel Runner="_runner" User="_user" />
+                }
+                <div class="panel mb-4"><RunnerTimeZoneEditor RunnerId="RunnerId" ReadOnly="!manage" /></div>
                 @if (_runner.State == RunnerState.Ready && status is { CpuUsage: not null })
                 {
                     <div class="panel mb-4">
@@ -161,6 +167,10 @@
                         </MudTooltip>
                     </div>
                     <dl class="details">
+                        <dt>Owner</dt>
+                        <dd>@_runner.OwnerName</dd>
+                        <dt>Your access</dt>
+                        <dd>@AccessText(_runner.Access)</dd>
                         <dt>Provider</dt>
                         <dd>@(provider?.DisplayName ?? _runner.ProviderId)</dd>
                         @if (_runner.MachineId is not null && _runner.ProviderId != "existing")
@@ -195,6 +205,8 @@
                 </div>
 
                 @* Maintenance, out of the header: each operation says what it does. Progress shows in the banner and the setup log. *@
+                @if (manage)
+                {
                 <div class="panel">
                     <div class="panel-header">
                         <MudText Typo="Typo.h6">Operations</MudText>
@@ -206,7 +218,7 @@
                             <div class="operation">
                                 <MudIcon Icon="@(harness.Icon ?? Icons.Material.Rounded.Upgrade)" Class="operation-icon" />
                                 <div class="operation-text">
-                                    <div class="operation-name help-heading"><span>Update @harness.DisplayName</span><HelpTip Label="Maintenance operation">The latest @harness.DisplayName and its packages, then Settings → @harness.DisplayName (packages, model, settings).</HelpTip></div>
+                                    <div class="operation-name help-heading"><span>Update @harness.DisplayName</span><HelpTip Label="Maintenance operation">The latest @harness.DisplayName and its packages, then Manager settings → @harness.DisplayName (packages, model, settings).</HelpTip></div>
                                 </div>
                                 <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => UpdateHarnessAsync(harness)">Update</MudButton>
                             </div>
@@ -235,7 +247,7 @@
                         <div class="operation">
                             <MudIcon Icon="@Icons.Material.Rounded.Build" Class="operation-icon" />
                             <div class="operation-text">
-                                <div class="operation-name help-heading"><span>Re-run setup</span><HelpTip Label="Re-run setup">Everything again: tools, tmux and git config, the Setup Profile, harnesses and their packages. Safe to repeat.</HelpTip></div>
+                                <div class="operation-name help-heading"><span>Re-run setup</span><HelpTip Label="Re-run setup">Everything again: tools, tmux and git config, the shared Setup Profile, harnesses and their packages, and each person's own git identity, GitHub token, environment and SSH keys. Safe to repeat.</HelpTip></div>
                                 <div class="operation-description">@SetupVersionText</div>
                             </div>
                             <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="operation is not null || _runner.State == RunnerState.Stopped" OnClick="RerunSetupAsync">Run</MudButton>
@@ -248,16 +260,20 @@
                             </div>
                             <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_runner.HostKeyFingerprint is null" OnClick="ForgetHostKeyAsync">Forget</MudButton>
                         </div>
-                        <div class="operation operation-danger">
-                            <MudIcon Icon="@Icons.Material.Rounded.Delete" Class="operation-icon" />
-                            <div class="operation-text">
-                                <div class="operation-name">Delete Runner</div>
-                                <div class="operation-description">Stops its agents and removes it from the Manager@(provider?.Capabilities.CanDestroy == true ? ", optionally with the VM" : ""). Conversations are kept.</div>
+                        @if (_runner.Access >= RunnerAccess.Owner)
+                        {
+                            <div class="operation operation-danger">
+                                <MudIcon Icon="@Icons.Material.Rounded.Delete" Class="operation-icon" />
+                                <div class="operation-text">
+                                    <div class="operation-name">Delete Runner</div>
+                                    <div class="operation-description">Stops everyone's agents on it and removes it from the Manager@(provider?.Capabilities.CanDestroy == true ? ", optionally with the VM" : ""). Conversations are kept.</div>
+                                </div>
+                                <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" Disabled="operation is not null" OnClick="DeleteAsync">Delete</MudButton>
                             </div>
-                            <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" Disabled="operation is not null" OnClick="DeleteAsync">Delete</MudButton>
-                        </div>
+                        }
                     </div>
                 </div>
+                }
             </MudItem>
         </MudGrid>
     }
@@ -268,6 +284,7 @@
     public Guid RunnerId { get; set; }
 
     private ManagerInfoDto? _info;
+    private CurrentUserDto? _user;
     private RunnerDto? _runner;
     private DesktopStatusDto? _desktop;
     private DateTime _desktopReadAt;
@@ -307,6 +324,7 @@
     protected override async Task LoadAsync()
     {
         _info ??= await Api.InfoAsync();
+        _user = await Me.GetAsync();
         _runner = await Api.GetRunnerAsync(RunnerId);
         if (_runner?.Kind == RunnerKind.Desktop && DateTime.UtcNow - _desktopReadAt >= TimeSpan.FromSeconds(15))
             await RefreshDesktopAsync();
@@ -317,6 +335,13 @@
             _tabChosen = true;
         }
     }
+
+    private static string AccessText(RunnerAccess access) => access switch
+    {
+        RunnerAccess.Owner => "Owner (or runner manager): everything",
+        RunnerAccess.Manage => "Manage",
+        _ => "Use: your own agents, the shell, VS Code and the desktop",
+    };
 
     private HarnessDto Harness(string harnessId) =>
         _info?.Harnesses.FirstOrDefault(h => h.Id == harnessId) ?? new HarnessDto(harnessId, harnessId, "", false, false, null, null);
@@ -340,7 +365,7 @@
         var running = _runner!.Agents.Count(a => a.State == AgentState.Running);
         var confirmed = await Dialogs.ShowMessageBoxAsync(
             $"Re-run setup on '{_runner.Name}'?",
-            "Everything is installed and configured again: base packages, tmux and git config, the Setup Profile (variables, files, script), the harnesses and tools in their latest version, and the harnesses' packages. Each step is safe to repeat."
+            "Everything is installed and configured again: base packages, tmux and git config, the shared Setup Profile (files, script), the harnesses and tools in their latest version, the harnesses' packages, and each person's own git identity, GitHub token, environment and SSH keys. Each step is safe to repeat."
             + (_runner.Kind == RunnerKind.Desktop ? " Desktop autologin and UI tools are configured too. An already logged-in desktop is left running; the login screen may restart to apply autologin." : "")
             + (running > 0 ? $" The {running} running {(running == 1 ? "agent keeps" : "agents keep")} running; restart {(running == 1 ? "it" : "them")} afterwards to use updated harnesses and packages." : ""),
             yesText: "Re-run setup", cancelText: "Cancel");
@@ -355,7 +380,7 @@
         var running = _runner!.Agents.Count(a => a.State == AgentState.Running && a.HarnessId == harness.Id);
         var confirmed = await Dialogs.ShowMessageBoxAsync(
             $"Update {harness.DisplayName} on '{_runner.Name}'?",
-            $"Installs the latest {harness.DisplayName}, updates its packages, and applies Settings → {harness.DisplayName} (packages added and removed, model, settings, keybindings). The rest of the setup is skipped."
+            $"Installs the latest {harness.DisplayName}, updates its packages, and applies Manager settings → {harness.DisplayName} (packages added and removed, model, settings, keybindings). The rest of the setup is skipped."
             + (running > 0 ? $" The {running} running {(running == 1 ? "agent keeps" : "agents keep")} the old version until {(running == 1 ? "it is" : "they are")} restarted." : ""),
             yesText: "Update", cancelText: "Cancel");
         if (confirmed == true)

@@ -4,32 +4,6 @@ using Microsoft.Extensions.Logging;
 
 namespace DeveAgentManager.Core.Users;
 
-/// <summary>The actions the audit log records.</summary>
-public static class AuditActions
-{
-    public const string SignedIn = "signed-in";
-    public const string SignInFailed = "sign-in-failed";
-    public const string SignInLocked = "sign-in-locked";
-    public const string PasswordChanged = "password-changed";
-    public const string UserCreated = "user-created";
-    public const string UserUpdated = "user-updated";
-    public const string UserPasswordReset = "user-password-reset";
-    public const string UserDeleted = "user-deleted";
-    public const string AdminPasswordReset = "admin-password-reset";
-    public const string RunnerCreated = "runner-created";
-    public const string RunnerDeleted = "runner-deleted";
-    public const string RunnerOwnerChanged = "runner-owner-changed";
-    public const string RunnerAccessChanged = "runner-access-changed";
-    public const string RunnerAccessRemoved = "runner-access-removed";
-    public const string RunnerPasswordViewed = "runner-password-viewed";
-    public const string RunnerPasswordChanged = "runner-password-changed";
-    public const string RunnerKeysOnlyChanged = "runner-keys-only-changed";
-    public const string AgentShared = "agent-shared";
-    public const string AgentUnshared = "agent-unshared";
-    public const string SessionShared = "session-shared";
-    public const string SessionUnshared = "session-unshared";
-}
-
 /// <summary>
 /// Records what happened to users, access, shares and Runner passwords, for user managers to read. Keeps the most
 /// recent <see cref="Kept"/> entries. Recording never fails the action it records.

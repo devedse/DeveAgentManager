@@ -2,11 +2,12 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
 @inject NavigationManager Navigation
+@inject SignedInUser Me
 
 <PageTitle>Sessions · DeveAgentManager</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page">
-    <PageHeader Title="Sessions" Help="Every agent's conversation, stored by the Manager. It stays after the agent or its Runner is gone, and can be continued on any Runner. Sizes are synced file sizes, including saved backups, not the model's context window.">
+    <PageHeader Title="Sessions" Help="Your conversations and the ones shared with you, stored by the Manager. It stays after the agent or its Runner is gone, and can be continued on any Runner. Sizes are synced file sizes, including saved backups, not the model's context window.">
         <Actions>
             <MudFileUpload T="IBrowserFile" FilesChanged="ImportAsync" Accept=".jsonl,.json" MaximumFileCount="1">
                 <CustomContent Context="upload">
@@ -22,6 +23,14 @@
             <div class="filter-bar">
                 <MudTextField @bind-Value="_search" Immediate="true" Placeholder="Search sessions" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Rounded.Search"
                               Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Class="filter-search" />
+                @if (_sessions.Any(s => s.Access != SessionAccess.Owner))
+                {
+                    <MudChipSet T="string" @bind-SelectedValue="_whose" SelectionMode="SelectionMode.SingleSelection" CheckMark="false" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                        <MudChip Value="@("all")" Default="true">All @_sessions.Count</MudChip>
+                        <MudChip Value="@("mine")">Mine @_sessions.Count(s => s.Access == SessionAccess.Owner)</MudChip>
+                        <MudChip Value="@("shared")">Shared with me @_sessions.Count(s => s.Access != SessionAccess.Owner)</MudChip>
+                    </MudChipSet>
+                }
             </div>
         }
 
@@ -38,12 +47,12 @@
                     var first = group.First();
                     <div class="session-group-heading">
                         <strong>@(first.WorkspaceName ?? first.RepositoryUrl ?? "Imported sessions")</strong>
-                        <span> · @group.Count() sessions</span>
-                        @if (first.WorkspaceAgentId is { } workspace)
+                        <span> · @group.Count() @(group.Count() == 1 ? "session" : "sessions")</span>
+                        @if (first.WorkspaceAgentId is { } workspace && first.WorkspaceAccess >= AgentAccess.Write)
                         {
                             <MudButton Size="Size.Small" OnClick="() => OpenWorkspaceAsync(workspace)">Manage sessions</MudButton>
                         }
-                        <div class="list-subtitle">@first.RepositoryUrl · @first.RunnerName · @first.WorkingDirectory</div>
+                        <div class="list-subtitle">@string.Join(" · ", new[] { first.RepositoryUrl, first.RunnerName, first.WorkingDirectory }.Where(part => !string.IsNullOrEmpty(part)))</div>
                     </div>
                     @foreach (var session in group.OrderByDescending(s => s.AgentId != null).ThenByDescending(s => s.UpdatedAt))
                     {
@@ -60,7 +69,14 @@
                             }
                             <div class="list-main">
                                 <div class="list-title">@session.Title@(session.AgentId is not null ? " · Active" : "")</div>
-                                <div class="list-subtitle">@SessionSize.Text(session)</div>
+                                <div class="list-subtitle">
+                                    @* Before the size, so a long title can't push it out of sight. *@
+                                    @if (session.Access != SessionAccess.Owner)
+                                    {
+                                        <span class="account-badge account-badge-lead" title="@($"{session.OwnerName}'s conversation, shared with you read-only")">@session.OwnerName</span>
+                                    }
+                                    @SessionSize.Text(session)
+                                </div>
                                 <div class="list-subtitle">
                                     @if (session.Agent is { } agent)
                                     {
@@ -89,21 +105,27 @@
                             <span class="list-time">@session.UpdatedAt.Humanize()</span>
                         </div>
                         <div class="agent-row-actions">
-                            @if (session.Agent is null)
-                            {
-                                <MudTooltip Text="Continue on a Runner">
-                                    <MudIconButton Icon="@Icons.Material.Rounded.PlayArrow" Color="Color.Success" Size="Size.Small" OnClick="() => ContinueAsync(session)" />
-                                </MudTooltip>
-                            }
-                            else
+                            @if (session.Agent is { Access: >= AgentAccess.Read })
                             {
                                 <MudTooltip Text="Open the agent">
                                     <MudIconButton Href="@($"agents/{session.AgentId}")" Icon="@Icons.Material.Rounded.Terminal" Color="Color.Primary" Size="Size.Small" />
                                 </MudTooltip>
                             }
+                            else if (ContinueText(session) is { } continueText)
+                            {
+                                <MudTooltip Text="@continueText">
+                                    <MudIconButton Icon="@Icons.Material.Rounded.PlayArrow" Color="Color.Success" Size="Size.Small" OnClick="() => ContinueAsync(session)" />
+                                </MudTooltip>
+                            }
                             <SessionExportMenu SessionId="session.Id" Icon="true" />
-                            <MudIconButton Icon="@Icons.Material.Rounded.Edit" Size="Size.Small" aria-label="Rename session" OnClick="() => RenameAsync(session)" />
-                            <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Size="Size.Small" aria-label="Delete session" Disabled="@(session.AgentId != null)" OnClick="() => DeleteAsync(session)" />
+                            <MudTooltip Text="@(session.Access == SessionAccess.Owner ? "Share" : "Sharing")">
+                                <MudIconButton Icon="@(session.Access == SessionAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" Size="Size.Small" OnClick="() => ShareAsync(session)" />
+                            </MudTooltip>
+                            @if (session.Access == SessionAccess.Owner)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Rounded.Edit" Size="Size.Small" aria-label="Rename session" OnClick="() => RenameAsync(session)" />
+                                <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Size="Size.Small" aria-label="Delete session" Disabled="@(session.AgentId != null)" OnClick="() => DeleteAsync(session)" />
+                            }
                         </div>
                     </div>
                 }
@@ -116,13 +138,31 @@
 @code {
     private List<SessionDto> _sessions = [];
     private string? _search;
+    private string? _whose = "all";
     private bool _importing;
 
-    private IEnumerable<SessionDto> Filtered => string.IsNullOrWhiteSpace(_search)
-        ? _sessions
-        : _sessions.Where(s => s.Title.Contains(_search, StringComparison.OrdinalIgnoreCase)
-                               || (s.RepositoryUrl?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
-                               || (s.Agent?.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+    private IEnumerable<SessionDto> Filtered => _sessions
+        .Where(s => _whose switch
+        {
+            "mine" => s.Access == SessionAccess.Owner,
+            "shared" => s.Access != SessionAccess.Owner,
+            _ => true,
+        })
+        .Where(s => string.IsNullOrWhiteSpace(_search)
+                    || s.Title.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                    || (s.RepositoryUrl?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (s.Agent?.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || s.OwnerName.Contains(_search, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// How the user can continue a conversation that isn't running where they can open it, or null when they can't: in its
+    /// workspace with read-write access to that agent, or else in a new agent of their own (a copy, for someone else's).
+    /// </summary>
+    public static string? ContinueText(SessionDto session) =>
+        session.WorkspaceAgentId is not null && session.WorkspaceAccess >= AgentAccess.Write ? "Continue in its workspace"
+        : session.Access != SessionAccess.Owner ? "Continue a copy on a Runner"
+        : session.WorkspaceAgentId is null ? "Continue on a Runner"
+        : null;
 
     protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.Kind is ManagerEventKind.SessionChanged or ManagerEventKind.SessionRemoved or ManagerEventKind.AgentChanged or ManagerEventKind.AgentRemoved;
 
@@ -154,8 +194,17 @@
 
     private async Task ContinueAsync(SessionDto session)
     {
-        if (session.WorkspaceAgentId is { } workspace) await OpenWorkspaceAsync(workspace);
+        if (session.WorkspaceAgentId is { } workspace && session.WorkspaceAccess >= AgentAccess.Write) await OpenWorkspaceAsync(workspace);
         else await Dialogs.ShowAsync<NewAgentDialog>("Continue session", new DialogParameters<NewAgentDialog> { { d => d.ContinueSession, session } });
+    }
+
+    private async Task ShareAsync(SessionDto session)
+    {
+        var dialog = await Dialogs.ShowAsync<ShareDialog>(session.Access == SessionAccess.Owner ? $"Share {session.Title}" : $"{session.OwnerName}'s {session.Title}",
+            new DialogParameters<ShareDialog> { { d => d.Session, session }, { d => d.Me, await Me.GetAsync() } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        await dialog.Result;
+        await ReloadAsync();
     }
     private async Task OpenWorkspaceAsync(Guid workspace)
     {

@@ -130,6 +130,8 @@ public sealed class DtoMapper(
         agent.ExitCode,
         agent.AccountId,
         agent.Account?.Name,
+        agent.Account?.OwnerId ?? agent.OwnerId,
+        (agent.Account is { } account ? account.Owner : agent.Owner)?.DisplayName ?? "",
         agent.CreatedAt,
         agent.UpdatedAt,
         agent.IconVersion,
@@ -141,7 +143,9 @@ public sealed class DtoMapper(
     /// <summary>A conversation loaded with its owner, shares, agent and workspace agent (see SessionService).</summary>
     public static SessionDto Session(StoredSession session, CurrentUser user)
     {
-        var workspace = session.WorkspaceAgent is { } owner ? AccessControl.ForAgent(user, owner.OwnerId, owner.Shares, RunnerAccess.None) : AgentAccess.None;
+        var workspace = session.WorkspaceAgent is { } owner
+            ? AccessControl.ForAgent(user, owner.OwnerId, owner.Shares, owner.Runner is { } runner ? AccessControl.ForRunner(user, runner.OwnerId, runner.Members) : RunnerAccess.None)
+            : AgentAccess.None;
         return new(
             session.Id,
             session.OwnerId,
@@ -163,6 +167,7 @@ public sealed class DtoMapper(
             session.LastSyncedAt,
             session.WorkspaceAgentId,
             session.WorkspaceAgent?.Name,
+            workspace,
             session.SourceSize,
             session.SavedSize,
             session.TotalSize);
