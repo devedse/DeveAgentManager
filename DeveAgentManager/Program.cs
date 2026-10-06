@@ -56,9 +56,17 @@ await app.Services.GetRequiredService<UserService>().EnsureAdminAsync();
 await app.Services.GetRequiredService<UserSettingsStore>().MoveSettingsFromBeforeUsersAsync();
 await app.Services.GetRequiredService<DeveAgentManager.Core.Sessions.SessionService>().BackfillMessageTimesAsync();
 
-if (!string.IsNullOrWhiteSpace(app.Configuration["RUNNER_PASSWORD"]))
+// Settings from before users existed: say so, instead of silently ignoring them.
+foreach (var (setting, instead) in new[]
 {
-    app.Logger.LogWarning("RUNNER_PASSWORD is no longer used: every Runner gets a password of its own (shown on its page). Remove it from the compose file.");
+    ("RUNNER_PASSWORD", "every Runner gets a password of its own (shown on its page)"),
+    ("GITHUB_PAT", "everyone enters their own GitHub token under My settings → Git and GitHub"),
+})
+{
+    if (!string.IsNullOrWhiteSpace(app.Configuration[setting]))
+    {
+        app.Logger.LogWarning("{Setting} is no longer used: {Instead}. Remove it from the compose file.", setting, instead);
+    }
 }
 
 app.UseForwardedHeaders();

@@ -75,7 +75,7 @@ internal static class SettingsEndpoints
         {
             var compose = await store.ComposeSettingsAsync(user.Id, ct);
             return new MySettingsDto(await store.GetProfileAsync(user.Id, ct), await store.GetGitHubTokenAsync(user.Id, ct) is not null,
-                compose.GitHubToken is not null, compose.GitUserName is not null || compose.GitUserEmail is not null);
+                compose.GitUserName is not null || compose.GitUserEmail is not null);
         }).ForAnyUser();
 
         // Their Runners get the change in the background (and before their next agent or shell starts there).

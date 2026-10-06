@@ -42,23 +42,16 @@
                             <HelpTip Label="GitHub token">Your agents and shells clone and push with it. Prefer a fine-grained token limited to the repositories your agents may work on.
                             Only yours: people you share a Runner with don't push with it, and without a token nobody else's is used.</HelpTip></div>
                         <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">Agents on the Runners you use can read this token, and so can the people you share those Runners with. Limit its repository access.</MudText>
-                        @if (_settings.GitHubTokenFromCompose)
-                        {
-                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">Set with <code>GITHUB_PAT</code> in the compose file.</MudAlert>
-                        }
-                        else
-                        {
-                            <div class="form-row form-row-center">
-                                <MudTextField @bind-Value="_token" Label="Token" Placeholder="@(_settings.HasGitHubToken ? "•••••••• (saved; enter a new one to replace it)" : "github_pat_...")" Variant="Variant.Outlined" Margin="Margin.Dense"
-                                              InputType="InputType.Password" Class="flex-grow-1 mono-input" Immediate="true"
-                                              HelperText="@TokenHint" Error="@TokenLooksWrong" ErrorText="@TokenHint" />
-                                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving || string.IsNullOrWhiteSpace(_token)" OnClick="() => SaveTokenAsync(_token)">Save</MudButton>
-                                @if (_settings.HasGitHubToken)
-                                {
-                                    <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="_saving" OnClick="() => SaveTokenAsync(null)">Remove</MudButton>
-                                }
-                            </div>
-                        }
+                        <div class="form-row form-row-center">
+                            <MudTextField @bind-Value="_token" Label="Token" Placeholder="@(_settings.HasGitHubToken ? "•••••••• (saved; enter a new one to replace it)" : "github_pat_...")" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                          InputType="InputType.Password" Class="flex-grow-1 mono-input" Immediate="true"
+                                          HelperText="@TokenHint" Error="@TokenLooksWrong" ErrorText="@TokenHint" />
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving || string.IsNullOrWhiteSpace(_token)" OnClick="() => SaveTokenAsync(_token)">Save</MudButton>
+                            @if (_settings.HasGitHubToken)
+                            {
+                                <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="_saving" OnClick="() => SaveTokenAsync(null)">Remove</MudButton>
+                            }
+                        </div>
                     </div>
                 }
             </MudTabPanel>

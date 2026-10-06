@@ -166,7 +166,6 @@ Everything is set with environment variables in the compose file.
 | `TEMPLATE_HEADLESS_VMID` / `TEMPLATE_DESKTOP_VMID` | | Template VMIDs, e.g. `10100` and `10120`. |
 | `RUNNER_USERNAME` | `remoteman` | Account created on new VMs by cloud-init. Each Runner gets a random password of its own, which whoever manages the Runner sees on its page. (`RUNNER_PASSWORD` is no longer used.) |
 | `RUNNER_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` | `4` / `8192` / `64` | Default size in the New Runner dialog. |
-| `GITHUB_PAT` | | The `ADMIN_USERNAME` user's token for cloning and pushing private repositories. Everyone else (or that user, without it) sets theirs under My settings. |
 | `GIT_USER_NAME` / `GIT_USER_EMAIL` | | The `ADMIN_USERNAME` user's git identity on Runners. Everyone else sets theirs under My settings. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |
 | `EDITOR_PORT` | `8081` | The port that serves VS Code, and nothing else. Publish it next to 8080. |
@@ -219,7 +218,7 @@ means re-entering those secrets.
   connection or VS Code closes when access to it ends. Requests that change something
   must carry the Portal's `X-DAM-Request` header (other sites can't send it without CORS, which the Manager doesn't
   allow) and, like the hub and terminal WebSockets, come from the Manager's own origin. The API never returns a secret:
-  account logins, Runner passwords and the GitHub token stay on the Manager. A login terminal only names the harness;
+  account logins, Runner passwords and GitHub tokens stay on the Manager. A login terminal only names the harness;
   the Manager runs the harness's login itself and saves what it produces.
 - **VS Code** runs as code-server on the Runner, on its loopback only (`127.0.0.1:13337`) with a password of its own
   (in `~/.deveagentmanager/code-server/config.yaml`, mode 600), so other users of the machine can't use it. The

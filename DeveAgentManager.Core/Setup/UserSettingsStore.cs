@@ -10,8 +10,8 @@ namespace DeveAgentManager.Core.Setup;
 
 /// <summary>
 /// Each user's own settings (My settings): their <see cref="UserProfile"/> and GitHub token, stored encrypted per user.
-/// GITHUB_PAT, GIT_USER_NAME and GIT_USER_EMAIL in the compose file are the settings of the user named ADMIN_USERNAME:
-/// they win over what that user enters, and are shown read-only.
+/// GIT_USER_NAME and GIT_USER_EMAIL in the compose file are the git identity of the user named ADMIN_USERNAME: they win
+/// over what that user enters, and are shown read-only.
 /// </summary>
 public sealed class UserSettingsStore(
     IDbContextFactory<ManagerDbContext> dbFactory,
@@ -28,7 +28,7 @@ public sealed class UserSettingsStore(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var username = await db.Users.Where(u => u.Id == userId).Select(u => u.Username).FirstOrDefaultAsync(cancellationToken);
         return string.Equals(username, options.AdminUsername, StringComparison.OrdinalIgnoreCase)
-            ? new ComposeUserSettings(options.GitUserName, options.GitUserEmail, options.GitHubPat)
+            ? new ComposeUserSettings(options.GitUserName, options.GitUserEmail)
             : ComposeUserSettings.None;
     }
 
@@ -49,15 +49,10 @@ public sealed class UserSettingsStore(
     }
 
     public async Task<string?> GetGitHubTokenAsync(Guid userId, CancellationToken cancellationToken = default) =>
-        (await ComposeSettingsAsync(userId, cancellationToken)).GitHubToken ?? protector.Unprotect(await GetRawAsync(userId, GitHubTokenKey, cancellationToken));
+        protector.Unprotect(await GetRawAsync(userId, GitHubTokenKey, cancellationToken));
 
     public async Task SaveGitHubTokenAsync(Guid userId, string? token, CancellationToken cancellationToken = default)
     {
-        if ((await ComposeSettingsAsync(userId, cancellationToken)).GitHubToken is not null)
-        {
-            throw new InvalidOperationException("Your token is set with GITHUB_PAT in the compose file.");
-        }
-
         var clean = string.IsNullOrWhiteSpace(token) ? null : token.Trim();
         if (clean is not null && (clean.Any(char.IsWhiteSpace) || clean.Contains('@') || clean.Contains(':')))
         {
@@ -146,8 +141,8 @@ public sealed class UserSettingsStore(
     }
 }
 
-/// <summary>What the compose file sets for a user: GIT_USER_NAME, GIT_USER_EMAIL and GITHUB_PAT for the ADMIN_USERNAME user.</summary>
-public sealed record ComposeUserSettings(string? GitUserName, string? GitUserEmail, string? GitHubToken)
+/// <summary>What the compose file sets for a user: GIT_USER_NAME and GIT_USER_EMAIL for the ADMIN_USERNAME user.</summary>
+public sealed record ComposeUserSettings(string? GitUserName, string? GitUserEmail)
 {
-    public static readonly ComposeUserSettings None = new(null, null, null);
+    public static readonly ComposeUserSettings None = new(null, null);
 }

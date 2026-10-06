@@ -33,9 +33,7 @@ public sealed class ManagerOptions
 
     public int DefaultDiskGb { get; init; } = 64;
 
-    /// <summary>Set in compose; when empty it can be set in the Portal.</summary>
-    public string? GitHubPat { get; init; }
-
+    /// <summary>The ADMIN_USERNAME user's git identity (see UserSettingsStore).</summary>
     public string? GitUserName { get; init; }
 
     public string? GitUserEmail { get; init; }
@@ -78,7 +76,6 @@ public sealed class ManagerOptions
             DefaultCores = Int(configuration, "RUNNER_DEFAULT_CORES", 4),
             DefaultMemoryMb = Int(configuration, "RUNNER_DEFAULT_MEMORY_MB", 8192),
             DefaultDiskGb = Int(configuration, "RUNNER_DEFAULT_DISK_GB", 64),
-            GitHubPat = Value(configuration, "GITHUB_PAT"),
             GitUserName = Value(configuration, "GIT_USER_NAME"),
             GitUserEmail = Value(configuration, "GIT_USER_EMAIL"),
             EditorPort = Int(configuration, "EDITOR_PORT", 8081),
