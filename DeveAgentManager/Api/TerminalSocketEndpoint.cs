@@ -9,6 +9,7 @@ using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Ssh;
+using DeveAgentManager.Core.Users;
 using ImageUploader = System.Func<string, byte[], System.Threading.CancellationToken, System.Threading.Tasks.Task<string>>;
 
 namespace DeveAgentManager.Api;
@@ -18,22 +19,30 @@ namespace DeveAgentManager.Api;
 /// binary frames carry the terminal's data both ways; JSON text frames carry control (see <see cref="TerminalSocket"/>).
 /// <list type="bullet">
 /// <item><c>?kind=agent&amp;id=</c>: attached to an agent's tmux session. Joins watching when other screens are attached,
-/// and takes the size on its first real input (keys, not the terminal's own replies).</item>
-/// <item><c>?kind=shell&amp;id=</c>: a shell on a Runner.</item>
+/// and takes the size on its first real input (keys, not the terminal's own replies). People who can only read the agent
+/// get a read-only tmux client, and what they type or paste is dropped here as well.</item>
+/// <item><c>?kind=shell&amp;id=</c>: a shell on a Runner, with the user's own environment (Use access).</item>
 /// <item><c>?kind=login&amp;runner=&amp;harness=[&amp;account=][&amp;name=]</c>: a harness's subscription login. The Manager builds
-/// the command itself (the browser only names the harness) and saves what the login produced as an account.</item>
+/// the command itself (the browser only names the harness) and saves what the login produced as the user's login.</item>
 /// </list>
+/// A terminal closes when the user's access ends while it is open (see <see cref="OpenConnections"/>).
 /// </summary>
 public static partial class TerminalSocketEndpoint
 {
     private const string DoneMarker = "__DAM_LOGIN_OK__";
 
     public static void MapTerminalSocket(this IEndpointRouteBuilder app) =>
-        app.Map(TerminalSocket.Path, async (HttpContext context, TerminalService terminals, AgentService agents, AccountService accounts, RunnerService runners, ILoggerFactory loggers) =>
+        app.Map(TerminalSocket.Path, async (HttpContext context, TerminalService terminals, AgentService agents, AccountService accounts, RunnerService runners,
+            AccessControl access, OpenConnections connections, ILoggerFactory loggers) =>
         {
             if (!context.WebSockets.IsWebSocketRequest)
             {
                 return Results.BadRequest("A WebSocket is needed.");
+            }
+
+            if (SignIn.UsableUser(context) is not { } user)
+            {
+                return Results.Unauthorized();
             }
 
             var query = context.Request.Query;
@@ -44,28 +53,71 @@ public static partial class TerminalSocketEndpoint
 
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
             var session = new TerminalSession(socket, logger);
+            // Ends the terminal when the user's access ends while it is open.
+            using var revoked = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+            var stamp = SignIn.SecurityStamp(context);
+            IDisposable Watch(Func<CurrentUser, CancellationToken, Task<bool>> stillAllowed) => connections.Register(user, stamp, stillAllowed, revoked.Cancel);
             try
             {
                 switch (kind)
                 {
                     case "agent" when Guid.TryParse(query["id"], out var agentId):
-                        await session.RunAsync(await terminals.OpenAgentAsync(agentId, columns, rows, context.RequestAborted), agentId, agents, login: null,
-                            (type, bytes, ct) => terminals.UploadImageAsync(agentId, null, type, bytes, ct), context.RequestAborted);
+                        var level = await access.AgentAsync(user, agentId, context.RequestAborted);
+                        if (level < AgentAccess.Read)
+                        {
+                            await session.CloseAsync(TerminalSocket.ClosedError, "Agent not found.");
+                            break;
+                        }
+
+                        var readOnly = level < AgentAccess.Write;
+                        var needed = readOnly ? AgentAccess.Read : AgentAccess.Write;
+                        using (Watch(async (current, ct) => await access.AgentAsync(current, agentId, ct) >= needed))
+                        {
+                            await session.RunAsync(await terminals.OpenAgentAsync(agentId, readOnly, columns, rows, context.RequestAborted), agentId, agents, login: null,
+                                readOnly ? null : (type, bytes, ct) => terminals.UploadImageAsync(agentId, null, type, bytes, ct), readOnly, revoked.Token);
+                        }
+
                         break;
                     case "shell" when Guid.TryParse(query["id"], out var runnerId):
-                        await session.RunAsync(await terminals.OpenShellAsync(runnerId, columns, rows, context.RequestAborted), null, agents, login: null,
-                            (type, bytes, ct) => terminals.UploadImageAsync(null, runnerId, type, bytes, ct), context.RequestAborted);
+                        if (await access.RunnerAsync(user, runnerId, context.RequestAborted) < RunnerAccess.Use)
+                        {
+                            await session.CloseAsync(TerminalSocket.ClosedError, "Runner not found.");
+                            break;
+                        }
+
+                        using (Watch(async (current, ct) => await access.RunnerAsync(current, runnerId, ct) >= RunnerAccess.Use))
+                        {
+                            await session.RunAsync(await terminals.OpenShellAsync(runnerId, user.Id, columns, rows, context.RequestAborted), null, agents, login: null,
+                                (type, bytes, ct) => terminals.UploadImageAsync(null, runnerId, type, bytes, ct), readOnly: false, revoked.Token);
+                        }
+
                         break;
                     case "login" when Guid.TryParse(query["runner"], out var runnerId):
-                        var login = await LoginWatcher.CreateAsync(runnerId, query["harness"].ToString(), Guid.TryParse(query["account"], out var accountId) ? accountId : null,
-                            query["name"].ToString(), accounts, runners, context.RequestAborted);
-                        // Wide, so a token is printed on one line (the harness's login command also sets it with stty).
-                        await session.RunAsync(await terminals.OpenCommandAsync(runnerId, login.Command, 500, rows, context.RequestAborted), null, agents, login,
-                            uploadImage: null, context.RequestAborted);
+                        var replacing = Guid.TryParse(query["account"], out var accountId) ? accountId : (Guid?)null;
+                        if (await access.RunnerAsync(user, runnerId, context.RequestAborted) < RunnerAccess.Use
+                            || replacing is { } own && !await access.OwnsAccountAsync(user, own, context.RequestAborted))
+                        {
+                            await session.CloseAsync(TerminalSocket.ClosedError, "Runner or login not found.");
+                            break;
+                        }
+
+                        var login = await LoginWatcher.CreateAsync(runnerId, query["harness"].ToString(), user.Id, replacing, query["name"].ToString(), accounts, runners, context.RequestAborted);
+                        using (Watch(async (current, ct) => await access.RunnerAsync(current, runnerId, ct) >= RunnerAccess.Use))
+                        {
+                            // Wide, so a token is printed on one line (the harness's login command also sets it with stty).
+                            await session.RunAsync(await terminals.OpenCommandAsync(runnerId, login.Command, 500, rows, context.RequestAborted), null, agents, login,
+                                uploadImage: null, readOnly: false, revoked.Token);
+                        }
+
                         break;
                     default:
                         await session.CloseAsync(TerminalSocket.ClosedError, "Unknown terminal.");
                         break;
+                }
+
+                if (revoked.IsCancellationRequested && !context.RequestAborted.IsCancellationRequested)
+                {
+                    await session.CloseAsync(TerminalSocket.ClosedError, "Your access to this ended.");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -86,12 +138,14 @@ public static partial class TerminalSocketEndpoint
         private readonly SemaphoreSlim _sending = new(1, 1);
         private string _closeReason = TerminalSocket.ClosedExited;
 
-        public async Task RunAsync(TerminalConnection connection, Guid? agentId, AgentService agents, LoginWatcher? login, ImageUploader? uploadImage, CancellationToken cancellationToken)
+        /// <param name="readOnly">Drops what the user types or pastes (the terminal is only watched).</param>
+        public async Task RunAsync(TerminalConnection connection, Guid? agentId, AgentService agents, LoginWatcher? login, ImageUploader? uploadImage, bool readOnly,
+            CancellationToken cancellationToken)
         {
             using (connection)
             {
                 var output = Task.Factory.StartNew(() => PumpOutputAsync(connection, login, cancellationToken), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
-                var input = PumpInputAsync(connection, agentId, agents, login is null, uploadImage, cancellationToken);
+                var input = PumpInputAsync(connection, agentId, agents, login is null, uploadImage, readOnly, cancellationToken);
                 if (await Task.WhenAny(output, input) == output)
                 {
                     // The terminal ended: say why, then close. The browser answers the close, which ends the input side.
@@ -150,7 +204,8 @@ public static partial class TerminalSocketEndpoint
             }
         }
 
-        private async Task PumpInputAsync(TerminalConnection connection, Guid? agentId, AgentService agents, bool forwardResize, ImageUploader? uploadImage, CancellationToken cancellationToken)
+        private async Task PumpInputAsync(TerminalConnection connection, Guid? agentId, AgentService agents, bool forwardResize, ImageUploader? uploadImage, bool readOnly,
+            CancellationToken cancellationToken)
         {
             var buffer = new byte[64 * 1024];
             var sizeClaimed = false;
@@ -193,6 +248,10 @@ public static partial class TerminalSocketEndpoint
                             // Stored while the terminal goes on; the answer names the image it is for.
                             _ = UploadImageAsync(uploadImage!, receiving.Id, receiving.ContentType, receiving.Bytes, cancellationToken);
                         }
+                    }
+                    else if (received.MessageType == WebSocketMessageType.Binary && readOnly)
+                    {
+                        // Watching only: keys never reach the terminal (the read-only tmux client would ignore them too).
                     }
                     else if (received.MessageType == WebSocketMessageType.Binary)
                     {
@@ -315,6 +374,7 @@ public static partial class TerminalSocketEndpoint
         private readonly StringBuilder _output = new();
         private readonly AccountService _accounts;
         private readonly Runner _runner;
+        private readonly Guid _ownerId;
         private readonly string _harnessId;
         private readonly Guid? _accountId;
         private readonly string _name;
@@ -323,10 +383,12 @@ public static partial class TerminalSocketEndpoint
         private readonly string _loginFolder;
         private bool _done;
 
-        private LoginWatcher(AccountService accounts, Runner runner, string harnessId, Guid? accountId, string name, string? tokenPattern, string? loginFile, string loginFolder, string command)
+        private LoginWatcher(AccountService accounts, Runner runner, Guid ownerId, string harnessId, Guid? accountId, string name, string? tokenPattern, string? loginFile,
+            string loginFolder, string command)
         {
             _accounts = accounts;
             _runner = runner;
+            _ownerId = ownerId;
             _harnessId = harnessId;
             _accountId = accountId;
             _name = name;
@@ -338,7 +400,10 @@ public static partial class TerminalSocketEndpoint
 
         public string Command { get; }
 
-        public static async Task<LoginWatcher> CreateAsync(Guid runnerId, string harnessId, Guid? accountId, string name, AccountService accounts, RunnerService runners, CancellationToken cancellationToken)
+        /// <param name="ownerId">Whose login it becomes.</param>
+        /// <param name="accountId">One of theirs to connect again, or null for a new one.</param>
+        public static async Task<LoginWatcher> CreateAsync(Guid runnerId, string harnessId, Guid ownerId, Guid? accountId, string name, AccountService accounts, RunnerService runners,
+            CancellationToken cancellationToken)
         {
             var support = accounts.GetHarness(harnessId).AccountSupport!;
             var runner = await runners.GetAsync(runnerId, cancellationToken) ?? throw new KeyNotFoundException("Runner not found.");
@@ -354,7 +419,7 @@ public static partial class TerminalSocketEndpoint
                 {support.LoginCommand} && printf '\n%s%s\n' {DoneMarker[..8]} {DoneMarker[8..]}
                 printf '\n(The login finished. You can close this window.)\n'; sleep 900
                 """;
-            return new LoginWatcher(accounts, runner, harnessId, accountId, name, support.TokenPattern, support.LoginFile, folder, command);
+            return new LoginWatcher(accounts, runner, ownerId, harnessId, accountId, name, support.TokenPattern, support.LoginFile, folder, command);
         }
 
         /// <summary>Returns the result once the login's credential was found and saved (or failed), else null.</summary>
@@ -397,7 +462,7 @@ public static partial class TerminalSocketEndpoint
                     return (true, "Connected again. Agents use the new login from their next start.");
                 }
 
-                var account = await _accounts.AddAsync(_harnessId, _name, AccountKind.Subscription, secret, cancellationToken);
+                var account = await _accounts.AddAsync(_ownerId, _harnessId, _name, AccountKind.Subscription, secret, cancellationToken);
                 return (true, $"Account '{account.Name}' connected.");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

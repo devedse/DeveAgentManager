@@ -4,6 +4,7 @@ using System.Text.Json;
 using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Agents;
+using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Setup;
@@ -36,6 +37,33 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
         return _info;
     }
+
+    // You
+
+    public Task<CurrentUserDto> MeAsync() => GetAsync<CurrentUserDto>("api/me");
+
+    public Task<MySettingsDto> GetMySettingsAsync() => GetAsync<MySettingsDto>("api/me/settings");
+
+    public Task<UserProfile> SaveMyProfileAsync(UserProfile profile) => SendAsync<UserProfile>(HttpMethod.Put, "api/me/settings/profile", profile);
+
+    public Task SaveGitHubTokenAsync(string? token) => SendAsync(HttpMethod.Put, "api/me/settings/github-token", new GitHubTokenRequest(token));
+
+    // Users
+
+    /// <summary>Everyone to share with or give access to.</summary>
+    public Task<List<UserSummaryDto>> ListUserDirectoryAsync() => GetAsync<List<UserSummaryDto>>("api/users/directory");
+
+    public Task<List<UserDto>> ListUsersAsync() => GetAsync<List<UserDto>>("api/users");
+
+    public Task<UserDto> CreateUserAsync(CreateUserRequest request) => SendAsync<UserDto>(HttpMethod.Post, "api/users", request);
+
+    public Task<UserDto> UpdateUserAsync(Guid userId, UpdateUserRequest request) => SendAsync<UserDto>(HttpMethod.Put, $"api/users/{userId}", request);
+
+    public Task ResetUserPasswordAsync(Guid userId, string password) => SendAsync(HttpMethod.Put, $"api/users/{userId}/password", new SetPasswordRequest(password));
+
+    public Task DeleteUserAsync(Guid userId, Guid transferTo) => SendAsync(HttpMethod.Delete, $"api/users/{userId}?transferTo={transferTo}");
+
+    public Task<List<AuditEventDto>> ListAuditAsync(int skip, int take) => GetAsync<List<AuditEventDto>>($"api/audit?skip={skip}&take={take}");
 
     // Runners
     public Task<List<SessionImageDto>> GetSessionImagesAsync(Guid sessionId) => GetAsync<List<SessionImageDto>>($"api/sessions/{sessionId}/images");
@@ -86,6 +114,22 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task InstallHarnessAsync(Guid runnerId, string harnessId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/harnesses/{Uri.EscapeDataString(harnessId)}/install");
 
+    public Task<List<RunnerMemberDto>> ListRunnerMembersAsync(Guid runnerId) => GetAsync<List<RunnerMemberDto>>($"api/runners/{runnerId}/members");
+
+    public Task SetRunnerAccessAsync(Guid runnerId, Guid userId, RunnerAccess access) =>
+        SendAsync(HttpMethod.Put, $"api/runners/{runnerId}/members/{userId}", new RunnerAccessRequest(access));
+
+    /// <summary>Takes someone's access away, or (for yourself) leaves the Runner.</summary>
+    public Task RemoveRunnerAccessAsync(Guid runnerId, Guid userId) => SendAsync(HttpMethod.Delete, $"api/runners/{runnerId}/members/{userId}");
+
+    public Task ChangeRunnerOwnerAsync(Guid runnerId, Guid userId) => SendAsync(HttpMethod.Put, $"api/runners/{runnerId}/owner", new ChangeOwnerRequest(userId));
+
+    public Task<RunnerPasswordDto> GetRunnerPasswordAsync(Guid runnerId) => GetAsync<RunnerPasswordDto>($"api/runners/{runnerId}/password");
+
+    public Task SetRunnerPasswordAsync(Guid runnerId, string password) => SendAsync(HttpMethod.Put, $"api/runners/{runnerId}/password", new SetPasswordRequest(password));
+
+    public Task SetKeysOnlyAsync(Guid runnerId, bool keysOnly) => SendAsync(HttpMethod.Put, $"api/runners/{runnerId}/keys-only", new KeysOnlyRequest(keysOnly));
+
     public Task<List<RunnerActivityDto>> ListRunnerActivityAsync(Guid runnerId) => GetAsync<List<RunnerActivityDto>>($"api/runners/{runnerId}/activity");
 
     public Task RefreshRunnerDetailsAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/refresh-details");
@@ -130,6 +174,14 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task<SessionDto?> GetAgentSessionAsync(Guid agentId) => FindAsync<SessionDto>($"api/agents/{agentId}/session");
 
+    public Task<List<AgentShareDto>> ListAgentSharesAsync(Guid agentId) => GetAsync<List<AgentShareDto>>($"api/agents/{agentId}/shares");
+
+    public Task ShareAgentAsync(Guid agentId, Guid userId, AgentAccess access) =>
+        SendAsync(HttpMethod.Put, $"api/agents/{agentId}/shares/{userId}", new ShareAgentRequest(access));
+
+    /// <summary>Ends a share, or (for yourself) leaves it.</summary>
+    public Task UnshareAgentAsync(Guid agentId, Guid userId) => SendAsync(HttpMethod.Delete, $"api/agents/{agentId}/shares/{userId}");
+
     // Sessions
 
     public Task<List<SessionDto>> ListSessionsAsync() => GetAsync<List<SessionDto>>("api/sessions");
@@ -163,6 +215,13 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task DeleteSessionAsync(Guid sessionId) => SendAsync(HttpMethod.Delete, $"api/sessions/{sessionId}");
 
+    public Task<List<SessionShareDto>> ListSessionSharesAsync(Guid sessionId) => GetAsync<List<SessionShareDto>>($"api/sessions/{sessionId}/shares");
+
+    public Task ShareSessionAsync(Guid sessionId, Guid userId) => SendAsync(HttpMethod.Put, $"api/sessions/{sessionId}/shares/{userId}");
+
+    /// <summary>Ends a share, or (for yourself) leaves it.</summary>
+    public Task UnshareSessionAsync(Guid sessionId, Guid userId) => SendAsync(HttpMethod.Delete, $"api/sessions/{sessionId}/shares/{userId}");
+
     // Accounts
 
     public Task<List<AccountDto>> ListAccountsAsync() => GetAsync<List<AccountDto>>("api/accounts");
@@ -189,8 +248,6 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     /// <summary>Starts applying a harness's configuration on its ready Runners; returns them. Results arrive as operations.</summary>
     public Task<OperationStartedDto> ApplyHarnessConfigAsync(string harnessId) =>
         SendAsync<OperationStartedDto>(HttpMethod.Post, $"api/settings/harnesses/{Uri.EscapeDataString(harnessId)}/apply");
-
-    public Task SaveGitHubPatAsync(string? pat) => SendAsync(HttpMethod.Put, "api/settings/github-pat", new GitHubPatRequest(pat));
 
     public Task<List<ProviderCheck>> CheckProviderAsync(string providerId) => GetAsync<List<ProviderCheck>>($"api/providers/{Uri.EscapeDataString(providerId)}/check");
 
@@ -251,7 +308,7 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {
-            // The login ran out: sign in again and come back here.
+            // The sign-in ran out (or was ended: a new password, disabled): sign in again and come back here.
             var returnUrl = "/" + navigation.ToBaseRelativePath(navigation.Uri);
             navigation.NavigateTo($"login?returnUrl={Uri.EscapeDataString(returnUrl)}", forceLoad: true);
             throw new ApiException("Signed out. Sign in again.", response.StatusCode);

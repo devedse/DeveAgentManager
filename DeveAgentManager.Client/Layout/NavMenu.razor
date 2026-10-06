@@ -1,4 +1,5 @@
 @inherits LiveComponent
+@inject SignedInUser Me
 
 <div class="nav-wrapper">
     <MudNavMenu Class="app-nav" Rounded="true" Margin="Margin.Dense" Color="Color.Primary">
@@ -39,7 +40,16 @@
             </div>
         </MudNavLink>
         <div class="nav-section">Manage</div>
-        <MudNavLink Href="settings" Icon="@Icons.Material.Rounded.Tune">Settings</MudNavLink>
+        <MudNavLink Href="settings" Icon="@Icons.Material.Rounded.Tune">My settings</MudNavLink>
+        @if (_user?.Has(UserRoles.SettingsManager) == true)
+        {
+            <MudNavLink Href="manager-settings" Icon="@Icons.Material.Rounded.SettingsApplications">Manager settings</MudNavLink>
+        }
+        @if (_user?.Has(UserRoles.UserManager) == true)
+        {
+            <MudNavLink Href="users" Icon="@Icons.Material.Rounded.Group">Users</MudNavLink>
+            <MudNavLink Href="audit" Icon="@Icons.Material.Rounded.Policy">Audit log</MudNavLink>
+        }
     </MudNavMenu>
 
     <div class="nav-footer">
@@ -52,11 +62,27 @@
     private int _runningAgents;
     private int _readyRunners;
     private List<AgentDto> _liveAgents = [];
+    private CurrentUserDto? _user;
 
     protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.Kind != ManagerEventKind.SettingsChanged;
 
+    protected override async Task OnInitializedAsync()
+    {
+        Me.Changed += OnUserChanged;
+        await base.OnInitializedAsync();
+    }
+
+    private void OnUserChanged() => _ = ReloadAsync();
+
+    public override void Dispose()
+    {
+        Me.Changed -= OnUserChanged;
+        base.Dispose();
+    }
+
     protected override async Task LoadAsync()
     {
+        _user = await Me.GetAsync();
         _version ??= (await Api.InfoAsync()).Version;
         var runners = await Api.ListRunnersAsync();
         _readyRunners = runners.Count(r => r.State == RunnerState.Ready);

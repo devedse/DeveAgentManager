@@ -80,7 +80,7 @@ public sealed class ProxmoxUsageTests
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
         await using (var db = await manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync(ct))
         {
-            db.Runners.Add(new Runner { Id = Machine.RunnerId, Name = "usage-runner", ProviderId = "proxmox",
+            db.Runners.Add(new Runner { OwnerId = User.BootstrapId, Id = Machine.RunnerId, Name = "usage-runner", ProviderId = "proxmox",
                 State = RunnerState.Ready, MachineId = Machine.MachineId, ProviderData = Machine.ProviderData,
                 Host = Machine.Host, Username = "test" });
             await db.SaveChangesAsync(ct);

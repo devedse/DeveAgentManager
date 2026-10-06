@@ -609,9 +609,9 @@ public sealed class AgentContinuationTests
             rig.Factory = new Factory(rig._path);
             await using var db = rig.Factory.CreateDbContext();
             await db.Database.EnsureCreatedAsync(Ct);
-            var runner = new Runner { Id = Guid.NewGuid(), Name = "runner", State = RunnerState.Ready };
+            var runner = new Runner { OwnerId = User.BootstrapId, Id = Guid.NewGuid(), Name = "runner", State = RunnerState.Ready };
             db.Runners.Add(runner);
-            db.Agents.Add(new Agent { Id = rig.Id, RunnerId = runner.Id, Name = "agent", HarnessId = "codex", HarnessSessionId = "session", State = AgentState.Running });
+            db.Agents.Add(new Agent { OwnerId = User.BootstrapId, Id = rig.Id, RunnerId = runner.Id, Name = "agent", HarnessId = "codex", HarnessSessionId = "session", State = AgentState.Running });
             await db.SaveChangesAsync(Ct);
             rig.Service = rig.NewService();
             return rig;

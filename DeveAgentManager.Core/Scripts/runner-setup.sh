@@ -5,10 +5,8 @@ set -euo pipefail
 
 DAM_DIR="$HOME/.deveagentmanager"
 mkdir -p "$DAM_DIR"
-# Non-secret values from the Manager (git identity etc.).
-if [ -f "$DAM_DIR/setup-vars.sh" ]; then
-  . "$DAM_DIR/setup-vars.sh"
-fi
+# The git identity came from here before each user had their own.
+rm -f "$DAM_DIR/setup-vars.sh"
 
 step() { printf '\n==> %s\n' "$*"; }
 
@@ -111,13 +109,12 @@ fi
 
 step "Configuring git"
 git config --global init.defaultBranch main
-if [ -n "${GIT_USER_NAME:-}" ]; then git config --global user.name "$GIT_USER_NAME"; fi
-if [ -n "${GIT_USER_EMAIL:-}" ]; then git config --global user.email "$GIT_USER_EMAIL"; fi
-if [ -f "$HOME/.git-credentials" ]; then
-  git config --global credential.helper store
-else
-  git config --global --unset credential.helper 2>/dev/null || true
-fi
+# Everyone's git identity and GitHub token are their own (~/.deveagentmanager/users/<id>/gitconfig, through
+# GIT_CONFIG_GLOBAL). The shared settings have neither, so nobody commits or pushes as someone else.
+git config --global --unset-all user.name 2>/dev/null || true
+git config --global --unset-all user.email 2>/dev/null || true
+git config --global --unset-all credential.helper 2>/dev/null || true
+rm -f "$HOME/.git-credentials"
 
 # Keep tmux (and so the agents) running when no SSH session is open.
 $SUDO loginctl enable-linger "$(whoami)" >/dev/null 2>&1 || true

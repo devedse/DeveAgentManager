@@ -4,16 +4,23 @@ using System.Text.Json;
 using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
+using DeveAgentManager.Core.Users;
 using Microsoft.EntityFrameworkCore;
 
 namespace DeveAgentManager.Core.Agents;
 
+/// <summary>
+/// Agents that need attention (a question, an unexpected exit, a finished task...), for the notification bell. Each user
+/// gets those of their own agents and of agents shared with them. Seen and dismissed are kept per agent, so they count
+/// for everyone who shares it.
+/// </summary>
 public sealed class AgentAttentionService(IDbContextFactory<ManagerDbContext> factory, ManagerEvents events, TimeProvider clock)
 {
-    public async Task<List<AgentAttentionDto>> ListAsync(CancellationToken ct)
+    public async Task<List<AgentAttentionDto>> ListAsync(CurrentUser user, CancellationToken ct)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
-        var agents = await db.Agents.AsNoTracking().Include(a => a.Runner).ToListAsync(ct);
+        var agents = await db.Agents.AsNoTracking().Include(a => a.Runner)
+            .Where(a => a.OwnerId == user.Id || a.Shares.Any(s => s.UserId == user.Id)).ToListAsync(ct);
         var managedLimits = await db.AgentLimits.AsNoTracking().Where(l => l.Status != "Cleared" && l.NativeAutoContinue || l.Status == "Scheduled" || l.Status == "Sending" || l.Status == "Sent")
             .Select(l => l.AgentId).ToListAsync(ct);
         var now = clock.GetUtcNow().UtcDateTime;

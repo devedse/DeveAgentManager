@@ -1,0 +1,461 @@
+@page "/manager-settings"
+@implements IDisposable
+@inject ManagerApi Api
+@inject LiveUpdates Live
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@inject SignedInUser Me
+
+<PageTitle>Manager settings · DeveAgentManager</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="page">
+    <PageHeader Title="Manager settings" Help="The same for everyone, changed by settings managers. Values set in the compose file are shown read-only; everything else is stored encrypted in /data. Each person's own settings are under My settings." />
+
+    @if (_allowed == false)
+    {
+        <EmptyState Icon="@Icons.Material.Rounded.Lock" Title="For settings managers" Text="Changing the Manager's settings needs the Settings manager role." />
+    }
+    else
+    {
+    <div class="panel panel-flush">
+        <MudTabs Elevation="0" ApplyEffectsToContainer="true" Class="panel-tabs" TabPanelsClass="panel-tab-content" KeepPanelsAlive="true" MinimumTabWidth="0">
+            <MudTabPanel Text="Timezones" Icon="@Icons.Material.Rounded.Schedule">
+                <RunnerTimeZoneEditor />
+            </MudTabPanel>
+            <MudTabPanel Text="Providers" Icon="@Icons.Material.Rounded.Cloud">
+                @foreach (var provider in (_info?.Providers ?? []).OrderBy(p => p.Capabilities.RequiresConnectionDetails))
+                {
+                    <div class="settings-section">
+                        <div class="settings-section-header">
+                            <div>
+                                <div class="help-heading"><MudText Typo="Typo.h6">@provider.DisplayName</MudText>
+                                    <HelpTip Label="@provider.DisplayName">@(provider.Capabilities.RequiresConnectionDetails ? "Add a Linux machine you already have. Nothing to configure." : "Clones Runners from a template VM over the Proxmox API.")</HelpTip></div>
+                            </div>
+                            <StatusPill Style="@(provider.IsConfigured ? new StateStyle("Configured", Tone.Success) : new StateStyle("Not configured", Tone.Warning))" />
+                        </div>
+
+                        @if (provider.Settings is { Count: > 0 } providerSettings)
+                        {
+                            <dl class="details details-wide">
+                                @foreach (var setting in providerSettings)
+                                {
+                                    <dt class="mono">@setting.Name</dt>
+                                    <dd class="mono">@(setting.Value ?? "(not set)")</dd>
+                                }
+                            </dl>
+                        }
+
+                        <div class="settings-actions">
+                            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.NetworkCheck" Disabled="_checking.Contains(provider.Id)" OnClick="() => CheckAsync(provider)">
+                                @(_checking.Contains(provider.Id) ? "Testing..." : "Test connection")
+                            </MudButton>
+                        </div>
+
+                        @if (_checks.TryGetValue(provider.Id, out var checks))
+                        {
+                            <div class="check-list">
+                                @foreach (var check in checks)
+                                {
+                                    <div class="check check-@check.Status.ToString().ToLowerInvariant()">
+                                        <MudIcon Size="Size.Small" Icon="@(check.Status switch { CheckStatus.Ok => Icons.Material.Rounded.CheckCircle, CheckStatus.Warning => Icons.Material.Rounded.Warning, _ => Icons.Material.Rounded.Cancel })" />
+                                        <div>
+                                            <div class="check-name">@check.Name</div>
+                                            <div class="check-message">@check.Message</div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </MudTabPanel>
+
+            <MudTabPanel Text="Setup Profile" Icon="@Icons.Material.Rounded.Checklist">
+                @if (_profile is not null)
+                {
+                    <div class="help-heading mb-3"><MudText Typo="Typo.subtitle1">Setup Profile</MudText>
+                        <HelpTip Label="Setup Profile">Applied to every Runner during setup and Re-run setup, for everyone who uses it: login and settings files, and a script. Packages and default models are on each harness's tab. Git identities, environment variables and GitHub tokens are each person's own (My settings).</HelpTip>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Files</MudText>
+                            <HelpTip Label="Files">Written to every Runner before the harnesses are configured, e.g. <code>~/.pi/agent/AGENTS.md</code> with your instructions or <code>~/.pi/agent/keybindings.json</code>.</HelpTip></div>
+
+                        <div class="import-box">
+                            <MudIcon Icon="@Icons.Material.Rounded.Download" Color="Color.Primary" />
+                            <div class="import-text">
+                                <div class="check-name">Import a login from a Runner</div>
+                                <div class="check-message">Log in once in a Runner's terminal (for pi: <code>/login</code>), then copy that login and settings here.</div>
+                            </div>
+                            <MudSelect T="Guid?" @bind-Value="_importRunnerId" Label="Runner" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="import-select">
+                                @foreach (var runner in _readyRunners)
+                                {
+                                    <MudSelectItem T="Guid?" Value="runner.Id">@runner.Name</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudSelect T="string" @bind-Value="_importHarnessId" Label="Harness" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="import-select">
+                                @foreach (var harness in _info?.Harnesses ?? [])
+                                {
+                                    <MudSelectItem Value="harness.Id">@harness.DisplayName</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudButton Variant="Variant.Outlined" Disabled="_importRunnerId is null || _importHarnessId is null || _importing" OnClick="ImportAsync">
+                                @(_importing ? "Importing..." : "Import")
+                            </MudButton>
+                        </div>
+
+                        @foreach (var file in _profile.Files)
+                        {
+                            <div class="file-card">
+                                <div class="form-row form-row-center">
+                                    <MudTextField @bind-Value="file.Path" Label="Path on the Runner" Placeholder="~/.pi/agent/settings.json" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" Immediate="true"
+                                                  Error="@(_profile.PathProblem(file) is not null)" ErrorText="@_profile.PathProblem(file)" />
+                                    <MudTextField @bind-Value="file.Mode" Label="Mode" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mode-field mono-input" Immediate="true"
+                                                  Error="@(SetupProfile.ModeProblem(file) is not null)" ErrorText="@SetupProfile.ModeProblem(file)" />
+                                    <MudIconButton Icon="@Icons.Material.Rounded.Close" Size="Size.Small" OnClick="() => _profile.Files.Remove(file)" aria-label="Remove" />
+                                </div>
+                                <MudTextField @bind-Value="file.Content" Label="Content" Variant="Variant.Outlined" Lines="6" MaxLines="24" Class="mono-input mt-2" Immediate="true" DebounceInterval="400" />
+                            </div>
+                        }
+                        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Rounded.Add" Size="Size.Small" OnClick="() => _profile.Files.Add(new SetupFile())">Add file</MudButton>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Script</MudText>
+                            <HelpTip Label="Script">Bash, run as the Runner Account at the end of setup. For example <code>sudo apt-get install -y dotnet-sdk-10.0</code>.</HelpTip></div>
+                        <MudTextField @bind-Value="_profile.Script" Variant="Variant.Outlined" Lines="6" MaxLines="30" Placeholder="#!/usr/bin/env bash" Class="mono-input" />
+                    </div>
+
+                    <div class="settings-actions sticky-actions">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Save" Disabled="_saving" OnClick="SaveProfileAsync">Save Setup Profile</MudButton>
+                    </div>
+                }
+            </MudTabPanel>
+
+            @foreach (var harness in (_info?.Harnesses ?? []).Where(h => h.ConfigSupport is not null))
+            {
+                <MudTabPanel Text="@harness.DisplayName" Icon="@(harness.Icon ?? Icons.Material.Rounded.Extension)">
+                    @if (_profile is not null)
+                    {
+                        <div class="help-heading mb-3"><MudText Typo="Typo.subtitle1">@harness.DisplayName settings</MudText>
+                            <HelpTip Label="@($"{harness.DisplayName} settings")">Part of the Setup Profile, applied to every Runner with @harness.DisplayName during setup. Use <b>Save and apply</b> to update Runners now.</HelpTip>
+                        </div>
+
+                        <HarnessConfigEditor Harness="harness" Config="_profile.GetHarness(harness.Id)"
+                                             Models="@(_models.GetValueOrDefault(harness.Id) ?? [])" ModelsLoading="@_modelsLoading.Contains(harness.Id)" />
+
+                        @if (_applyResults.TryGetValue(harness.Id, out var results))
+                        {
+                            <div class="check-list">
+                                @foreach (var result in results)
+                                {
+                                    <div class="check check-@(result.Status.ToString().ToLowerInvariant())">
+                                        <MudIcon Size="Size.Small" Icon="@(result.Status switch { CheckStatus.Ok => Icons.Material.Rounded.CheckCircle, CheckStatus.Warning => Icons.Material.Rounded.HourglassTop, _ => Icons.Material.Rounded.Cancel })" />
+                                        <div>
+                                            <div class="check-name">@result.Name</div>
+                                            <div class="check-message">@result.Message</div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        <div class="settings-actions sticky-actions">
+                            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Save" Disabled="_saving || IsApplying(harness.Id)" OnClick="SaveProfileAsync">Save</MudButton>
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PublishedWithChanges" Disabled="_saving || IsApplying(harness.Id)" OnClick="() => SaveAndApplyAsync(harness)">
+                                @(IsApplying(harness.Id) ? "Applying..." : "Save and apply to Runners")
+                            </MudButton>
+                        </div>
+                    }
+                </MudTabPanel>
+            }
+
+            <MudTabPanel Text="Manager" Icon="@Icons.Material.Rounded.Info">
+                <div class="settings-section">
+                    <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">SSH key</MudText>
+                        <HelpTip Label="SSH key">The Manager logs in to Runners with this key. It is injected into new VMs automatically; add it to <code>~/.ssh/authorized_keys</code> to use a machine without a password.</HelpTip></div>
+                    <div class="code-box">
+                        <code>@_info?.SshPublicKey</code>
+                        <MudIconButton Icon="@Icons.Material.Rounded.ContentCopy" Size="Size.Small" OnClick="CopyKeyAsync" aria-label="Copy" />
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Configuration</MudText>
+                        <HelpTip Label="Manager backups">The data folder holds the database, the SSH key and the keys that decrypt stored secrets. Include the entire folder in backups.</HelpTip></div>
+                    <dl class="details details-wide">
+                        <dt class="mono">RUNNER_USERNAME</dt>
+                        <dd class="mono">@_info?.RunnerUsername (each Runner has a password of its own, on its page)</dd>
+                        <dt class="mono">RUNNER_DEFAULT_*</dt>
+                        <dd>@_info?.DefaultCores CPU · @(_info?.DefaultMemoryMb / 1024) GB RAM · @_info?.DefaultDiskGb GB disk</dd>
+                        <dt class="mono">DATA_DIR</dt>
+                        <dd class="mono">@_info?.DataDirectory</dd>
+                    </dl>
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary mt-3">Back up the data folder.</MudText>
+                </div>
+            </MudTabPanel>
+        </MudTabs>
+    </div>
+    }
+</MudContainer>
+
+@code {
+    private readonly HashSet<string> _checking = [];
+    private readonly Dictionary<string, IReadOnlyList<ProviderCheck>> _checks = [];
+    private readonly Dictionary<string, List<ProviderCheck>> _applyResults = [];
+    private readonly Dictionary<string, IReadOnlyList<ModelChoice>> _models = [];
+    private readonly HashSet<string> _modelsLoading = [];
+
+    /// <summary>Runners a "Save and apply" is waiting for: runner id → (harness, index of its row in the results).</summary>
+    private readonly Dictionary<Guid, (string HarnessId, int Index)> _applying = [];
+
+    /// <summary>Results that came in while "Save and apply" was still waiting for the Manager to say which Runners it started.</summary>
+    private readonly Dictionary<Guid, OperationFinished> _earlyResults = [];
+    private bool _startingApply;
+
+    private ManagerInfoDto? _info;
+    private SetupProfile? _profile;
+    private List<RunnerDto> _readyRunners = [];
+    private Guid? _importRunnerId;
+    private string? _importHarnessId;
+    private bool _importing;
+    private bool _saving;
+    private bool? _allowed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Live.OperationFinished += OnOperationFinished;
+        try
+        {
+            _allowed = (await Me.GetAsync()).Has(UserRoles.SettingsManager);
+            if (_allowed != true)
+            {
+                return;
+            }
+
+            _info = await Api.InfoAsync(refresh: true);
+            _profile = await Api.GetProfileAsync();
+            _readyRunners = (await Api.ListRunnersAsync()).Where(r => r.State == RunnerState.Ready).ToList();
+            _importRunnerId = _readyRunners.FirstOrDefault()?.Id;
+            _importHarnessId = _info.Harnesses.FirstOrDefault()?.Id;
+            LoadModels();
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task CheckAsync(ProviderDto provider)
+    {
+        _checking.Add(provider.Id);
+        try
+        {
+            _checks[provider.Id] = await Api.CheckProviderAsync(provider.Id);
+        }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException)
+        {
+            _checks[provider.Id] = [new ProviderCheck("Test", CheckStatus.Failed, ex.Message)];
+        }
+        finally
+        {
+            _checking.Remove(provider.Id);
+        }
+    }
+
+    private async Task SaveProfileAsync() => await TrySaveProfileAsync(announce: true);
+
+    private async Task<bool> TrySaveProfileAsync(bool announce)
+    {
+        _saving = true;
+        try
+        {
+            _profile = await Api.SaveProfileAsync(_profile!);
+            if (announce)
+            {
+                Snackbar.Add("Setup Profile saved. It is applied the next time a Runner is set up.", Severity.Success);
+            }
+
+            return true;
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+            return false;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    /// <summary>Asks the harnesses on a ready Runner which models they offer, for the model fields. In the background.</summary>
+    private void LoadModels()
+    {
+        foreach (var harness in _info!.Harnesses.Where(h => h.ConfigSupport is not null && h.HasModelCatalog))
+        {
+            _modelsLoading.Add(harness.Id);
+            _ = LoadModelsAsync(harness.Id);
+        }
+    }
+
+    private async Task LoadModelsAsync(string harnessId)
+    {
+        IReadOnlyList<ModelChoice> models = [];
+        try
+        {
+            models = await Api.ListModelsAsync(harnessId);
+        }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException)
+        {
+            // No Runner could tell; the field still takes any model name.
+        }
+
+        _models[harnessId] = models;
+        _modelsLoading.Remove(harnessId);
+        StateHasChanged();
+    }
+
+    /// <summary>Saves the profile, then applies the harness's configuration on every ready Runner that has the harness.</summary>
+    private async Task SaveAndApplyAsync(HarnessDto harness)
+    {
+        if (!await TrySaveProfileAsync(announce: false))
+        {
+            return;
+        }
+
+        OperationStartedDto started;
+        var clicked = DateTime.UtcNow;
+        _earlyResults.Clear();
+        _startingApply = true;
+        try
+        {
+            started = await Api.ApplyHarnessConfigAsync(harness.Id);
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+            _startingApply = false;
+            return;
+        }
+
+        // From here on without awaiting anything, so no result can come in between.
+        _startingApply = false;
+        if (started.RunnerIds.Count == 0)
+        {
+            Snackbar.Add($"Saved. No ready Runner has {harness.DisplayName}; it is applied when one is set up.", Severity.Info);
+            return;
+        }
+
+        var results = new List<ProviderCheck>();
+        foreach (var runnerId in started.RunnerIds)
+        {
+            _applying[runnerId] = (harness.Id, results.Count);
+            results.Add(new ProviderCheck(_readyRunners.FirstOrDefault(r => r.Id == runnerId)?.Name ?? "Runner", CheckStatus.Warning, "Applying..."));
+        }
+
+        _applyResults[harness.Id] = results;
+        foreach (var early in _earlyResults.Values.ToList())
+        {
+            OnOperationFinished(early);
+        }
+
+        _earlyResults.Clear();
+        _ = WatchActivityAsync(harness, clicked);
+    }
+
+    /// <summary>
+    /// In case a result never arrives (the live connection dropped, e.g. a phone that slept): the Runners' activity says
+    /// how their "Configuring ..." ended.
+    /// </summary>
+    private async Task WatchActivityAsync(HarnessDto harness, DateTime clicked)
+    {
+        var name = $"Configuring {harness.DisplayName}";
+        for (var round = 0; round < 200 && IsApplying(harness.Id); round++)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3));
+            foreach (var runnerId in _applying.Where(a => a.Value.HarnessId == harness.Id).Select(a => a.Key).ToList())
+            {
+                try
+                {
+                    var done = (await Api.ListRunnerActivityAsync(runnerId))
+                        .FirstOrDefault(a => a.Name == name && a.StartedAt >= clicked.AddSeconds(-30) && a.Outcome is not null);
+                    if (done is not null && _applying.ContainsKey(runnerId))
+                    {
+                        var runnerName = _readyRunners.FirstOrDefault(r => r.Id == runnerId)?.Name ?? "Runner";
+                        OnOperationFinished(new OperationFinished(runnerId, runnerName, "apply", done.Outcome == RunnerActivityOutcome.Succeeded ? null : done.Error ?? done.Outcome.ToString()));
+                    }
+                }
+                catch (ApiException)
+                {
+                    // Asked again in the next round.
+                }
+            }
+        }
+    }
+
+    private bool IsApplying(string harnessId) => _applying.Values.Any(a => a.HarnessId == harnessId);
+
+    /// <summary>A Runner finished applying: fill in its row.</summary>
+    private void OnOperationFinished(OperationFinished finished)
+    {
+        if (finished.Operation == "apply" && _startingApply && !_applying.ContainsKey(finished.RunnerId))
+        {
+            // A quick apply can end before the request that started it has answered: kept until the rows exist.
+            _earlyResults[finished.RunnerId] = finished;
+            return;
+        }
+
+        if (finished.Operation != "apply" || !_applying.Remove(finished.RunnerId, out var target) || !_applyResults.TryGetValue(target.HarnessId, out var results))
+        {
+            return;
+        }
+
+        results[target.Index] = finished.Error is null
+            ? new ProviderCheck(finished.RunnerName, CheckStatus.Ok, "Applied. Restart running agents (or /reload) to load new packages.")
+            : new ProviderCheck(finished.RunnerName, CheckStatus.Failed, $"{finished.Error} The Runner's setup log has the details.");
+        if (!IsApplying(target.HarnessId))
+        {
+            var failed = results.Count(r => r.Status == CheckStatus.Failed);
+            Snackbar.Add(failed == 0 ? $"Applied to {results.Count} Runner(s)." : $"Failed on {failed} of {results.Count} Runner(s).", failed == 0 ? Severity.Success : Severity.Error);
+        }
+
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ImportAsync()
+    {
+        var runner = _readyRunners.First(r => r.Id == _importRunnerId);
+        _importing = true;
+        try
+        {
+            var imported = await Api.ImportHarnessFilesAsync(runner.Id, _importHarnessId!);
+            if (imported.Count == 0)
+            {
+                Snackbar.Add($"No login or settings files found on '{runner.Name}'. Log in there first.", Severity.Warning);
+                return;
+            }
+
+            // Keep unsaved edits to the rest of the profile, but take the imported files.
+            var saved = await Api.GetProfileAsync();
+            _profile!.Files.RemoveAll(f => imported.Contains(f.Path));
+            _profile.Files.AddRange(saved.Files.Where(f => imported.Contains(f.Path)));
+            Snackbar.Add($"Imported {string.Join(", ", imported)} from '{runner.Name}'.", Severity.Success);
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+        }
+    }
+
+    private async Task CopyKeyAsync()
+    {
+        await JS.InvokeVoidAsync("damUi.copy", _info?.SshPublicKey ?? "");
+        Snackbar.Add("Public key copied.", Severity.Success);
+    }
+
+    public void Dispose() => Live.OperationFinished -= OnOperationFinished;
+}

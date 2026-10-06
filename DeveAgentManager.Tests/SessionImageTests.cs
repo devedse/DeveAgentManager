@@ -1,3 +1,4 @@
+using DeveAgentManager.Core.Users;
 #pragma warning disable xUnit1051
 using System.Text;
 using DeveAgentManager.Core.Configuration;
@@ -51,23 +52,25 @@ public sealed class SessionImageTests : IDisposable
         await using (var db = factory.CreateDbContext())
         {
             await db.Database.EnsureCreatedAsync();
-            db.Runners.Add(new Runner { Id = runnerId, Name = "desktop" });
-            db.Agents.Add(new Agent { Id = agentId, RunnerId = runnerId, Name = "agent" });
+            db.Runners.Add(new Runner { OwnerId = User.BootstrapId, Id = runnerId, Name = "desktop" });
+            db.Agents.Add(new Agent { OwnerId = User.BootstrapId, Id = agentId, RunnerId = runnerId, Name = "agent" });
             // Inactive conversation in the same workspace: image ownership remains valid.
-            db.Sessions.Add(new StoredSession { Id = sessionId, WorkspaceAgentId = agentId, AgentId = null });
+            db.Sessions.Add(new StoredSession { OwnerId = User.BootstrapId, Id = sessionId, WorkspaceAgentId = agentId, AgentId = null });
             await db.SaveChangesAsync();
         }
         var events = new ManagerEvents();
-        var sessions = new SessionService(factory, null!, [], [], Options, events, NullLogger<SessionService>.Instance);
         var store = new SessionImageStore(Options);
-        var images = new SessionImages(factory, null!, sessions, store, events, NullLogger<SessionImages>.Instance);
-        await Assert.ThrowsAsync<ArgumentException>(() => images.SaveSnapshotAsync(Guid.NewGuid(), sessionId, Png, "", default));
+        var sessions = new SessionService(factory, null!, [], [], store, Options, events, NullLogger<SessionService>.Instance);
+        var images = new SessionImages(factory, null!, sessions, store, new AccessControl(factory), events, NullLogger<SessionImages>.Instance);
+        await Assert.ThrowsAsync<ArgumentException>(() => images.SaveSnapshotAsync(TestUsers.Admin, Guid.NewGuid(), sessionId, Png, "", default));
+        // Only who can write to the conversation's agent saves into it.
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => images.SaveSnapshotAsync(TestUsers.Plain(Guid.NewGuid()), runnerId, sessionId, Png, "", default));
         Assert.Empty(await store.ListAsync(sessionId, default));
-        await images.SaveSnapshotAsync(runnerId, sessionId, Png, "UI", default);
+        await images.SaveSnapshotAsync(TestUsers.Admin, runnerId, sessionId, Png, "UI", default);
         Assert.Single(await store.ListAsync(sessionId, default));
         await sessions.DeleteAsync(sessionId);
         Assert.Empty(await store.ListAsync(sessionId, default));
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => images.SaveSnapshotAsync(runnerId, sessionId, Png, "", default));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => images.SaveSnapshotAsync(TestUsers.Admin, runnerId, sessionId, Png, "", default));
         images.Dispose();
     }
 

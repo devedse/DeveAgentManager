@@ -6,6 +6,7 @@ using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Editor;
 using DeveAgentManager.Core.Runners;
+using DeveAgentManager.Core.Users;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Net.Http.Headers;
 using Yarp.ReverseProxy.Forwarder;
@@ -18,10 +19,12 @@ namespace DeveAgentManager.Api;
 /// agent there could put in code-server's place), so it must never run as the Portal, which can do anything the admin
 /// can. On its own origin, the Portal's API refuses it like any other site (see <see cref="RequestSecurity"/>).
 /// <list type="bullet">
-/// <item>Portal origin: <c>/editor/runners/{id}</c> and <c>/editor/agents/{id}</c> need the login and send the browser on
-/// to the editor origin with a ticket for that one Runner, valid for two minutes.</item>
+/// <item>Portal origin: <c>/editor/runners/{id}</c> (Use access to the Runner) and <c>/editor/agents/{id}</c> (read-write
+/// access to the agent: VS Code edits its files) send the browser on to the editor origin with a ticket for that user and
+/// that one Runner, valid for two minutes.</item>
 /// <item>Editor origin: <c>/runners/{id}/auth</c> turns the ticket into a cookie for that Runner's path only;
-/// <c>/runners/{id}/code/</c> is its code-server. It serves nothing else.</item>
+/// <c>/runners/{id}/code/</c> is its code-server. It serves nothing else. Every request checks again that the user's
+/// sign-in still counts and that they still have access; an open VS Code closes when either ends.</item>
 /// <item>The browser sends the Manager's login cookie to the editor port as well (cookies don't care about ports): it is
 /// removed before a request goes to the Runner, and cookies code-server sets never reach the browser.</item>
 /// <item>A page on the editor port counts as the same site as the Portal, so its frames get the login cookie: the links
@@ -68,19 +71,24 @@ public static class EditorEndpoints
     {
         var links = app.MapGroup("/editor");
 
-        links.MapGet("/runners/{runnerId:guid}", async (Guid runnerId, HttpContext context, RunnerService runners, CancellationToken ct) =>
-            await runners.GetAsync(runnerId, ct) is { } runner
-                ? Open(context, runner, runner.HomeDirectory)
+        links.MapGet("/runners/{runnerId:guid}", async (Guid runnerId, HttpContext context, RunnerService runners, AccessControl access, CancellationToken ct) =>
+            SignIn.UsableUser(context) is { } user && await access.RunnerAsync(user, runnerId, ct) >= RunnerAccess.Use && await runners.GetAsync(runnerId, ct) is { } runner
+                ? Open(context, user, runner, runner.HomeDirectory)
                 : Page(StatusCodes.Status404NotFound, "This Runner doesn't exist (any more)."));
 
-        links.MapGet("/agents/{agentId:guid}", async (Guid agentId, HttpContext context, AgentService agents, CancellationToken ct) =>
-            await agents.GetAsync(agentId, ct) is { Runner: { } runner } agent
-                ? Open(context, runner, agent.WorkingDirectory)
-                : Page(StatusCodes.Status404NotFound, "This agent doesn't exist (any more)."));
+        links.MapGet("/agents/{agentId:guid}", async (Guid agentId, HttpContext context, AgentService agents, AccessControl access, CancellationToken ct) =>
+            SignIn.UsableUser(context) is { } user && await access.AgentAsync(user, agentId, ct) >= AgentAccess.Write && await agents.GetAsync(agentId, ct) is { Runner: { } runner } agent
+                ? Open(context, user, runner, agent.WorkingDirectory)
+                : Page(StatusCodes.Status404NotFound, "This agent doesn't exist (any more), or you can only read it."));
 
         // Lets the Portal find out whether a Runner's editor origin can be reached from the browser.
-        links.MapGet("/ping", async (Guid? runner, HttpContext context, RunnerService runners, CancellationToken ct) =>
-            NoStore(context, Results.Redirect($"{EditorBase(context, runner is { } id ? (await runners.GetAsync(id, ct))?.Name : null)}/ping")));
+        links.MapGet("/ping", async (Guid? runner, HttpContext context, RunnerService runners, AccessControl access, CancellationToken ct) =>
+        {
+            var name = runner is { } id && SignIn.UsableUser(context) is { } user && await access.RunnerAsync(user, id, ct) >= RunnerAccess.Use
+                ? (await runners.GetAsync(id, ct))?.Name
+                : null;
+            return NoStore(context, Results.Redirect($"{EditorBase(context, name)}/ping"));
+        });
     }
 
     /// <summary>
@@ -100,7 +108,7 @@ public static class EditorEndpoints
     /// </summary>
     private static bool FromThePortal(HttpRequest request) => request.Headers["Sec-Fetch-Site"].ToString() is "" or "same-origin" or "none";
 
-    private static IResult Open(HttpContext context, Runner runner, string? folder)
+    private static IResult Open(HttpContext context, CurrentUser user, Runner runner, string? folder)
     {
         if (!FromThePortal(context.Request))
         {
@@ -112,7 +120,7 @@ public static class EditorEndpoints
             return Page(StatusCodes.Status409Conflict, $"VS Code is not installed on '{runner.Name}'. Install it on the Runner page, under Operations.");
         }
 
-        var ticket = Protectors(context).Ticket.Protect(runner.Id.ToString("N"), TicketLifetime);
+        var ticket = Protectors(context).Ticket.Protect(new EditorPass(user.Id, SignIn.SecurityStamp(context) ?? "", runner.Id).Format(), TicketLifetime);
         var query = QueryString.Create("ticket", ticket);
         if (!string.IsNullOrEmpty(folder))
         {
@@ -150,7 +158,7 @@ public static class EditorEndpoints
         var prefix = $"/runners/{runnerId}/code";
         if (parts[3] == "auth")
         {
-            await WriteAsync(context, SignIn(context, runnerId));
+            await WriteAsync(context, AcceptTicket(context, runnerId));
         }
         else if (parts[3] == "code")
         {
@@ -182,15 +190,15 @@ public static class EditorEndpoints
     }
 
     /// <summary>Turns a ticket from the Portal into this origin's cookie for the one Runner, then opens VS Code.</summary>
-    private static IResult SignIn(HttpContext context, Guid runnerId)
+    private static IResult AcceptTicket(HttpContext context, Guid runnerId)
     {
         var protectors = Protectors(context);
-        if (Unprotect(protectors.Ticket, context.Request.Query["ticket"]) != runnerId.ToString("N"))
+        if (EditorPass.Parse(Unprotect(protectors.Ticket, context.Request.Query["ticket"])) is not { } pass || pass.RunnerId != runnerId)
         {
             return Page(StatusCodes.Status403Forbidden, "This link to VS Code has expired. Open VS Code from the Manager again.");
         }
 
-        context.Response.Cookies.Append(CookieName, protectors.Cookie.Protect(runnerId.ToString("N"), CookieLifetime), new CookieOptions
+        context.Response.Cookies.Append(CookieName, protectors.Cookie.Protect(pass.Format(), CookieLifetime), new CookieOptions
         {
             Path = $"/runners/{runnerId}/",
             HttpOnly = true,
@@ -206,13 +214,19 @@ public static class EditorEndpoints
 
     private static async Task ProxyAsync(HttpContext context, Guid runnerId, PathString path)
     {
-        if (Unprotect(Protectors(context).Cookie, context.Request.Cookies[CookieName]) != runnerId.ToString("N"))
+        var services = context.RequestServices;
+        var access = services.GetRequiredService<AccessControl>();
+        if (EditorPass.Parse(Unprotect(Protectors(context).Cookie, context.Request.Cookies[CookieName])) is not { } pass || pass.RunnerId != runnerId
+            || await services.GetRequiredService<UserService>().ValidateAsync(pass.UserId, pass.SecurityStamp, context.RequestAborted) is not { MustChangePassword: false } user
+            || await access.RunnerAsync(user, runnerId, context.RequestAborted) < RunnerAccess.Use)
         {
             await WriteAsync(context, Page(StatusCodes.Status401Unauthorized, "Open VS Code from the Manager (the Runner page, or an agent's terminal)."));
             return;
         }
 
-        var services = context.RequestServices;
+        // VS Code keeps a WebSocket open: it closes when the user's access or sign-in ends meanwhile.
+        using var watched = services.GetRequiredService<OpenConnections>().Register(user, pass.SecurityStamp,
+            async (current, ct) => await access.RunnerAsync(current, runnerId, ct) >= RunnerAccess.Use, context.Abort);
         var runner = await services.GetRequiredService<RunnerService>().GetAsync(runnerId, context.RequestAborted);
         if (runner is null || !runner.ToolIds.Contains(VsCodeTool.ToolId))
         {
@@ -327,4 +341,15 @@ public static class EditorEndpoints
         """, "text/html; charset=utf-8", statusCode: status);
 
     private static Task WriteAsync(HttpContext context, IResult result) => result.ExecuteAsync(context);
+}
+
+/// <summary>Who may use VS Code on which Runner: what the editor ticket and cookie carry (protected).</summary>
+internal sealed record EditorPass(Guid UserId, string SecurityStamp, Guid RunnerId)
+{
+    public string Format() => $"{UserId:N}.{RunnerId:N}.{SecurityStamp}";
+
+    public static EditorPass? Parse(string? value) =>
+        value?.Split('.', 3) is [var user, var runner, var stamp] && Guid.TryParseExact(user, "N", out var userId) && Guid.TryParseExact(runner, "N", out var runnerId)
+            ? new EditorPass(userId, stamp, runnerId)
+            : null;
 }

@@ -21,7 +21,7 @@ public sealed class SessionImageStore(ManagerOptions options)
         throw new ArgumentException("Use a PNG, JPEG, GIF or WebP image.");
     }
 
-    public async Task<SessionImageDto> SaveAsync(Guid sessionId, Guid id, byte[] data, string fileName, string caption, CancellationToken ct)
+    public async Task<SessionImageDto> SaveAsync(Guid sessionId, Guid id, byte[] data, string fileName, string caption, CancellationToken ct, DateTime? createdAt = null)
     {
         if (data.Length is 0 or > MaxBytes) throw new ArgumentException("Images must be between 1 byte and 10 MiB.");
         var type = ContentType(data);
@@ -29,7 +29,7 @@ public sealed class SessionImageStore(ManagerOptions options)
         var safeName = Path.GetFileName(fileName.Replace('\\', '/'));
         safeName = Clean(safeName, 128);
         if (safeName.Length == 0) safeName = "image";
-        var dto = new SessionImageDto(id, sessionId, safeName, Clean(caption, 500), type, data.Length, DateTime.UtcNow);
+        var dto = new SessionImageDto(id, sessionId, safeName, Clean(caption, 500), type, data.Length, createdAt ?? DateTime.UtcNow);
         Directory.CreateDirectory(Folder(sessionId));
         await AtomicWriteAsync(DataPath(sessionId, id), data, ct);
         await AtomicWriteAsync(Metadata(sessionId, id), JsonSerializer.SerializeToUtf8Bytes(dto, ApiJson.Options), ct);
@@ -83,9 +83,21 @@ public sealed class SessionImageStore(ManagerOptions options)
         catch (IOException) { return null; }
     }
 
-    public static void DeleteSession(ManagerOptions options, Guid sessionId)
+    /// <summary>Copies a conversation's images (keeping their ids and times) to another conversation, e.g. a continued copy.</summary>
+    public async Task CopyAsync(Guid fromSessionId, Guid toSessionId, CancellationToken ct)
     {
-        var folder = Path.Combine(options.SessionsDirectory, "images", sessionId.ToString("N"));
+        foreach (var image in await ListAsync(fromSessionId, ct))
+        {
+            if (await ReadAsync(fromSessionId, image.Id, ct) is { } found)
+            {
+                await SaveAsync(toSessionId, image.Id, found.Data, image.FileName, image.Caption, ct, image.CreatedAt);
+            }
+        }
+    }
+
+    public void DeleteSession(Guid sessionId)
+    {
+        var folder = Folder(sessionId);
         if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
     }
 }

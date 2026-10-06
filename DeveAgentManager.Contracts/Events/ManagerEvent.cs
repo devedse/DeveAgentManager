@@ -9,6 +9,14 @@ public enum ManagerEventKind
     SettingsChanged,
     SessionChanged,
     SessionRemoved,
+
+    /// <summary>A user was added or changed (name, roles, password, disabled); <see cref="ManagerEvent.UserId"/> says who.</summary>
+    UserChanged,
+    UserRemoved,
+
+    /// <summary>Who may see something changed (an owner, Runner access or a share): pages reload what they show.</summary>
+    AccessChanged,
 }
 
-public sealed record ManagerEvent(ManagerEventKind Kind, Guid? RunnerId = null, Guid? AgentId = null, Guid? SessionId = null);
+/// <param name="UserId">For changes that concern one user only: their settings, logins or account.</param>
+public sealed record ManagerEvent(ManagerEventKind Kind, Guid? RunnerId = null, Guid? AgentId = null, Guid? SessionId = null, Guid? UserId = null);

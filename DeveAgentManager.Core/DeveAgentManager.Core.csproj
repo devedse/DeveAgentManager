@@ -15,6 +15,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.Extensions" Version="10.0.12" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="10.0.12" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.12" />
     <PackageReference Include="Polly.Core" Version="8.8.0" />
     <PackageReference Include="SSH.NET" Version="2026.0.0" />

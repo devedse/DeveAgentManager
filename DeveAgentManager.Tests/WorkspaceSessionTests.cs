@@ -46,7 +46,7 @@ public sealed class WorkspaceSessionTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.DeleteAsync(active.Id, Ct));
         await using (var db = rig.Factory.CreateDbContext())
         {
-            db.Sessions.Add(new StoredSession { Id = Guid.Empty, Title = "Other workspace", HarnessId = "pi" });
+            db.Sessions.Add(new StoredSession { OwnerId = User.BootstrapId, Id = Guid.Empty, Title = "Other workspace", HarnessId = "pi" });
             await db.SaveChangesAsync(Ct);
         }
         using (await rig.Service.LockAsync(Ct))
@@ -98,9 +98,11 @@ public sealed class WorkspaceSessionTests
         using var rig = new Rig();
         await using var db = rig.Factory.CreateDbContext();
         var migrations = db.Database.GetMigrations().ToArray();
-        await db.GetService<IMigrator>().MigrateAsync(migrations[^2], Ct);
-        db.Agents.Add(rig.Agent);
-        await db.SaveChangesAsync(Ct);
+        var workspaceSessions = Array.FindIndex(migrations, m => m.EndsWith("_WorkspaceSessions", StringComparison.Ordinal));
+        await db.GetService<IMigrator>().MigrateAsync(migrations[workspaceSessions - 1], Ct);
+        // Rows as that schema had them (before workspaces and before users), not as the model has them now.
+        await InsertAsync(db, "Runners", new() { ["Id"] = rig.Runner.Id, ["Name"] = rig.Runner.Name, ["State"] = "Ready" });
+        await InsertAsync(db, "Agents", new() { ["Id"] = rig.Agent.Id, ["RunnerId"] = rig.Runner.Id, ["Name"] = rig.Agent.Name, ["HarnessId"] = "pi", ["State"] = "Stopped" });
         var first = Guid.NewGuid(); var second = Guid.NewGuid();
         foreach (var id in new[] { first, second })
             await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO Sessions (Id, AgentId, Title, HarnessId, MessageCount, SourceSize, CreatedAt, UpdatedAt) VALUES ({id}, {rig.Agent.Id}, 'Old chat', 'pi', 0, 0, '2026-10-03 00:00:00', '2026-10-03 00:00:00')", Ct);
@@ -109,7 +111,11 @@ public sealed class WorkspaceSessionTests
         Assert.Equal(2, rows.Count);
         Assert.All(rows, row => Assert.Equal(rig.Agent.Id, row.WorkspaceAgentId));
         Assert.Single(rows, s => s.AgentId != null);
-        db.Sessions.Add(new StoredSession { Id = Guid.NewGuid(), AgentId = rig.Agent.Id });
+        // Everything from before users existed belongs to the first user.
+        Assert.All(rows, row => Assert.Equal(User.BootstrapId, row.OwnerId));
+        Assert.Equal(User.BootstrapId, await db.Agents.Select(a => a.OwnerId).SingleAsync(Ct));
+        Assert.Equal(User.BootstrapId, await db.Runners.Select(r => r.OwnerId).SingleAsync(Ct));
+        db.Sessions.Add(new StoredSession { OwnerId = User.BootstrapId, Id = Guid.NewGuid(), AgentId = rig.Agent.Id });
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync(Ct));
     }
 
@@ -122,7 +128,7 @@ public sealed class WorkspaceSessionTests
         var brokenId = Guid.NewGuid();
         await using (var db = rig.Factory.CreateDbContext())
         {
-            db.Sessions.Add(new StoredSession { Id = brokenId, WorkspaceAgentId = rig.Agent.Id, HarnessId = "pi", MessageCount = 3 });
+            db.Sessions.Add(new StoredSession { OwnerId = User.BootstrapId, Id = brokenId, WorkspaceAgentId = rig.Agent.Id, HarnessId = "pi", MessageCount = 3 });
             await db.SaveChangesAsync(Ct);
         }
         using (await rig.Service.LockAsync(Ct))
@@ -153,6 +159,33 @@ public sealed class WorkspaceSessionTests
         Assert.Single(Directory.GetFiles(rig.Options.SessionsDirectory, $"{current.Id:N}.*.json"));
     }
 
+    /// <summary>
+    /// Inserts a row into a table as an older migration left it: the columns that schema requires and these values don't
+    /// give get a placeholder (0, or a date for *At columns).
+    /// </summary>
+    private static async Task InsertAsync(ManagerDbContext db, string table, Dictionary<string, object> values)
+    {
+        await db.Database.OpenConnectionAsync(Ct);
+        await using (var command = db.Database.GetDbConnection().CreateCommand())
+        {
+            command.CommandText = $"PRAGMA table_info({table})";
+            await using var reader = await command.ExecuteReaderAsync(Ct);
+            while (await reader.ReadAsync(Ct))
+            {
+                // cid, name, type, notnull, dflt_value, pk
+                var (name, type, required, hasDefault) = (reader.GetString(1), reader.GetString(2), reader.GetInt32(3) == 1, !reader.IsDBNull(4));
+                if (required && !hasDefault)
+                {
+                    values.TryAdd(name, type == "INTEGER" ? 0 : name.EndsWith("At", StringComparison.Ordinal) ? "2026-10-03 00:00:00" : "");
+                }
+            }
+        }
+
+        var columns = values.Keys.ToList();
+        await db.Database.ExecuteSqlRawAsync($"INSERT INTO {table} ({string.Join(", ", columns)}) VALUES ({string.Join(", ", columns.Select((_, i) => $"{{{i}}}"))})",
+            columns.Select(c => values[c]), Ct);
+    }
+
     private sealed class Factory(string path) : IDbContextFactory<ManagerDbContext>
     {
         public ManagerDbContext CreateDbContext() => new(new DbContextOptionsBuilder<ManagerDbContext>().UseSqlite($"Data Source={path};Pooling=False").Options);
@@ -160,7 +193,7 @@ public sealed class WorkspaceSessionTests
     private sealed class Rig : IDisposable
     {
         private readonly string _folder = Directory.CreateTempSubdirectory("dam-workspace-").FullName;
-        public readonly Runner Runner = new() { Id = Guid.NewGuid(), Name = "runner", State = RunnerState.Ready };
+        public readonly Runner Runner = new() { OwnerId = User.BootstrapId, Id = Guid.NewGuid(), Name = "runner", State = RunnerState.Ready };
         public Agent Agent { get; }
         public ManagerOptions Options { get; }
         public Factory Factory { get; }
@@ -169,8 +202,8 @@ public sealed class WorkspaceSessionTests
         {
             Options = new() { DataDirectory = _folder };
             Factory = new(Options.DatabasePath);
-            Agent = new() { Id = Guid.NewGuid(), Name = "workspace", Runner = Runner, RunnerId = Runner.Id, HarnessId = "pi", HarnessSessionId = "first", State = AgentState.Stopped, LastAssistantMessageAt = DateTime.UtcNow };
-            Service = new(Factory, null!, [new PiSessionFormat(), new DeveAgentManager.Harnesses.Codex.CodexSessionFormat()], [], Options, new ManagerEvents(), NullLogger<SessionService>.Instance);
+            Agent = new() { Id = Guid.NewGuid(), OwnerId = User.BootstrapId, Name = "workspace", Runner = Runner, RunnerId = Runner.Id, HarnessId = "pi", HarnessSessionId = "first", State = AgentState.Stopped, LastAssistantMessageAt = DateTime.UtcNow };
+            Service = new(Factory, null!, [new PiSessionFormat(), new DeveAgentManager.Harnesses.Codex.CodexSessionFormat()], [], new SessionImageStore(Options), Options, new ManagerEvents(), NullLogger<SessionService>.Instance);
         }
         public async Task CreateAsync()
         {

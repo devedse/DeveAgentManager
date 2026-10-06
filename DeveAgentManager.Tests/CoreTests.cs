@@ -55,23 +55,6 @@ public class CoreTests
     public void NormalizeRepositoryUrl_AcceptsShortForms(string input, string expected) => Assert.Equal(expected, AgentService.NormalizeRepositoryUrl(input));
 
     [Fact]
-    public void BuildAgentEnv_QuotesValuesAndSkipsInvalidNames()
-    {
-        var env = RunnerSetupService.BuildAgentEnv(new SetupProfile
-        {
-            EnvironmentVariables =
-            [
-                new SetupEnvironmentVariable { Name = "ANTHROPIC_API_KEY", Value = "sk-'x' y" },
-                new SetupEnvironmentVariable { Name = "BAD NAME", Value = "x" },
-                new SetupEnvironmentVariable { Name = "1BAD", Value = "x" },
-            ],
-        });
-
-        Assert.Contains("export ANTHROPIC_API_KEY='sk-'\"'\"'x'\"'\"' y'\n", env);
-        Assert.DoesNotContain("BAD", env.Replace("ANTHROPIC", ""));
-    }
-
-    [Fact]
     public void StartupOutputFilter_HidesEverythingBeforeTheMarker()
     {
         var filter = new StartupOutputFilter();

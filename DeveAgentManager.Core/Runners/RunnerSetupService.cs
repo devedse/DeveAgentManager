@@ -13,17 +13,20 @@ using Renci.SshNet.Common;
 namespace DeveAgentManager.Core.Runners;
 
 /// <summary>
-/// Sets up a Runner over SSH: base packages, tmux and git config, the Setup Profile, and the selected harnesses and tools.
+/// Sets up a Runner over SSH: base packages, tmux and git config, the shared Setup Profile, the selected harnesses and
+/// tools, and what each person with access has on it (<see cref="RunnerUsers"/>).
 /// </summary>
 public sealed partial class RunnerSetupService(
     RunnerShell shell,
     ManagerSshKey sshKey,
     SettingsStore settings,
+    RunnerUsers users,
+    RunnerPasswords passwords,
     IEnumerable<IHarness> harnesses,
     IEnumerable<IRunnerTool> tools)
 {
     /// <summary>Bump when runner-setup.sh changes, so the Portal can show that a Runner's setup is outdated.</summary>
-    public const int SetupVersion = 4;
+    public const int SetupVersion = 5;
 
     /// <summary>The first setup version that installs dam-tools.</summary>
     public const int AgentToolsSetupVersion = 4;
@@ -76,7 +79,6 @@ public sealed partial class RunnerSetupService(
     public async Task RunAsync(Runner runner, IRunnerLog log, CancellationToken cancellationToken)
     {
         var profile = await settings.GetSetupProfileAsync(cancellationToken);
-        var pat = await settings.GetGitHubPatAsync(cancellationToken);
 
         log.Step("Authorizing the Manager's SSH key");
         var quotedKey = ShellQuote.Quote(sshKey.PublicKey);
@@ -87,19 +89,11 @@ public sealed partial class RunnerSetupService(
         runner.HomeDirectory = (await shell.RunAsync(runner, "printf %s \"$HOME\"", cancellationToken: cancellationToken)).EnsureSuccess("Reading home directory").Output.Trim();
 
         log.Step("Uploading setup files");
-        await shell.UploadAsync(runner, "~/.deveagentmanager/setup-vars.sh", BuildSetupVars(profile), "600", cancellationToken);
-        await shell.UploadAsync(runner, "~/.deveagentmanager/agent-env.sh", BuildAgentEnv(profile, runner.Kind == RunnerKind.Desktop), "600", cancellationToken);
+        await shell.UploadAsync(runner, "~/.deveagentmanager/agent-env.sh", BuildAgentEnv(runner.Kind == RunnerKind.Desktop), "600", cancellationToken);
         await shell.UploadAsync(runner, "~/.deveagentmanager/runner-setup.sh", SetupScript.Value, "700", cancellationToken);
-        if (!string.IsNullOrEmpty(pat))
-        {
-            await shell.UploadAsync(runner, "~/.git-credentials", $"https://x-access-token:{pat}@github.com\n", "600", cancellationToken);
-        }
-        else
-        {
-            await shell.RunAsync(runner, "rm -f ~/.git-credentials", cancellationToken: cancellationToken);
-        }
 
         await RunScriptAsync(runner, log, "Base setup", "bash ~/.deveagentmanager/runner-setup.sh", TimeSpan.FromMinutes(30), cancellationToken);
+        await passwords.ApplyAtSetupAsync(runner, log, cancellationToken);
 
         // dam-tools: commands for agents, e.g. dam-tools share-image. dam-share was its earlier name.
         await shell.UploadAsync(runner, "~/.deveagentmanager/dam-tools.py", ReadResource("dam-tools.py"), "700", cancellationToken);
@@ -158,6 +152,9 @@ public sealed partial class RunnerSetupService(
         {
             await RunScriptAsync(runner, log, "Removing old desktop instructions", "python3 ~/.deveagentmanager/desktop.py remove-instructions", TimeSpan.FromSeconds(30), cancellationToken);
         }
+
+        log.Step("Setting up the people with access: their git identity, GitHub token, environment and SSH keys");
+        await users.SyncAsync(runner, cancellationToken);
 
         runner.InstalledVersions = await ReadVersionsAsync(runner, cancellationToken);
         runner.SetupVersion = SetupVersion;
@@ -338,36 +335,13 @@ public sealed partial class RunnerSetupService(
         }
     }
 
-    internal static string BuildSetupVars(SetupProfile profile)
+    /// <summary>
+    /// What every shell and agent on the Runner loads (through env.sh), whoever it is for: on a desktop Runner, the desktop
+    /// connection. Each user's own environment comes after it (<see cref="RunnerUsers.EnvironmentFile"/>).
+    /// </summary>
+    internal static string BuildAgentEnv(bool desktop = false)
     {
-        var builder = new StringBuilder("# Managed by DeveAgentManager\n");
-        if (!string.IsNullOrWhiteSpace(profile.GitUserName))
-        {
-            builder.Append("GIT_USER_NAME=").Append(ShellQuote.Quote(profile.GitUserName.Trim())).Append('\n');
-        }
-
-        if (!string.IsNullOrWhiteSpace(profile.GitUserEmail))
-        {
-            builder.Append("GIT_USER_EMAIL=").Append(ShellQuote.Quote(profile.GitUserEmail.Trim())).Append('\n');
-        }
-
-        return builder.ToString();
-    }
-
-    internal static string BuildAgentEnv(SetupProfile profile, bool desktop = false)
-    {
-        var builder = new StringBuilder("# Managed by DeveAgentManager: environment variables from the Setup Profile\n");
-        foreach (var variable in profile.EnvironmentVariables)
-        {
-            var name = variable.Name.Trim();
-            if (!SetupProfile.IsValidVariableName(name))
-            {
-                continue;
-            }
-
-            builder.Append("export ").Append(name).Append('=').Append(ShellQuote.Quote(variable.Value)).Append('\n');
-        }
-
+        var builder = new StringBuilder("# Managed by DeveAgentManager: the environment of every shell and agent on this Runner\n");
         if (desktop)
         {
             builder.Append("""

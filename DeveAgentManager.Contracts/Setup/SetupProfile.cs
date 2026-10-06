@@ -1,17 +1,12 @@
 namespace DeveAgentManager.Core.Setup;
 
 /// <summary>
-/// What gets installed and configured on every Runner on top of the base setup: environment variables
-/// (API keys), files (logins, settings, plugins) and an extra script. Stored encrypted.
+/// What gets installed and configured on every Runner on top of the base setup, the same for everyone who uses it
+/// (Manager settings): files (logins, settings, plugins), a script and each harness's packages and settings. Stored
+/// encrypted. What differs per person (git identity, environment variables, keys) is in each <see cref="UserProfile"/>.
 /// </summary>
 public sealed class SetupProfile
 {
-    public string? GitUserName { get; set; }
-
-    public string? GitUserEmail { get; set; }
-
-    public List<SetupEnvironmentVariable> EnvironmentVariables { get; set; } = [];
-
     public List<SetupFile> Files { get; set; } = [];
 
     /// <summary>Bash run as the Runner Account at the end of setup, e.g. <c>pi install npm:some-package</c>.</summary>
@@ -29,27 +24,6 @@ public sealed class SetupProfile
         }
 
         return config;
-    }
-
-    /// <summary>A name bash can export: letters, digits and underscores, not starting with a digit.</summary>
-    public static bool IsValidVariableName(string name) =>
-        name.Length > 0 && !char.IsAsciiDigit(name[0]) && name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
-
-    /// <summary>Why this variable can't be used, or null. An empty row is fine: it is left out when saving.</summary>
-    public string? Problem(SetupEnvironmentVariable variable)
-    {
-        var name = variable.Name.Trim();
-        if (name.Length == 0)
-        {
-            return variable.Value.Length == 0 ? null : "Enter a name for this value.";
-        }
-
-        if (!IsValidVariableName(name))
-        {
-            return "Letters, digits and _ only, not starting with a digit.";
-        }
-
-        return EnvironmentVariables.Count(v => v.Name.Trim() == name) > 1 ? $"{name} is listed twice." : null;
     }
 
     /// <summary>Why this file can't be written, or null. An empty row is fine: it is left out when saving.</summary>
@@ -75,14 +49,6 @@ public sealed class SetupProfile
     /// <summary>Throws with a readable message for the first thing that can't be applied.</summary>
     public void Validate()
     {
-        foreach (var variable in EnvironmentVariables)
-        {
-            if (Problem(variable) is { } problem)
-            {
-                throw new ArgumentException($"Environment variable '{variable.Name.Trim()}': {problem}");
-            }
-        }
-
         foreach (var file in Files.Where(f => f.Path.Trim().Length > 0 || f.Content.Length > 0))
         {
             if ((PathProblem(file) ?? ModeProblem(file)) is { } problem)

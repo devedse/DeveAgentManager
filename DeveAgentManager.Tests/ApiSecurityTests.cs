@@ -104,9 +104,10 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
     public async Task Login_ThenApiWorks_AndLogoutEndsIt()
     {
         var client = await SignedInAsync();
+        var me = await client.GetFromJsonAsync<CurrentUserDto>("/api/me", ApiJson.Options);
+        Assert.Equal(("admin", UserRoles.Admin, false), (me!.Username, me.Roles, me.MustChangePassword));
         var info = await client.GetFromJsonAsync<ManagerInfoDto>("/api/info", ApiJson.Options);
-        Assert.Equal("admin", info!.AdminUsername);
-        Assert.Contains(info.Harnesses, h => h.Id == "pi");
+        Assert.Contains(info!.Harnesses, h => h.Id == "pi");
 
         await client.PostAsync("/account/logout", null);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/info")).StatusCode);

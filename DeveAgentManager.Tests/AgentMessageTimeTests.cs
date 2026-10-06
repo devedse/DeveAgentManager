@@ -34,14 +34,14 @@ public class AgentMessageTimeTests
             await using (var db = factory.CreateDbContext())
             {
                 await db.Database.EnsureCreatedAsync(Ct);
-                var runner = new Runner { Id = Guid.NewGuid(), Name = "offline", State = RunnerState.Stopped };
-                var agent = new Agent { Id = id, Name = "agent", State = AgentState.Stopped, Runner = runner, RunnerId = runner.Id };
-                db.Sessions.Add(new() { Id = sessionId, Agent = agent, AgentId = id });
+                var runner = new Runner { Id = Guid.NewGuid(), OwnerId = User.BootstrapId, Name = "offline", State = RunnerState.Stopped };
+                var agent = new Agent { Id = id, OwnerId = User.BootstrapId, Name = "agent", State = AgentState.Stopped, Runner = runner, RunnerId = runner.Id };
+                db.Sessions.Add(new() { Id = sessionId, OwnerId = User.BootstrapId, Agent = agent, AgentId = id });
                 await db.SaveChangesAsync(Ct);
             }
             Directory.CreateDirectory(options.SessionsDirectory);
             await File.WriteAllTextAsync(Path.Combine(options.SessionsDirectory, $"{sessionId:N}.json"), new DeveSession { Entries = [Entry(DeveRole.Assistant, 2), Entry(DeveRole.User, 3)] }.ToJson(), Ct);
-            var service = new SessionService(factory, null!, [], [], options, new ManagerEvents(), NullLogger<SessionService>.Instance);
+            var service = new SessionService(factory, null!, [], [], new SessionImageStore(options), options, new ManagerEvents(), NullLogger<SessionService>.Instance);
             await service.BackfillMessageTimesAsync(Ct);
             await using var read = factory.CreateDbContext();
             Assert.Equal(At.AddMinutes(2), (await read.Agents.SingleAsync(Ct)).LastAssistantMessageAt);

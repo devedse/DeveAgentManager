@@ -11,7 +11,8 @@ public class AgentAttentionTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
     private static readonly DateTime Now = DateTime.UtcNow;
-    private static Agent NewAgent() => new() { Id = Guid.NewGuid(), Name = "agent", State = AgentState.Running, HarnessId = "codex", UpdatedAt = Now, Runner = new() { Id = Guid.NewGuid(), Name = "runner", State = RunnerState.Ready } };
+    private static Agent NewAgent() => new() { Id = Guid.NewGuid(), OwnerId = User.BootstrapId, Name = "agent", State = AgentState.Running, HarnessId = "codex", UpdatedAt = Now,
+        Runner = new() { Id = Guid.NewGuid(), OwnerId = User.BootstrapId, Name = "runner", State = RunnerState.Ready } };
     private static void Complete(Agent agent, DateTime at, string response)
     {
         AgentActivityTracker.Apply(agent, new(AgentActivityStatus.Working, "working", "busy"), "process", at);
@@ -63,7 +64,7 @@ public class AgentAttentionTests
                 await db.SaveChangesAsync(Ct);
             }
             var service = new AgentAttentionService(factory, new ManagerEvents(), TimeProvider.System);
-            Assert.Equal(AgentAttentionKind.Finished, Assert.Single(await service.ListAsync(Ct)).Kind);
+            Assert.Equal(AgentAttentionKind.Finished, Assert.Single(await service.ListAsync(TestUsers.Admin, Ct)).Kind);
             await using (var db = factory.CreateDbContext())
             {
                 var newer = await db.Agents.SingleAsync(Ct);
@@ -71,14 +72,14 @@ public class AgentAttentionTests
                 await db.SaveChangesAsync(Ct);
             }
             await service.MarkSeenAsync(agent.Id, viewed, Ct);
-            var latest = Assert.Single(await service.ListAsync(Ct));
+            var latest = Assert.Single(await service.ListAsync(TestUsers.Admin, Ct));
             Assert.True(latest.CompletionSequence > viewed);
             await Assert.ThrowsAsync<ArgumentException>(() => service.MarkSeenAsync(agent.Id, latest.CompletionSequence + 1, Ct));
             await service.MarkSeenAsync(agent.Id, latest.CompletionSequence, Ct);
             service = new(factory, new ManagerEvents(), TimeProvider.System);
-            Assert.Empty(await service.ListAsync(Ct));
+            Assert.Empty(await service.ListAsync(TestUsers.Admin, Ct));
             await service.MarkSeenAsync(agent.Id, viewed, Ct);
-            Assert.Empty(await service.ListAsync(Ct));
+            Assert.Empty(await service.ListAsync(TestUsers.Admin, Ct));
         }
         finally { File.Delete(path); }
     }
@@ -111,10 +112,10 @@ public class AgentAttentionTests
                 await db.Database.EnsureCreatedAsync(Ct); db.Agents.Add(agent); await db.SaveChangesAsync(Ct);
             }
             var service = new AgentAttentionService(factory, new ManagerEvents(), TimeProvider.System);
-            var old = Assert.Single(await service.ListAsync(Ct));
+            var old = Assert.Single(await service.ListAsync(TestUsers.Admin, Ct));
             await service.DismissAsync(agent.Id, old.Token, Ct);
             service = new(factory, new ManagerEvents(), TimeProvider.System);
-            Assert.Empty(await service.ListAsync(Ct));
+            Assert.Empty(await service.ListAsync(TestUsers.Admin, Ct));
             await using (var db = factory.CreateDbContext())
             {
                 var current = await db.Agents.SingleAsync(Ct);
@@ -122,10 +123,10 @@ public class AgentAttentionTests
                 await db.SaveChangesAsync(Ct);
             }
             await service.DismissAsync(agent.Id, old.Token, Ct);
-            var latest = Assert.Single(await service.ListAsync(Ct));
+            var latest = Assert.Single(await service.ListAsync(TestUsers.Admin, Ct));
             Assert.Equal(AgentAttentionKind.NeedsInput, latest.Kind);
             await service.DismissAsync(agent.Id, latest.Token, Ct);
-            Assert.Empty(await service.ListAsync(Ct));
+            Assert.Empty(await service.ListAsync(TestUsers.Admin, Ct));
             await using (var db = factory.CreateDbContext())
             {
                 var current = await db.Agents.SingleAsync(Ct);
@@ -134,10 +135,10 @@ public class AgentAttentionTests
                 db.AgentLimits.Add(new AgentLimit { AgentId = current.Id, Status = "Scheduled" });
                 await db.SaveChangesAsync(Ct);
             }
-            var finished = Assert.Single(await service.ListAsync(Ct));
+            var finished = Assert.Single(await service.ListAsync(TestUsers.Admin, Ct));
             Assert.Equal(AgentAttentionKind.Finished, finished.Kind);
             await service.DismissAsync(agent.Id, finished.Token, Ct);
-            Assert.Empty(await service.ListAsync(Ct));
+            Assert.Empty(await service.ListAsync(TestUsers.Admin, Ct));
         }
         finally { File.Delete(path); }
     }
