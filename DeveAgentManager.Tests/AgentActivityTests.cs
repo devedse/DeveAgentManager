@@ -50,6 +50,7 @@ public class AgentActivityTests
     [InlineData("codex-idle", AgentActivityStatus.Ready)]
     [InlineData("codex-idle-draft-warnings", AgentActivityStatus.Ready)]
     [InlineData("claude-weekly-limit", AgentActivityStatus.UsageLimited)]
+    [InlineData("claude-session-limit", AgentActivityStatus.UsageLimited)]
     public void RealScreensHaveNamedRules(string name, AgentActivityStatus status)
     {
         var result = AgentScreenDetector.Detect(name.Split('-')[0], Screen(name), Now);
@@ -151,6 +152,43 @@ public class AgentActivityTests
         Assert.False(parsed.NativeAutoContinue);
         Assert.Null(UsageLimitParser.Parse("claude", Screen("claude-weekly-limit").Replace("✻ Crunched", "● Resumed\n✻ Crunched"), "UTC", Now));
         Assert.Null(UsageLimitParser.Parse("claude", Screen("claude-weekly-limit").Replace("✻ Crunched for 0s · done 10:58 PM", "✻ Clauding… (5s · ↓ 77 tokens)"), "UTC", Now));
+    }
+
+    [Fact]
+    public void SessionLimitSurvivesClaudesOwnNoticeAndWaitsWithClaude()
+    {
+        // Claude Code 2.1 follows the error with its own notice, and says below the prompt that it continues by itself.
+        var now = new DateTime(2026, 10, 6, 15, 25, 0, DateTimeKind.Utc);
+        var screen = Screen("claude-session-limit");
+        var parsed = UsageLimitParser.Parse("claude", screen, "UTC", now);
+        Assert.NotNull(parsed);
+        Assert.Equal("⎿ You've hit your session limit · resets 6:40pm (Europe/Amsterdam)", parsed.Message);
+        Assert.Equal(new DateTime(2026, 10, 6, 16, 40, 0, DateTimeKind.Utc), parsed.ResetAt);
+        Assert.Equal("Europe/Amsterdam", parsed.TimeZoneId);
+        Assert.True(parsed.NativeAutoContinue);
+
+        // On a narrow screen the notice comes first and wraps.
+        var narrow = screen.Replace("""
+              ⎿  You've hit your session limit · resets 6:40pm (Europe/Amsterdam)
+
+            ● Usage limit reached · continuing automatically at 6:40pm · esc to cancel
+            """, """
+            ● Usage limit reached again · continuing automatically at 6:40pm · esc to
+              cancel
+              ⎿  You've hit your session limit · resets 6:40pm (Europe/Amsterdam)
+            """);
+        Assert.NotEqual(screen, narrow);
+        Assert.Equal(new DateTime(2026, 10, 6, 16, 40, 0, DateTimeKind.Utc), UsageLimitParser.Parse("claude", narrow, "UTC", now)?.ResetAt);
+
+        // With the error scrolled away, the footer still says it, in the agent's timezone.
+        var footerOnly = string.Join('\n', screen.Split('\n').Skip(5));
+        var fromFooter = UsageLimitParser.Parse("claude", footerOnly, "Europe/Amsterdam", now);
+        Assert.Equal(new DateTime(2026, 10, 6, 16, 40, 0, DateTimeKind.Utc), fromFooter?.ResetAt);
+        Assert.True(fromFooter?.NativeAutoContinue);
+
+        // Once the limit was reset and the agent went on, the error is old, whatever the footer still says.
+        Assert.Null(UsageLimitParser.Parse("claude", screen.Replace("● Usage limit reached · continuing automatically at 6:40pm · esc to cancel",
+            "● Usage limit reset · continuing automatically\n\n● Back to work."), "UTC", now));
     }
 
     [Fact]

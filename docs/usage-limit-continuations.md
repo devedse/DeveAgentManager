@@ -22,7 +22,7 @@ The same harness, conversation/account and process must still be present, displa
 
 The database marks a send as in progress before the SSH side effect. A restart or network failure during delivery leaves an uncertain result that requires checking the terminal; it never automatically retries that send. Continuing into another limit does not automatically grant a new continuation.
 
-Claude's native automatic-wait status is recognized, including when it appears below the prompt. The Manager shows that Claude is already resuming itself and refuses to schedule a second prompt.
+Claude's native automatic-wait status is recognized, including when it appears below the prompt (on one line, or as "⚠ Usage limit reached · limit resets 6:40pm" with "Continuing automatically at 6:40pm" under it). Claude's own "● Usage limit reached · continuing automatically" notice after the error belongs to the limit; "● Usage limit reset" ends it. The Manager shows that Claude is already resuming itself and refuses to schedule a second prompt.
 
 ## Message references
 

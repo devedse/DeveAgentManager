@@ -24,22 +24,32 @@ public static class UsageLimitParser
         var start = -1;
         for (var i = Math.Max(0, prompt - 16); i < prompt; i++)
             if (Match(lines[i], prefix).Success) start = i;
-        var nativeFooter = harness == "claude" ? lines.Skip(Math.Max(prompt, lines.Length - 12))
-            .LastOrDefault(line => Match(line, @"^\s*(?:[⎿■└]\s*)?Usage limit (?:reached|reset)\s*·\s*continuing (?:automatically|shortly)").Success) : null;
+        // Below the prompt, Claude Code says it waits for the reset itself: on one line, or (newer versions) as
+        // "⚠ Usage limit reached · limit resets 6:40pm" followed by "Continuing automatically at 6:40pm · esc to cancel".
+        var footer = harness == "claude" ? lines.Skip(Math.Max(prompt, lines.Length - 12)).ToArray() : [];
+        var nativeFooter = footer.LastOrDefault(line => Match(line,
+            @"^\s*(?:[⎿■└]\s*|⚠\uFE0F?\s*)?Usage limit (?:reached|reset)\s*·\s*(?:continuing (?:automatically|shortly)|limit resets\b)").Success);
+        var footerContinues = footer.Any(line => Match(line,
+            @"^\s*(?:[⎿■└]\s*|⚠\uFE0F?\s*)?(?:Usage limit (?:reached|reset)\s*·\s*)?continuing (?:automatically|shortly)\b").Success);
         if (start < 0 && nativeFooter is null) return null;
         // A later submitted prompt or assistant/tool output means this is an old error in the conversation.
         var following = start < 0 ? [] : lines.Skip(start + 1).Take(prompt - start - 1).ToArray();
         bool CompletedFooter(string line) => harness == "claude" && Match(line,
             @"^\s*[✻✢✽✶✳*] .+ for \d+[smh](?: \d+[smh])*\s*·\s*done \d{1,2}:\d{2}(?: [AP]M)?\s*$").Success;
-        if (following.Any(line => !CompletedFooter(line) && Match(line, @"^\s*[›❯•●◦■⎿└✻✢✽✶✳*]").Success)) return null;
+        // Claude Code's own notice about this limit ("● Usage limit reached · continuing automatically at 6:40pm") is
+        // part of it, not later output. "● Usage limit reset" is not: the limit is over.
+        bool LimitNotice(string line) => harness == "claude" && Match(line,
+            @"^\s*●\s*Usage limit reached(?: again)?\s*·\s*continuing (?:automatically|shortly)\b").Success;
+        if (following.Any(line => !CompletedFooter(line) && !LimitNotice(line) && Match(line, @"^\s*[›❯•●◦■⎿└✻✢✽✶✳*]").Success)) return null;
         bool StatusFooter(string line) => harness == "codex" && Match(line,
             @"^\s*(?:⚠(?:️)?\s*)?(?:[0-9]+ background terminals? running\b|(?:5h|weekly)\s+(?:limit:\s*)?[0-9]+%\s+left\b)").Success;
-        var message = Regex.Replace(start < 0 ? nativeFooter! : string.Join(" ", new[] { lines[start] }.Concat(following.TakeWhile(line => !CompletedFooter(line) && !StatusFooter(line)))), @"\s+", " ").Trim();
+        var message = Regex.Replace(start < 0 ? nativeFooter! : string.Join(" ", new[] { lines[start] }
+            .Concat(following.TakeWhile(line => !CompletedFooter(line) && !StatusFooter(line) && !LimitNotice(line)))), @"\s+", " ").Trim();
         if (harness == "codex")
             message = Regex.Replace(message, @"\s+(?:\d+ background terminals? running\b|⚠(?:️)?\s*(?:5h|weekly)\s+(?:limit:\s*)?\d+%\s+left\b).*$", "",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)).Trim();
         if (message.Length > 1800) return null;
-        var native = nativeFooter is not null || message.Contains("continuing automatically", StringComparison.OrdinalIgnoreCase);
+        var native = footerContinues || following.Any(LimitNotice) || message.Contains("continuing automatically", StringComparison.OrdinalIgnoreCase);
         var marker = Match(message, @"(?:try again at|will reset at|\bresets|continuing automatically at)\s+(?<reset>.+)$");
         if (!marker.Success) return new(message, null, processTimeZone, native, "No unambiguous reset time was found. Choose a reset date and time or a continuation duration.");
         var reset = marker.Groups["reset"].Value.Split('·')[0].Trim().TrimEnd('.');

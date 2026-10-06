@@ -1,0 +1,13 @@
+  Ran 1 shell command
+  ⎿  You've hit your session limit · resets 6:40pm (Europe/Amsterdam)
+
+● Usage limit reached · continuing automatically at 6:40pm · esc to cancel
+
+✻ Worked for 29m 5s · done 4:18 PM
+
+──────────────────────────────────────────────────────────── deveagentmanager ─
+❯ 
+──────────────────────────────────────────────────────────────────────────────
+  ⚠ Usage limit reached · limit resets 6:40pm
+    Continuing automatically at 6:40pm · esc to cancel
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · install gh for PR status · ← for…
