@@ -231,8 +231,9 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             }
         }
 
-        // An explicitly scheduled attempt is independent of later screen text or usage-limit detection.
-        // Only the user cancels it. If it is due but cannot safely submit, leave it armed and explain why.
+        // An explicitly scheduled attempt is independent of later screen text or usage-limit detection: the user
+        // cancels it, or it is done once the agent got going again without it. If it is due but cannot safely submit,
+        // leave it armed and explain why.
         if (row?.Status == "Sending")
         {
             row.Status = "Uncertain";
@@ -245,11 +246,24 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             {
                 var activity = screen is null ? AgentActivityStatus.Unknown
                     : AgentScreenDetector.Detect(agent.HarnessId, screen.Screen, Now).Status;
+                if (ContinuedWithout(agent, row, activity))
+                {
+                    row.Status = "Cleared";
+                    row.ContinueAt = null;
+                    row.Detail = null;
+                    if (row.Automatic && policy is { Enabled: true }) policy.Detail = "The agent continued by itself. Waiting for the next usage limit.";
+                    diagnostics?.Record(id, "Continuation", "Not sent: the agent was already going again, so the one-time continue is done.");
+                    logger.LogInformation("Agent {Agent} continued without its scheduled continue; the schedule is done", id);
+                    await db.SaveChangesAsync(ct);
+                    events.AgentChanged(agent.RunnerId, id);
+                    return;
+                }
+
                 row.Detail = Session(agent) != row.SessionId ? "Waiting: the agent's harness or session changed. Cancel this schedule to replace it."
                     : screen is null ? "Waiting for the agent and Runner to be available."
                     : !screen.InputEmpty ? "Waiting for an empty prompt. Your draft will not be submitted."
                     : parsed?.NativeAutoContinue == true ? "Waiting while Claude handles its own automatic continuation."
-                    : agent.Working || activity is not (AgentActivityStatus.Ready or AgentActivityStatus.UsageLimited)
+                    : activity is not (AgentActivityStatus.Ready or AgentActivityStatus.UsageLimited)
                         ? "Waiting for the agent to be idle and ready for input." : null;
                 if (row.Detail is null)
                 {
@@ -353,6 +367,15 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             events.AgentChanged(agent.RunnerId, id);
         }
     }
+
+    /// <summary>
+    /// Whether a due one-time continue is no longer needed: the agent is working, or replied after the moment the schedule
+    /// waited for (the reset; for a chosen duration, a minute before it is due). The harness continued by itself (Claude
+    /// does at the reset) or someone prompted it. Sending later would prompt a finished turn, or the next limit.
+    /// </summary>
+    private static bool ContinuedWithout(Agent agent, AgentLimit row, AgentActivityStatus activity) =>
+        agent.Working || activity == AgentActivityStatus.Working
+        || agent.LastAssistantMessageAt > (row.ResetAt ?? row.ContinueAt!.Value.AddMinutes(-1));
 
     public void Dispose()
     {
