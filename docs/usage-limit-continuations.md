@@ -16,9 +16,9 @@ The resolved UTC instant is stored once per observed limit/process/session, rath
 
 ## Sending and recovery
 
-Schedules are stored in SQLite and checked by the Manager every five seconds, including while browsers are closed. Sending starts no earlier than reset + one minute. A schedule missed by more than 15 minutes is cancelled, rather than unexpectedly sending hours later.
+Schedules are stored in SQLite and checked by the Manager every five seconds, including while browsers are closed. Sending starts no earlier than reset + one minute (or the chosen time). A due schedule stays armed until it can send or you cancel it, and says what it waits for: the same harness and conversation/account, an idle agent, an empty prompt. Before sending, a second check on the Runner verifies the pane identity, captured screen hash and empty prompt; it never clears the input buffer. This also catches drafts entered through another tmux client when they are visible. Concurrent activity from external tmux clients cannot be made fully atomic with a screen capture.
 
-The same harness, conversation/account and process must still be present, displaying the same limit at an empty prompt. User input in a Manager terminal cancels an armed schedule before forwarding that input. Before sending, a second check on the Runner verifies the pane identity, captured screen hash and empty prompt; it never clears the input buffer. This also catches drafts entered through another tmux client when they are visible. Concurrent activity from external tmux clients cannot be made fully atomic with a screen capture.
+A one-time continue is done without sending when the agent got going again without it: it is working when the continue is due, or replied after the reset. Claude continues by itself at the reset ("continuing automatically at 6:40pm"), and someone may have prompted the agent; a late `continue` would otherwise prompt a finished turn or run into the next limit.
 
 The database marks a send as in progress before the SSH side effect. A restart or network failure during delivery leaves an uncertain result that requires checking the terminal; it never automatically retries that send. Continuing into another limit does not automatically grant a new continuation.
 

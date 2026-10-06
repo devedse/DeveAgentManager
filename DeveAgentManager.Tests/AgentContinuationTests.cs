@@ -35,7 +35,6 @@ public sealed class AgentContinuationTests
     [InlineData("typing")]
     [InlineData("restarted")]
     [InlineData("changed-limit")]
-    [InlineData("working")]
     [InlineData("stopped")]
     [InlineData("native")]
     public async Task ScheduleSurvivesChangesAndWaitsWhenNotReady(string change)
@@ -60,8 +59,7 @@ public sealed class AgentContinuationTests
                 await using (var db = rig.Factory.CreateDbContext())
                 {
                     var a = await db.Agents.FindAsync([rig.Id], Ct);
-                    a!.Working = change == "working";
-                    if (change == "stopped") a.State = AgentState.Stopped;
+                    a!.State = AgentState.Stopped;
                     await db.SaveChangesAsync(Ct);
                 }
                 break;
@@ -328,7 +326,6 @@ public sealed class AgentContinuationTests
     [InlineData("screen")]
     [InlineData("process")]
     [InlineData("stopped")]
-    [InlineData("working")]
     [InlineData("limit")]
     public async Task ManualScheduleSurvivesChangesAndWaitsForAnEmptyIdlePrompt(string change)
     {
@@ -345,8 +342,7 @@ public sealed class AgentContinuationTests
                 await using (var db = rig.Factory.CreateDbContext())
                 {
                     var agent = await db.Agents.FindAsync([rig.Id], Ct);
-                    agent!.Working = change == "working";
-                    if (change == "stopped") agent.State = AgentState.Stopped;
+                    agent!.State = AgentState.Stopped;
                     await db.SaveChangesAsync(Ct);
                 }
                 break;
@@ -362,6 +358,98 @@ public sealed class AgentContinuationTests
             await rig.Service.RefreshAsync(rig.Id, Ct);
             Assert.Equal(1, rig.Terminal.Sends);
         }
+    }
+
+    [Theory]
+    [InlineData(false, "working")]
+    [InlineData(false, "working-screen")]
+    [InlineData(false, "replied")]
+    [InlineData(true, "working")]
+    [InlineData(true, "working-screen")]
+    [InlineData(true, "replied")]
+    public async Task OneTimeContinueIsDoneWhenTheAgentAlreadyContinued(bool manual, string how)
+    {
+        await using var rig = await Rig.Create();
+        if (manual) ReadyWithoutLimit(rig);
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: manual ? 3 : null, manual: manual);
+        var due = (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt!.Value;
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            var agent = (await db.Agents.FindAsync([rig.Id], Ct))!;
+            agent.Working = how == "working";
+            if (how == "replied") agent.LastAssistantMessageAt = due.AddSeconds(-30);
+            await db.SaveChangesAsync(Ct);
+        }
+        rig.Terminal.Screen = rig.Terminal.Screen with
+        {
+            Screen = (how == "working-screen" ? "• Working (2s • esc to interrupt)\n" : "") + "› Ask Codex to do anything\nGPT-6 medium · /work/example\n? for shortcuts",
+        };
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+
+        // Idle again at the next limit: that one is only detected, the earlier schedule doesn't send into it.
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            (await db.Agents.FindAsync([rig.Id], Ct))!.Working = false;
+            await db.SaveChangesAsync(Ct);
+        }
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.Codex("7:00 PM"), Hash = "next-limit" };
+        rig.Clock.Utc = rig.Clock.Utc.AddHours(1);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+        Assert.Equal("Detected", await rig.StatusAsync());
+    }
+
+    [Fact]
+    public async Task OneTimeContinueStillSendsAfterAReplyFromBeforeTheReset()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            // The reply that ran into the limit.
+            (await db.Agents.FindAsync([rig.Id], Ct))!.LastAssistantMessageAt = rig.Clock.Utc.UtcDateTime.AddMinutes(-1);
+            await db.SaveChangesAsync(Ct);
+        }
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        Assert.Equal("Sent", await rig.StatusAsync());
+    }
+
+    [Fact]
+    public async Task ClaudeContinuingByItselfAtTheResetEndsAChosenTimeSchedule()
+    {
+        // Claude waits for the reset itself ("continuing automatically at 2:02pm"); a continue scheduled for a minute
+        // later finds it working, and must not fire when it stops at its next limit.
+        await using var rig = await Rig.Create();
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            (await db.Agents.FindAsync([rig.Id], Ct))!.HarnessId = "claude";
+            await db.SaveChangesAsync(Ct);
+        }
+        ReadyWithoutLimit(rig);
+        await rig.Service.ScheduleAsync(rig.Id, rig.Clock.Utc.AddMinutes(2).UtcDateTime, Ct, manual: true);
+        rig.Terminal.Screen = rig.Terminal.Screen with
+        {
+            Screen = "● Usage limit reset\n\n✶ Deliberating… (1m 12s · thinking)\n\n─────\n❯ \n─────\n  ⏵⏵ bypass permissions on",
+        };
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+
+        rig.Terminal.Screen = rig.Terminal.Screen with
+        {
+            Screen = UsageLimitParserTests.Claude("Usage limit reached · continuing automatically at 7:02pm · esc to cancel"), Hash = "next-limit",
+        };
+        rig.Clock.Utc = rig.Clock.Utc.AddHours(1);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+        Assert.True((await rig.Service.GetAsync(rig.Id, Ct))!.NativeAutoContinue);
     }
 
     [Fact]
