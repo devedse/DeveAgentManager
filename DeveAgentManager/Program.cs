@@ -61,6 +61,8 @@ foreach (var (setting, instead) in new[]
 {
     ("RUNNER_PASSWORD", "every Runner gets a password of its own (shown on its page)"),
     ("GITHUB_PAT", "everyone enters their own GitHub token under My settings → Git and GitHub"),
+    ("GIT_USER_NAME", "everyone enters their own git identity under My settings → Git and GitHub"),
+    ("GIT_USER_EMAIL", "everyone enters their own git identity under My settings → Git and GitHub"),
 })
 {
     if (!string.IsNullOrWhiteSpace(app.Configuration[setting]))

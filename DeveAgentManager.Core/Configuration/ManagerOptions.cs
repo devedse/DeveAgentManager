@@ -33,11 +33,6 @@ public sealed class ManagerOptions
 
     public int DefaultDiskGb { get; init; } = 64;
 
-    /// <summary>The ADMIN_USERNAME user's git identity (see UserSettingsStore).</summary>
-    public string? GitUserName { get; init; }
-
-    public string? GitUserEmail { get; init; }
-
     /// <summary>
     /// The Manager's second port, which only serves VS Code. VS Code runs code from the Runner (extensions, and anything
     /// that took over code-server there), so it gets an origin of its own instead of running as the Portal.
@@ -76,8 +71,6 @@ public sealed class ManagerOptions
             DefaultCores = Int(configuration, "RUNNER_DEFAULT_CORES", 4),
             DefaultMemoryMb = Int(configuration, "RUNNER_DEFAULT_MEMORY_MB", 8192),
             DefaultDiskGb = Int(configuration, "RUNNER_DEFAULT_DISK_GB", 64),
-            GitUserName = Value(configuration, "GIT_USER_NAME"),
-            GitUserEmail = Value(configuration, "GIT_USER_EMAIL"),
             EditorPort = Int(configuration, "EDITOR_PORT", 8081),
             EditorUrl = Value(configuration, "EDITOR_URL")?.TrimEnd('/'),
         };

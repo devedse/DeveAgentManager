@@ -1,5 +1,4 @@
 using System.Text.Json;
-using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Security;
@@ -28,7 +27,7 @@ public sealed class UserSettingsTests : IAsyncLifetime
         _factory = new Factory(_path);
         await using var db = _factory.CreateDbContext();
         await db.Database.MigrateAsync(Ct);
-        _store = new UserSettingsStore(_factory, _protector, new ManagerOptions { DataDirectory = Path.GetTempPath() }, new ManagerEvents());
+        _store = new UserSettingsStore(_factory, _protector, new ManagerEvents());
     }
 
     public ValueTask DisposeAsync()

@@ -91,9 +91,8 @@ An agent's owner can share it with other users, **read-only** or **read-write**,
 | **Manager settings** (Settings manager) | Providers, templates, default timezone, and the rest of the Setup Profile: setup files, setup script, harness packages, default model and effort, and settings |
 
 The Setup Profile was split on migration: git identity, environment variables and the GitHub token became the first
-user's My settings; the rest stays shared. `GIT_USER_NAME` and `GIT_USER_EMAIL` in the compose file are the git
-identity of the `ADMIN_USERNAME` user (shown read-only there). `GITHUB_PAT` is gone: everyone enters their own GitHub
-token under My settings.
+user's My settings; the rest stays shared. My settings are only set in the Portal: `GITHUB_PAT`, `GIT_USER_NAME` and
+`GIT_USER_EMAIL` are gone from the compose file.
 
 ## 6. On the Runner (one shared account)
 
@@ -223,5 +222,5 @@ Phases 1–2 are useful on their own: several people, each on their own Runners.
   people's agents on it listed but can't open them, Use-level people don't see them; an agent's "needs attention"
   state is shared by everyone who sees it; deleting a user gives what they owned, and their Runner access, to a user
   of your choice; a role check comes before the check on the thing itself.
-- 2026-10-07 — `GITHUB_PAT` is removed from the compose file; the admin enters their token under My settings like
-  everyone else.
+- 2026-10-07 — `GITHUB_PAT`, `GIT_USER_NAME` and `GIT_USER_EMAIL` are removed from the compose file; the admin
+  enters their token and git identity under My settings like everyone else.

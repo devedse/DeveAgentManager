@@ -72,11 +72,7 @@ internal static class SettingsEndpoints
         var mine = api.MapGroup("/me/settings");
 
         mine.MapGet("/", async (CurrentUser user, UserSettingsStore store, CancellationToken ct) =>
-        {
-            var compose = await store.ComposeSettingsAsync(user.Id, ct);
-            return new MySettingsDto(await store.GetProfileAsync(user.Id, ct), await store.GetGitHubTokenAsync(user.Id, ct) is not null,
-                compose.GitUserName is not null || compose.GitUserEmail is not null);
-        }).ForAnyUser();
+            new MySettingsDto(await store.GetProfileAsync(user.Id, ct), await store.GetGitHubTokenAsync(user.Id, ct) is not null)).ForAnyUser();
 
         // Their Runners get the change in the background (and before their next agent or shell starts there).
         mine.MapPut("/profile", async (UserProfile profile, CurrentUser user, UserSettingsStore store, RunnerUsers runnerUsers, CancellationToken ct) =>

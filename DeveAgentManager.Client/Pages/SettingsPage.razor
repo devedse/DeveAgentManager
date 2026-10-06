@@ -24,16 +24,12 @@
                     <div class="settings-section">
                         <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Git identity</MudText>
                             <HelpTip Label="Git identity">Your agents and shells commit with this name and email. Without one, git asks for it.</HelpTip></div>
-                        @if (_settings.GitIdentityFromCompose)
-                        {
-                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-2">Set with <code>GIT_USER_NAME</code> and <code>GIT_USER_EMAIL</code> in the compose file.</MudAlert>
-                        }
                         <div class="form-row">
-                            <MudTextField @bind-Value="_profile.GitUserName" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1" ReadOnly="_settings.GitIdentityFromCompose" />
-                            <MudTextField @bind-Value="_profile.GitUserEmail" Label="Email" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1" ReadOnly="_settings.GitIdentityFromCompose" />
+                            <MudTextField @bind-Value="_profile.GitUserName" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1" />
+                            <MudTextField @bind-Value="_profile.GitUserEmail" Label="Email" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1" />
                         </div>
                         <div class="settings-actions">
-                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Save" Disabled="_saving || _settings.GitIdentityFromCompose" OnClick="SaveProfileAsync">Save</MudButton>
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Save" Disabled="_saving" OnClick="SaveProfileAsync">Save</MudButton>
                         </div>
                     </div>
 

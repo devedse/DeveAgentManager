@@ -52,9 +52,7 @@ services:
       # VS Code is served on its own port. Behind a reverse proxy, set where browsers reach that port:
       # EDITOR_URL: https://code.example.com
 
-      # Optional: the ADMIN_USERNAME user's git identity. Everyone sets theirs, and their GitHub token, under My settings.
-      # GIT_USER_NAME: Your Name
-      # GIT_USER_EMAIL: you@example.com
+      # Each person's git identity, GitHub token, environment variables and SSH keys are set in the Portal (My settings).
 
 volumes:
   deveagentmanager-data:

@@ -56,11 +56,8 @@ public sealed record UserSummaryDto(Guid Id, string Username, string DisplayName
 
 public sealed record AuditEventDto(long Id, DateTime At, string? ActorName, string Action, string? Target, string? Detail);
 
-/// <summary>
-/// A user's own settings. The GitHub token is never sent back, only whether there is one. Values from the compose file
-/// (for the ADMIN_USERNAME user) are shown read-only.
-/// </summary>
-public sealed record MySettingsDto(UserProfile Profile, bool HasGitHubToken, bool GitIdentityFromCompose);
+/// <summary>A user's own settings. The GitHub token is never sent back, only whether there is one.</summary>
+public sealed record MySettingsDto(UserProfile Profile, bool HasGitHubToken);
 
 /// <summary>Someone with access to a Runner besides its owner.</summary>
 public sealed record RunnerMemberDto(Guid UserId, string Username, string DisplayName, RunnerAccess Access, DateTime GrantedAt);

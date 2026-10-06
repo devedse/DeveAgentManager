@@ -166,7 +166,6 @@ Everything is set with environment variables in the compose file.
 | `TEMPLATE_HEADLESS_VMID` / `TEMPLATE_DESKTOP_VMID` | | Template VMIDs, e.g. `10100` and `10120`. |
 | `RUNNER_USERNAME` | `remoteman` | Account created on new VMs by cloud-init. Each Runner gets a random password of its own, which whoever manages the Runner sees on its page. (`RUNNER_PASSWORD` is no longer used.) |
 | `RUNNER_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` | `4` / `8192` / `64` | Default size in the New Runner dialog. |
-| `GIT_USER_NAME` / `GIT_USER_EMAIL` | | The `ADMIN_USERNAME` user's git identity on Runners. Everyone else sets theirs under My settings. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |
 | `EDITOR_PORT` | `8081` | The port that serves VS Code, and nothing else. Publish it next to 8080. |
 | `EDITOR_URL` | Portal's host on `EDITOR_PORT` | Where browsers reach that port, when it differs (behind a proxy), e.g. `https://code.example.com`. With `{runner}` in it (e.g. `https://{runner}.code.example.com`, a wildcard DNS name), each Runner's VS Code gets a host of its own, which isolates Runners from each other too. |

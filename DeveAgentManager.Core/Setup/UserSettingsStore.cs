@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Security;
@@ -9,37 +8,21 @@ using Microsoft.EntityFrameworkCore;
 namespace DeveAgentManager.Core.Setup;
 
 /// <summary>
-/// Each user's own settings (My settings): their <see cref="UserProfile"/> and GitHub token, stored encrypted per user.
-/// GIT_USER_NAME and GIT_USER_EMAIL in the compose file are the git identity of the user named ADMIN_USERNAME: they win
-/// over what that user enters, and are shown read-only.
+/// Each user's own settings (My settings): their <see cref="UserProfile"/> and GitHub token, stored encrypted per user
+/// and only set in the Portal.
 /// </summary>
 public sealed class UserSettingsStore(
     IDbContextFactory<ManagerDbContext> dbFactory,
     SecretProtector protector,
-    ManagerOptions options,
     ManagerEvents events)
 {
     private const string ProfileKey = "profile";
     private const string GitHubTokenKey = "github-token";
 
-    /// <summary>What the compose file sets for this user (empty for everyone but the ADMIN_USERNAME user).</summary>
-    public async Task<ComposeUserSettings> ComposeSettingsAsync(Guid userId, CancellationToken cancellationToken = default)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var username = await db.Users.Where(u => u.Id == userId).Select(u => u.Username).FirstOrDefaultAsync(cancellationToken);
-        return string.Equals(username, options.AdminUsername, StringComparison.OrdinalIgnoreCase)
-            ? new ComposeUserSettings(options.GitUserName, options.GitUserEmail)
-            : ComposeUserSettings.None;
-    }
-
     public async Task<UserProfile> GetProfileAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         var json = protector.Unprotect(await GetRawAsync(userId, ProfileKey, cancellationToken));
-        var profile = json is null ? new UserProfile() : JsonSerializer.Deserialize<UserProfile>(json) ?? new UserProfile();
-        var compose = await ComposeSettingsAsync(userId, cancellationToken);
-        profile.GitUserName = compose.GitUserName ?? profile.GitUserName;
-        profile.GitUserEmail = compose.GitUserEmail ?? profile.GitUserEmail;
-        return profile;
+        return json is null ? new UserProfile() : JsonSerializer.Deserialize<UserProfile>(json) ?? new UserProfile();
     }
 
     public async Task SaveProfileAsync(Guid userId, UserProfile profile, CancellationToken cancellationToken = default)
@@ -139,10 +122,4 @@ public sealed class UserSettingsStore(
         await db.SaveChangesAsync(cancellationToken);
         events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: userId));
     }
-}
-
-/// <summary>What the compose file sets for a user: GIT_USER_NAME and GIT_USER_EMAIL for the ADMIN_USERNAME user.</summary>
-public sealed record ComposeUserSettings(string? GitUserName, string? GitUserEmail)
-{
-    public static readonly ComposeUserSettings None = new(null, null);
 }
