@@ -200,10 +200,7 @@
 
     private async Task ShareAsync(SessionDto session)
     {
-        var dialog = await Dialogs.ShowAsync<ShareDialog>(session.Access == SessionAccess.Owner ? $"Share {session.Title}" : $"{session.OwnerName}'s {session.Title}",
-            new DialogParameters<ShareDialog> { { d => d.Session, session }, { d => d.Me, await Me.GetAsync() } },
-            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
-        await dialog.Result;
+        await ShareDialog.ShowAsync(Dialogs, session, await Me.GetAsync());
         await ReloadAsync();
     }
     private async Task OpenWorkspaceAsync(Guid workspace)

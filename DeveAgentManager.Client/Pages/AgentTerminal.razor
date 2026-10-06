@@ -223,11 +223,7 @@
 
     private async Task ShareAsync()
     {
-        if (_agent is null) return;
-        var dialog = await Dialogs.ShowAsync<ShareDialog>(_agent.Access == AgentAccess.Owner ? $"Share {_agent.Name}" : $"{_agent.OwnerName}'s {_agent.Name}",
-            new DialogParameters<ShareDialog> { { d => d.Agent, _agent }, { d => d.Me, await Me.GetAsync() } },
-            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
-        if (await dialog.Result is { Canceled: false, Data: true })
+        if (_agent is not null && await ShareDialog.ShowAsync(Dialogs, _agent, await Me.GetAsync()))
         {
             // Left the share: there is nothing here any more.
             Navigation.NavigateTo("agents");

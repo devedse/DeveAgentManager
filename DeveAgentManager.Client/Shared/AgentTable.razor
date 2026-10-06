@@ -1,6 +1,7 @@
 @inject ManagerApi Api
 @inject IDialogService Dialogs
 @inject ISnackbar Snackbar
+@inject SignedInUser Me
 
 @if (Agents.Count == 0)
 {
@@ -71,16 +72,23 @@ else
                                            OnClick="@(() => StartAsync(agent, false))" />
                         </MudTooltip>
                     }
-                    @if (write)
+                    @if (agent.Access >= AgentAccess.Read)
                     {
                         <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
-                            <MudMenuItem Icon="@Icons.Material.Rounded.Terminal" Href="@($"agents/{agent.Id}")">Open</MudMenuItem>
-                            @if (agent.RunnerToolIds.Contains("vscode"))
+                            <MudMenuItem Icon="@(write ? Icons.Material.Rounded.Terminal : Icons.Material.Rounded.Visibility)" Href="@($"agents/{agent.Id}")">@(write ? "Open" : "Watch")</MudMenuItem>
+                            @if (write)
                             {
-                                <MudMenuItem Icon="@Icons.Material.Rounded.Code" Href="@($"agents/{agent.Id}/vscode")">Open in VS Code</MudMenuItem>
+                                @if (agent.RunnerToolIds.Contains("vscode"))
+                                {
+                                    <MudMenuItem Icon="@Icons.Material.Rounded.Code" Href="@($"agents/{agent.Id}/vscode")">Open in VS Code</MudMenuItem>
+                                }
+                                <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="@(() => StartAsync(agent, true))">Restart</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Rounded.Image" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => PickIconAsync(agent)">Icon...</MudMenuItem>
                             }
-                            <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="@(() => StartAsync(agent, true))">Restart</MudMenuItem>
-                            <MudMenuItem Icon="@Icons.Material.Rounded.Image" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => PickIconAsync(agent)">Icon...</MudMenuItem>
+                            @* Owners share it; others see who else has it and can leave. *@
+                            <MudMenuItem Icon="@(agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="() => ShareAsync(agent)">
+                                @(agent.Access == AgentAccess.Owner ? "Share..." : "Sharing...")
+                            </MudMenuItem>
                             @if (agent.Access == AgentAccess.Owner)
                             {
                                 <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem>
@@ -135,6 +143,8 @@ else
 
     private Task PickIconAsync(AgentDto agent) =>
         Dialogs.ShowAsync<AgentIconDialog>("Icon", new DialogParameters<AgentIconDialog> { { d => d.Agent, agent } }, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+
+    private async Task ShareAsync(AgentDto agent) => await ShareDialog.ShowAsync(Dialogs, agent, await Me.GetAsync());
 
     private Task StopAsync(AgentDto agent) => RunAsync(agent, () => Api.StopAgentAsync(agent.Id), $"Stopped '{agent.Name}'");
 

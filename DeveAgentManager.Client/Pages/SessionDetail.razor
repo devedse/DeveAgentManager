@@ -138,10 +138,7 @@
     }
     private async Task ShareAsync()
     {
-        var dialog = await Dialogs.ShowAsync<ShareDialog>(_stored!.Access == SessionAccess.Owner ? $"Share {_stored.Title}" : $"{_stored.OwnerName}'s {_stored.Title}",
-            new DialogParameters<ShareDialog> { { d => d.Session, _stored }, { d => d.Me, await Me.GetAsync() } },
-            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
-        if (await dialog.Result is { Canceled: false, Data: true })
+        if (await ShareDialog.ShowAsync(Dialogs, _stored!, await Me.GetAsync()))
         {
             // Left the share: it is gone for this user.
             Navigation.NavigateTo("sessions");

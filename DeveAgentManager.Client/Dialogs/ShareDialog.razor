@@ -89,6 +89,22 @@
     [Parameter, EditorRequired]
     public CurrentUserDto Me { get; set; } = default!;
 
+    /// <summary>Shows who the agent is shared with; true when the user left the share (so it is gone for them).</summary>
+    public static Task<bool> ShowAsync(IDialogService dialogs, AgentDto agent, CurrentUserDto me) =>
+        ShowAsync(dialogs, agent.Access == AgentAccess.Owner ? $"Share {agent.Name}" : $"{agent.OwnerName}'s {agent.Name}",
+            new DialogParameters<ShareDialog> { { d => d.Agent, agent }, { d => d.Me, me } });
+
+    /// <summary>Shows who the conversation is shared with; true when the user left the share.</summary>
+    public static Task<bool> ShowAsync(IDialogService dialogs, SessionDto session, CurrentUserDto me) =>
+        ShowAsync(dialogs, session.Access == SessionAccess.Owner ? $"Share {session.Title}" : $"{session.OwnerName}'s {session.Title}",
+            new DialogParameters<ShareDialog> { { d => d.Session, session }, { d => d.Me, me } });
+
+    private static async Task<bool> ShowAsync(IDialogService dialogs, string title, DialogParameters<ShareDialog> parameters)
+    {
+        var dialog = await dialogs.ShowAsync<ShareDialog>(title, parameters, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        return await dialog.Result is { Canceled: false, Data: true };
+    }
+
     private bool IsOwner => Agent?.Access == AgentAccess.Owner || Session?.Access == SessionAccess.Owner;
 
     private Guid OwnerId => Agent?.OwnerId ?? Session!.OwnerId;
