@@ -51,7 +51,7 @@ services:
 
       # Public HTTPS setup (configure once; one wildcard NPM host per editor domain covers EVERY Runner).
       # PUBLIC_ORIGINS: https://dam.example.com;https://dam.example.net
-      # EDITOR_URL: https://{runner}.code.{host}
+      # EDITOR_URL: https://{runner}.code.{host}   # behind Cloudflare: https://dam-vscode-{runner}.example.com
       # TRUSTED_PROXIES: 192.168.1.20 # actual NPM socket address, NOT every private network
       # ALLOW_LOCAL_ACCESS: "true" # direct LAN IP HTTP keeps separate local cookies; proxy traffic cannot use it
       # PROXY_IDENTITY_HEADERS: X-Custom-Authenticated-User # extra identity headers to strip at editor proxy

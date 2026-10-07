@@ -38,7 +38,7 @@ public sealed class ManagerOptions
     /// </summary>
     public int EditorPort { get; init; } = 8081;
 
-    /// <summary>Public editor origin template; {runner} is the first hostname label, {host} comes from the public allowlist.</summary>
+    /// <summary>Public editor origin template; {runner} is within the first hostname label, {host} comes from the public allowlist.</summary>
     public string? EditorUrl { get; init; }
 
     public string[] PublicOrigins { get; init; } = [];

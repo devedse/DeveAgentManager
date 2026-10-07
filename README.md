@@ -168,7 +168,7 @@ Everything is set with environment variables in the compose file.
 | `RUNNER_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` | `4` / `8192` / `64` | Default size in the New Runner dialog. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |
 | `EDITOR_PORT` | `8081` | Optional editor-only port for direct local IP access. Public editors use hostname routing on the Portal port. |
-| `EDITOR_URL` | Local Portal host on `EDITOR_PORT` | Public mode requires `{runner}`, e.g. `https://{runner}.code.{host}`. `{host}` is derived only from an allowlisted public Portal origin. |
+| `EDITOR_URL` | Local Portal host on `EDITOR_PORT` | Public mode requires `{runner}` within the first hostname label: `https://{runner}.code.{host}`, or flat names such as `https://dam-vscode-{runner}.example.com` (one level deep, so a free `*.example.com` certificate such as Cloudflare's covers them). `{host}` is derived only from an allowlisted public Portal origin. |
 | `PUBLIC_ORIGINS` | empty | Semicolon-separated HTTPS Portal origins, e.g. `https://dam.devedse.click;https://dam.devedse.duckdns.org`. Unknown public origins are rejected; editor hosts never serve the Portal. |
 | `TRUSTED_PROXIES` | empty | Semicolon-separated exact proxy IP addresses (actual socket peers). Only these can set forwarded client IP and HTTPS scheme. Host is preserved directly; forwarded Host is never used. |
 | `ALLOW_LOCAL_ACCESS` | `true` | Allow direct private/loopback IP HTTP connections, with separate credentials. Proxy or forwarded traffic cannot activate this exception. |
@@ -184,6 +184,12 @@ Configure **one wildcard editor proxy host per domain**, e.g. `*.code.dam.deveds
 **8080**, with WebSockets enabled. Add the corresponding wildcard DNS record and wildcard TLS certificate obtained by
 DNS challenge. `EDITOR_URL=https://{runner}.code.{host}` chooses the matching public domain automatically. Adding a
 Runner never needs an NPM entry, DNS record or certificate. Each Runner keeps a separate browser origin.
+
+Behind Cloudflare (proxied DNS or a tunnel), use flat editor names instead: the free Universal SSL certificate only
+covers one level (`*.example.com`). With `EDITOR_URL=https://dam-vscode-{runner}.example.com`, an existing
+`*.example.com` DNS record/tunnel route already reaches NPM; add
+`server_name ~^dam-vscode-[a-z0-9-]+\.example\.com$;` to the Portal proxy host's **Advanced** tab so NPM routes them
+to DAM. A broader NPM wildcard host such as `*.example.com` would take priority over that regex.
 
 Public deployments must keep backend ports off the internet. Trust only NPM's specific socket addresses, including
 its IPv6 address if used. Requests preserve Host; `X-Forwarded-Host` is ignored. NPM must overwrite forwarded headers

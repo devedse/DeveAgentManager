@@ -38,7 +38,7 @@ Server settings are shown under **Account menu → Account security** for user m
 | Setting | Example / default |
 |---|---|
 | `PUBLIC_ORIGINS` | `https://dam.devedse.click;https://dam.devedse.duckdns.org` |
-| `EDITOR_URL` | `https://{runner}.code.{host}` |
+| `EDITOR_URL` | `https://{runner}.code.{host}`, or flat `https://dam-vscode-{runner}.devedse.click` |
 | `TRUSTED_PROXIES` | Exact NPM socket IPs separated by semicolons; empty trusts nobody |
 | `ALLOW_LOCAL_ACCESS` | `true` |
 | `PROXY_IDENTITY_HEADERS` | Additional header names separated by semicolons |
@@ -189,6 +189,14 @@ and real client IP; configure NPM's actual socket address in TRUSTED_PROXIES.
 `runner-01.code.dam.devedse.click`, `runner-02.code.dam.devedse.click` and every future Runner use the same entry.
 Adding Runners needs no NPM, DNS or certificate changes. NPM routes; DAM checks identity and authorization. The wildcard
 certificate covers one Runner-label level, not deeper names or bare `code.dam.devedse.click`.
+
+**Behind Cloudflare: flat editor names.** Cloudflare's free certificate covers `*.devedse.click` (one level), not
+`runner-01.code.dam.devedse.click`, and a DNS wildcard doesn't apply below the existing `dam.devedse.click` record.
+So `EDITOR_URL=https://dam-vscode-{runner}.devedse.click`: the existing `*.devedse.click` DNS record and tunnel route
+already reach NPM (verified: `dam-vscode-runner-01.devedse.click` resolves with a valid certificate). NPM needs only one
+line in the Portal proxy host's Advanced tab: `server_name ~^dam-vscode-[a-z0-9-]+\.devedse\.click$;`. DAM accepts
+`{runner}` anywhere in the first label, so Runners stay one origin each and one name each never spans labels. From the
+DuckDNS Portal these editors are cross-site: VS Code opens there with **Open in a new tab**.
 
 Configure a second wildcard entry/certificate once if editors are wanted under the DuckDNS domain as well. Verify
 wildcard DNS/certificate support on the chosen provider; this implementation has not changed live DNS. Local optional

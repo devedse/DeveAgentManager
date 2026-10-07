@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using DeveAgentManager.Core.Configuration;
 using Microsoft.AspNetCore.HttpOverrides;
 using DeveAgentManager.Core.Data;
@@ -11,6 +12,7 @@ public sealed class DeploymentBoundary
 {
     private const string LocalKey = "dam:local";
     private const string EditorKey = "dam:editor";
+    private const string Marker = "damrunnerplaceholder";
     private readonly ManagerOptions _options;
     private readonly Uri[] _portals;
     private readonly HashSet<IPAddress> _proxies;
@@ -26,14 +28,13 @@ public sealed class DeploymentBoundary
                 throw new ArgumentException("Public deployment requires EDITOR_URL with {runner}, e.g. https://{runner}.code.{host}.");
             foreach (var portal in _portals)
             {
-                var editor = ParseOrigin(options.EditorUrl.Replace("{host}", portal.Host).Replace("{runner}", "runner"));
-                var marker = "damrunnerplaceholder";
-                var pattern = ParseOrigin(options.EditorUrl.Replace("{host}", portal.Host).Replace("{runner}", marker));
-                if (!pattern.Host.StartsWith(marker + ".", StringComparison.Ordinal) || pattern.Host[(marker.Length + 1)..].Contains(marker, StringComparison.Ordinal))
-                    throw new ArgumentException("EDITOR_URL must use {runner} as the first complete hostname label, so one wildcard covers all Runners.");
-                var suffix = pattern.Host[marker.Length..];
-                if (_portals.Any(p => p.Host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)))
-                    throw new ArgumentException("A Portal hostname cannot belong to the editor hostname namespace.");
+                // {runner} lies within the first label (`{runner}.code.{host}` or `dam-vscode-{runner}.example.com`), so one
+                // wildcard (DNS, certificate, proxy) covers every Runner and a Runner name never spans labels.
+                var (prefix, suffix, _) = EditorPattern(portal);
+                if (prefix.Contains('.') || !suffix.StartsWith('.') || suffix.Length < 2 || suffix.Contains(Marker, StringComparison.Ordinal))
+                    throw new ArgumentException("EDITOR_URL must have {runner} once, in the first hostname label, e.g. https://{runner}.code.{host} or https://dam-vscode-{runner}.example.com.");
+                if (_portals.Any(p => EditorRunner(p.Host, portal) is not null))
+                    throw new ArgumentException("A Portal hostname cannot match the editor hostname pattern.");
             }
         }
     }
@@ -79,11 +80,12 @@ public sealed class DeploymentBoundary
     {
         if (IsLocal(context)) { await next(context); return; }
         if (_portals.Any(p => SameOrigin(p, context.Request))) { await next(context); return; }
-        if (context.Request.IsHttps && _portals.Any(p => MatchesEditor(context.Request, p)))
+        var name = context.Request.IsHttps
+            ? _portals.Select(p => (context.Request.Host.Port ?? 443) == EditorPattern(p).Port ? EditorRunner(context.Request.Host.Host, p) : null).FirstOrDefault(n => n is not null)
+            : null;
+        if (name is not null)
         {
             await using var db = await context.RequestServices.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync(context.RequestAborted);
-            var name = context.Request.Host.Host.Split('.')[0].ToLowerInvariant();
-            // The validated template uses the first complete label, so this uses the unique name index.
             if (!await db.Runners.AnyAsync(r => r.Name == name, context.RequestAborted))
             { context.Response.StatusCode = 404; return; }
             context.Items[EditorKey] = true;
@@ -104,18 +106,26 @@ public sealed class DeploymentBoundary
                 && context.Request.Host.Host.EndsWith(parts[1], StringComparison.OrdinalIgnoreCase));
     }
 
-    private bool MatchesEditor(HttpRequest request, Uri portal)
+    /// <summary>The editor hostname around {runner} for a Portal origin: what comes before and after it, and the port.</summary>
+    private (string Prefix, string Suffix, int Port) EditorPattern(Uri portal)
     {
-        var template = _options.EditorUrl!.Replace("{host}", portal.Host, StringComparison.Ordinal);
-        var marker = "damrunnerplaceholder";
-        var sample = ParseOrigin(template.Replace("{runner}", marker, StringComparison.Ordinal));
-        var parts = sample.Host.Split(marker, StringSplitOptions.None);
-        return parts.Length == 2 && parts[1].Length > 0 && request.Host.Host.StartsWith(parts[0], StringComparison.OrdinalIgnoreCase)
-            && request.Host.Host.EndsWith(parts[1], StringComparison.OrdinalIgnoreCase)
-            && request.Host.Host.Length > parts[0].Length + parts[1].Length
-            && !request.Host.Host[parts[0].Length..^parts[1].Length].Contains('.')
-            && (request.Host.Port ?? 443) == sample.Port;
+        var sample = ParseOrigin(_options.EditorUrl!.Replace("{host}", portal.Host, StringComparison.Ordinal).Replace("{runner}", Marker, StringComparison.Ordinal));
+        var parts = sample.Host.Split(Marker, 2);
+        return (parts[0], parts.Length == 2 ? parts[1] : "", sample.Port);
     }
+
+    /// <summary>The Runner name an editor hostname names (lowercase, a single label), or null when it isn't one.</summary>
+    internal string? EditorRunner(string host, Uri portal)
+    {
+        var (prefix, suffix, _) = EditorPattern(portal);
+        host = host.ToLowerInvariant();
+        if (host.Length <= prefix.Length + suffix.Length || !host.StartsWith(prefix, StringComparison.Ordinal) || !host.EndsWith(suffix, StringComparison.Ordinal)) return null;
+        var name = host[prefix.Length..^suffix.Length];
+        return name.Contains('.') ? null : name;
+    }
+
+    /// <summary>A CSP source for every Runner's editor: the label holding {runner} becomes the one wildcard CSP allows.</summary>
+    internal static string EditorFrameSource(string editorUrl) => Regex.Replace(editorUrl, @"//[^./]*\{runner\}[^./]*", "//*");
 
     internal static bool SameOrigin(Uri origin, HttpRequest request) => origin.Scheme == request.Scheme
         && string.Equals(origin.Host, request.Host.Host, StringComparison.OrdinalIgnoreCase)

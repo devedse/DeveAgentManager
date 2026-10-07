@@ -11,10 +11,10 @@ public static class SecurityHeaders
         var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
         context.Items[NonceKey] = nonce;
         var options = context.RequestServices.GetRequiredService<ManagerOptions>();
-        var frames = options.PublicOrigins.Select(p => options.EditorUrl!.Replace("{host}", new Uri(p).Host).Replace("{runner}", "*")).ToList();
+        var frames = options.PublicOrigins.Select(p => DeploymentBoundary.EditorFrameSource(options.EditorUrl!.Replace("{host}", new Uri(p).Host))).ToList();
         if (DeploymentBoundary.IsLocal(context))
             frames.Add(options.PublicOrigins.Length == 0 && options.EditorUrl is { } template && !template.Contains("{host}", StringComparison.Ordinal)
-                ? template.Replace("{runner}", "*")
+                ? DeploymentBoundary.EditorFrameSource(template)
                 : new UriBuilder(context.Request.Scheme, context.Request.Host.Host, options.EditorPort).Uri.GetLeftPart(UriPartial.Authority));
         context.Response.Headers.ContentSecurityPolicy = $"default-src 'self'; script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src {string.Join(' ', frames)}; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'";
         context.Response.Headers.XFrameOptions = "SAMEORIGIN";
