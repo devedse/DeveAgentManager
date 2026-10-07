@@ -117,6 +117,11 @@ public static class EditorEndpoints
             query = query.Add("folder", folder);
         }
 
+        if (context.Request.Query["theme"] == "light")
+        {
+            query = query.Add("theme", "light");
+        }
+
         return NoStore(context, Results.Redirect($"{origin}/runners/{runner.Id}/auth#{query.ToString().TrimStart('?')}"));
     }
 
@@ -167,7 +172,7 @@ public static class EditorEndpoints
         if (parts[3] == "auth")
         {
             if (HttpMethods.IsGet(context.Request.Method))
-                await WriteAsync(context, NoStore(context, Results.Content(AuthPage, "text/html")));
+                await WriteAsync(context, NoStore(context, Results.Content(AuthPage, "text/html; charset=utf-8")));
             else if (HttpMethods.IsPost(context.Request.Method) && RequestSecurity.IsSameOrigin(context.Request, requireOrigin: true))
                 await WriteAsync(context, await AcceptTicketAsync(context, runnerId));
             else context.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -338,18 +343,34 @@ public static class EditorEndpoints
         }
     }
 
+    // Dark unless the Portal passed theme=light; the colors are the Portal's.
     private const string AuthPage = """
-        <!doctype html><html><head><meta name="referrer" content="no-referrer"><title>Opening VS Code</title></head>
-        <body>Opening VS Code…<script src="/auth.js"></script></body></html>
+        <!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Opening VS Code</title>
+        <style>
+        :root{color-scheme:dark;--bg:#0d1017;--fg:#e6ebf5;--muted:#8b93a7;--accent:#8b7cf6;--track:#262c3a}
+        :root[data-theme=light]{color-scheme:light;--bg:#f6f7fb;--fg:#1b2230;--muted:#5b6478;--accent:#6d5ae6;--track:#dde1ea}
+        body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif}
+        main{display:grid;justify-items:center;gap:16px;padding:24px;text-align:center}
+        .spinner{width:32px;height:32px;border-radius:50%;border:3px solid var(--track);border-top-color:var(--accent);animation:spin .8s linear infinite}
+        p{margin:0;color:var(--muted);max-width:34em;line-height:1.5}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @media (prefers-reduced-motion:reduce){.spinner{animation-duration:2.4s}}
+        </style></head>
+        <body><main><div class="spinner"></div><p id="status">Opening VS Code…</p></main><script src="/auth.js"></script></body></html>
         """;
 
     private const string AuthScript = """
         (async () => {
           const values = new URLSearchParams(location.hash.slice(1));
+          if (values.get('theme') === 'light') document.documentElement.dataset.theme = 'light';
+          values.delete('theme');
           history.replaceState(null, '', location.pathname);
           const response = await fetch(location.pathname, { method: 'POST', body: values, credentials: 'same-origin' });
           if (response.redirected) location.replace(response.url);
-          else document.body.textContent = 'This link has expired. Open VS Code from the Manager again.';
+          else {
+            document.querySelector('.spinner').remove();
+            document.getElementById('status').textContent = 'This link has expired. Open VS Code from the Manager again.';
+          }
         })();
         """;
 
