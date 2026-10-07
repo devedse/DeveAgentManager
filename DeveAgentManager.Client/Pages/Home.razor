@@ -1,6 +1,7 @@
 @page "/"
 @inherits LiveComponent
 @inject IDialogService Dialogs
+@inject SignedInUser Me
 
 <PageTitle>Dashboard · DeveAgentManager</PageTitle>
 
@@ -8,22 +9,29 @@
     <PageHeader Title="Dashboard" Subtitle="Your coding agents and the machines they run on.">
         <Actions>
             <MudButton Href="activity" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.MonitorHeart">Agent activity</MudButton>
-            <MudButton Variant="Variant.Outlined" Color="Color.Default" StartIcon="@Icons.Material.Rounded.AddToQueue" OnClick="NewRunnerAsync">New Runner</MudButton>
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
+            @if (CanCreateRunners)
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Default" StartIcon="@Icons.Material.Rounded.AddToQueue" OnClick="NewRunnerAsync">New Runner</MudButton>
+            }
+            @if (_runners.Count > 0)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
+            }
         </Actions>
     </PageHeader>
 
-    @if (_info?.UsesDefaultAdminPassword == true)
-    {
-        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4" Dense="true">
-            The Portal uses the default password. Set <code>ADMIN_PASSWORD</code> in the compose file, because the Portal gives shell access to every Runner.
-        </MudAlert>
-    }
-
-    @if (_info is not null && !_info.Providers.Any(p => p.IsConfigured && !p.Capabilities.RequiresConnectionDetails))
+    @if (CanCreateRunners && _info is not null && !_info.Providers.Any(p => p.IsConfigured && !p.Capabilities.RequiresConnectionDetails))
     {
         <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4" Dense="true">
-            Proxmox is not configured yet, so only existing machines can be added. See <MudLink Href="settings">Settings</MudLink> for what to set.
+            Proxmox is not configured yet, so only existing machines can be added.
+            @if (_user?.Has(UserRoles.SettingsManager) == true)
+            {
+                <span>See <MudLink Href="manager-settings">Manager settings → Providers</MudLink> for what to set.</span>
+            }
+            else
+            {
+                <span>A settings manager sets it up under Manager settings → Providers.</span>
+            }
         </MudAlert>
     }
 
@@ -62,22 +70,34 @@
         </div>
     </div>
 
-    @if (Loaded && _runners.Count == 0)
+    @if (Loaded && _runners.Count == 0 && _agents.Count == 0 && !CanCreateRunners)
+    {
+        <EmptyState Icon="@Icons.Material.Rounded.Dns" Title="No Runner yet"
+                    Text="Agents run on Runners. Ask a runner manager to give you access to one; agents others share with you appear here too." />
+    }
+    else if (Loaded && _runners.Count == 0 && _agents.Count == 0)
     {
         <div class="panel get-started">
             <MudText Typo="Typo.h5">Get started</MudText>
-            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">Three steps to your first agent.</MudText>
+            @{
+                var checksConnection = _user?.Has(UserRoles.SettingsManager) == true;
+                var step = 1;
+            }
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">@(checksConnection ? "Three" : "Two") steps to your first agent.</MudText>
             <div class="steps">
-                <a class="step" href="settings">
-                    <span class="step-number">1</span>
-                    <div><div class="step-title">Check the connection</div><div class="step-text">Settings → Providers → Test connection</div></div>
-                </a>
+                @if (checksConnection)
+                {
+                    <a class="step" href="manager-settings">
+                        <span class="step-number">@(step++)</span>
+                        <div><div class="step-title">Check the connection</div><div class="step-text">Manager settings → Providers → Test connection</div></div>
+                    </a>
+                }
                 <button type="button" class="step" @onclick="NewRunnerAsync">
-                    <span class="step-number">2</span>
+                    <span class="step-number">@(step++)</span>
                     <div><div class="step-title">Create a Runner</div><div class="step-text">A VM cloned from your template and set up for agents</div></div>
                 </button>
                 <button type="button" class="step" @onclick="NewAgentAsync">
-                    <span class="step-number">3</span>
+                    <span class="step-number">@step</span>
                     <div><div class="step-title">Start an agent</div><div class="step-text">Clone a repository and open pi in your browser</div></div>
                 </button>
             </div>
@@ -95,7 +115,10 @@
                     @* The same rows, with the same quick actions, as on the Agents and Runner pages. *@
                     <AgentTable Agents="_agents.Take(8).ToList()" ShowRunner="true" EmptyText="Start an agent on a Runner to work on a repository.">
                         <EmptyContent>
-                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
+                            @if (_runners.Count > 0)
+                            {
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
+                            }
                         </EmptyContent>
                     </AgentTable>
                 </div>
@@ -135,14 +158,19 @@
 @code {
     protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
     private ManagerInfoDto? _info;
+    private CurrentUserDto? _user;
     private List<RunnerDto> _runners = [];
     private List<AgentDto> _agents = [];
 
+    private bool CanCreateRunners => _user?.Has(UserRoles.RunnerCreator) == true;
+
     protected override async Task LoadAsync()
     {
+        _user = await Me.GetAsync();
         _info ??= await Api.InfoAsync();
         _runners = await Api.ListRunnersAsync();
-        _agents = _runners.SelectMany(r => r.Agents).OrderByDescending(a => a.State == AgentState.Running).ThenByDescending(a => a.CreatedAt).ToList();
+        // Agents shared with the user can be on Runners they have no access to: they come from the agent list.
+        _agents = (await Api.ListAgentsAsync()).OrderByDescending(a => a.State == AgentState.Running).ThenByDescending(a => a.CreatedAt).ToList();
     }
 
     private Task NewRunnerAsync() => Dialogs.ShowAsync<NewRunnerDialog>();

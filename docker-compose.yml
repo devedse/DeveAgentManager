@@ -19,9 +19,11 @@ services:
     environment:
       TZ: Europe/Amsterdam
 
-      # Portal login
+      # The first user, with all roles. The password only counts at the very first start; afterwards everyone changes
+      # theirs in the Portal. RESET_ADMIN_PASSWORD: "true" gives this user all roles and ADMIN_PASSWORD again (remove it after).
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: change-me # CHANGE ME
+      # RESET_ADMIN_PASSWORD: "true"
 
       # Proxmox API (token from README.md)
       PROXMOX_URL: https://proxmox1:8006 # CHANGE ME
@@ -39,9 +41,8 @@ services:
       TEMPLATE_HEADLESS_VMID: "10100"
       TEMPLATE_DESKTOP_VMID: "10120"
 
-      # Runner Account, created on every new VM through cloud-init
+      # Runner Account, created on every new VM through cloud-init (each Runner gets a random password of its own)
       RUNNER_USERNAME: remoteman
-      RUNNER_PASSWORD: remoteman
 
       # Default size of new Runners (can be changed per Runner)
       RUNNER_DEFAULT_CORES: "4"
@@ -51,10 +52,7 @@ services:
       # VS Code is served on its own port. Behind a reverse proxy, set where browsers reach that port:
       # EDITOR_URL: https://code.example.com
 
-      # Optional: set here, or in the Portal under Settings
-      # GITHUB_PAT: github_pat_...
-      # GIT_USER_NAME: Your Name
-      # GIT_USER_EMAIL: you@example.com
+      # Each person's git identity, GitHub token, environment variables and SSH keys are set in the Portal (My settings).
 
 volumes:
   deveagentmanager-data:

@@ -7,6 +7,7 @@ using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Ssh;
+using DeveAgentManager.Core.Users;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -25,6 +26,8 @@ public sealed partial class AgentService(
     SessionService sessions,
     Accounts.AccountService accounts,
     Setup.SettingsStore settings,
+    Runners.RunnerUsers users,
+    AccessControl access,
     ManagerEvents events,
     ILogger<AgentService> logger,
     AgentContinuations? continuations = null, AgentDiagnostics? diagnostics = null)
@@ -33,36 +36,53 @@ public sealed partial class AgentService(
 
     public IReadOnlyCollection<IHarness> Harnesses => _harnesses.Values;
 
-    public async Task<List<Agent>> ListAsync(Guid? runnerId = null, CancellationToken cancellationToken = default)
+    /// <summary>The agents a user can see, with what deciding their access needs (owner, shares, the Runner's members).</summary>
+    public async Task<List<Agent>> ListVisibleAsync(CurrentUser user, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var query = db.Agents.AsNoTracking().Include(a => a.Runner).AsQueryable();
-        if (runnerId is not null)
-        {
-            query = query.Where(a => a.RunnerId == runnerId);
-        }
-
-        return await query.OrderByDescending(a => a.CreatedAt).ToListAsync(cancellationToken);
+        return await WithAccess(AccessControl.VisibleAgents(db, user)).OrderByDescending(a => a.CreatedAt).ToListAsync(cancellationToken);
     }
 
     public async Task<Agent?> GetAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.Agents.AsNoTracking().Include(a => a.Runner).Include(a => a.Account).FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken);
+        return await WithAccess(db.Agents).FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken);
     }
 
-    public async Task<Agent> CreateAsync(CreateAgentRequest request, CancellationToken cancellationToken = default)
+    private static IQueryable<Agent> WithAccess(IQueryable<Agent> agents) => agents.AsNoTracking().AsSplitQuery()
+        .Include(a => a.Runner).ThenInclude(r => r!.Members)
+        .Include(a => a.Account).ThenInclude(a => a!.Owner).Include(a => a.Owner).Include(a => a.Shares).ThenInclude(s => s.User);
+
+    /// <summary>
+    /// Creates an agent owned by <paramref name="actor"/>, who needs Use access to the Runner. Its harness login is one of
+    /// theirs (or their default); a stored conversation to continue must be readable by them.
+    /// </summary>
+    public async Task<Agent> CreateAsync(CurrentUser actor, CreateAgentRequest request, CancellationToken cancellationToken = default)
     {
-        var name = request.Name.Trim().ToLowerInvariant();
+        var name = (request.Name ?? "").Trim().ToLowerInvariant();
         if (!AgentName().IsMatch(name))
         {
             throw new ArgumentException("Use lowercase letters, digits and dashes for the name, for example 'fix-maze-perf'.");
         }
 
         var harness = GetHarness(request.HarnessId);
+        if (await access.RunnerAsync(actor, request.RunnerId, cancellationToken) < RunnerAccess.Use)
+        {
+            throw new KeyNotFoundException("Runner not found.");
+        }
+
+        if (request.AccountId is { } accountId)
+        {
+            await RequireOwnLoginAsync(actor, harness, accountId, cancellationToken);
+        }
+
+        if (request.ContinueSessionId is { } continuing && await access.SessionAsync(actor, continuing, cancellationToken) == SessionAccess.None)
+        {
+            throw new KeyNotFoundException("Session not found.");
+        }
+
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var runner = await db.Runners.FirstOrDefaultAsync(r => r.Id == request.RunnerId, cancellationToken)
-            ?? throw new ArgumentException("Runner not found.");
+        var runner = await db.Runners.FirstAsync(r => r.Id == request.RunnerId, cancellationToken);
         if (runner.State != RunnerState.Ready)
         {
             throw new InvalidOperationException($"Runner '{runner.Name}' is not ready.");
@@ -79,10 +99,11 @@ public sealed partial class AgentService(
         }
 
         var home = runner.HomeDirectory ?? $"/home/{runner.Username}";
+        // Everyone shares the Runner Account: new folders go under the owner's name, so two people's clones don't collide.
         var workingDirectory = request.Mode switch
         {
             AgentWorkspaceMode.ExistingFolder => ExpandHome(RequireValue(request.ExistingPath, "Enter the folder on the Runner."), home),
-            _ => $"{home}/work/{name}",
+            _ => $"{home}/work/{actor.Username}/{name}",
         };
 
         var agentId = Guid.NewGuid();
@@ -91,6 +112,7 @@ public sealed partial class AgentService(
         {
             Id = agentId,
             RunnerId = runner.Id,
+            OwnerId = actor.Id,
             Name = name,
             HarnessId = harness.Id,
             WorkingDirectory = workingDirectory,
@@ -167,18 +189,21 @@ public sealed partial class AgentService(
     }
 
     /// <summary>
-    /// Continues the agent in another harness and/or with another account, in the same folder on the same Runner (e.g.
-    /// when a subscription ran out). The harness is stopped gracefully and the conversation synced. For another harness
-    /// the conversation moves as text (tool calls become short descriptions; thinking stays behind); for another account
-    /// of the same harness the conversation simply resumes. <paramref name="accountId"/> null means the default account.
+    /// Continues the agent in another harness and/or with another harness login, in the same folder on the same Runner
+    /// (e.g. when a subscription ran out). The harness is stopped gracefully and the conversation synced. For another
+    /// harness the conversation moves as text (tool calls become short descriptions; thinking stays behind); for another
+    /// login of the same harness the conversation simply resumes.
+    /// <paramref name="accountId"/> must be one of <paramref name="actor"/>'s own logins; null means the owner's default,
+    /// which only the owner can pick (nobody switches an agent to someone else's login).
     /// </summary>
-    public async Task SwitchAsync(Guid agentId, string harnessId, Guid? accountId, CancellationToken cancellationToken = default)
+    public async Task SwitchAsync(CurrentUser actor, Guid agentId, string harnessId, Guid? accountId, CancellationToken cancellationToken = default)
     {
+        var target = GetHarness(harnessId);
+        await RequireOwnLoginAsync(actor, agentId, target, accountId, cancellationToken);
         using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         var runner = RequireReady(agent.Runner!);
-        var target = GetHarness(harnessId);
         if (!runner.HarnessIds.Contains(harnessId))
         {
             throw new InvalidOperationException($"{target.DisplayName} is not installed on '{runner.Name}'. Install it first (Runner → Operations).");
@@ -218,6 +243,31 @@ public sealed partial class AgentService(
         agent.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
         events.AgentChanged(runner.Id, agent.Id);
+    }
+
+    /// <summary>A login to switch to: one of the actor's own for that harness, or (null) the default, which is the owner's.</summary>
+    private async Task RequireOwnLoginAsync(CurrentUser actor, Guid agentId, IHarness harness, Guid? accountId, CancellationToken cancellationToken)
+    {
+        if (accountId is { } id)
+        {
+            await RequireOwnLoginAsync(actor, harness, id, cancellationToken);
+            return;
+        }
+
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        if (harness.AccountSupport is not null && !await db.Agents.AnyAsync(a => a.Id == agentId && a.OwnerId == actor.Id, cancellationToken))
+        {
+            throw new ArgumentException("Choose one of your own harness logins: the default is the owner's.");
+        }
+    }
+
+    private async Task RequireOwnLoginAsync(CurrentUser actor, IHarness harness, Guid accountId, CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        if (!await db.Accounts.AnyAsync(a => a.Id == accountId && a.OwnerId == actor.Id && a.HarnessId == harness.Id, cancellationToken))
+        {
+            throw new ArgumentException($"Choose one of your own {harness.DisplayName} logins.");
+        }
     }
 
     /// <summary>Selects a saved chat or starts an empty chat in the same workspace and harness.</summary>
@@ -321,8 +371,11 @@ public sealed partial class AgentService(
         events.Publish(new ManagerEvent(ManagerEventKind.AgentRemoved, agent.RunnerId, agent.Id));
     }
 
-    /// <summary>The command a terminal runs to attach to the agent's tmux session.</summary>
-    public async Task<(Runner Runner, string Command)> GetAttachCommandAsync(Guid agentId, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// The command a terminal runs to attach to the agent's tmux session. A <paramref name="readOnly"/> terminal is a
+    /// read-only tmux client (keys do nothing) that never sets the size.
+    /// </summary>
+    public async Task<(Runner Runner, string Command)> GetAttachCommandAsync(Guid agentId, bool readOnly, CancellationToken cancellationToken = default)
     {
         var agent = await GetAsync(agentId, cancellationToken) ?? throw new ArgumentException("Agent not found.");
         var runner = RequireReady(agent.Runner!);
@@ -336,10 +389,12 @@ public sealed partial class AgentService(
         // conversation. So a terminal that joins while others are attached joins watching (ignore-size): opening or
         // refreshing a tab changes nothing. It takes the size once its user types (ClaimSizeAsync).
         var target = ShellQuote.Quote("=" + agent.TmuxSession);
-        var attach = $"""
-            if [ -n "$(tmux list-clients -t {target} 2>/dev/null)" ]; then exec tmux -u attach-session -f ignore-size -t {target}; fi
-            exec tmux -u attach-session -t {target}
-            """;
+        var attach = readOnly
+            ? $"exec tmux -u attach-session -f read-only,ignore-size -t {target}"
+            : $"""
+              if [ -n "$(tmux list-clients -t {target} 2>/dev/null)" ]; then exec tmux -u attach-session -f ignore-size -t {target}; fi
+              exec tmux -u attach-session -t {target}
+              """;
         return (runner, "bash -c " + ShellQuote.Quote(attach));
     }
 
@@ -666,8 +721,12 @@ public sealed partial class AgentService(
             case AgentWorkspaceMode.CloneRepository:
                 var url = RequireValue(agent.RepositoryUrl, "Enter the repository URL.");
                 var branch = agent.RepositoryBranch is null ? "" : $" --branch {ShellQuote.Quote(agent.RepositoryBranch)}";
+                // With the owner's GitHub token: a private repository is theirs to clone.
+                await users.EnsureAsync(runner, agent.OwnerId, cancellationToken);
                 var script = $"""
                     if [ -e {directory} ] && [ -n "$(ls -A {directory} 2>/dev/null)" ]; then echo "The folder {agent.WorkingDirectory} already exists and is not empty." >&2; exit 3; fi
+                    . "{Runners.RunnerUsers.EnvironmentFile(agent.OwnerId)}"
+                    mkdir -p "$(dirname {directory})"
                     GIT_TERMINAL_PROMPT=0 git clone{branch} {ShellQuote.Quote(NormalizeRepositoryUrl(url))} {directory}
                     """;
                 (await shell.RunAsync(runner, script, TimeSpan.FromMinutes(15), cancellationToken)).EnsureSuccess("Cloning the repository");
@@ -695,7 +754,10 @@ public sealed partial class AgentService(
         var instructions = runner.SetupVersion >= Runners.RunnerSetupService.AgentToolsSetupVersion ? LaunchInstructions : null;
         var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model, instructions));
 
-        // The account's environment comes after the Setup Profile's, so e.g. a subscription wins over an API key meant for pi.
+        // The owner's environment (their git identity, GitHub token and variables), then the harness login's, so e.g. a
+        // subscription wins over an API key meant for pi.
+        await users.EnsureAsync(runner, agent.OwnerId, cancellationToken);
+        var ownerEnvironment = $". \"{Runners.RunnerUsers.EnvironmentFile(agent.OwnerId)}\"; ";
         var account = await accounts.ResolveAsync(agent, cancellationToken);
         var accountEnvironment = "";
         if (account is not null)
@@ -708,7 +770,7 @@ public sealed partial class AgentService(
         var zone = Runners.RunnerTimeZones.Validate(runner.TimeZoneId ?? await settings.GetDefaultTimeZoneAsync(cancellationToken));
         var stored = await sessions.GetForAgentAsync(agent.Id, cancellationToken);
         var imageContext = $"export DAM_AGENT_ID={ShellQuote.Quote(agent.Id.ToString("N"))}; export DAM_SESSION_ID={ShellQuote.Quote(stored?.Id.ToString("N") ?? "")}; ";
-        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; {accountEnvironment}{imageContext}export TZ={ShellQuote.Quote(zone)}; export COLORTERM=truecolor; exec {harnessCommand}");
+        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; {ownerEnvironment}{accountEnvironment}{imageContext}export TZ={ShellQuote.Quote(zone)}; export COLORTERM=truecolor; exec {harnessCommand}");
         var session = ShellQuote.Quote("=" + agent.TmuxSession);
         var directory = ShellQuote.Quote(agent.WorkingDirectory);
 

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
+using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Ssh;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -31,9 +32,10 @@ public interface IEditorUpstreams
 /// <summary>
 /// One tunnel per Runner whose VS Code is in use: an SSH connection of its own with a port forward from 127.0.0.1 on
 /// the Manager to code-server on the Runner's loopback, and a code-server session (logged in with its password).
-/// Tunnels close after half an hour without requests, and when their Runner is removed.
+/// Tunnels close after half an hour without requests, and when their Runner is removed. VS Code is one for everyone with
+/// access to the Runner: it starts with the Runner owner's environment, so its git commits and pushes as the owner.
 /// </summary>
-public sealed class EditorTunnels(RunnerShell shell, ManagerEvents events, ILogger<EditorTunnels> logger) : IEditorUpstreams, IHostedService, IDisposable
+public sealed class EditorTunnels(RunnerShell shell, RunnerUsers users, ManagerEvents events, ILogger<EditorTunnels> logger) : IEditorUpstreams, IHostedService, IDisposable
 {
     private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan MinTimeBetweenLogins = TimeSpan.FromSeconds(10);
@@ -123,7 +125,9 @@ public sealed class EditorTunnels(RunnerShell shell, ManagerEvents events, ILogg
 
     private async Task<string> StartAsync(Runner runner, CancellationToken cancellationToken)
     {
-        var output = (await shell.RunAsync(runner, VsCodeTool.EnsureRunningScript, TimeSpan.FromMinutes(1), cancellationToken)).EnsureSuccess("Starting VS Code").Output;
+        await users.EnsureAsync(runner, runner.OwnerId, cancellationToken);
+        var script = $". \"{RunnerUsers.EnvironmentFile(runner.OwnerId)}\"\n{VsCodeTool.EnsureRunningScript}";
+        var output = (await shell.RunAsync(runner, script, TimeSpan.FromMinutes(1), cancellationToken)).EnsureSuccess("Starting VS Code").Output;
         return output.Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.StartsWith(VsCodeTool.PasswordMarker, StringComparison.Ordinal))?[VsCodeTool.PasswordMarker.Length..]
             ?? throw new InvalidOperationException("VS Code started, but its password could not be read.");
     }

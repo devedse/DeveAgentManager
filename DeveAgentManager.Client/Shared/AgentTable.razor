@@ -1,6 +1,7 @@
 @inject ManagerApi Api
 @inject IDialogService Dialogs
 @inject ISnackbar Snackbar
+@inject SignedInUser Me
 
 @if (Agents.Count == 0)
 {
@@ -14,11 +15,19 @@ else
         @foreach (var agent in Agents)
         {
             var busy = _busy.Contains(agent.Id);
+            var write = agent.Access >= AgentAccess.Write;
+            @* People who manage the Runner see other people's agents there, but can't open them. *@
             <div class="agent-row">
-                <a class="agent-row-main" href="agents/@agent.Id">
+                <a class="agent-row-main" href="@(agent.Access >= AgentAccess.Read ? $"agents/{agent.Id}" : null)">
                     <AgentAvatar Agent="agent" />
                     <div class="list-main">
-                        <div class="list-title">@agent.Name</div>
+                        <div class="list-title">
+                            @agent.Name
+                            @if (agent.Access != AgentAccess.Owner)
+                            {
+                                <span class="account-badge" title="@ShareText(agent)">@agent.OwnerName</span>
+                            }
+                        </div>
                         <div class="list-subtitle">
                             @if (ShowRunner)
                             {
@@ -37,6 +46,16 @@ else
                     {
                         <MudProgressCircular Indeterminate="true" Size="Size.Small" />
                     }
+                    else if (agent.Access < AgentAccess.Read)
+                    {
+                        @* Only listed: nothing to do with it. *@
+                    }
+                    else if (!write)
+                    {
+                        <MudTooltip Text="Watch (read-only)">
+                            <MudIconButton Href="@($"agents/{agent.Id}")" Icon="@Icons.Material.Rounded.Visibility" Color="Color.Primary" Size="Size.Small" />
+                        </MudTooltip>
+                    }
                     else if (agent.State is AgentState.Running or AgentState.Starting)
                     {
                         <MudTooltip Text="Open terminal">
@@ -53,16 +72,29 @@ else
                                            OnClick="@(() => StartAsync(agent, false))" />
                         </MudTooltip>
                     }
-                    <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
-                        <MudMenuItem Icon="@Icons.Material.Rounded.Terminal" Href="@($"agents/{agent.Id}")">Open</MudMenuItem>
-                        @if (agent.RunnerToolIds.Contains("vscode"))
-                        {
-                            <MudMenuItem Icon="@Icons.Material.Rounded.Code" Href="@($"agents/{agent.Id}/vscode")">Open in VS Code</MudMenuItem>
-                        }
-                        <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="@(() => StartAsync(agent, true))">Restart</MudMenuItem>
-                        <MudMenuItem Icon="@Icons.Material.Rounded.Image" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => PickIconAsync(agent)">Icon...</MudMenuItem>
-                        <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem>
-                    </MudMenu>
+                    @if (agent.Access >= AgentAccess.Read)
+                    {
+                        <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+                            <MudMenuItem Icon="@(write ? Icons.Material.Rounded.Terminal : Icons.Material.Rounded.Visibility)" Href="@($"agents/{agent.Id}")">@(write ? "Open" : "Watch")</MudMenuItem>
+                            @if (write)
+                            {
+                                @if (agent.RunnerToolIds.Contains("vscode"))
+                                {
+                                    <MudMenuItem Icon="@Icons.Material.Rounded.Code" Href="@($"agents/{agent.Id}/vscode")">Open in VS Code</MudMenuItem>
+                                }
+                                <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="@(() => StartAsync(agent, true))">Restart</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Rounded.Image" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => PickIconAsync(agent)">Icon...</MudMenuItem>
+                            }
+                            @* Owners share it; others see who else has it and can leave. *@
+                            <MudMenuItem Icon="@(agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="() => ShareAsync(agent)">
+                                @(agent.Access == AgentAccess.Owner ? "Share..." : "Sharing...")
+                            </MudMenuItem>
+                            @if (agent.Access == AgentAccess.Owner)
+                            {
+                                <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem>
+                            }
+                        </MudMenu>
+                    }
                 </div>
             </div>
         }
@@ -84,6 +116,14 @@ else
     [Parameter]
     public RenderFragment? EmptyContent { get; set; }
 
+    /// <summary>Whose agent it is and what the signed-in user may do with it.</summary>
+    public static string ShareText(AgentDto agent) => agent.Access switch
+    {
+        AgentAccess.Write => $"{agent.OwnerName}'s agent, shared with you read-write (it runs with the login it is switched to)",
+        AgentAccess.Read => $"{agent.OwnerName}'s agent, shared with you read-only",
+        _ => $"{agent.OwnerName}'s agent, on a Runner you manage",
+    };
+
     private async Task StartAsync(AgentDto agent, bool restart)
     {
         if (restart && agent.State is AgentState.Running or AgentState.Starting && !await ConfirmRestartAsync(Dialogs, agent.Name))
@@ -103,6 +143,8 @@ else
 
     private Task PickIconAsync(AgentDto agent) =>
         Dialogs.ShowAsync<AgentIconDialog>("Icon", new DialogParameters<AgentIconDialog> { { d => d.Agent, agent } }, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+
+    private async Task ShareAsync(AgentDto agent) => await ShareDialog.ShowAsync(Dialogs, agent, await Me.GetAsync());
 
     private Task StopAsync(AgentDto agent) => RunAsync(agent, () => Api.StopAgentAsync(agent.Id), $"Stopped '{agent.Name}'");
 

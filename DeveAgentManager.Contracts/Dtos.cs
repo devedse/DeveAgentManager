@@ -1,5 +1,6 @@
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
+using DeveAgentManager.Core.Setup;
 
 namespace DeveAgentManager.Contracts;
 
@@ -14,26 +15,60 @@ public sealed record AgentLimitDto(string Message, string? TimeZoneId, DateTime 
 public sealed record ScheduleContinueRequest(DateTime? ResetAtUtc = null, DateTime? ExpectedDetectedAt = null, double? ContinueAfterMinutes = null, bool Manual = false);
 
 // What the Manager's API returns to the browser app. Built from the database entities on the server, without their
-// secrets: no account logins, no Runner passwords, no GitHub token.
+// secrets: no harness logins, no GitHub tokens, and a Runner's password only through its own endpoint.
 
-/// <summary>The Manager itself: its version, login name and the defaults the Portal shows.</summary>
+/// <summary>
+/// The Manager itself: its version and the defaults the Portal shows. Provider settings and the data folder are only
+/// filled in for settings managers.
+/// </summary>
 public sealed record ManagerInfoDto(
     string Version,
-    string AdminUsername,
-    bool UsesDefaultAdminPassword,
-    string DefaultAdminPassword,
     string RunnerUsername,
     int DefaultCores,
     int DefaultMemoryMb,
     int DefaultDiskGb,
-    string DataDirectory,
+    string? DataDirectory,
     string SshPublicKey,
-    bool GitHubPatFromCompose,
-    bool HasGitHubPat,
     int SetupVersion,
     IReadOnlyList<HarnessDto> Harnesses,
     IReadOnlyList<ProviderDto> Providers,
     IReadOnlyList<RunnerToolDto> Tools);
+
+/// <summary>Who is signed in, and what their roles let them do.</summary>
+public sealed record CurrentUserDto(Guid Id, string Username, string DisplayName, UserRoles Roles, bool MustChangePassword)
+{
+    public bool Has(UserRoles role) => (Roles & role) == role;
+}
+
+/// <summary>A user, as user managers see them.</summary>
+/// <param name="Locked">Signing in is blocked for a few minutes after too many wrong passwords.</param>
+public sealed record UserDto(
+    Guid Id,
+    string Username,
+    string DisplayName,
+    UserRoles Roles,
+    bool Disabled,
+    bool MustChangePassword,
+    bool Locked,
+    DateTime CreatedAt,
+    DateTime? LastSignInAt);
+
+/// <summary>Someone to share with or give access to.</summary>
+public sealed record UserSummaryDto(Guid Id, string Username, string DisplayName);
+
+public sealed record AuditEventDto(long Id, DateTime At, string? ActorName, string Action, string? Target, string? Detail);
+
+/// <summary>A user's own settings. The GitHub token is never sent back, only whether there is one.</summary>
+public sealed record MySettingsDto(UserProfile Profile, bool HasGitHubToken);
+
+/// <summary>Someone with access to a Runner besides its owner.</summary>
+public sealed record RunnerMemberDto(Guid UserId, string Username, string DisplayName, RunnerAccess Access, DateTime GrantedAt);
+
+/// <summary>Someone an agent is shared with.</summary>
+public sealed record AgentShareDto(Guid UserId, string Username, string DisplayName, AgentAccess Access, DateTime GrantedAt);
+
+/// <summary>Someone a conversation is shared with (read-only).</summary>
+public sealed record SessionShareDto(Guid UserId, string Username, string DisplayName, DateTime GrantedAt);
 
 /// <summary>Software a Runner can have besides the harnesses, e.g. VS Code.</summary>
 /// <param name="Icon">The logo: SVG content for a 24×24 view box.</param>
@@ -61,9 +96,16 @@ public sealed record ProviderDto(
 
 /// <param name="Operation">The operation running for the Runner (e.g. "Setting up"), or null.</param>
 /// <param name="Status">Power state and resources, as last seen from the provider.</param>
+/// <param name="Access">What the signed-in user may do with it.</param>
+/// <param name="KeysOnly">SSH refuses passwords.</param>
+/// <param name="Agents">The agents on it the signed-in user can see.</param>
 public sealed record RunnerDto(
     Guid Id,
     string Name,
+    Guid OwnerId,
+    string OwnerName,
+    RunnerAccess Access,
+    bool KeysOnly,
     string ProviderId,
     string? TemplateId,
     RunnerKind Kind,
@@ -99,10 +141,14 @@ public sealed record DesktopStatusDto(string State, string Message, string? Sess
 public sealed record SessionImageDto(Guid Id, Guid SessionId, string FileName, string Caption, string ContentType, long Bytes, DateTime CreatedAt);
 public sealed record SaveDesktopSnapshotRequest(Guid SessionId, string? Caption = null);
 
-/// <param name="AccountId">The account the agent picked; null uses the harness's default account.</param>
+/// <param name="AccountId">The harness login it runs with; null uses its owner's default login.</param>
+/// <param name="Access">What the signed-in user may do with it.</param>
 public sealed record AgentDto(
     Guid Id,
     Guid RunnerId,
+    Guid OwnerId,
+    string OwnerName,
+    AgentAccess Access,
     string RunnerName,
     RunnerState RunnerState,
     IReadOnlyList<string> RunnerHarnessIds,
@@ -117,6 +163,8 @@ public sealed record AgentDto(
     int? ExitCode,
     Guid? AccountId,
     string? AccountName,
+    Guid LoginOwnerId,
+    string LoginOwnerName,
     DateTime CreatedAt,
     DateTime UpdatedAt,
     long? IconVersion = null,
@@ -135,8 +183,14 @@ public sealed record AgentIconChoicesDto(IReadOnlyList<AgentIconImageDto> Images
 /// <summary>Use this image (a path in the agent's folder) or none (null); or, with <paramref name="Automatic"/>, let the Manager pick again.</summary>
 public sealed record SetAgentIconRequest(string? Path, bool Automatic = false);
 
+/// <param name="Access">What the signed-in user may do with it.</param>
+/// <param name="WorkspaceAccess">What they may do with the agent whose workspace it is in: with read-write access, they pick it
+/// from the agent's sessions.</param>
 public sealed record SessionDto(
     Guid Id,
+    Guid OwnerId,
+    string OwnerName,
+    SessionAccess Access,
     string Title,
     string HarnessId,
     string? HarnessSessionId,
@@ -153,6 +207,7 @@ public sealed record SessionDto(
     DateTime? LastSyncedAt,
     Guid? WorkspaceAgentId = null,
     string? WorkspaceName = null,
+    AgentAccess WorkspaceAccess = AgentAccess.None,
     long SourceSize = 0,
     long SavedSize = 0,
     long TotalSize = 0);
@@ -181,7 +236,23 @@ public sealed record ReplaceAccountSecretRequest(AccountKind Kind, string Secret
 
 public sealed record RenameRequest(string Name);
 
-public sealed record GitHubPatRequest(string? Pat);
+public sealed record GitHubTokenRequest(string? Token);
+
+public sealed record CreateUserRequest(string Username, string? DisplayName, string Password, UserRoles Roles);
+
+public sealed record UpdateUserRequest(string? DisplayName, UserRoles Roles, bool Disabled);
+
+public sealed record SetPasswordRequest(string Password);
+
+public sealed record RunnerAccessRequest(RunnerAccess Access);
+
+public sealed record ChangeOwnerRequest(Guid UserId);
+
+public sealed record KeysOnlyRequest(bool KeysOnly);
+
+public sealed record RunnerPasswordDto(string Password);
+
+public sealed record ShareAgentRequest(AgentAccess Access);
 
 public sealed record ImportHarnessFilesRequest(Guid RunnerId, string HarnessId);
 

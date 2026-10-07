@@ -5,10 +5,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DeveAgentManager.Core.Runners;
 
-/// <summary>Opens browser terminals: a plain shell on a Runner, or attached to an agent's tmux session.</summary>
-public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactory, RunnerShell shell, AgentService agents)
+/// <summary>Opens browser terminals: a shell on a Runner, or attached to an agent's tmux session.</summary>
+public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactory, RunnerShell shell, AgentService agents, RunnerUsers users)
 {
-    public async Task<TerminalConnection> OpenShellAsync(Guid runnerId, int columns, int rows, CancellationToken cancellationToken)
+    /// <summary>A shell with <paramref name="userId"/>'s environment: their git identity, GitHub token and variables.</summary>
+    public async Task<TerminalConnection> OpenShellAsync(Guid runnerId, Guid userId, int columns, int rows, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var runner = await db.Runners.AsNoTracking().FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken)
@@ -18,7 +19,10 @@ public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactor
             throw new InvalidOperationException($"Runner '{runner.Name}' is not ready ({runner.State}).");
         }
 
-        return await OpenAsync(runner, null, columns, rows, cancellationToken);
+        await users.EnsureAsync(runner, userId, cancellationToken);
+        // A login shell after the user's environment. The terminal hid its start-up with stty -echo: a shell needs it back.
+        var start = $"stty echo 2>/dev/null; . \"{RunnerUsers.EnvironmentFile(userId)}\" 2>/dev/null; exec bash -il";
+        return await OpenAsync(runner, "bash -c " + ShellQuote.Quote(start), columns, rows, cancellationToken);
     }
 
     /// <summary>A terminal that runs one command on a Runner (e.g. a login), instead of a shell.</summary>
@@ -36,9 +40,10 @@ public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactor
         return await OpenAsync(runner, "bash -lc " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\" 2>/dev/null; {command}"), columns, rows, cancellationToken);
     }
 
-    public async Task<TerminalConnection> OpenAgentAsync(Guid agentId, int columns, int rows, CancellationToken cancellationToken)
+    /// <summary>Attached to an agent's tmux session; <paramref name="readOnly"/> for people who can only watch it.</summary>
+    public async Task<TerminalConnection> OpenAgentAsync(Guid agentId, bool readOnly, int columns, int rows, CancellationToken cancellationToken)
     {
-        var (runner, command) = await agents.GetAttachCommandAsync(agentId, cancellationToken);
+        var (runner, command) = await agents.GetAttachCommandAsync(agentId, readOnly, cancellationToken);
         return await OpenAsync(runner, command, columns, rows, cancellationToken);
     }
 

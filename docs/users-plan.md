@@ -1,19 +1,19 @@
 # Users, roles and sharing — plan
 
-Status: **planned, not started**. Last updated 2026-10-06.
+Status: **phases 0–4 implemented** (branch `feature/users`), phase 5 partly. Last updated 2026-10-06.
 
-Today the Manager has a single login (`ADMIN_USERNAME` / `ADMIN_PASSWORD`) and every Runner is one Linux account
-(`remoteman`) with one shared password. This plan adds users who each have their own logins, keys and settings,
+Before this, the Manager had a single login (`ADMIN_USERNAME` / `ADMIN_PASSWORD`) and every Runner was one Linux
+account (`remoteman`) with one shared password. This plan adds users who each have their own logins, keys and settings,
 runners that can be shared, and agents and conversations that can be shared.
 
 | Part | Status |
 |---|---|
-| Unique runner passwords, SSH keys (section 8, phase 0) | Proposed, waiting for a go |
-| Users and login (phase 1) | Planned |
-| Per-user data and permissions (phase 2) | Planned |
-| Shared runners (phase 3) | Planned |
-| Sharing agents and conversations (phase 4) | Planned |
-| Hardening (phase 5) | Planned |
+| Unique runner passwords, SSH keys (section 8, phase 0) | Implemented |
+| Users and login (phase 1) | Implemented |
+| Per-user data and permissions (phase 2) | Implemented |
+| Shared runners (phase 3) | Implemented |
+| Sharing agents and conversations (phase 4) | Implemented |
+| Hardening (phase 5) | Audit log page implemented; OIDC, quotas and the Proxmox firewall rule are for later |
 
 ## 1. Principles
 
@@ -32,7 +32,7 @@ Global roles. A user can have any combination.
 
 | Role | Can |
 |---|---|
-| **Settings manager** | Manager settings: providers, templates, backups, default timezone, the runner base setup (system packages and the root script), shared harness settings |
+| **Settings manager** | Manager settings: providers, default timezone, the Setup Profile (setup files and script) and the harnesses' shared settings |
 | **User manager** | Create and disable users, reset passwords, grant roles |
 | **Runner creator** | Create Runners (a Proxmox VM or an existing machine) and become their owner |
 | **Runner manager** | Every Runner: see it, give people access, change its owner, view and set its password, delete it |
@@ -56,8 +56,11 @@ Global roles. A user can have any combination.
   example: create one for Ketty, make her the owner, and she logs in to it with its password or her SSH key).
 - Use-level people can't see the password in the Portal, but their agents run as the same account with sudo and
   could change it. That's tidiness, not a security boundary (section 1).
-- **Removing someone's access** stops their agents on that Runner and deletes their harness logins, GitHub token,
-  environment file and SSH key there. Their conversations stay theirs; their work folder stays on the Runner.
+- **Removing someone's access** (or leaving) removes their agents on that Runner and deletes their harness logins,
+  GitHub token, environment file and SSH key there. Their conversations stay theirs; their work folder stays on the
+  Runner.
+- **Other people's agents on a Runner** are listed (name and status) for whoever manages it (Manage, Owner, runner
+  managers), who can't open them. Use-level people only see their own agents and the ones shared with them.
 
 ## 4. Sharing agents and conversations
 
@@ -72,20 +75,24 @@ An agent's owner can share it with other users, **read-only** or **read-write**,
   people who share an agent know each other.
 - **Switching the login**: anyone with read-write access can switch the agent to *their own* harness login, never to
   someone else's. (If Ketty switches it to hers, the owner then prompts with Ketty's.)
-- A stored conversation whose agent is gone can be shared read-only. Proposed: anyone who can read a conversation can
-  **Continue in my agent**: a copy in their own agent, on a Runner they can use, with their own login.
-- Reading an agent needs no access to its Runner; read-write needs Use access to the Runner as well.
+- Conversations can be shared read-only on their own. Anyone who can read someone else's conversation can **continue a
+  copy** of it in a new agent of their own, on a Runner they can use, with their own login. Everyone an agent is shared
+  with can read its workspace's conversations.
+- Reading an agent needs no access to its Runner; read-write needs Use access to the Runner as well (without it, a
+  read-write share works as read-only).
+- Roles never give access to other people's agents or conversations.
 
 ## 5. Settings: per user, per Runner, shared
 
 | Where | What |
 |---|---|
-| **My settings** (each user) | Git name and email, environment variables, GitHub token, harness logins, default model and effort, SSH keys, theme, notifications |
+| **My settings** (each user) | Git name and email, environment variables, GitHub token, harness logins, SSH keys, theme |
 | **Per Runner** (Manage) | Name, size, harnesses and tools to install, timezone, desktop, password, keys only |
-| **Manager settings** (Settings manager) | Providers, templates, backups, default timezone, runner base setup, and the rest of today's Setup Profile: setup files, setup script, harness packages and settings |
+| **Manager settings** (Settings manager) | Providers, templates, default timezone, and the rest of the Setup Profile: setup files, setup script, harness packages, default model and effort, and settings |
 
-Today's Setup Profile is split on migration: git identity, environment variables and the GitHub token become the
-admin's My settings; the rest stays shared.
+The Setup Profile was split on migration: git identity, environment variables and the GitHub token became the first
+user's My settings; the rest stays shared. My settings are only set in the Portal: `GITHUB_PAT`, `GIT_USER_NAME` and
+`GIT_USER_EMAIL` are gone from the compose file.
 
 ## 6. On the Runner (one shared account)
 
@@ -95,11 +102,12 @@ admin's My settings; the rest stays shared.
     user's name, email and a credentials file with their token, so commits carry their name and pushes use their token.
 - Harness logins already have a folder each (Codex gets its own `CODEX_HOME` per login).
 - **Agent launch** loads the base environment, then the owner's environment file, then the harness login's. The
-  owner's default model and effort are launch flags.
+  default model and effort stay shared (Manager settings).
 - **Work folders**: new agents default to `~/work/<username>/…`, so two users cloning the same repository don't collide.
 - **Shell** loads the environment of whoever opens it, so git in the shell uses their identity and token.
 - **SSH keys** of everyone with access are in `~/.ssh/authorized_keys`, next to the Manager's key.
-- **Known limits**: VS Code is one instance per Runner, so its built-in git uses the shared settings. Claude Code and
+- **Known limits**: VS Code is one instance per Runner; it starts with the Runner owner's environment, so its built-in
+  git commits and pushes as the owner. Claude Code and
   pi settings (`settings.json`, `CLAUDE.md`, keybindings, pi packages) are shared per Runner; per-user versions are
   possible later through each harness's config folder setting.
 
@@ -128,11 +136,11 @@ loopback, so neither is a way in.)
 
 - **A random password per Runner**, generated when the Manager creates the VM and stored encrypted. Re-run setup
   replaces `remoteman` on existing Runners. `RUNNER_PASSWORD` goes away.
-- **The Runner page shows the password** (show, copy, change) to whoever may manage the Runner: for now the one
-  admin; later Manage access and runner managers.
+- **The Runner page shows the password** (show, copy, change) to whoever manages the Runner (Manage access, its owner
+  and runner managers). Every view and change is in the audit log.
 - **Password SSH stays allowed**: each password only opens its own Runner. A per-Runner **keys only** switch turns it off.
-- **SSH keys**: a list in Settings for now, which becomes "My SSH keys" with users. Keys go into `authorized_keys` on
-  the Runners their owner can use, and are removed when access ends.
+- **SSH keys** (My settings → SSH keys) go into a managed part of `authorized_keys` on the Runners their owner can use,
+  and are removed when access ends.
 - Existing machines added with their own password keep it; the Manager doesn't change SSH settings there unless asked.
 - Optional later: a Proxmox firewall rule on Runner VMs that only lets SSH in from the Manager, so Runners can't reach
   each other at all. Needs the Proxmox firewall switched on at datacenter level.
@@ -155,14 +163,16 @@ loopback, so neither is a way in.)
 
 ## 10. Portal changes
 
-- **Users** page (user managers): create, disable, reset password, roles.
+- **Users** page (user managers): create, disable, reset password, roles, delete (what they owned goes to someone
+  else, with their Runner access). **Audit log** page (user managers).
 - **Runner** page: owner, people with access (Use / Manage) with add and remove, the share dialog with the trust
   note, the password row and keys only.
 - **Agent**: a Share button (read-only / read-write); the login switcher only offers your own logins.
-- **Sessions**: Mine and Shared with me; Continue in my agent.
+- **Sessions**: Mine and Shared with me; continue a copy.
 - **Settings** splits into My settings and Manager settings.
 - Buttons you lack the rights for are hidden; empty states explain what to ask for.
-- A user menu in the header: change password, log out.
+- A user menu in the header: change password, log out. New users, and users whose password a user manager set, choose
+  their own at their next sign-in (`/password`) before anything else works.
 
 ## 11. Phases
 
@@ -182,8 +192,9 @@ Phases 1–2 are useful on their own: several people, each on their own Runners.
 
 ## 12. Tests
 
-- **Endpoint sweep**: a second user gets 404 on every endpoint for the first user's things. Generated from the route
-  table, so a new endpoint can't be forgotten.
+- **Endpoint sweep**: every API endpoint declares its access (an endpoint without one answers 500), and a second user
+  gets 404 on every endpoint for the first user's things (403 where a role is missing, the same for any id). Generated
+  from the route table, so a new endpoint can't be forgotten. Implemented in `UserAccessTests`.
 - Live updates, terminals (read-only drops input), VS Code and desktop are tested for who can reach them.
 - Role granting: you can't grant a role you don't hold.
 - On a real Runner: two users' agents on one Runner commit and push with their own names and tokens; removing a user
@@ -193,10 +204,8 @@ Phases 1–2 are useful on their own: several people, each on their own Runners.
 ## 13. Open questions
 
 1. **Shared harness logins**, such as a team API key managed by a settings manager: needed?
-2. **Agents on a shared Runner**: do Use-level people see the names and status of other users' agents there (they
-   could reach them anyway), or only their own?
-3. **Single sign-on**: OIDC instead of passwords, or alongside them?
-4. **Quotas**: a limit on Runners or cores per runner creator?
+2. **Single sign-on**: OIDC instead of passwords, or alongside them?
+3. **Quotas**: a limit on Runners or cores per runner creator?
 
 ## Decision log
 
@@ -208,3 +217,10 @@ Phases 1–2 are useful on their own: several people, each on their own Runners.
 - 2026-10-06 — Runner access has Use and Manage levels and one owner. Manage can view and set the Runner's password.
 - 2026-10-06 — Unique random password per Runner instead of the shared `remoteman`; password SSH stays allowed with a
   per-Runner keys only switch; per-user SSH keys.
+- 2026-10-06 — Implementation decisions: the default model and effort stay shared; VS Code runs with the Runner
+  owner's identity; removing someone's Runner access removes their agents there; whoever manages a Runner sees other
+  people's agents on it listed but can't open them, Use-level people don't see them; an agent's "needs attention"
+  state is shared by everyone who sees it; deleting a user gives what they owned, and their Runner access, to a user
+  of your choice; a role check comes before the check on the thing itself.
+- 2026-10-07 — `GITHUB_PAT`, `GIT_USER_NAME` and `GIT_USER_EMAIL` are removed from the compose file; the admin
+  enters their token and git identity under My settings like everyone else.

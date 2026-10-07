@@ -1,5 +1,4 @@
 using System.Text.Json;
-using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Security;
@@ -7,17 +6,16 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DeveAgentManager.Core.Setup;
 
-/// <summary>Settings edited in the Portal. Values set in compose win and are shown read-only.</summary>
+/// <summary>
+/// The Manager's own settings, the same for everyone (Manager settings): the default timezone and the shared Setup
+/// Profile. Each user's settings are in <see cref="UserSettingsStore"/>.
+/// </summary>
 public sealed class SettingsStore(
     IDbContextFactory<ManagerDbContext> dbFactory,
     SecretProtector protector,
-    ManagerOptions options,
     ManagerEvents events)
 {
-    private const string SetupProfileKey = "setup-profile";
-    private const string GitHubPatKey = "github-pat";
-
-    public bool GitHubPatFromCompose => options.GitHubPat is not null;
+    internal const string SetupProfileKey = "setup-profile";
 
     public async Task<string> GetDefaultTimeZoneAsync(CancellationToken ct = default) =>
         await GetRawAsync("runner-timezone", ct) ?? TimeZoneInfo.Local.Id;
@@ -28,17 +26,13 @@ public sealed class SettingsStore(
     public async Task<SetupProfile> GetSetupProfileAsync(CancellationToken cancellationToken = default)
     {
         var json = protector.Unprotect(await GetRawAsync(SetupProfileKey, cancellationToken));
-        var profile = json is null ? new SetupProfile() : JsonSerializer.Deserialize<SetupProfile>(json) ?? new SetupProfile();
-        profile.GitUserName ??= options.GitUserName;
-        profile.GitUserEmail ??= options.GitUserEmail;
-        return profile;
+        return json is null ? new SetupProfile() : JsonSerializer.Deserialize<SetupProfile>(json) ?? new SetupProfile();
     }
 
     public async Task SaveSetupProfileAsync(SetupProfile profile, CancellationToken cancellationToken = default)
     {
         profile.Validate();
-        // What is left without a name or path is an empty row (Validate refuses a value without a name).
-        profile.EnvironmentVariables = profile.EnvironmentVariables.Where(v => !string.IsNullOrWhiteSpace(v.Name)).ToList();
+        // What is left without a path is an empty row (Validate refuses content without a path).
         profile.Files = profile.Files.Where(f => !string.IsNullOrWhiteSpace(f.Path)).ToList();
         foreach (var config in profile.Harnesses.Values)
         {
@@ -47,12 +41,6 @@ public sealed class SettingsStore(
 
         await SetRawAsync(SetupProfileKey, protector.Protect(JsonSerializer.Serialize(profile)), cancellationToken);
     }
-
-    public async Task<string?> GetGitHubPatAsync(CancellationToken cancellationToken = default) =>
-        options.GitHubPat ?? protector.Unprotect(await GetRawAsync(GitHubPatKey, cancellationToken));
-
-    public async Task SaveGitHubPatAsync(string? pat, CancellationToken cancellationToken = default) =>
-        await SetRawAsync(GitHubPatKey, protector.Protect(string.IsNullOrWhiteSpace(pat) ? null : pat.Trim()), cancellationToken);
 
     private async Task<string?> GetRawAsync(string key, CancellationToken cancellationToken)
     {

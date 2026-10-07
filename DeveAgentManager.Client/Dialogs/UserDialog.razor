@@ -1,0 +1,89 @@
+@using System.Security.Cryptography
+
+@* Adds a user, or changes one (name, roles, disabled). Only roles the signed-in user has can be given or taken. Returns a UserDialog.Result. *@
+<MudDialog>
+    <DialogContent>
+        @if (User is null)
+        {
+            <MudTextField @bind-Value="_username" Label="Username" Variant="Variant.Outlined" Margin="Margin.Dense" AutoFocus="true" Immediate="true"
+                          HelperText="What they sign in with: lowercase letters, digits, dots, dashes and underscores." autocomplete="off" />
+        }
+        <MudTextField @bind-Value="_displayName" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Placeholder="@(User?.Username ?? _username)"
+                      HelperText="How others see them, e.g. when sharing." Class="mt-2" />
+        @if (User is null)
+        {
+            <div class="form-row form-row-center mt-2">
+                <MudTextField @bind-Value="_password" Label="First password" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1 mono-input" Immediate="true"
+                              InputType="@(_showPassword ? InputType.Text : InputType.Password)" autocomplete="new-password"
+                              HelperText="Give it to them; they choose their own when they first sign in." />
+                <MudIconButton Icon="@(_showPassword ? Icons.Material.Rounded.VisibilityOff : Icons.Material.Rounded.Visibility)" Size="Size.Small"
+                               OnClick="() => _showPassword = !_showPassword" aria-label="@(_showPassword ? "Hide password" : "Show password")" />
+            </div>
+            <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Casino" OnClick="GeneratePassword">Make one up</MudButton>
+        }
+
+        <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">Roles</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">Everyone can use the Runners they get access to and what is shared with them. Admin is all four roles.</MudText>
+        @foreach (var role in Roles.All)
+        {
+            var mine = (ActorRoles & role) == role;
+            <div class="role-choice">
+                <MudCheckBox T="bool" Value="(_roles & role) == role" ValueChanged="on => _roles = on ? _roles | role : _roles & ~role" Disabled="!mine" Color="Color.Primary"
+                             Label="@Roles.Name(role)" />
+                <div class="role-choice-help">@Roles.Explain(role)@(mine ? "" : " You don't have this role, so you can't give or take it.")</div>
+            </div>
+        }
+
+        @if (User is not null)
+        {
+            <MudSwitch T="bool" @bind-Value="_disabled" Color="Color.Error" Label="Disabled: can't sign in (their agents keep running)" Class="mt-3" Disabled="User.Id == ActorId" />
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="!CanSave" OnClick="Save">@(User is null ? "Add user" : "Save")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+
+    private string _username = "";
+    private string? _displayName;
+    private string _password = "";
+    private bool _showPassword;
+    private UserRoles _roles;
+    private bool _disabled;
+
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>The user to change, or null to add one.</summary>
+    [Parameter]
+    public UserDto? User { get; set; }
+
+    [Parameter]
+    public UserRoles ActorRoles { get; set; }
+
+    [Parameter]
+    public Guid ActorId { get; set; }
+
+    private bool CanSave => User is not null || (_username.Trim().Length > 0 && _password.Length >= 8);
+
+    protected override void OnInitialized()
+    {
+        _displayName = User?.DisplayName;
+        _roles = User?.Roles ?? UserRoles.None;
+        _disabled = User?.Disabled ?? false;
+    }
+
+    private void GeneratePassword()
+    {
+        _password = RandomNumberGenerator.GetString(Alphabet, 16);
+        _showPassword = true;
+    }
+
+    private void Save() => MudDialog.Close(DialogResult.Ok(new Result(_username.Trim(), string.IsNullOrWhiteSpace(_displayName) ? null : _displayName.Trim(), _password, _roles, _disabled)));
+
+    public sealed record Result(string Username, string? DisplayName, string Password, UserRoles Roles, bool Disabled);
+}

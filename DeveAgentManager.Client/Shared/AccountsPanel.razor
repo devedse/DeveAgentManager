@@ -2,9 +2,10 @@
 @inject IDialogService Dialogs
 @inject ISnackbar Snackbar
 
-@* Settings → Accounts: the subscriptions and API keys harnesses run with. *@
-<div class="help-heading mb-3"><MudText Typo="Typo.subtitle1">Accounts</MudText><HelpTip Label="Accounts">Log in once here and every Runner can use the account; nothing to set up per Runner. A harness can have several
-    accounts: when one runs out, switch the agent to another one (or to another harness) from its terminal.</HelpTip></div>
+@* My settings → Harness logins: the user's own subscriptions and API keys their agents run with. *@
+<div class="help-heading mb-3"><MudText Typo="Typo.subtitle1">Harness logins</MudText><HelpTip Label="Harness logins">Yours only. Log in once here and your agents use the login on every
+    Runner you use; nothing to set up per Runner. You can have several per harness: when one runs out, switch the agent to another one (or to another harness) from its terminal.
+    People you share an agent with read-write prompt it with the login it runs with.</HelpTip></div>
 
 @foreach (var harness in _harnesses)
 {
@@ -42,7 +43,7 @@
                 </div>
                 @if (!account.IsDefault)
                 {
-                    <MudTooltip Text="Agents that don't pick an account use the default">
+                    <MudTooltip Text="Your agents that don't pick a login use your default">
                         <MudIconButton Icon="@Icons.Material.Rounded.StarOutline" Size="Size.Small" OnClick="() => SetDefaultAsync(account)" aria-label="Make default" />
                     </MudTooltip>
                 }

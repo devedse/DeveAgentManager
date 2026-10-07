@@ -129,7 +129,7 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
         await using var db = await _manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync();
         db.Runners.Add(new Runner
         {
-            Id = _runnerId, Name = $"editor-{_runnerId:N}"[..20], ProviderId = "existing", State = RunnerState.Ready, Host = "127.0.0.1",
+            OwnerId = User.BootstrapId, Id = _runnerId, Name = $"editor-{_runnerId:N}"[..20], ProviderId = "existing", State = RunnerState.Ready, Host = "127.0.0.1",
             Username = "test", Tools = VsCodeTool.ToolId, HomeDirectory = "/home/test", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
@@ -340,12 +340,12 @@ public sealed class EditorHostPerRunnerTests : IClassFixture<EditorHostPerRunner
         {
             db.Runners.Add(new Runner
             {
-                Id = id, Name = "alpha", ProviderId = "existing", State = RunnerState.Ready, Host = "127.0.0.1", Username = "test",
+                OwnerId = User.BootstrapId, Id = id, Name = "alpha", ProviderId = "existing", State = RunnerState.Ready, Host = "127.0.0.1", Username = "test",
                 Tools = VsCodeTool.ToolId, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
             });
             db.Runners.Add(new Runner
             {
-                Id = Guid.NewGuid(), Name = "beta", ProviderId = "existing", State = RunnerState.Ready, Host = "127.0.0.1", Username = "test",
+                OwnerId = User.BootstrapId, Id = Guid.NewGuid(), Name = "beta", ProviderId = "existing", State = RunnerState.Ready, Host = "127.0.0.1", Username = "test",
                 Tools = VsCodeTool.ToolId, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
             });
             await db.SaveChangesAsync();

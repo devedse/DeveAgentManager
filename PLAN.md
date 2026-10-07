@@ -123,12 +123,8 @@ services:
       TEMPLATE_HEADLESS_VMID: 10100
       TEMPLATE_DESKTOP_VMID: 10120
 
-      # Runner Account (injected via cloud-init)
+      # Runner Account (injected via cloud-init, with a random password per Runner)
       RUNNER_USERNAME: remoteman
-      RUNNER_PASSWORD: remoteman
-
-      # Optional, can also be set in the Portal
-      GITHUB_PAT: ""
     restart: unless-stopped
 ```
 

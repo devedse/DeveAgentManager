@@ -22,6 +22,18 @@
                     <MudChip Value="@("running")">Running @_agents.Count(a => a.State is AgentState.Running or AgentState.Starting)</MudChip>
                     <MudChip Value="@("stopped")">Not running @_agents.Count(a => a.State is not (AgentState.Running or AgentState.Starting))</MudChip>
                 </MudChipSet>
+                @if (_agents.Any(a => a.Access != AgentAccess.Owner))
+                {
+                    <MudChipSet T="string" @bind-SelectedValue="_whose" SelectionMode="SelectionMode.SingleSelection" CheckMark="false" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                        <MudChip Value="@("all")" Default="true">Everyone's</MudChip>
+                        <MudChip Value="@("mine")">Mine @_agents.Count(a => a.Access == AgentAccess.Owner)</MudChip>
+                        <MudChip Value="@("shared")">Shared with me @_agents.Count(a => a.Access is AgentAccess.Read or AgentAccess.Write)</MudChip>
+                        @if (_agents.Any(a => a.Access == AgentAccess.Listed))
+                        {
+                            <MudChip Value="@("runners")">Others' on my Runners @_agents.Count(a => a.Access == AgentAccess.Listed)</MudChip>
+                        }
+                    </MudChipSet>
+                }
             </div>
         }
         <AgentTable Agents="Filtered" ShowRunner="true" EmptyText="@(_agents.Count == 0 ? "Start an agent to work on a repository." : "No agents match.")">
@@ -40,6 +52,7 @@
     private List<AgentDto> _agents = [];
     private string? _search;
     private string? _filter = "all";
+    private string? _whose = "all";
 
     private IReadOnlyList<AgentDto> Filtered => _agents
         .Where(a => _filter switch
@@ -48,10 +61,18 @@
             "stopped" => a.State is not (AgentState.Running or AgentState.Starting),
             _ => true,
         })
+        .Where(a => _whose switch
+        {
+            "mine" => a.Access == AgentAccess.Owner,
+            "shared" => a.Access is AgentAccess.Read or AgentAccess.Write,
+            "runners" => a.Access == AgentAccess.Listed,
+            _ => true,
+        })
         .Where(a => string.IsNullOrWhiteSpace(_search)
                     || a.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)
                     || (a.RepositoryUrl?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
-                    || a.RunnerName.Contains(_search, StringComparison.OrdinalIgnoreCase))
+                    || a.RunnerName.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                    || a.OwnerName.Contains(_search, StringComparison.OrdinalIgnoreCase))
         .ToList();
 
     protected override async Task LoadAsync() => _agents = await Api.ListAgentsAsync();

@@ -1,19 +1,15 @@
-using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text;
 using DeveAgentManager.Api;
 using DeveAgentManager.Components;
 using DeveAgentManager.Contracts;
 using DeveAgentManager.Core;
 using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
+using DeveAgentManager.Core.Setup;
+using DeveAgentManager.Core.Users;
 using DeveAgentManager.Harnesses.Claude;
 using DeveAgentManager.Harnesses.Codex;
 using DeveAgentManager.Harnesses.Pi;
 using DeveAgentManager.Providers.Proxmox;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 
@@ -36,36 +32,9 @@ builder.Services.AddHttpForwarder();
 builder.Services.AddHostedService<LiveUpdatesBridge>();
 builder.Services.AddProblemDetails();
 
-builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-    .AddCookie(cookie =>
-    {
-        cookie.LoginPath = "/login";
-        cookie.Cookie.Name = "DeveAgentManager.Auth";
-        cookie.Cookie.SameSite = SameSiteMode.Lax;
-        cookie.ExpireTimeSpan = TimeSpan.FromDays(30);
-        cookie.SlidingExpiration = true;
-        // The API, the live hub and terminals answer 401/403; only pages redirect to the login page.
-        cookie.Events.OnRedirectToLogin = context =>
-        {
-            if (RequestSecurity.IsMachinePath(context.Request.Path))
-            {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                return Task.CompletedTask;
-            }
-
-            context.Response.Redirect(context.RedirectUri);
-            return Task.CompletedTask;
-        };
-        cookie.Events.OnRedirectToAccessDenied = context =>
-        {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
-            return Task.CompletedTask;
-        };
-    });
-// Everything needs a login (pages, the API, the live hub, terminals) unless it is explicitly anonymous.
-builder.Services.AddAuthorizationBuilder()
-    .SetFallbackPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
-builder.Services.AddCascadingAuthenticationState();
+builder.Services.AddManagerSignIn();
+builder.Services.AddSingleton<OpenConnections>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<OpenConnections>());
 builder.Services.AddHealthChecks();
 
 builder.Services.Configure<ForwardedHeadersOptions>(forwarded =>
@@ -83,11 +52,23 @@ await using (var db = await app.Services.GetRequiredService<IDbContextFactory<Ma
     await db.Database.MigrateAsync();
 }
 
+await app.Services.GetRequiredService<UserService>().EnsureAdminAsync();
+await app.Services.GetRequiredService<UserSettingsStore>().MoveSettingsFromBeforeUsersAsync();
 await app.Services.GetRequiredService<DeveAgentManager.Core.Sessions.SessionService>().BackfillMessageTimesAsync();
 
-if (managerOptions.UsesDefaultAdminPassword)
+// Settings from before users existed: say so, instead of silently ignoring them.
+foreach (var (setting, instead) in new[]
 {
-    app.Logger.LogWarning("ADMIN_PASSWORD is not set: the Portal login is {User} / {Password}. Set ADMIN_PASSWORD in the compose file.", managerOptions.AdminUsername, ManagerOptions.DefaultAdminPassword);
+    ("RUNNER_PASSWORD", "every Runner gets a password of its own (shown on its page)"),
+    ("GITHUB_PAT", "everyone enters their own GitHub token under My settings → Git and GitHub"),
+    ("GIT_USER_NAME", "everyone enters their own git identity under My settings → Git and GitHub"),
+    ("GIT_USER_EMAIL", "everyone enters their own git identity under My settings → Git and GitHub"),
+})
+{
+    if (!string.IsNullOrWhiteSpace(app.Configuration[setting]))
+    {
+        app.Logger.LogWarning("{Setting} is no longer used: {Instead}. Remove it from the compose file.", setting, instead);
+    }
 }
 
 app.UseForwardedHeaders();
@@ -116,6 +97,7 @@ app.UseWhen(context => !RequestSecurity.IsMachinePath(context.Request.Path), pag
 
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 app.UseAuthentication();
+app.UsePasswordChangeFirst();
 app.UseAuthorization();
 app.UseSameOriginForSockets();
 app.UseAntiforgery();
@@ -123,33 +105,7 @@ app.UseAntiforgery();
 app.MapStaticAssets().AllowAnonymous();
 app.MapHealthChecks("/health").AllowAnonymous();
 
-app.MapPost("/account/login", async (HttpContext context, ManagerOptions options) =>
-{
-    var form = await context.Request.ReadFormAsync();
-    var returnUrl = form["returnUrl"].ToString();
-    if (string.IsNullOrEmpty(returnUrl) || !returnUrl.StartsWith('/') || returnUrl.StartsWith("//", StringComparison.Ordinal))
-    {
-        returnUrl = "/";
-    }
-
-    if (!FixedTimeEquals(form["username"].ToString(), options.AdminUsername) | !FixedTimeEquals(form["password"].ToString(), options.AdminPassword))
-    {
-        // Slow down password guessing a little.
-        await Task.Delay(TimeSpan.FromSeconds(1));
-        return Results.LocalRedirect($"/login?failed=1&returnUrl={Uri.EscapeDataString(returnUrl)}");
-    }
-
-    var identity = new ClaimsIdentity([new Claim(ClaimTypes.Name, options.AdminUsername)], CookieAuthenticationDefaults.AuthenticationScheme);
-    await context.SignInAsync(new ClaimsPrincipal(identity), new AuthenticationProperties { IsPersistent = form["remember"] == "on" });
-    return Results.LocalRedirect(returnUrl);
-}).AllowAnonymous();
-
-app.MapPost("/account/logout", async (HttpContext context) =>
-{
-    await context.SignOutAsync();
-    return Results.LocalRedirect("/login");
-});
-
+app.MapAccountEndpoints();
 app.MapManagerApi();
 app.MapTerminalSocket();
 app.MapEditorLinks();
@@ -160,6 +116,3 @@ app.MapRazorComponents<App>()
     .AddAdditionalAssemblies(typeof(DeveAgentManager.Client.Routes).Assembly);
 
 app.Run();
-
-static bool FixedTimeEquals(string a, string b) =>
-    CryptographicOperations.FixedTimeEquals(SHA256.HashData(Encoding.UTF8.GetBytes(a)), SHA256.HashData(Encoding.UTF8.GetBytes(b)));

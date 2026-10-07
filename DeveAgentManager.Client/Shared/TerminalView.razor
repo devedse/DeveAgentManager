@@ -31,7 +31,10 @@
     }
 </div>
 
-@* On-screen keys for phones and tablets: one row that always fits (no scrolling), the keys pi needs most first. *@
+@* On-screen keys for phones and tablets: one row that always fits (no scrolling), the keys pi needs most first. A
+   read-only terminal (an agent shared read-only) has none: it is only watched. *@
+@if (!ReadOnly)
+{
 <div class="terminal-keys">
     @foreach (var (label, sequence, title) in Keys)
     {
@@ -46,6 +49,7 @@
         <MudIcon Icon="@Icons.Material.Rounded.AttachFile" Size="Size.Small" />
     </button>
 </div>
+}
 
 @code {
     // On-screen keys for phones and tablets, where these are hard or impossible to type.
@@ -98,6 +102,12 @@
     [Parameter]
     public Guid? AgentId { get; set; }
 
+    /// <summary>Only watched (an agent shared read-only): nothing can be typed or pasted, and there is no phone keyboard.</summary>
+    [Parameter]
+    public bool ReadOnly { get; set; }
+
+    protected override void OnInitialized() => _options.DisableStdin = ReadOnly;
+
     [Parameter] public string? HarnessId { get; set; }
 
     /// <summary>Or open a plain shell on this Runner (or, with <see cref="Login"/>, a login on it).</summary>
@@ -140,7 +150,7 @@
     private async Task OnFirstRenderAsync()
     {
         _self = DotNetObjectReference.Create(this);
-        await JS.InvokeVoidAsync("damTerminal.init", _xterm.Id, _self, AcceptsImages);
+        await JS.InvokeVoidAsync("damTerminal.init", _xterm.Id, _self, AcceptsImages, ReadOnly);
         StateHasChanged();
         // Connecting to an agent makes this screen one of its viewers; a tab in the background waits until it is looked at.
         await JS.InvokeVoidAsync("damTerminal.whenVisible");
@@ -149,7 +159,7 @@
 
     /// <summary>Where pasted images go: the agent's or the shell's Runner (query string for the upload).</summary>
     // Images go to the Runner through the terminal's socket: agents and shells, not login terminals.
-    private bool AcceptsImages => AgentId is not null || (Login is null && RunnerId is not null);
+    private bool AcceptsImages => !ReadOnly && (AgentId is not null || (Login is null && RunnerId is not null));
 
     private async Task ConnectAsync()
     {

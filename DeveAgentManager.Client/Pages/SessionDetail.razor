@@ -3,6 +3,7 @@
 @inject IDialogService Dialogs
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@inject SignedInUser Me
 
 <PageTitle>@(_stored?.Title ?? "Session") · DeveAgentManager</PageTitle>
 
@@ -27,23 +28,31 @@
                 }
             </TitleContent>
             <Actions>
-                @if (_stored.Agent is { } owner)
+                @if (_stored.Agent is { Access: >= AgentAccess.Read } running)
                 {
-                    <MudButton Href="@($"agents/{owner.Id}")" Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Terminal">Open agent</MudButton>
+                    <MudButton Href="@($"agents/{running.Id}")" Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Terminal">Open agent</MudButton>
                 }
-                else
+                else if (SessionList.ContinueText(_stored) is { } continueText)
                 {
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" OnClick="ContinueAsync">Continue on a Runner</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" OnClick="ContinueAsync">@continueText</MudButton>
                 }
                 <SessionExportMenu SessionId="_stored.Id" />
                 <MudMenu Icon="@Icons.Material.Rounded.MoreVert" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
-                    <MudMenuItem Icon="@Icons.Material.Rounded.Edit" OnClick="RenameAsync">Rename session</MudMenuItem>
-                    <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="@(_stored.AgentId != null)" OnClick="DeleteAsync">Delete session</MudMenuItem>
+                    <MudMenuItem Icon="@(_stored.Access == SessionAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="ShareAsync">Sharing</MudMenuItem>
+                    @if (_stored.Access == SessionAccess.Owner)
+                    {
+                        <MudMenuItem Icon="@Icons.Material.Rounded.Edit" OnClick="RenameAsync">Rename session</MudMenuItem>
+                        <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="@(_stored.AgentId != null)" OnClick="DeleteAsync">Delete session</MudMenuItem>
+                    }
                 </MudMenu>
             </Actions>
         </PageHeader>
 
         <div class="session-facts">
+            @if (_stored.Access != SessionAccess.Owner)
+            {
+                <div><span class="fact-label">Owner</span><span>@_stored.OwnerName · shared with you read-only</span></div>
+            }
             <div><span class="fact-label">Harness</span><span>@(_stored.HarnessTrail is { } trail && trail.Contains(',') ? string.Join(" → ", trail.Split(',')) : _stored.HarnessId)</span></div>
             <div><span class="fact-label">Where</span><span>@(_stored.Agent is { } a ? $"{a.Name} on {a.RunnerName}" : _stored.RunnerName is null ? "Imported" : $"No agent (last on {_stored.RunnerName})")</span></div>
             @if (_stored.RepositoryUrl is not null)
@@ -120,13 +129,22 @@
 
     private async Task ContinueAsync()
     {
-        if (_stored?.WorkspaceAgentId is { } workspace && await Api.GetAgentAsync(workspace) is { } agent)
+        if (_stored?.WorkspaceAgentId is { } workspace && _stored.WorkspaceAccess >= AgentAccess.Write && await Api.GetAgentAsync(workspace) is { } agent)
         {
             var dialog = await Dialogs.ShowAsync<SessionPickerDialog>("Sessions", new DialogParameters<SessionPickerDialog> { { d => d.Agent, agent } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
             if (await dialog.Result is { Canceled: false }) Navigation.NavigateTo($"agents/{workspace}");
         }
         else await Dialogs.ShowAsync<NewAgentDialog>("Continue session", new DialogParameters<NewAgentDialog> { { d => d.ContinueSession, _stored } });
     }
+    private async Task ShareAsync()
+    {
+        if (await ShareDialog.ShowAsync(Dialogs, _stored!, await Me.GetAsync()))
+        {
+            // Left the share: it is gone for this user.
+            Navigation.NavigateTo("sessions");
+        }
+    }
+
     private async Task RenameAsync()
     {
         var dialog = await Dialogs.ShowAsync<RenameSessionDialog>("Rename session", new DialogParameters<RenameSessionDialog> { { d => d.Session, _stored! } });

@@ -2,6 +2,8 @@
 @layout TerminalLayout
 @inherits LiveComponent
 @inject IDialogService Dialogs
+@inject SignedInUser Me
+@inject NavigationManager Navigation
 
 <PageTitle>@(_agent?.Name ?? "Agent") · DeveAgentManager</PageTitle>
 
@@ -13,6 +15,8 @@
         @if (_agent is not null)
         {
             var running = _agent.State is AgentState.Running or AgentState.Starting;
+            var write = _agent.Access >= AgentAccess.Write;
+            var read = _agent.Access >= AgentAccess.Read;
             @if (ManagerApi.IconUrl(_agent) is not null)
             {
                 <AgentAvatar Agent="_agent" Class="terminal-avatar" />
@@ -24,7 +28,10 @@
                 </div>
                 <span class="terminal-context"><HarnessLogo HarnessId="@_agent.HarnessId" Class="context-logo" />@(_agent.AccountName is { } account ? $"{account} · " : "")@_agent.RunnerName · <span class="mono">@(_sessionTitle ?? _agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
             </div>
-            <MudIconButton Icon="@Icons.Material.Rounded.FolderOpen" Class="session-picker-button" aria-label="Switch session" title="@(_sessionTitle ?? "Sessions")" OnClick="OpenSessionsAsync" />
+            @if (write)
+            {
+                <MudIconButton Icon="@Icons.Material.Rounded.FolderOpen" Class="session-picker-button" aria-label="Switch session" title="@(_sessionTitle ?? "Sessions")" OnClick="OpenSessionsAsync" />
+            }
             <AttentionMenu />
             <AgentSeenWatcher @key="(AgentId, nameof(AgentSeenWatcher))" Agent="_agent" />
             <span class="terminal-hint">Shift+drag selects · Ctrl+C copies a selection</span>
@@ -35,11 +42,17 @@
                     <MudIconButton Href="@($"sessions/{sessionId}")" Icon="@Icons.Material.Rounded.Forum" Size="Size.Small" aria-label="Conversation" />
                 </MudTooltip></span>
             }
-            @if (_agent.RunnerKind == RunnerKind.Desktop)
+            @if (read)
+            {
+                <span class="toolbar-wide"><MudTooltip Text="@(_agent.Access == AgentAccess.Owner ? "Share" : AgentTable.ShareText(_agent))">
+                    <MudIconButton Icon="@(_agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" Size="Size.Small" OnClick="ShareAsync" aria-label="Sharing" />
+                </MudTooltip></span>
+            }
+            @if (write && _agent.RunnerKind == RunnerKind.Desktop)
             {
                 <span class="toolbar-wide"><MudIconButton Href="@($"runners/{_agent.RunnerId}/desktop?agent={AgentId}")" Icon="@Icons.Material.Rounded.DesktopWindows" Size="Size.Small" aria-label="Runner desktop" title="Runner desktop" /></span>
             }
-            @if (running)
+            @if (running && write)
             {
                 <AgentLimitButton @key="AgentId" AgentId="AgentId" />
                 <span class="terminal-quick-desktop"><QuickCommandMenu AgentId="AgentId" HarnessId="@_agent.HarnessId" Disabled="_busy" /></span>
@@ -58,7 +71,7 @@
                     <MudIconButton Icon="@Icons.Material.Rounded.Stop" Size="Size.Small" Disabled="_busy" OnClick="StopAsync" aria-label="Stop" />
                 </MudTooltip></span>
             }
-            @if (running || _sessionId is not null)
+            @if (read)
             {
                 <div class="toolbar-narrow">
                     <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" aria-label="More">
@@ -67,11 +80,12 @@
                             <MudMenuItem Icon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{menuSessionId}")">Conversation</MudMenuItem>
                             <MudMenuItem Icon="@Icons.Material.Rounded.PhotoLibrary" OnClick="OpenImagesAsync">Shared images</MudMenuItem>
                         }
-                        @if (_agent.RunnerKind == RunnerKind.Desktop)
+                        <MudMenuItem Icon="@Icons.Material.Rounded.Share" OnClick="ShareAsync">Sharing</MudMenuItem>
+                        @if (write && _agent.RunnerKind == RunnerKind.Desktop)
                         {
                             <MudMenuItem Icon="@Icons.Material.Rounded.DesktopWindows" Href="@($"runners/{_agent.RunnerId}/desktop?agent={AgentId}")">Runner desktop</MudMenuItem>
                         }
-                        @if (running)
+                        @if (running && write)
                         {
                             @if (_agent.RunnerToolIds.Contains("vscode"))
                             {
@@ -95,18 +109,38 @@
             </EmptyState>
         }
     }
+    else if (_agent.Access < AgentAccess.Read)
+    {
+        <div class="terminal-stopped">
+            <EmptyState Icon="@Icons.Material.Rounded.Lock" Title="@($"{_agent.OwnerName}'s agent")"
+                        Text="It runs on a Runner you manage, so you see that it is there, but only its owner and the people they share it with can open it.">
+                <MudButton Href="agents" Variant="Variant.Outlined">Back to agents</MudButton>
+            </EmptyState>
+        </div>
+    }
     else if (_agent.State is AgentState.Running or AgentState.Starting)
     {
-        <TerminalView @ref="_terminal" @key="_connectionKey" AgentId="_agent.Id" HarnessId="@_agent.HarnessId" Disconnected="OnDisconnectedAsync" Connected="StateHasChanged" />
+        @if (_agent.Access < AgentAccess.Write)
+        {
+            <div class="terminal-readonly-banner">
+                <MudIcon Icon="@Icons.Material.Rounded.Visibility" Size="Size.Small" />
+                <span>@AgentTable.ShareText(_agent). You can watch; typing goes nowhere.</span>
+            </div>
+        }
+        <TerminalView @ref="_terminal" @key="_connectionKey" AgentId="_agent.Id" HarnessId="@_agent.HarnessId" ReadOnly="@(_agent.Access < AgentAccess.Write)"
+                      Disconnected="OnDisconnectedAsync" Connected="StateHasChanged" />
     }
     else
     {
         <div class="terminal-stopped">
             <EmptyState Icon="@Icons.Material.Rounded.PauseCircle" Title="@($"'{_agent.Name}' is not running")"
-                        Text="@(_agent.StateMessage ?? "Start it to continue. The harness resumes the same conversation.")">
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" Disabled="_busy || _agent.RunnerState != RunnerState.Ready" OnClick="StartAsync">
-                    @(_agent.RunnerState == RunnerState.Ready ? "Start agent" : $"Runner is {_agent.RunnerState.ToString().ToLowerInvariant()}")
-                </MudButton>
+                        Text="@(_agent.Access >= AgentAccess.Write ? _agent.StateMessage ?? "Start it to continue. The harness resumes the same conversation." : $"{_agent.OwnerName} or someone with read-write access can start it.")">
+                @if (_agent.Access >= AgentAccess.Write)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" Disabled="_busy || _agent.RunnerState != RunnerState.Ready" OnClick="StartAsync">
+                        @(_agent.RunnerState == RunnerState.Ready ? "Start agent" : $"Runner is {_agent.RunnerState.ToString().ToLowerInvariant()}")
+                    </MudButton>
+                }
             </EmptyState>
         </div>
     }
@@ -150,7 +184,8 @@
         var previous = _agent?.State;
         _vsCodeIcon ??= (await Api.InfoAsync()).Tools.FirstOrDefault(t => t.Id == "vscode")?.Icon;
         _agent = await Api.GetAgentAsync(AgentId);
-        var currentSession = await Api.GetAgentSessionAsync(AgentId);
+        // Its conversation is for who can read the agent (not for people who only see it on a Runner they manage).
+        var currentSession = _agent?.Access >= AgentAccess.Read ? await Api.GetAgentSessionAsync(AgentId) : null;
         _sessionId = currentSession?.Id;
         _sessionTitle = currentSession?.Title;
         if (previous is not null && previous != AgentState.Running && _agent?.State == AgentState.Running)
@@ -184,6 +219,15 @@
         var dialog = await Dialogs.ShowAsync<SessionPickerDialog>("Sessions", new DialogParameters<SessionPickerDialog> { { d => d.Agent, _agent } },
             new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
         if (await dialog.Result is { Canceled: false }) await OnSwitchedAsync();
+    }
+
+    private async Task ShareAsync()
+    {
+        if (_agent is not null && await ShareDialog.ShowAsync(Dialogs, _agent, await Me.GetAsync()))
+        {
+            // Left the share: there is nothing here any more.
+            Navigation.NavigateTo("agents");
+        }
     }
 
     private async Task OpenImagesAsync()

@@ -8,6 +8,14 @@ public class Runner
     public string? TimeZoneId { get; set; }
     public Guid Id { get; set; }
 
+    /// <summary>Who created it (or got it from a runner manager). Has <see cref="RunnerAccess.Owner"/>.</summary>
+    public Guid OwnerId { get; set; }
+
+    public User? Owner { get; set; }
+
+    /// <summary>Everyone else with access to it.</summary>
+    public List<RunnerMember> Members { get; set; } = [];
+
     public string Name { get; set; } = "";
 
     public string ProviderId { get; set; } = "";
@@ -31,8 +39,17 @@ public class Runner
 
     public string Username { get; set; } = "";
 
-    /// <summary>Only set for existing machines added with a password; encrypted.</summary>
+    /// <summary>The Runner Account's password, encrypted: generated for each new VM, or entered for an existing machine.</summary>
     public string? ProtectedPassword { get; set; }
+
+    /// <summary>
+    /// When the password was set. Null for a VM from before each Runner had its own password: it still has the one all
+    /// Runners shared, and the next setup replaces it.
+    /// </summary>
+    public DateTime? PasswordChangedAt { get; set; }
+
+    /// <summary>SSH refuses passwords; only keys log in (the Manager's, and those of the people with access).</summary>
+    public bool KeysOnly { get; set; }
 
     /// <summary>SHA256 fingerprint of the SSH host key, learned on first connect (trust on first use).</summary>
     public string? HostKeyFingerprint { get; set; }
@@ -134,6 +151,13 @@ public class Agent
 
     public Runner? Runner { get; set; }
 
+    /// <summary>Who created it. Its harness runs with this user's git identity, GitHub token and environment.</summary>
+    public Guid OwnerId { get; set; }
+
+    public User? Owner { get; set; }
+
+    public List<AgentShare> Shares { get; set; } = [];
+
     public string Name { get; set; } = "";
 
     public string HarnessId { get; set; } = "";
@@ -150,7 +174,10 @@ public class Agent
     /// <summary>The harness's own session id, so a restart resumes the same conversation.</summary>
     public string HarnessSessionId { get; set; } = "";
 
-    /// <summary>The account the harness runs with; null uses the harness's default account (or the Runner's own login).</summary>
+    /// <summary>
+    /// The harness login the agent runs with: one of its owner's, or of a user it is shared with who switched it to theirs.
+    /// Null uses the owner's default login for the harness (or the Runner's own login when there is none).
+    /// </summary>
     public Guid? AccountId { get; set; }
 
     public Account? Account { get; set; }
@@ -212,6 +239,13 @@ public class StoredSession
 
     public Guid Id { get; set; }
 
+    /// <summary>Whose conversation it is: its workspace's owner, or who imported or continued it.</summary>
+    public Guid OwnerId { get; set; }
+
+    public User? Owner { get; set; }
+
+    public List<SessionShare> Shares { get; set; } = [];
+
     public string Title { get; set; } = "";
 
     /// <summary>The harness it last ran in, e.g. "pi".</summary>
@@ -268,6 +302,11 @@ public class Account
 {
     public Guid Id { get; set; }
 
+    /// <summary>Only its owner sees and uses it; agents shared with others keep running with it.</summary>
+    public Guid OwnerId { get; set; }
+
+    public User? Owner { get; set; }
+
     public string HarnessId { get; set; } = "";
 
     public string Name { get; set; } = "";
@@ -277,7 +316,7 @@ public class Account
     /// <summary>The credential (a token, an API key or a harness's login file), encrypted.</summary>
     public string ProtectedSecret { get; set; } = "";
 
-    /// <summary>Used by agents that don't pick an account.</summary>
+    /// <summary>Used by its owner's agents that don't pick a login. One per owner and harness.</summary>
     public bool IsDefault { get; set; }
 
     /// <summary>Goes up when the credential is replaced (a new login), so Runners take the new one.</summary>
@@ -286,4 +325,124 @@ public class Account
     public DateTime CreatedAt { get; set; }
 
     public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>Someone who signs in to the Portal.</summary>
+public class User
+{
+    /// <summary>The user the first migration creates, so existing Runners, agents and conversations have an owner.</summary>
+    public static readonly Guid BootstrapId = new("00000000-0000-0000-0000-000000000001");
+
+    public Guid Id { get; set; }
+
+    /// <summary>What they sign in with; unique, compared case-insensitively.</summary>
+    public string Username { get; set; } = "";
+
+    public string DisplayName { get; set; } = "";
+
+    /// <summary>ASP.NET Core Identity's password hash. Empty until the user's first password is set.</summary>
+    public string PasswordHash { get; set; } = "";
+
+    /// <summary>Changes with the password, roles or disabling, which signs the user out everywhere.</summary>
+    public string SecurityStamp { get; set; } = "";
+
+    public UserRoles Roles { get; set; }
+
+    public bool Disabled { get; set; }
+
+    /// <summary>Set by a password a user manager chose: the user picks their own at the next sign-in.</summary>
+    public bool MustChangePassword { get; set; }
+
+    /// <summary>Wrong passwords in a row; reset by a correct one.</summary>
+    public int FailedSignIns { get; set; }
+
+    public DateTime? LockedUntil { get; set; }
+
+    public DateTime CreatedAt { get; set; }
+
+    public DateTime UpdatedAt { get; set; }
+
+    public DateTime? LastSignInAt { get; set; }
+}
+
+/// <summary>A user's own setting (My settings), e.g. their git identity or GitHub token.</summary>
+public class UserSetting
+{
+    public Guid UserId { get; set; }
+
+    public string Key { get; set; } = "";
+
+    public string? Value { get; set; }
+
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>Access to a Runner for someone besides its owner.</summary>
+public class RunnerMember
+{
+    public Guid RunnerId { get; set; }
+
+    public Guid UserId { get; set; }
+
+    public User? User { get; set; }
+
+    /// <summary><see cref="RunnerAccess.Use"/> or <see cref="RunnerAccess.Manage"/>.</summary>
+    public RunnerAccess Access { get; set; }
+
+    public Guid? GrantedById { get; set; }
+
+    public DateTime GrantedAt { get; set; }
+}
+
+/// <summary>An agent its owner shared with another user.</summary>
+public class AgentShare
+{
+    public Guid AgentId { get; set; }
+
+    public Guid UserId { get; set; }
+
+    public User? User { get; set; }
+
+    /// <summary><see cref="AgentAccess.Read"/> or <see cref="AgentAccess.Write"/>.</summary>
+    public AgentAccess Access { get; set; }
+
+    public Guid? GrantedById { get; set; }
+
+    public DateTime GrantedAt { get; set; }
+}
+
+/// <summary>A conversation its owner shared, read-only, with another user.</summary>
+public class SessionShare
+{
+    public Guid SessionId { get; set; }
+
+    public Guid UserId { get; set; }
+
+    public User? User { get; set; }
+
+    public Guid? GrantedById { get; set; }
+
+    public DateTime GrantedAt { get; set; }
+}
+
+/// <summary>Something security-related that happened: sign-ins, users and roles, access, shares and Runner passwords.</summary>
+public class AuditEvent
+{
+    public long Id { get; set; }
+
+    public DateTime At { get; set; }
+
+    /// <summary>Who did it; null for the Manager itself (or a sign-in with an unknown username).</summary>
+    public Guid? ActorId { get; set; }
+
+    /// <summary>The actor's username at the time, so the entry stays readable after the user is gone.</summary>
+    public string? ActorName { get; set; }
+
+    /// <summary>What happened, e.g. "user-created" (see <see cref="AuditActions"/>).</summary>
+    public string Action { get; set; } = "";
+
+    /// <summary>What it happened to, as the Portal shows it, e.g. "Runner runner-01" or "User ketty".</summary>
+    public string? Target { get; set; }
+
+    public string? Detail { get; set; }
 }

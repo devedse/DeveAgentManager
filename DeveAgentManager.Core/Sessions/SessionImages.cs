@@ -4,6 +4,7 @@ using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Ssh;
+using DeveAgentManager.Core.Users;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -12,7 +13,7 @@ namespace DeveAgentManager.Core.Sessions;
 
 /// <summary>Imports explicit image publications independently of whether any browser is open.</summary>
 public sealed class SessionImages(IDbContextFactory<ManagerDbContext> factory, RunnerShell shell,
-    SessionService sessions, SessionImageStore store, ManagerEvents events, ILogger<SessionImages> logger) : BackgroundService
+    SessionService sessions, SessionImageStore store, AccessControl access, ManagerEvents events, ILogger<SessionImages> logger) : BackgroundService
 {
     private sealed record Publication(Guid Id, Guid AgentId, Guid SessionId, string FileName, string Caption, string ContentType, long Bytes);
 
@@ -79,13 +80,16 @@ public sealed class SessionImages(IDbContextFactory<ManagerDbContext> factory, R
     private Task<CommandResult> AcknowledgeAsync(Runner runner, Guid id, CancellationToken ct) =>
         shell.RunAsync(runner, $"python3 ~/.deveagentmanager/dam-tools.py --ack-image {id:N}", TimeSpan.FromSeconds(10), ct);
 
-    public async Task<SessionImageDto> SaveSnapshotAsync(Guid runnerId, Guid sessionId, byte[] data, string? caption, CancellationToken ct)
+    /// <summary>Saves a desktop snapshot in a conversation on that Runner, whose agent <paramref name="actor"/> can write to.</summary>
+    public async Task<SessionImageDto> SaveSnapshotAsync(CurrentUser actor, Guid runnerId, Guid sessionId, byte[] data, string? caption, CancellationToken ct)
     {
         using var lease = await sessions.LockAsync(ct);
         await using var db = await factory.CreateDbContextAsync(ct);
         var session = await db.Sessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct) ?? throw new KeyNotFoundException("Session not found.");
         var owner = session.WorkspaceAgentId ?? session.AgentId;
-        if (owner is null || !await BelongsAsync(db, runnerId, owner.Value, sessionId, ct)) throw new ArgumentException("Choose a conversation on this runner.");
+        if (owner is null || await access.AgentAsync(actor, owner.Value, ct) < AgentAccess.Write)
+            throw new KeyNotFoundException("Session not found.");
+        if (!await BelongsAsync(db, runnerId, owner.Value, sessionId, ct)) throw new ArgumentException("Choose a conversation on this runner.");
         var image = await store.SaveAsync(sessionId, Guid.NewGuid(), data, "desktop.jpg", caption ?? "Desktop snapshot", ct);
         events.SessionChanged(sessionId, owner);
         return image;

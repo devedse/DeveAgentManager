@@ -1,7 +1,8 @@
 @inherits LayoutComponentBase
 @implements IDisposable
-@inject ManagerApi Api
+@inject SignedInUser Me
 @inject LiveUpdates Live
+@inject NavigationManager Navigation
 
 <MudProviders />
 <LoadingDone />
@@ -23,12 +24,22 @@
         <AttentionMenu />
         <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
             <ActivatorContent>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" StartIcon="@Icons.Material.Rounded.AccountCircle" Class="user-button" OnClick="@context.ToggleAsync">
-                    <span class="d-none d-sm-inline">@_username</span>
+                <MudButton Variant="Variant.Text" Color="Color.Inherit" StartIcon="@Icons.Material.Rounded.AccountCircle" Class="user-button" OnClick="@context.ToggleAsync"
+                           aria-label="@($"Signed in as {_user?.DisplayName}")">
+                    <span class="d-none d-sm-inline">@_user?.DisplayName</span>
                 </MudButton>
             </ActivatorContent>
             <ChildContent>
-                <MudMenuItem Icon="@Icons.Material.Rounded.Settings" Href="settings">Settings</MudMenuItem>
+                @if (_user is not null)
+                {
+                    <div class="menu-user">
+                        <div class="menu-user-name">@_user.DisplayName</div>
+                        <div class="menu-user-meta">@_user.Username@(_user.Roles == UserRoles.None ? "" : $" · {Roles.Describe(_user.Roles)}")</div>
+                    </div>
+                }
+                <MudMenuItem Icon="@Icons.Material.Rounded.Settings" Href="settings">My settings</MudMenuItem>
+                @* The change-password page is the Manager's own (also used when a new password is required). *@
+                <MudMenuItem Icon="@Icons.Material.Rounded.Password" Href="@ChangePasswordUrl" ForceLoad="true">Change password</MudMenuItem>
                 @* A plain form: signing out clears the cookie on the server and goes to the login page. *@
                 <form method="post" action="account/logout" class="menu-form">
                     <button type="submit" class="menu-form-button">
@@ -57,14 +68,22 @@
 
 @code {
     private bool _drawerOpen = true;
-    private string? _username;
+    private CurrentUserDto? _user;
+
+    private string ChangePasswordUrl => $"password?returnUrl={Uri.EscapeDataString("/" + Navigation.ToBaseRelativePath(Navigation.Uri))}";
 
     protected override async Task OnInitializedAsync()
     {
-        Live.StateChanged += OnLiveStateChanged;
+        Live.StateChanged += OnChanged;
+        Me.Changed += OnUserChanged;
+        await LoadUserAsync();
+    }
+
+    private async Task LoadUserAsync()
+    {
         try
         {
-            _username = (await Api.InfoAsync()).AdminUsername;
+            _user = await Me.GetAsync();
         }
         catch (Exception ex) when (ex is ApiException or HttpRequestException)
         {
@@ -72,7 +91,17 @@
         }
     }
 
-    private void OnLiveStateChanged() => InvokeAsync(StateHasChanged);
+    private void OnChanged() => InvokeAsync(StateHasChanged);
 
-    public void Dispose() => Live.StateChanged -= OnLiveStateChanged;
+    private void OnUserChanged() => InvokeAsync(async () =>
+    {
+        await LoadUserAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose()
+    {
+        Live.StateChanged -= OnChanged;
+        Me.Changed -= OnUserChanged;
+    }
 }

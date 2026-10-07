@@ -22,6 +22,18 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
     public DbSet<AgentAutoContinue> AgentAutoContinues => Set<AgentAutoContinue>();
     public DbSet<AgentLimit> AgentLimits => Set<AgentLimit>();
 
+    public DbSet<User> Users => Set<User>();
+
+    public DbSet<UserSetting> UserSettings => Set<UserSetting>();
+
+    public DbSet<RunnerMember> RunnerMembers => Set<RunnerMember>();
+
+    public DbSet<AgentShare> AgentShares => Set<AgentShare>();
+
+    public DbSet<SessionShare> SessionShares => Set<SessionShare>();
+
+    public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // SQLite has no date type: store UTC and give values back as UTC.
@@ -51,6 +63,17 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
             runner.Ignore(r => r.HarnessIds);
             runner.Ignore(r => r.ToolIds);
             runner.HasMany(r => r.Agents).WithOne(a => a.Runner).HasForeignKey(a => a.RunnerId).OnDelete(DeleteBehavior.Cascade);
+            // Users who own something can't be deleted before it has another owner (see UserService.DeleteAsync).
+            runner.HasOne(r => r.Owner).WithMany().HasForeignKey(r => r.OwnerId).OnDelete(DeleteBehavior.Restrict);
+            runner.HasMany(r => r.Members).WithOne().HasForeignKey(m => m.RunnerId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RunnerMember>(member =>
+        {
+            member.HasKey(m => new { m.RunnerId, m.UserId });
+            member.HasIndex(m => m.UserId);
+            member.Property(m => m.Access).HasConversion<string>().HasMaxLength(32);
+            member.HasOne(m => m.User).WithMany().HasForeignKey(m => m.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<RunnerActivity>(activity =>
@@ -76,13 +99,24 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
             agent.HasIndex(a => new { a.RunnerId, a.Name }).IsUnique();
             agent.Property(a => a.State).HasConversion<string>().HasMaxLength(32);
             agent.HasOne(a => a.Account).WithMany().HasForeignKey(a => a.AccountId).OnDelete(DeleteBehavior.SetNull);
+            agent.HasOne(a => a.Owner).WithMany().HasForeignKey(a => a.OwnerId).OnDelete(DeleteBehavior.Restrict);
+            agent.HasMany(a => a.Shares).WithOne().HasForeignKey(s => s.AgentId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentShare>(share =>
+        {
+            share.HasKey(s => new { s.AgentId, s.UserId });
+            share.HasIndex(s => s.UserId);
+            share.Property(s => s.Access).HasConversion<string>().HasMaxLength(32);
+            share.HasOne(s => s.User).WithMany().HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Account>(account =>
         {
             account.HasKey(a => a.Id);
-            account.HasIndex(a => a.HarnessId);
+            account.HasIndex(a => new { a.OwnerId, a.HarnessId });
             account.Property(a => a.Kind).HasConversion<string>().HasMaxLength(32);
+            account.HasOne(a => a.Owner).WithMany().HasForeignKey(a => a.OwnerId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<StoredSession>(session =>
@@ -91,6 +125,49 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
             session.HasIndex(s => s.AgentId).IsUnique();
             session.HasOne(s => s.WorkspaceAgent).WithMany().HasForeignKey(s => s.WorkspaceAgentId).OnDelete(DeleteBehavior.SetNull);
             session.HasOne(s => s.Agent).WithMany().HasForeignKey(s => s.AgentId).OnDelete(DeleteBehavior.SetNull);
+            session.HasOne(s => s.Owner).WithMany().HasForeignKey(s => s.OwnerId).OnDelete(DeleteBehavior.Restrict);
+            session.HasMany(s => s.Shares).WithOne().HasForeignKey(s => s.SessionId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SessionShare>(share =>
+        {
+            share.HasKey(s => new { s.SessionId, s.UserId });
+            share.HasIndex(s => s.UserId);
+            share.HasOne(s => s.User).WithMany().HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<User>(user =>
+        {
+            user.HasKey(u => u.Id);
+            user.Property(u => u.Username).HasMaxLength(64).UseCollation("NOCASE");
+            user.HasIndex(u => u.Username).IsUnique();
+            user.Property(u => u.DisplayName).HasMaxLength(100);
+            user.Property(u => u.Roles).HasConversion<int>();
+            user.HasData(new User
+            {
+                Id = User.BootstrapId,
+                Username = "admin",
+                DisplayName = "Admin",
+                SecurityStamp = "bootstrap",
+                Roles = UserRoles.Admin,
+                CreatedAt = new DateTime(2026, 10, 6, 0, 0, 0, DateTimeKind.Utc),
+                UpdatedAt = new DateTime(2026, 10, 6, 0, 0, 0, DateTimeKind.Utc),
+            });
+        });
+
+        modelBuilder.Entity<UserSetting>(setting =>
+        {
+            setting.HasKey(s => new { s.UserId, s.Key });
+            setting.HasOne<User>().WithMany().HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AuditEvent>(audit =>
+        {
+            audit.HasKey(a => a.Id);
+            audit.HasIndex(a => a.At);
+            audit.Property(a => a.Action).HasMaxLength(64);
+            audit.Property(a => a.ActorName).HasMaxLength(64);
+            audit.Property(a => a.Target).HasMaxLength(200);
         });
 
         modelBuilder.Entity<SettingEntry>(setting =>

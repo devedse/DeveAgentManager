@@ -18,23 +18,20 @@ public sealed class ManagerOptions
 
     public bool UsesDefaultAdminPassword => AdminPassword == DefaultAdminPassword;
 
-    /// <summary>The Runner Account injected into new Runners.</summary>
-    public string RunnerUsername { get; init; } = "remoteman";
+    /// <summary>
+    /// RESET_ADMIN_PASSWORD=true: at start-up, <see cref="AdminUsername"/> gets all roles and <see cref="AdminPassword"/>
+    /// again (a way back in). ADMIN_USERNAME and ADMIN_PASSWORD otherwise only matter for the very first start.
+    /// </summary>
+    public bool ResetAdminPassword { get; init; }
 
-    public string RunnerPassword { get; init; } = "remoteman";
+    /// <summary>The Runner Account injected into new Runners (each gets a password of its own: see RunnerPasswords).</summary>
+    public string RunnerUsername { get; init; } = "remoteman";
 
     public int DefaultCores { get; init; } = 4;
 
     public int DefaultMemoryMb { get; init; } = 8192;
 
     public int DefaultDiskGb { get; init; } = 64;
-
-    /// <summary>Set in compose; when empty it can be set in the Portal.</summary>
-    public string? GitHubPat { get; init; }
-
-    public string? GitUserName { get; init; }
-
-    public string? GitUserEmail { get; init; }
 
     /// <summary>
     /// The Manager's second port, which only serves VS Code. VS Code runs code from the Runner (extensions, and anything
@@ -69,14 +66,11 @@ public sealed class ManagerOptions
             DataDirectory = Path.GetFullPath(dataDirectory),
             AdminUsername = Value(configuration, "ADMIN_USERNAME") ?? "admin",
             AdminPassword = Value(configuration, "ADMIN_PASSWORD") ?? DefaultAdminPassword,
+            ResetAdminPassword = string.Equals(Value(configuration, "RESET_ADMIN_PASSWORD"), "true", StringComparison.OrdinalIgnoreCase),
             RunnerUsername = Value(configuration, "RUNNER_USERNAME") ?? "remoteman",
-            RunnerPassword = Value(configuration, "RUNNER_PASSWORD") ?? "remoteman",
             DefaultCores = Int(configuration, "RUNNER_DEFAULT_CORES", 4),
             DefaultMemoryMb = Int(configuration, "RUNNER_DEFAULT_MEMORY_MB", 8192),
             DefaultDiskGb = Int(configuration, "RUNNER_DEFAULT_DISK_GB", 64),
-            GitHubPat = Value(configuration, "GITHUB_PAT"),
-            GitUserName = Value(configuration, "GIT_USER_NAME"),
-            GitUserEmail = Value(configuration, "GIT_USER_EMAIL"),
             EditorPort = Int(configuration, "EDITOR_PORT", 8081),
             EditorUrl = Value(configuration, "EDITOR_URL")?.TrimEnd('/'),
         };

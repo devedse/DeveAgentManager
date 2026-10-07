@@ -25,8 +25,8 @@ public class RunnerDesktopTests
     [Fact]
     public void OnlyDesktopRunnersLoadTheGraphicalEnvironment()
     {
-        Assert.DoesNotContain("desktop-env", RunnerSetupService.BuildAgentEnv(new SetupProfile()));
-        Assert.Contains("desktop-env", RunnerSetupService.BuildAgentEnv(new SetupProfile(), desktop: true));
+        Assert.DoesNotContain("desktop-env", RunnerSetupService.BuildAgentEnv());
+        Assert.Contains("desktop-env", RunnerSetupService.BuildAgentEnv(desktop: true));
     }
 
     [Theory]

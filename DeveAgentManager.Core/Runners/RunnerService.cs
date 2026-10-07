@@ -8,6 +8,7 @@ using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Security;
 using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Ssh;
+using DeveAgentManager.Core.Users;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -22,6 +23,7 @@ public sealed partial class RunnerService(
     IDbContextFactory<ManagerDbContext> dbFactory,
     IEnumerable<IRunnerProvider> providers,
     RunnerSetupService setup,
+    RunnerUsers users,
     AgentService agents,
     SessionService sessions,
     RunnerShell shell,
@@ -30,6 +32,7 @@ public sealed partial class RunnerService(
     ManagerOptions options,
     ManagerSshKey sshKey,
     SecretProtector protector,
+    AuditLog audit,
     IHostApplicationLifetime lifetime,
     ILogger<RunnerService> logger)
 {
@@ -61,17 +64,31 @@ public sealed partial class RunnerService(
         return true;
     }
 
+    /// <summary>Every Runner, for the Manager's own work (monitors). Lists for users come from <see cref="ListVisibleAsync"/>.</summary>
     public async Task<List<Runner>> ListAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         return await db.Runners.AsNoTracking().Include(r => r.Agents).OrderBy(r => r.Name).ToListAsync(cancellationToken);
     }
 
+    /// <summary>The Runners a user can see, with what deciding their access needs (owner, members, agents' shares).</summary>
+    public async Task<List<Runner>> ListVisibleAsync(CurrentUser user, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await WithAccess(AccessControl.VisibleRunners(db, user)).OrderBy(r => r.Name).ToListAsync(cancellationToken);
+    }
+
     public async Task<Runner?> GetAsync(Guid runnerId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.Runners.AsNoTracking().Include(r => r.Agents).FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken);
+        return await WithAccess(db.Runners).FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken);
     }
+
+    private static IQueryable<Runner> WithAccess(IQueryable<Runner> runners) => runners.AsNoTracking().AsSplitQuery()
+        .Include(r => r.Owner).Include(r => r.Members).ThenInclude(m => m.User)
+        .Include(r => r.Agents).ThenInclude(a => a.Shares)
+        .Include(r => r.Agents).ThenInclude(a => a.Owner)
+        .Include(r => r.Agents).ThenInclude(a => a.Account).ThenInclude(a => a!.Owner);
 
     /// <summary>The operations that ran on a Runner, newest first.</summary>
     public async Task<List<RunnerActivity>> ListActivityAsync(Guid runnerId, CancellationToken cancellationToken = default)
@@ -81,7 +98,8 @@ public sealed partial class RunnerService(
             .Take(ActivityKept).ToListAsync(cancellationToken);
     }
 
-    public async Task<Runner> CreateAsync(CreateRunnerRequest request, CancellationToken cancellationToken = default)
+    /// <summary>Creates a Runner owned by <paramref name="actor"/> (who needs the Runner creator role).</summary>
+    public async Task<Runner> CreateAsync(CurrentUser actor, CreateRunnerRequest request, CancellationToken cancellationToken = default)
     {
         var name = request.Name.Trim().ToLowerInvariant();
         if (!RunnerName().IsMatch(name))
@@ -111,6 +129,7 @@ public sealed partial class RunnerService(
         var runner = new Runner
         {
             Id = Guid.NewGuid(),
+            OwnerId = actor.Id,
             Name = name,
             ProviderId = provider.Id,
             TemplateId = template?.Id,
@@ -127,22 +146,26 @@ public sealed partial class RunnerService(
             UpdatedAt = now,
         };
 
+        // A VM gets a password of its own (see RunnerPasswords); an existing machine keeps the one it was added with.
+        var password = request.Connection?.Password ?? RunnerPasswords.Generate();
         if (request.Connection is { } connection)
         {
             runner.Host = connection.Host.Trim();
             runner.SshPort = connection.Port;
             runner.Username = connection.Username.Trim();
-            runner.ProtectedPassword = protector.Protect(connection.Password);
         }
         else
         {
             runner.Username = options.RunnerUsername;
-            runner.ProtectedPassword = protector.Protect(options.RunnerPassword);
         }
+
+        runner.ProtectedPassword = protector.Protect(password);
+        runner.PasswordChangedAt = now;
 
         db.Runners.Add(runner);
         await db.SaveChangesAsync(cancellationToken);
         events.RunnerChanged(runner.Id);
+        await audit.RecordAsync(actor, AuditActions.RunnerCreated, $"Runner {runner.Name}", $"{provider.DisplayName}{(template is null ? "" : $", {template.DisplayName}")}", cancellationToken);
 
         _ = StartOperation(runner.Id, "Creating", async (op, cancellation) =>
         {
@@ -153,7 +176,7 @@ public sealed partial class RunnerService(
                 runner.Cores,
                 runner.MemoryMb,
                 runner.DiskGb,
-                new RunnerAccount(options.RunnerUsername, options.RunnerPassword, sshKey.PublicKey),
+                new RunnerAccount(options.RunnerUsername, password, sshKey.PublicKey),
                 request.Connection);
 
             await op.SetStateAsync(RunnerState.Creating, "Creating the machine");
@@ -270,7 +293,7 @@ public sealed partial class RunnerService(
     });
 
     /// <summary>Removes the Runner. With <paramref name="destroyMachine"/> the machine itself is deleted too (Proxmox VM).</summary>
-    public void Delete(Guid runnerId, bool destroyMachine) => StartOperation(runnerId, "Deleting", async (op, cancellation) =>
+    public void Delete(CurrentUser actor, Guid runnerId, bool destroyMachine) => StartOperation(runnerId, "Deleting", async (op, cancellation) =>
     {
         var provider = FindProvider(op.Runner.ProviderId);
         if (op.Runner.State == RunnerState.Ready)
@@ -303,6 +326,7 @@ public sealed partial class RunnerService(
         await op.RemoveAsync();
         logs.Delete(op.Runner.Id);
         events.Publish(new ManagerEvent(ManagerEventKind.RunnerRemoved, op.Runner.Id));
+        await audit.RecordAsync(actor, AuditActions.RunnerDeleted, $"Runner {op.Runner.Name}", destroyMachine ? "With its machine" : "The machine was kept", CancellationToken.None);
     }, deleting: true, replaceRunning: true);
 
     /// <summary>
@@ -430,6 +454,13 @@ public sealed partial class RunnerService(
             await op.SetStateAsync(RunnerState.SettingUp, "Installing tools and harnesses");
             await setup.RunAsync(op.Runner, op.Log, cancellationToken);
             await op.SaveAsync();
+        }
+
+        else
+        {
+            // Setup does this itself; a start brings in access changes made while the Runner was off.
+            op.Log.Step("Updating the people with access");
+            await users.SyncAsync(op.Runner, cancellationToken);
         }
 
         await op.SetStateAsync(RunnerState.Ready, null);

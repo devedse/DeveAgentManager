@@ -2,7 +2,7 @@
 @layout EmptyLayout
 @attribute [AllowAnonymous]
 @attribute [ExcludeFromInteractiveRouting]
-@inject ManagerOptions Options
+@inject DeveAgentManager.Core.Users.UserService Users
 
 <PageTitle>Sign in · DeveAgentManager</PageTitle>
 
@@ -19,28 +19,30 @@
 
         @if (Failed)
         {
-            <div class="login-error">Wrong username or password.</div>
+            <div class="login-error">Wrong username or password, or too many attempts: wait a few minutes.</div>
         }
 
         <input type="hidden" name="returnUrl" value="@ReturnUrl" />
         <label class="login-label" for="username">Username</label>
-        <input class="login-input" id="username" name="username" autocomplete="username" value="@Options.AdminUsername" required />
+        <input class="login-input" id="username" name="username" autocomplete="username" autocapitalize="none" value="@_defaultUser" required autofocus />
         <label class="login-label" for="password">Password</label>
-        <input class="login-input" id="password" name="password" type="password" autocomplete="current-password" autofocus required />
+        <input class="login-input" id="password" name="password" type="password" autocomplete="current-password" required />
         <label class="login-remember">
             <input type="checkbox" name="remember" checked />
             <span>Keep me signed in</span>
         </label>
         <button type="submit" class="login-button">Sign in</button>
 
-        @if (Options.UsesDefaultAdminPassword)
+        @if (_defaultUser is not null)
         {
-            <div class="login-hint">No ADMIN_PASSWORD is set, so the password is <code>@ManagerOptions.DefaultAdminPassword</code>. Set one in the compose file.</div>
+            <div class="login-hint">No ADMIN_PASSWORD is set: sign in as <code>@_defaultUser</code> with <code>@ManagerOptions.DefaultAdminPassword</code>, then choose your own password.</div>
         }
     </form>
 </div>
 
 @code {
+    private string? _defaultUser;
+
     [SupplyParameterFromQuery(Name = "failed")]
     private string? FailedValue { get; set; }
 
@@ -48,4 +50,6 @@
     private string? ReturnUrl { get; set; }
 
     private bool Failed => FailedValue == "1";
+
+    protected override async Task OnInitializedAsync() => _defaultUser = await Users.DefaultPasswordUserAsync();
 }

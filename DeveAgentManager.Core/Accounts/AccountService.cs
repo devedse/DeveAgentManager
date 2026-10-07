@@ -9,9 +9,10 @@ using Microsoft.Extensions.Logging;
 namespace DeveAgentManager.Core.Accounts;
 
 /// <summary>
-/// Harness accounts (subscriptions and API keys). They are stored encrypted in the Manager and put on a Runner when an
-/// agent starts with one, in ~/.deveagentmanager/accounts/&lt;id&gt;: an environment file the agent's harness starts
-/// with, and the harness's own files (Codex: its auth.json).
+/// Harness logins ("accounts": subscriptions and API keys), each owned by one user. They are stored encrypted in the
+/// Manager and put on a Runner when an agent starts with one, in ~/.deveagentmanager/accounts/&lt;id&gt;: an environment
+/// file the agent's harness starts with, and the harness's own files (Codex: its auth.json). Every user has their own
+/// default login per harness.
 /// </summary>
 public sealed class AccountService(
     IDbContextFactory<ManagerDbContext> dbFactory,
@@ -35,10 +36,10 @@ public sealed class AccountService(
     /// <summary>Sourced before an agent's harness starts.</summary>
     public static string EnvironmentFile(Guid accountId) => $"{Folder(accountId)}/env";
 
-    public async Task<List<Account>> ListAsync(string? harnessId = null, CancellationToken cancellationToken = default)
+    public async Task<List<Account>> ListAsync(Guid ownerId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.Accounts.AsNoTracking().Where(a => harnessId == null || a.HarnessId == harnessId)
+        return await db.Accounts.AsNoTracking().Where(a => a.OwnerId == ownerId)
             .OrderBy(a => a.HarnessId).ThenByDescending(a => a.IsDefault).ThenBy(a => a.Name).ToListAsync(cancellationToken);
     }
 
@@ -50,8 +51,8 @@ public sealed class AccountService(
             .Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(g => g.Key, g => g.Count, cancellationToken);
     }
 
-    /// <summary>Adds an account. The first one of a harness becomes its default.</summary>
-    public async Task<Account> AddAsync(string harnessId, string name, AccountKind kind, string secret, CancellationToken cancellationToken = default)
+    /// <summary>Adds a login for <paramref name="ownerId"/>. Their first one of a harness becomes their default for it.</summary>
+    public async Task<Account> AddAsync(Guid ownerId, string harnessId, string name, AccountKind kind, string secret, CancellationToken cancellationToken = default)
     {
         GetHarness(harnessId);
         var clean = RequireSecret(secret);
@@ -60,17 +61,18 @@ public sealed class AccountService(
         var account = new Account
         {
             Id = Guid.NewGuid(),
+            OwnerId = ownerId,
             HarnessId = harnessId,
-            Name = string.IsNullOrWhiteSpace(name) ? await NextNameAsync(db, harnessId, kind, cancellationToken) : name.Trim(),
+            Name = string.IsNullOrWhiteSpace(name) ? await NextNameAsync(db, ownerId, harnessId, kind, cancellationToken) : name.Trim(),
             Kind = kind,
             ProtectedSecret = protector.Protect(clean)!,
-            IsDefault = !await db.Accounts.AnyAsync(a => a.HarnessId == harnessId, cancellationToken),
+            IsDefault = !await db.Accounts.AnyAsync(a => a.OwnerId == ownerId && a.HarnessId == harnessId, cancellationToken),
             CreatedAt = now,
             UpdatedAt = now,
         };
         db.Accounts.Add(account);
         await db.SaveChangesAsync(cancellationToken);
-        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged));
+        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: ownerId));
         return account;
     }
 
@@ -93,16 +95,16 @@ public sealed class AccountService(
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var account = await db.Accounts.FirstAsync(a => a.Id == accountId, cancellationToken);
-        foreach (var other in await db.Accounts.Where(a => a.HarnessId == account.HarnessId).ToListAsync(cancellationToken))
+        foreach (var other in await db.Accounts.Where(a => a.OwnerId == account.OwnerId && a.HarnessId == account.HarnessId).ToListAsync(cancellationToken))
         {
             other.IsDefault = other.Id == accountId;
         }
 
         await db.SaveChangesAsync(cancellationToken);
-        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged));
+        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: account.OwnerId));
     }
 
-    /// <summary>Removes the account; its agents fall back to the default. Its files are removed from ready Runners.</summary>
+    /// <summary>Removes the login; agents that used it fall back to their owner's default. Its files are removed from ready Runners.</summary>
     public async Task DeleteAsync(Guid accountId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
@@ -114,7 +116,8 @@ public sealed class AccountService(
 
         await db.Agents.Where(a => a.AccountId == accountId).ExecuteUpdateAsync(s => s.SetProperty(a => a.AccountId, (Guid?)null), cancellationToken);
         db.Accounts.Remove(account);
-        if (account.IsDefault && await db.Accounts.Where(a => a.HarnessId == account.HarnessId && a.Id != accountId).OrderBy(a => a.CreatedAt).FirstOrDefaultAsync(cancellationToken) is { } next)
+        if (account.IsDefault && await db.Accounts.Where(a => a.OwnerId == account.OwnerId && a.HarnessId == account.HarnessId && a.Id != accountId)
+                .OrderBy(a => a.CreatedAt).FirstOrDefaultAsync(cancellationToken) is { } next)
         {
             next.IsDefault = true;
         }
@@ -132,10 +135,10 @@ public sealed class AccountService(
             }
         }
 
-        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged));
+        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: account.OwnerId));
     }
 
-    /// <summary>The account an agent runs with: its own choice, else the harness's default, else none (the Runner's own login).</summary>
+    /// <summary>The login an agent runs with: the one it was switched to, else its owner's default, else none (the Runner's own login).</summary>
     public async Task<Account?> ResolveAsync(Agent agent, CancellationToken cancellationToken = default)
     {
         if (_harnesses.GetValueOrDefault(agent.HarnessId)?.AccountSupport is null)
@@ -145,7 +148,7 @@ public sealed class AccountService(
 
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         return (agent.AccountId is { } id ? await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, cancellationToken) : null)
-            ?? await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.HarnessId == agent.HarnessId && a.IsDefault, cancellationToken);
+            ?? await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.OwnerId == agent.OwnerId && a.HarnessId == agent.HarnessId && a.IsDefault, cancellationToken);
     }
 
     /// <summary>
@@ -207,12 +210,12 @@ public sealed class AccountService(
         change(account);
         account.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
-        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged));
+        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: account.OwnerId));
     }
 
-    private async Task<string> NextNameAsync(ManagerDbContext db, string harnessId, AccountKind kind, CancellationToken cancellationToken)
+    private async Task<string> NextNameAsync(ManagerDbContext db, Guid ownerId, string harnessId, AccountKind kind, CancellationToken cancellationToken)
     {
-        var count = await db.Accounts.CountAsync(a => a.HarnessId == harnessId, cancellationToken);
+        var count = await db.Accounts.CountAsync(a => a.OwnerId == ownerId && a.HarnessId == harnessId, cancellationToken);
         var baseName = kind == AccountKind.Subscription ? "Subscription" : "API key";
         return count == 0 ? baseName : $"{baseName} {count + 1}";
     }

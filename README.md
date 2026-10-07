@@ -8,19 +8,25 @@ when you close the tab.
 - **Runner**: a machine that hosts agents. Proxmox Runners are full clones of a template VM.
 - **Agent**: a harness ([pi](https://pi.dev), [Claude Code](https://code.claude.com) or
   [Codex](https://github.com/openai/codex)) running in its own tmux session and working folder on a Runner.
-- **Account** (**Settings → Accounts**): a Claude or ChatGPT subscription, or an API key, connected once in the
-  Manager and used on every Runner. Claude logs in with `claude setup-token` (a token valid for a year). Codex logs in
+- **Users**: everyone signs in with a username and password of their own and has their own harness logins, GitHub
+  token, git identity, environment variables and SSH keys (**My settings**). Roles: *settings manager*, *user
+  manager*, *runner creator* and *runner manager*; *Admin* is all of them. A Runner has an owner and people with *Use*
+  or *Manage* access, who share its Linux account (so they trust each other with what is on it). Agents can be shared
+  read-only or read-write, conversations read-only. See [docs/users-plan.md](docs/users-plan.md).
+- **Account** (**My settings → Harness logins**): a Claude or ChatGPT subscription, or an API key, connected once in the
+  Manager and used on every Runner. Each person's own. Claude logs in with `claude setup-token` (a token valid for a year). Codex logs in
   with `codex login --device-auth` (a code you enter on any device). A harness can have several accounts.
 - **Continue with…**: the switch button in an agent's terminal continues the conversation with another account or in
   another harness, in the same folder, e.g. when a subscription ran out. Another harness gets the conversation as
   text: messages, answers and what the tools did carry over, and the model's hidden thinking stays behind.
 - **Session**: an agent's conversation. The Manager keeps a copy in a harness-neutral format, so it survives the agent
   and its Runner and can be continued on another Runner.
-- **Setup Profile**: what every Runner gets during setup: git identity, API keys, login and settings files, and a script.
-  Per harness (**Settings → pi**): packages (pi extensions, skills, themes, e.g. `npm:pi-web-access`), the default
+- **Setup Profile** (**Manager settings**): what every Runner gets during setup: login and settings files, and a script.
+  Each person's git identity, environment variables (API keys) and GitHub token are their own (**My settings**).
+  Per harness (**Manager settings → pi**): packages (pi extensions, skills, themes, e.g. `npm:pi-web-access`), the default
   model and thinking level, and extra settings merged into `~/.pi/agent/settings.json`. **Save and apply to Runners**
   updates the ready Runners right away. Packages removed from the list are removed from the Runners.
-  **Settings → Claude Code / Codex**: the default model and effort for new agents. Empty (the default) lets the
+  **Manager settings → Claude Code / Codex**: the default model and effort for new agents. Empty (the default) lets the
   harness choose, which follows new models by itself. Claude takes aliases like `opus`, and Codex lists the models its
   catalog offers on your Runner.
 - **VS Code** (opt-in per Runner: tick it in **New Runner**, or **Install VS Code** on the Runner page): VS Code in the
@@ -29,7 +35,7 @@ when you close the tab.
   with buttons for a new tab and full screen. It is served on the Manager's second port (`8081`), see below.
 - A Runner's **Activity** tab lists what ran on it (setup, starts, installs, updates), how long it took and how it ended.
 - On a Runner's page, **Re-run setup** runs the whole setup again, and **Update pi** only installs the latest pi,
-  updates its packages and applies Settings → pi. Every step is idempotent, so both are safe to repeat. Running agents
+  updates its packages and applies Manager settings → pi. Every step is idempotent, so both are safe to repeat. Running agents
   keep running and use the new versions after a restart.
 
 See [PLAN.md](PLAN.md) for where this is going (Jobs API, projects).
@@ -41,14 +47,15 @@ See [PLAN.md](PLAN.md) for where this is going (Jobs API, projects).
 3. Log in to the GitHub Container Registry once (the image is private, like the repo). Use a
    [personal access token](https://github.com/settings/tokens) with `read:packages`:
    `echo <token> | docker login ghcr.io -u devedse --password-stdin`
-4. Run `docker compose up -d` and open `http://<docker-host>:8080`. Port `8081` serves VS Code (optional).
-5. In **Settings → Providers**, click **Test connection**. Every check should be green.
+4. Run `docker compose up -d`, open `http://<docker-host>:8080` and sign in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
+   Port `8081` serves VS Code (optional). Add the other people under **Users**.
+5. In **Manager settings → Providers**, click **Test connection**. Every check should be green.
 6. **New Runner** → Headless → Create. Watch the setup log (about 3 to 5 minutes).
 7. **New agent** → clone a repository → pi opens in the browser.
 
-pi needs a model provider. Either add an API key (e.g. `ANTHROPIC_API_KEY`) under **Settings → Setup Profile →
-Environment variables**, or run `/login` inside an agent's terminal once and then use **Import a login from a
-Runner** in the same screen, so every new Runner gets it. Use **Re-run setup** on existing Runners to apply changes.
+pi needs a model provider. Either add an API key (e.g. `ANTHROPIC_API_KEY`) under **My settings → Environment**, or
+run `/login` inside an agent's terminal once and then use **Import a login from a Runner** under **Manager settings →
+Setup Profile**, so every new Runner gets it. Use **Re-run setup** on existing Runners to apply Setup Profile changes.
 
 ## Proxmox setup
 
@@ -123,7 +130,7 @@ Desktop VM autologin, connecting agents to the real display, and updating existi
 Runners are full clones of `TEMPLATE_HEADLESS_VMID` (and `TEMPLATE_DESKTOP_VMID`). The template needs:
 
 - **A cloud-init drive**: on the template, **Hardware → Add → CloudInit Drive**. The Manager sets the Runner Account
-  (`RUNNER_USERNAME` / `RUNNER_PASSWORD`), its own SSH key, DHCP and the hostname through it.
+  (`RUNNER_USERNAME`, with a random password of its own per Runner), its own SSH key, DHCP and the hostname through it.
 - **qemu-guest-agent installed** and **Options → QEMU Guest Agent** set to *Enabled*. The Manager reads the Runner's IP
   from it.
   Debian cloud images don't include it; add it to the image before importing it:
@@ -136,7 +143,7 @@ Runners are full clones of `TEMPLATE_HEADLESS_VMID` (and `TEMPLATE_DESKTOP_VMID`
   gets passwordless sudo by default, which setup needs.
 - **DHCP** on the Runner's network.
 
-**Settings → Providers → Test connection** checks the token, the templates (cloud-init drive, guest agent option),
+**Manager settings → Providers → Test connection** checks the token, the templates (cloud-init drive, guest agent option),
 the pool, the storage and the VMID range.
 
 ## Configuration
@@ -145,7 +152,8 @@ Everything is set with environment variables in the compose file.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `change-me` | Portal login. The Portal gives shell access to every Runner: set a real password. |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `change-me` | The first user, with all roles, who owns everything from before users existed. The password only counts at the very first start (with the default, it must be changed at the first sign-in); afterwards everyone changes theirs in the Portal. |
+| `RESET_ADMIN_PASSWORD` | `false` | `true`: at start-up, `ADMIN_USERNAME` gets all roles and `ADMIN_PASSWORD` again (the way back in). Remove it afterwards. |
 | `PROXMOX_URL` | | e.g. `https://proxmox1:8006`. Without it only existing machines can be added. |
 | `PROXMOX_TOKEN_ID` / `PROXMOX_TOKEN_SECRET` | | The API token. |
 | `PROXMOX_VERIFY_TLS` | `true` | `false` accepts Proxmox's self-signed certificate. |
@@ -156,10 +164,8 @@ Everything is set with environment variables in the compose file.
 | `PROXMOX_VMID_RANGE` | `30000-30999` | Runners only get VMIDs from this range. The Manager never deletes VMs outside it. |
 | `PROXMOX_FULL_CLONE` | `true` | `false` makes linked clones (faster, needs a template on storage that supports it). |
 | `TEMPLATE_HEADLESS_VMID` / `TEMPLATE_DESKTOP_VMID` | | Template VMIDs, e.g. `10100` and `10120`. |
-| `RUNNER_USERNAME` / `RUNNER_PASSWORD` | `remoteman` / `remoteman` | Account created on new VMs by cloud-init. |
+| `RUNNER_USERNAME` | `remoteman` | Account created on new VMs by cloud-init. Each Runner gets a random password of its own, which whoever manages the Runner sees on its page. (`RUNNER_PASSWORD` is no longer used.) |
 | `RUNNER_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` | `4` / `8192` / `64` | Default size in the New Runner dialog. |
-| `GITHUB_PAT` | | Token for cloning and pushing private repositories. Can also be set in the Portal. |
-| `GIT_USER_NAME` / `GIT_USER_EMAIL` | | Default git identity on Runners. Can also be set in the Portal. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |
 | `EDITOR_PORT` | `8081` | The port that serves VS Code, and nothing else. Publish it next to 8080. |
 | `EDITOR_URL` | Portal's host on `EDITOR_PORT` | Where browsers reach that port, when it differs (behind a proxy), e.g. `https://code.example.com`. With `{runner}` in it (e.g. `https://{runner}.code.example.com`, a wildcard DNS name), each Runner's VS Code gets a host of its own, which isolates Runners from each other too. |
@@ -177,7 +183,8 @@ and set `EDITOR_URL` to it. Inside the Portal, VS Code only works when both are 
 ### Data and backups
 
 Back up the `/data` volume. It holds the SQLite database, the SSH key the Manager uses to log in to Runners, and the
-keys that decrypt stored secrets (Setup Profile, GitHub token). Losing the keys means re-entering those secrets.
+keys that decrypt stored secrets (harness logins, GitHub tokens, Runner passwords, the Setup Profile). Losing the keys
+means re-entering those secrets.
 
 ## How it works
 
@@ -186,7 +193,8 @@ keys that decrypt stored secrets (Setup Profile, GitHub token). Losing the keys 
 - **Setup** runs over SSH: an idempotent script installs packages, Node.js, tmux (with extended keys, so Shift+Enter
   works in pi) and git config, then applies the Setup Profile and installs the harnesses. Output streams to the
   setup log. Run it again any time with **Re-run setup**.
-- **Agents** run as `tmux` sessions named `dam-<name>` in `~/work/<name>`. The harness is started with a fixed session
+- **Agents** run as `tmux` sessions named `dam-<name>` in `~/work/<username>/<name>`, with their owner's git identity,
+  GitHub token and environment (from `~/.deveagentmanager/users/<id>/`, through `GIT_CONFIG_GLOBAL`). The harness is started with a fixed session
   id, so **Start** after a stop or reboot resumes the same conversation. Start leaves a harness that is still running
   alone. **Restart** asks first, sends the harness SIGTERM, and kills it only after 10 seconds.
   Claude Code and Codex run without permission prompts (`--dangerously-skip-permissions`,
@@ -203,10 +211,13 @@ keys that decrypt stored secrets (Setup Profile, GitHub token). Losing the keys 
   (`/ws/terminal`). The Manager keeps everything that matters: the database, the secrets, SSH to the Runners. Only the
   login and error pages are server-rendered. A phone that sleeps just reconnects (pages reload what they missed, and an
   agent's terminal reconnects by itself); there is no server-side session to lose.
-- **Security**: everything but the login page needs the login cookie (SameSite=Lax). Requests that change something
+- **Security**: everything but the login page needs the login cookie (SameSite=Lax). Every API endpoint declares who
+  may call it (a role, or access to the Runner, agent, conversation or harness login it names); other people's things
+  answer 404, as if they didn't exist. Live updates only go to the people a change concerns, and a terminal, the live
+  connection or VS Code closes when access to it ends. Requests that change something
   must carry the Portal's `X-DAM-Request` header (other sites can't send it without CORS, which the Manager doesn't
   allow) and, like the hub and terminal WebSockets, come from the Manager's own origin. The API never returns a secret:
-  account logins, Runner passwords and the GitHub token stay on the Manager. A login terminal only names the harness;
+  account logins, Runner passwords and GitHub tokens stay on the Manager. A login terminal only names the harness;
   the Manager runs the harness's login itself and saves what it produces.
 - **VS Code** runs as code-server on the Runner, on its loopback only (`127.0.0.1:13337`) with a password of its own
   (in `~/.deveagentmanager/code-server/config.yaml`, mode 600), so other users of the machine can't use it. The

@@ -460,8 +460,8 @@
     }
 
     window.damTerminal = {
-        // `images`: whether images can be pasted (they go to the Runner).
-        init(id, dotnet, images) {
+        // `images`: whether images can be pasted (they go to the Runner). `readOnly`: only watched, so no phone keyboard.
+        init(id, dotnet, images, readOnly) {
             const terminal = XtermBlazor.getTerminalById(id);
             hardenInput(terminal);
 
@@ -524,7 +524,7 @@
                 });
             }
 
-            if (xtermElement && !touchInputs.has(id)) {
+            if (xtermElement && !readOnly && !touchInputs.has(id)) {
                 const input = DamTouchInput.attach(terminal, xtermElement, data => terminal.input(data, true));
                 // Phone input is always enabled on touch devices, including browsers with an old saved "off" choice.
                 input.setEnabled(isTouch());
@@ -672,7 +672,7 @@
         },
     };
 
-    // Light or dark (Settings → Appearance), per browser. "system" follows the device, also when it changes.
+    // Light or dark (My settings → Appearance), per browser. "system" follows the device, also when it changes.
     const THEME_KEY = "dam-theme";
     const themeWatchers = new Set();
     const systemLight = window.matchMedia?.("(prefers-color-scheme: light)");

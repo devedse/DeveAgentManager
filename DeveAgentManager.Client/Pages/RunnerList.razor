@@ -1,22 +1,32 @@
 @page "/runners"
 @inherits LiveComponent
 @inject IDialogService Dialogs
+@inject SignedInUser Me
 
 <PageTitle>Runners · DeveAgentManager</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page">
-    <PageHeader Title="Runners" Subtitle="Machines that host your agents. Each Runner can run many agents at once.">
+    <PageHeader Title="Runners" Subtitle="The machines you can use for agents: yours, and those others gave you access to.">
         <Actions>
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.AddToQueue" OnClick="NewRunnerAsync">New Runner</MudButton>
+            @if (CanCreate)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.AddToQueue" OnClick="NewRunnerAsync">New Runner</MudButton>
+            }
         </Actions>
     </PageHeader>
 
-    @if (Loaded && _runners.Count == 0)
+    @if (Loaded && _runners.Count == 0 && CanCreate)
     {
         <div class="panel">
             <EmptyState Icon="@Icons.Material.Rounded.Dns" Title="No Runners yet" Text="A Runner is a VM cloned from your Proxmox template (or a machine you already have), set up with tmux, Node and the harnesses.">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.AddToQueue" OnClick="NewRunnerAsync">Create your first Runner</MudButton>
             </EmptyState>
+        </div>
+    }
+    else if (Loaded && _runners.Count == 0)
+    {
+        <div class="panel">
+            <EmptyState Icon="@Icons.Material.Rounded.Dns" Title="No Runner yet" Text="Agents run on Runners. Ask a runner manager to give you access to one." />
         </div>
     }
     else
@@ -58,6 +68,10 @@
                             <div><span class="fact-label">Size</span><span class="fact-value">@runner.Cores CPU · @(runner.MemoryMb / 1024.0) GB · @runner.DiskGb GB</span></div>
                         }
                         <div><span class="fact-label">Agents</span><span class="fact-value">@runner.Agents.Count(a => a.State == AgentState.Running) running · @runner.Agents.Count total</span></div>
+                        @if (runner.OwnerId != _user?.Id)
+                        {
+                            <div><span class="fact-label">Owner</span><span class="fact-value">@runner.OwnerName</span></div>
+                        }
                     </div>
 
                     @if (runner.State == RunnerState.Ready && status is { CpuUsage: not null })
@@ -77,10 +91,14 @@
 
 @code {
     private ManagerInfoDto? _info;
+    private CurrentUserDto? _user;
     private List<RunnerDto> _runners = [];
+
+    private bool CanCreate => _user?.Has(UserRoles.RunnerCreator) == true;
 
     protected override async Task LoadAsync()
     {
+        _user = await Me.GetAsync();
         _info ??= await Api.InfoAsync();
         _runners = await Api.ListRunnersAsync();
     }

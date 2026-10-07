@@ -10,6 +10,7 @@ using DeveAgentManager.Core.Security;
 using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Setup;
 using DeveAgentManager.Core.Ssh;
+using DeveAgentManager.Core.Users;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,11 +32,19 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<SecretProtector>();
         services.AddSingleton<ManagerEvents>();
+        services.AddSingleton<AuditLog>();
+        services.AddSingleton<UserService>();
+        services.AddSingleton<AccessControl>();
+        services.AddSingleton<Sharing>();
         services.AddSingleton<RunnerLogStore>();
         services.AddSingleton(_ => ManagerSshKey.LoadOrCreate(options.SshDirectory));
         services.AddSingleton<SshConnector>();
         services.AddSingleton<RunnerShell>();
         services.AddSingleton<SettingsStore>();
+        services.AddSingleton<UserSettingsStore>();
+        services.AddSingleton<RunnerUsers>();
+        services.AddSingleton<RunnerPasswords>();
+        services.AddSingleton<RunnerMembers>();
         services.AddSingleton<RunnerTimeZones>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<ILimitTerminal, LimitTerminal>();

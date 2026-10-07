@@ -6,19 +6,29 @@
     <div class="settings-section">
         <div class="help-heading"><MudText Typo="Typo.h6">@(RunnerId is null ? "Default runner timezone" : "Runner timezone")</MudText>
             <HelpTip Label="Runner timezone">Used by newly started harnesses. Restart running agents to apply a change. The Runner's system clock is not changed.</HelpTip></div>
-        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">Restart running agents to apply changes.</MudText>
-        @if (RunnerId is not null)
+        @if (ReadOnly)
         {
-            <MudCheckBox T="bool" @bind-Value="_inherit" Label="@($"Use default ({_config.DefaultTimeZoneId})")" />
+            <MudText Typo="Typo.body2">@(_config.OverrideTimeZoneId ?? $"{_config.DefaultTimeZoneId} (the default)")</MudText>
         }
-        <MudAutocomplete T="string" @bind-Value="_zone" Label="Timezone" SearchFunc="SearchAsync" Disabled="@(RunnerId is not null && _inherit)"
-                         Variant="Variant.Outlined" Margin="Margin.Dense" MaxItems="100" />
-        <MudButton Class="mt-3" Variant="Variant.Outlined" Disabled="_saving" OnClick="SaveAsync">Save timezone</MudButton>
+        else
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">Restart running agents to apply changes.</MudText>
+            @if (RunnerId is not null)
+            {
+                <MudCheckBox T="bool" @bind-Value="_inherit" Label="@($"Use default ({_config.DefaultTimeZoneId})")" />
+            }
+            <MudAutocomplete T="string" @bind-Value="_zone" Label="Timezone" SearchFunc="SearchAsync" Disabled="@(RunnerId is not null && _inherit)"
+                             Variant="Variant.Outlined" Margin="Margin.Dense" MaxItems="100" />
+            <MudButton Class="mt-3" Variant="Variant.Outlined" Disabled="_saving" OnClick="SaveAsync">Save timezone</MudButton>
+        }
     </div>
 }
 
 @code {
     [Parameter] public Guid? RunnerId { get; set; }
+
+    /// <summary>Shows the timezone only, for people who can't change it.</summary>
+    [Parameter] public bool ReadOnly { get; set; }
     private TimeZoneConfigDto? _config;
     private List<string> _zones = [];
     private string? _zone;

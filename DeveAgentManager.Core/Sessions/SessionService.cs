@@ -5,6 +5,7 @@ using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Ssh;
+using DeveAgentManager.Core.Users;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -21,19 +22,22 @@ public sealed class SessionService(
     RunnerShell shell,
     IEnumerable<ISessionFormat> formats,
     IEnumerable<IHarness> harnesses,
+    SessionImageStore images,
     ManagerOptions options,
     ManagerEvents events,
     ILogger<SessionService> logger)
 {
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly Dictionary<Guid, (DateTime UpdatedAt, string Text)> _previews = new();
-    public async Task<List<DeveAgentManager.Contracts.AgentReplyPreviewDto>> ReplyPreviewsAsync(CancellationToken ct)
+    /// <summary>The latest reply of each agent whose conversations <paramref name="user"/> can read.</summary>
+    public async Task<List<DeveAgentManager.Contracts.AgentReplyPreviewDto>> ReplyPreviewsAsync(CurrentUser user, CancellationToken ct)
     {
         await _previewGate.WaitAsync(ct);
         try
         {
             await using var db = await dbFactory.CreateDbContextAsync(ct);
-            var saved = await db.Sessions.AsNoTracking().Where(s => s.AgentId != null).ToListAsync(ct);
+            var saved = await db.Sessions.AsNoTracking()
+                .Where(s => s.AgentId != null && (s.Agent!.OwnerId == user.Id || s.Agent.Shares.Any(x => x.UserId == user.Id))).ToListAsync(ct);
             var ids = saved.Select(s => s.Id).ToHashSet();
             foreach (var id in _previews.Keys.Where(id => !ids.Contains(id)).ToArray()) _previews.Remove(id);
             var result = new List<DeveAgentManager.Contracts.AgentReplyPreviewDto>();
@@ -83,11 +87,11 @@ public sealed class SessionService(
 
     public bool SupportsHarness(string harnessId) => _formats.ContainsKey(harnessId);
 
-    public async Task<List<StoredSession>> ListAsync(CancellationToken cancellationToken = default)
+    /// <summary>The conversations a user can read, newest first.</summary>
+    public async Task<List<StoredSession>> ListVisibleAsync(CurrentUser user, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var rows = await db.Sessions.AsNoTracking().Include(s => s.Agent).ThenInclude(a => a!.Runner).Include(s => s.WorkspaceAgent)
-            .OrderByDescending(s => s.UpdatedAt).ToListAsync(cancellationToken);
+        var rows = await WithAccess(AccessControl.VisibleSessions(db, user)).OrderByDescending(s => s.UpdatedAt).ToListAsync(cancellationToken);
         foreach (var row in rows) UpdateSizes(row);
         return rows;
     }
@@ -95,11 +99,20 @@ public sealed class SessionService(
     public async Task<StoredSession?> GetAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var row = await db.Sessions.AsNoTracking().Include(s => s.Agent).ThenInclude(a => a!.Runner).Include(s => s.WorkspaceAgent)
-            .FirstOrDefaultAsync(s => s.Id == sessionId, cancellationToken);
+        var row = await WithAccess(db.Sessions).FirstOrDefaultAsync(s => s.Id == sessionId, cancellationToken);
         if (row != null) UpdateSizes(row);
         return row;
     }
+
+    /// <summary>With what deciding access to a conversation (and to its agent) needs: owners, shares, the Runner's members.</summary>
+    private static IQueryable<StoredSession> WithAccess(IQueryable<StoredSession> sessions) => sessions.AsNoTracking().AsSplitQuery()
+        .Include(s => s.Owner).Include(s => s.Shares).ThenInclude(x => x.User)
+        .Include(s => s.Agent).ThenInclude(a => a!.Runner).ThenInclude(r => r!.Members)
+        .Include(s => s.Agent).ThenInclude(a => a!.Shares)
+        .Include(s => s.Agent).ThenInclude(a => a!.Owner)
+        .Include(s => s.Agent).ThenInclude(a => a!.Account).ThenInclude(a => a!.Owner)
+        .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Shares)
+        .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Runner).ThenInclude(r => r!.Members);
 
     public async Task<StoredSession?> GetForAgentAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
@@ -116,7 +129,8 @@ public sealed class SessionService(
 
     /// <summary>
     /// Registers the session of a new agent. With <paramref name="continueSessionId"/>, the stored conversation is written
-    /// to the Runner first, so the harness starts with the full history.
+    /// to the Runner first, so the harness starts with the full history. Someone else's conversation (one shared with the
+    /// agent's owner) is continued as a copy that belongs to the agent's owner; the original stays as it is.
     /// </summary>
     public async Task AttachToAgentAsync(Runner runner, Agent agent, Guid? continueSessionId, CancellationToken cancellationToken)
     {
@@ -126,7 +140,11 @@ public sealed class SessionService(
         if (continueSessionId is { } existingId)
         {
             stored = await db.Sessions.FirstOrDefaultAsync(s => s.Id == existingId, cancellationToken) ?? throw new ArgumentException("Session not found.");
-            if (stored.AgentId is not null || stored.WorkspaceAgentId is not null)
+            if (stored.OwnerId != agent.OwnerId)
+            {
+                stored = await CopyAsync(db, stored, agent.OwnerId, cancellationToken);
+            }
+            else if (stored.AgentId is not null || stored.WorkspaceAgentId is not null)
             {
                 throw new InvalidOperationException("This session already belongs to a running agent. Open that agent instead.");
             }
@@ -136,7 +154,7 @@ public sealed class SessionService(
         else
         {
             stored = await db.Sessions.FirstOrDefaultAsync(s => s.AgentId == agent.Id, cancellationToken)
-                ?? new StoredSession { Id = Guid.NewGuid(), Title = agent.Name, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+                ?? new StoredSession { Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Title = agent.Name, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
             if (db.Entry(stored).State == EntityState.Detached) db.Sessions.Add(stored);
         }
 
@@ -238,6 +256,7 @@ public sealed class SessionService(
             db.Sessions.Add(new StoredSession
             {
                 Id = Guid.NewGuid(),
+                OwnerId = agent.OwnerId,
                 Title = agent.Name,
                 AgentId = agent.Id,
                 WorkspaceAgentId = agent.Id,
@@ -325,11 +344,11 @@ public sealed class SessionService(
         }
     }
 
-    /// <summary>Imports a DeveSession file or a harness's own session file (pi JSONL).</summary>
-    public async Task<StoredSession> ImportAsync(string fileName, string content, CancellationToken cancellationToken = default)
+    /// <summary>Imports a DeveSession file or a harness's own session file (pi JSONL), as a conversation of <paramref name="ownerId"/>.</summary>
+    public async Task<StoredSession> ImportAsync(Guid ownerId, string fileName, string content, CancellationToken cancellationToken = default)
     {
         var (session, harnessId) = Parse(content);
-        var stored = new StoredSession { Id = Guid.NewGuid(), HarnessId = harnessId, CreatedAt = session.CreatedAt == default ? DateTime.UtcNow : session.CreatedAt };
+        var stored = new StoredSession { Id = Guid.NewGuid(), OwnerId = ownerId, HarnessId = harnessId, CreatedAt = session.CreatedAt == default ? DateTime.UtcNow : session.CreatedAt };
         Apply(stored, session, null);
         if (string.IsNullOrWhiteSpace(stored.Title))
         {
@@ -370,7 +389,7 @@ public sealed class SessionService(
             throw new InvalidOperationException("Select another session before deleting the active conversation.");
         await db.Sessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync(cancellationToken);
         File.Delete(PathFor(sessionId));
-        SessionImageStore.DeleteSession(options, sessionId);
+        images.DeleteSession(sessionId);
         if (Directory.Exists(options.SessionsDirectory))
             foreach (var backup in Directory.EnumerateFiles(options.SessionsDirectory, $"{sessionId:N}.*.json")) File.Delete(backup);
         events.Publish(new ManagerEvent(ManagerEventKind.SessionRemoved, SessionId: sessionId));
@@ -395,6 +414,34 @@ public sealed class SessionService(
         return title;
     }
 
+    /// <summary>A copy of someone's conversation for <paramref name="ownerId"/>: its content and its shared images, not its history of moves.</summary>
+    private async Task<StoredSession> CopyAsync(ManagerDbContext db, StoredSession source, Guid ownerId, CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var copy = new StoredSession
+        {
+            Id = Guid.NewGuid(),
+            OwnerId = ownerId,
+            Title = source.Title,
+            TitlePinned = source.TitlePinned,
+            HarnessId = source.HarnessId,
+            HarnessTrail = source.HarnessTrail,
+            RepositoryUrl = source.RepositoryUrl,
+            RepositoryBranch = source.RepositoryBranch,
+            MessageCount = source.MessageCount,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        if (File.Exists(PathFor(source.Id)))
+        {
+            await SaveAsync(copy.Id, await LoadAsync(source.Id, cancellationToken), cancellationToken);
+        }
+
+        await images.CopyAsync(source.Id, copy.Id, cancellationToken);
+        db.Sessions.Add(copy);
+        return copy;
+    }
+
     private void UpdateSizes(StoredSession stored)
     {
         stored.SavedSize = File.Exists(PathFor(stored.Id)) ? new FileInfo(PathFor(stored.Id)).Length : 0;
@@ -408,7 +455,7 @@ public sealed class SessionService(
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var selected = id.HasValue ? await db.Sessions.SingleAsync(s => s.Id == id, ct) : new StoredSession
         {
-            Id = Guid.NewGuid(), Title = string.IsNullOrWhiteSpace(title) ? "New session" : ValidateTitle(title),
+            Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Title = string.IsNullOrWhiteSpace(title) ? "New session" : ValidateTitle(title),
             TitlePinned = !string.IsNullOrWhiteSpace(title), CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
             HarnessId = agent.HarnessId, WorkspaceAgentId = agent.Id
         };

@@ -7,7 +7,7 @@ namespace DeveAgentManager.Tests;
 public class ImageUploadTests
 {
     // The checks run before the database or a Runner is used.
-    private static TerminalService Service() => new(null!, null!, null!);
+    private static TerminalService Service() => new(null!, null!, null!, null!);
 
     [Fact]
     public async Task RefusesContentThatIsNoImage_WhateverTheBrowserSays()

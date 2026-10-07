@@ -16,6 +16,7 @@ builder.Services.AddSingleton(_ =>
 });
 builder.Services.AddSingleton<ManagerApi>();
 builder.Services.AddSingleton<LiveUpdates>();
+builder.Services.AddSingleton<SignedInUser>();
 builder.Services.AddSingleton<ThemeService>();
 builder.Services.AddMudServices(config =>
 {
