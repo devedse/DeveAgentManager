@@ -1,6 +1,7 @@
 # Internet-facing deployment — plan
 
-Status: **planned, not started**. Last updated 2026-10-07.
+Status: **implementation started** on `feature/internet-facing`; not yet ready for public deployment.
+Last updated 2026-10-07. Implementation delegated to Sol 6.1 with Medium reasoning.
 
 Today the Manager is meant for a LAN, a VPN, or behind a reverse proxy with its own login. This plan makes it safe to
 expose directly: HTTPS through a plain reverse proxy, no extra login in front. A Portal login is effectively a shell
@@ -14,10 +15,32 @@ merely because it arrives from the proxy's private IP or supplies a private Host
 
 | Part | Status |
 |---|---|
-| Phase 1: fix what is unsafe when exposed (section 3) | Planned; VS Code by hostname first |
-| Phase 2: second factor and sessions (section 4) | Waiting for decisions |
-| Phase 3: review and checks (section 6) | Planned |
-| Reverse proxy guidance for nginx proxy manager (section 5) | Written |
+| Phase 1: fix what is unsafe when exposed (section 3) | In progress; host/proxy boundaries and sessions underpin editor routing |
+| Phase 2: second factor and sessions (section 4) | In scope; implementation defaults below |
+| Phase 3: review and checks (section 6) | In scope; tests accompany each change |
+| Reverse proxy guidance for nginx proxy manager (section 5) | Written; verify against implementation |
+
+### Implementation scope and defaults
+
+The user requested implementation of the complete plan, including the security review corrections and wildcard NPM
+setup. The following are implementation defaults chosen to make that request concrete, not prior user choices:
+
+- Implement the reviewed public origin allowlist, explicit trusted proxies, antiforgery/cookie protections and
+  server-side session revocation in phase 1. Treat later references to these as review proposals as historical
+  context and update each section as implemented. Keep local IP access convenient without allowing public requests
+  to activate local exceptions.
+- Start with authenticator-app TOTP plus single-use recovery codes. Make enforcement configurable by a user manager
+  for everyone or users with roles; enrollment must happen before enforcement locks anyone out. Do not add an
+  external identity provider or passkey implementation in this PR.
+- Use seven days of sliding inactivity and a thirty-day absolute maximum for remembered sessions initially, subject
+  to validation and clear UI documentation. Tie editor access and live connections to the same revocable session.
+- Require recent authentication for the sensitive actions listed in section 4. Choose bounded, documented login
+  throttling defaults and operator recovery. Keep existing sessions usable during failed-login attacks.
+- Implement automated dependency checks and targeted security regression tests; run the available browser and ZAP
+  checks against an isolated test instance. Record any unavailable external validation honestly, without claiming
+  the public deployment is verified merely because compilation or unit tests pass.
+- Keep this document, README, compose example and PR description aligned with actual behavior. Existing deployment
+  credentials and the user's live NPM/DNS configuration are not to be modified by this work.
 
 ## 1. What is already in place
 
