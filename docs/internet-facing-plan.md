@@ -166,6 +166,25 @@ planned.
 
 **VS Code proxy host**, with a wildcard name so each Runner gets its own host (section 2):
 
+- **One wildcard NPM entry covers every Runner. Never require an NPM entry per Runner.** Configure the wildcard
+  DNS record, certificate and proxy host once for each public domain used for editors. New Runners automatically get
+  their own editor hostname through the same wildcard; they require no NPM, DNS or certificate changes.
+- Example for the `.click` domain:
+
+  | Configure once | Value |
+  |---|---|
+  | Wildcard DNS record | `*.code.dam.devedse.click` pointing to the public address of NPM |
+  | NPM proxy host domain | `*.code.dam.devedse.click` |
+  | Forward destination | Manager's address, using HTTP |
+  | Forward port | `8081` today; `8080` after hostname routing is implemented |
+  | WebSockets / asset caching | On / off |
+  | Certificate coverage | `*.code.dam.devedse.click`, obtained with a DNS challenge |
+
+  `runner-01.code.dam.devedse.click`, `runner-02.code.dam.devedse.click` and future Runner names all use this
+  single entry. NPM preserves the requested hostname. DAM matches it to the Runner, validates the signed-in user's
+  access, and rejects unknown names or a Runner ID in the URL that does not match the hostname. Routing to DAM is
+  not permission to open VS Code. Each hostname remains a distinct browser origin despite sharing one proxy entry.
+  The wildcard certificate covers these Runner names, not deeper nested subdomains or the bare `code.dam` host.
 - Domain `*.code.dam.devedse.click` (and/or `*.code.dam.devedse.duckdns.org`), forward to the Manager host: port
   `8081` today, port `8080` once VS Code is served by hostname (phase 1). Websockets Support on, Cache Assets off.
 - A wildcard certificate needs a Let's Encrypt DNS challenge (nginx proxy manager supports DuckDNS and most DNS
@@ -209,4 +228,7 @@ on the installed NPM version. Local IP access remains available through the inte
 - 2026-10-07 — Review: coordinated guessing protection accepted; thresholds and recovery behavior still need design.
   CI/scan improvements are under consideration. Origin allowlists, antiforgery/cookie hardening and moving revocable
   sessions earlier are recommendations being explained, not yet settled configuration/UI decisions.
+- 2026-10-07 — One wildcard proxy setup per editor domain handles all Runners. Adding Runners must never require
+  individual NPM entries, DNS records or certificates. The user authorized a new branch and PR and delegated full
+  implementation to a Sol 6.1 agent with Medium reasoning.
 - Open: second factor (TOTP first?), requiring it, session lifetime, re-authentication for sensitive actions.
