@@ -40,6 +40,16 @@
                             <span> · @count @(count == 1 ? "agent" : "agents")</span>
                         }
                     </div>
+                    @if (account.RenewalNote is { } note)
+                    {
+                        <div class="account-note">
+                            <span>@note</span>
+                            <HelpTip Label="Staying signed in">
+                                <p>ChatGPT logins last about ten days. The Manager renews them itself, a few days early, and gives Runners only the renewed access. Codex on a Runner then never renews on its own, so agents on several Runners can't use up each other's login.</p>
+                                <p>Logins connected before this still renew on each Runner. Connect them again (⋮ → Reconnect) to switch. When ChatGPT ended a login, connect it again; running agents keep working until their access runs out.</p>
+                            </HelpTip>
+                        </div>
+                    }
                 </div>
                 @if (!account.IsDefault)
                 {

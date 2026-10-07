@@ -38,6 +38,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("ManagedRenewal")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -47,6 +50,9 @@ namespace DeveAgentManager.Core.Data.Migrations
 
                     b.Property<string>("ProtectedSecret")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RenewalProblem")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("UpdatedAt")

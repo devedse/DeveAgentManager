@@ -1873,6 +1873,14 @@ html:has(.terminal-layout) body {
     font-size: 0.8rem;
 }
 
+.account-note {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--dam-warning);
+    font-size: 0.8rem;
+}
+
 /* The login terminal in the account dialog. */
 .login-terminal {
     position: relative;

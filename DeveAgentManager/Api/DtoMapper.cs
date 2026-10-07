@@ -173,7 +173,8 @@ public sealed class DtoMapper(
             session.TotalSize);
     }
 
-    public static AccountDto Account(Account account, int agentCount) => new(
+    /// <param name="renewable">Its harness lets the Manager renew subscription logins.</param>
+    public static AccountDto Account(Account account, int agentCount, bool renewable) => new(
         account.Id,
         account.HarnessId,
         account.Name,
@@ -182,7 +183,9 @@ public sealed class DtoMapper(
         account.Version,
         agentCount,
         account.CreatedAt,
-        account.UpdatedAt);
+        account.UpdatedAt,
+        account.RenewalProblem ?? (renewable && account.Kind == AccountKind.Subscription && !account.ManagedRenewal
+            ? "Connect it again so the Manager keeps it signed in" : null));
 
     public static UserDto User(User user) => new(
         user.Id,

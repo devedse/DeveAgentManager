@@ -271,10 +271,10 @@ September 26 credentials and bypassed using the same account's October 7 renewal
 
 ### Follow-up investigation: simultaneous Codex refresh (2026-10-07)
 
-Implementation handoff: [Codex central account renewal plan](codex-central-auth-plan.md). It defines scope separation,
-the native-terminal prototype gate, the account authority, migration and acceptance tests.
+**Resolved (2026-10-08) by [Codex login renewal](codex-central-auth-plan.md):** the Manager is the only renewer and
+Runners get access tokens only. The findings below are the investigation that led there.
 
-**The synchronization above fixes stale installation copies, not concurrent OAuth refresh. This remains unresolved.**
+**The synchronization above fixes stale installation copies, not concurrent OAuth refresh.**
 Do not treat the credential persistence tests as proof that two live agents can safely refresh a copied login together.
 
 Evidence:

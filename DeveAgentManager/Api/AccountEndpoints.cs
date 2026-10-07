@@ -14,11 +14,11 @@ internal static class AccountEndpoints
         accounts.MapGet("/", async (CurrentUser user, AccountService service, CancellationToken ct) =>
         {
             var usage = await service.CountAgentsAsync(ct);
-            return (await service.ListAsync(user.Id, ct)).Select(a => DtoMapper.Account(a, usage.GetValueOrDefault(a.Id))).ToList();
+            return (await service.ListAsync(user.Id, ct)).Select(a => DtoMapper.Account(a, usage.GetValueOrDefault(a.Id), service.GetHarness(a.HarnessId).RenewsAccounts)).ToList();
         }).ForAnyUser();
 
         accounts.MapPost("/", async (AddAccountRequest request, CurrentUser user, AccountService service, CancellationToken ct) =>
-            DtoMapper.Account(await service.AddAsync(user.Id, request.HarnessId, request.Name ?? "", request.Kind, request.Secret, ct), 0)).ForAnyUser();
+            DtoMapper.Account(await service.AddAsync(user.Id, request.HarnessId, request.Name ?? "", request.Kind, request.Secret, ct), 0, service.GetHarness(request.HarnessId).RenewsAccounts)).ForAnyUser();
 
         accounts.MapPut("/{accountId:guid}/secret", async (Guid accountId, ReplaceAccountSecretRequest request, AccountService service, CancellationToken ct) =>
         {

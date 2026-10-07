@@ -17,7 +17,9 @@ when you close the tab.
   this role on upgrade and must sign in again. See [docs/users-plan.md](docs/users-plan.md).
 - **Account** (**My settings → Harness logins**): a Claude or ChatGPT subscription, or an API key, connected once in the
   Manager and used on every Runner. Each person's own. Claude logs in with `claude setup-token` (a token valid for a year). Codex logs in
-  with `codex login --device-auth` (a code you enter on any device). A harness can have several accounts.
+  with `codex login --device-auth` (a code you enter on any device); the Manager renews that login itself and Runners
+  only get its access token, so agents on several Runners can share it ([details](docs/codex-central-auth-plan.md)).
+  A harness can have several accounts.
 - **Continue with…**: the switch button in an agent's terminal continues the conversation with another account or in
   another harness, in the same folder, e.g. when a subscription ran out. Another harness gets the conversation as
   text: messages, answers and what the tools did carry over, and the model's hidden thinking stays behind.

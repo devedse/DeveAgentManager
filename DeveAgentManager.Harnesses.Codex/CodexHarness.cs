@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json.Nodes;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
@@ -11,10 +14,19 @@ namespace DeveAgentManager.Harnesses.Codex;
 /// OpenAI's Codex CLI (npm package @openai/codex). Runs with --dangerously-bypass-approvals-and-sandbox: Runners are
 /// throwaway VMs, and an agent that stops to ask for every command is no use when nobody is watching.
 /// </summary>
-public sealed class CodexHarness : IHarness
+public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHarness
 {
     public const string HarnessId = "codex";
     public const string NpmPackage = "@openai/codex";
+
+    /// <summary>Where and as whom the Codex CLI renews its ChatGPT login (codex-rs/login/src/auth/manager.rs, 0.160.1).</summary>
+    public const string TokenUrl = "https://auth.openai.com/oauth/token";
+    public const string ClientId = "app_EMoamEEZ73f0CkXaXp7hrann";
+
+    /// <summary>Access tokens last about 10 days; renewing 3 days early leaves time to reach Runners that were off.</summary>
+    public static readonly TimeSpan RenewBefore = TimeSpan.FromDays(3);
+
+    private readonly HttpClient _http = new(tokenHandler ?? new SocketsHttpHandler()) { Timeout = TimeSpan.FromSeconds(30) };
 
     /// <summary>
     /// Codex picks its own session id when it starts a conversation. So the Manager creates the session file (just its
@@ -238,6 +250,102 @@ public sealed class CodexHarness : IHarness
               if [ -e "$HOME/.codex/$f" ]; then ln -sfn "$HOME/.codex/$f" "{home}/$f"; fi
             done
             """);
+    }
+
+    public bool RenewsAccounts => true;
+
+    /// <summary>
+    /// The login with <c>auth_mode: chatgptAuthTokens</c> and no refresh token. Codex never renews such a login itself:
+    /// on a 401 it reloads auth.json, which the Manager keeps current. Agents still running with an older full copy take
+    /// this file instead of renewing (Codex reloads before it renews). Verified with tools/codex-auth-gate.
+    /// </summary>
+    public string RunnerAccountCopy(string secret)
+    {
+        var auth = JsonNode.Parse(secret)?.AsObject() ?? throw new InvalidOperationException("The login isn't valid JSON.");
+        if (auth["tokens"] is not JsonObject tokens)
+        {
+            return secret;
+        }
+
+        return new JsonObject
+        {
+            ["auth_mode"] = "chatgptAuthTokens",
+            ["OPENAI_API_KEY"] = null,
+            ["tokens"] = new JsonObject
+            {
+                ["id_token"] = tokens["id_token"]?.DeepClone(),
+                ["access_token"] = tokens["access_token"]?.DeepClone(),
+                ["refresh_token"] = "",
+                ["account_id"] = tokens["account_id"]?.DeepClone(),
+            },
+            ["last_refresh"] = auth["last_refresh"]?.DeepClone(),
+        }.ToJsonString();
+    }
+
+    /// <summary>Renews like the Codex CLI does, when the access token has less than <see cref="RenewBefore"/> left.</summary>
+    public async Task<string?> RenewAccountAsync(string secret, CancellationToken cancellationToken)
+    {
+        var auth = JsonNode.Parse(secret)?.AsObject();
+        if (auth?["tokens"] is not JsonObject tokens || tokens["refresh_token"]?.GetValue<string>() is not { Length: > 0 } refreshToken
+            || Expiry(tokens["access_token"]?.GetValue<string>()) > DateTimeOffset.UtcNow + RenewBefore)
+        {
+            return null;
+        }
+
+        using var response = await _http.PostAsJsonAsync(TokenUrl,
+            new { grant_type = "refresh_token", client_id = ClientId, refresh_token = refreshToken }, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            // The CLI's own rule: these mean the refresh token is spent; another try can't work.
+            var code = ErrorCode(body);
+            var permanent = response.StatusCode == HttpStatusCode.Unauthorized
+                || code is "refresh_token_expired" or "refresh_token_reused" or "refresh_token_invalidated"
+                || response.StatusCode == HttpStatusCode.BadRequest && code == "invalid_grant";
+            throw new AccountRenewalException(permanent
+                ? $"ChatGPT ended this login ({code ?? ((int)response.StatusCode).ToString()}). Connect it again."
+                : $"ChatGPT didn't renew this login ({(int)response.StatusCode}). The Manager tries again in a few minutes.", permanent);
+        }
+
+        var renewed = JsonNode.Parse(body);
+        foreach (var name in new[] { "id_token", "access_token", "refresh_token" })
+        {
+            if (renewed?[name]?.GetValue<string>() is { Length: > 0 } value)
+            {
+                tokens[name] = value;
+            }
+        }
+
+        auth["last_refresh"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ");
+        return auth.ToJsonString();
+    }
+
+    /// <summary>A JWT's exp claim; null when it can't be read (then the login is renewed).</summary>
+    internal static DateTimeOffset? Expiry(string? jwt)
+    {
+        try
+        {
+            var payload = jwt?.Split('.')[1].Replace('-', '+').Replace('_', '/') ?? "";
+            var exp = JsonNode.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(payload.PadRight((payload.Length + 3) / 4 * 4, '='))))?["exp"];
+            return exp is null ? null : DateTimeOffset.FromUnixTimeSeconds(exp.GetValue<long>());
+        }
+        catch (Exception ex) when (ex is FormatException or IndexOutOfRangeException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static string? ErrorCode(string body)
+    {
+        try
+        {
+            var error = JsonNode.Parse(body)?["error"];
+            return (error is JsonValue ? error.GetValue<string>() : error?["code"]?.GetValue<string>())?.ToLowerInvariant();
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 }
 
