@@ -54,6 +54,12 @@ No decisions needed.
    - Allow `{host}` in `EDITOR_URL` (the Portal's host the browser used), so a Portal reachable on two hostnames gets
      the matching editor host for each, e.g. `https://{runner}.code.{host}`.
    - Review the ticket flow against the open internet (lifetime, single use, binding to the user).
+   - **Serve VS Code on the Portal's port, by hostname.** A request whose host matches `EDITOR_URL` goes to VS Code;
+     everything else to the Portal. Port 8081 and its proxy upstream are then optional (kept for setups without a
+     hostname of their own). The Portal's cookie isn't even sent to another hostname, unlike another port today.
+   - Not a path on the Portal's host (`/vscode/...`): VS Code runs content from the Runner in the browser (extensions,
+     Markdown and notebook previews, webviews), which an agent can write. On the Portal's origin that script could use
+     the user's sign-in for anything in the Portal. The separate origin is the security boundary.
 7. **Error responses.** Make sure no stack traces or internal details reach anonymous visitors in Production (the
    developer exception page is only on in Development; check the problem-details output).
 
@@ -89,10 +95,10 @@ For `dam.devedse.click` and `dam.devedse.duckdns.org`, both forwarding to the Ma
   allows large uploads (session imports) and keeps WebSockets open (the Manager pings every 15–30 seconds).
 - Keep the access list (extra login) until phases 1 and 2 are done.
 
-**VS Code proxy host** (port 8081), with a wildcard name so each Runner gets its own host:
+**VS Code proxy host** (port 8081; after phase 1 also port 8080), with a wildcard name so each Runner gets its own host:
 
 - Domain `*.code.dam.devedse.click` (and/or `*.code.dam.devedse.duckdns.org`), forward to the Manager host, port
-  `8081`, Websockets Support on, Cache Assets off.
+  `8081` (or `8080` once VS Code is served by hostname), Websockets Support on, Cache Assets off.
 - A wildcard certificate needs a Let's Encrypt DNS challenge (nginx proxy manager supports DuckDNS and most DNS
   providers). The DNS name must resolve: DuckDNS resolves every name under `devedse.duckdns.org` already; for
   `devedse.click` add a wildcard record `*.code.dam` pointing to the proxy.
@@ -118,4 +124,5 @@ address) is trusted by default; otherwise set `TRUSTED_PROXIES`.
 ## 6. Decisions
 
 - 2026-10-07 — HTTPS stays in the reverse proxy.
+- 2026-10-07 — VS Code keeps an origin of its own, but can share the Portal's port: it is chosen by hostname.
 - Open: second factor (TOTP first?), requiring it, session lifetime, re-authentication for sensitive actions.
