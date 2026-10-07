@@ -137,7 +137,12 @@ public sealed class InternetSecurityTests : IClassFixture<InternetSecurityTests.
         Assert.Equal(3, results.Count(r => r.StatusCode == HttpStatusCode.Forbidden));
         var editorCookie = results.Single(r => r.StatusCode == HttpStatusCode.Redirect).Headers.GetValues("Set-Cookie").Single();
         Assert.StartsWith("__Host-DAM.Editor=", editorCookie); Assert.Contains("path=/", editorCookie);
-        Assert.Equal(HttpStatusCode.NotFound, (await editor.GetAsync("/login")).StatusCode);
+        var editorPage = await editor.GetAsync("/login");
+        Assert.Equal(HttpStatusCode.NotFound, editorPage.StatusCode);
+        // Only the Portals may frame VS Code (overrides a proxy's X-Frame-Options), and the Portal may reach it.
+        Assert.Contains("frame-ancestors 'self' https://dam.test https://alternate.test", editorPage.Headers.GetValues("Content-Security-Policy"));
+        var portalCsp = (await portal.GetAsync("/login")).Headers.GetValues("Content-Security-Policy").Single();
+        Assert.Contains("connect-src 'self' https://*.code.dam.test https://*.code.alternate.test;", portalCsp);
         var copied = Client(); copied.DefaultRequestHeaders.Add("Cookie", cookie);
         Assert.Equal(HttpStatusCode.OK, (await copied.GetAsync("/api/me")).StatusCode);
         Assert.Equal(HttpStatusCode.Redirect, (await portal.PostAccountAsync("/account/logout", null)).StatusCode);

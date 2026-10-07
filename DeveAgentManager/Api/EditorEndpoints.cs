@@ -123,6 +123,16 @@ public static class EditorEndpoints
     private static async Task HandleEditorRequestAsync(HttpContext context)
     {
         context.Response.Headers["Referrer-Policy"] = "no-referrer";
+        // Only the Portal (and VS Code's own webviews) may frame VS Code. A proxy's X-Frame-Options: SAMEORIGIN would
+        // otherwise block the Portal's frame; browsers obey frame-ancestors over it. Added when the response starts, as
+        // its own policy, so headers copied from code-server can't replace it.
+        var portals = context.RequestServices.GetRequiredService<ManagerOptions>().PublicOrigins;
+        if (portals.Length > 0)
+            context.Response.OnStarting(() =>
+            {
+                context.Response.Headers.Append(HeaderNames.ContentSecurityPolicy, $"frame-ancestors 'self' {string.Join(' ', portals)}");
+                return Task.CompletedTask;
+            });
         var mutation = !HttpMethods.IsGet(context.Request.Method) && !HttpMethods.IsHead(context.Request.Method);
         if ((mutation || context.WebSockets.IsWebSocketRequest) && !RequestSecurity.IsSameOrigin(context.Request, requireOrigin: true))
         { context.Response.StatusCode = 403; return; }
