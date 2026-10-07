@@ -10,10 +10,10 @@ when you close the tab.
   [Codex](https://github.com/openai/codex)) running in its own tmux session and working folder on a Runner.
 - **Users**: everyone signs in with a username and password of their own and has their own harness logins, GitHub
   token, git identity, environment variables and SSH keys (**My settings**). Roles: *settings manager*, *user
-  manager*, *runner creator*, *runner manager* and *conversation reader*; *Admin* is all of them. A Runner has an owner and people with *Use*
+  manager*, *runner creator*, *runner manager* and *conversation manager*; *Admin* is all of them. A Runner has an owner and people with *Use*
   or *Manage* access, who share its Linux account (so they trust each other with what is on it). Agents can be shared
-  read-only or read-write, conversations read-only. Conversation readers (including admins) can watch every agent
-  and read/export every conversation, without prompting or changing another user’s content. Existing admins receive
+  read-only or read-write, conversations read-only. Conversation managers (including admins) can open, prompt and manage every agent
+  and read, export, rename, share or delete every conversation. Existing admins receive
   this role on upgrade and must sign in again. See [docs/users-plan.md](docs/users-plan.md).
 - **Account** (**My settings → Harness logins**): a Claude or ChatGPT subscription, or an API key, connected once in the
   Manager and used on every Runner. Each person's own. Claude logs in with `claude setup-token` (a token valid for a year). Codex logs in

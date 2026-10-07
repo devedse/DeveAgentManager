@@ -65,10 +65,10 @@ public enum UserRoles
     /// <summary>Every Runner: see it, give people access, change its owner, view and set its password, delete it.</summary>
     RunnerManager = 8,
 
-    /// <summary>Watch every agent and read/export every conversation, without changing them or accessing harness credentials.</summary>
-    ConversationReader = 16,
+    /// <summary>Manage every agent and conversation, including prompting, sharing and deletion.</summary>
+    ConversationManager = 16,
 
-    Admin = SettingsManager | UserManager | RunnerCreator | RunnerManager | ConversationReader,
+    Admin = SettingsManager | UserManager | RunnerCreator | RunnerManager | ConversationManager,
 }
 
 /// <summary>What a user may do with a Runner. Each level includes the ones before it.</summary>

@@ -242,7 +242,7 @@ wildcard DNS/certificate support on the chosen provider; this implementation has
 
 ## Global conversation access
 
-Conversation reader is an explicit role included in Admin. It allows watching every agent and reading/exporting all
-conversations, including imported conversations. It does not allow prompting, sharing, deleting other users’ content
-or reading their harness credentials. Existing users with all four previous admin roles are promoted once by migration;
+Conversation manager is an explicit role included in Admin. It allows opening, prompting, restarting, sharing and deleting every agent,
+and reading, exporting, renaming, sharing and deleting every conversation, including imports. It does not expose
+other users’ harness credentials. Existing users with all four previous admin roles are promoted once by migration;
 their sessions are invalidated, so they must sign in again. Role removal takes effect on subsequent requests and revokes live access.

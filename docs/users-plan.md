@@ -36,7 +36,7 @@ Global roles. A user can have any combination.
 | **User manager** | Create and disable users, reset passwords, grant roles |
 | **Runner creator** | Create Runners (a Proxmox VM or an existing machine) and become their owner |
 | **Runner manager** | Every Runner: see it, give people access, change its owner, view and set its password, delete it |
-| **Conversation reader** | Watch every agent and read/export every conversation; no prompting, sharing or deletion |
+| **Conversation manager** | Manage every agent and conversation, including prompting, sharing and deletion |
 | **Admin** | All of the above. Admin is only the collection; nothing is admin-only. |
 | *(no role)* | Use the Runners they have access to; their own agents, conversations and settings |
 
@@ -81,7 +81,7 @@ An agent's owner can share it with other users, **read-only** or **read-write**,
   with can read its workspace's conversations.
 - Reading an agent needs no access to its Runner; read-write needs Use access to the Runner as well (without it, a
   read-write share works as read-only).
-- Conversation reader (included in Admin) grants read-only access to all agents and conversations. Other roles do not.
+- Conversation manager (included in Admin) grants full access to all agents and conversations. Other roles do not.
 - Existing admins with all four original roles are upgraded once and their security stamps rotate; sign in again.
 
 ## 5. Settings: per user, per Runner, shared
@@ -232,5 +232,5 @@ Phases 1–2 are useful on their own: several people, each on their own Runners.
   are replaced by bounded throttles; direct local IP access uses separate credentials. Deployment defaults and
   validation are maintained in [internet-facing-plan.md](internet-facing-plan.md).
 
-- 2026-10-07 — Added Conversation reader to Admin: global read-only agent/session access, including imported sessions
-  and live updates. Harness credentials and mutation permissions remain private.
+- 2026-10-07 — Added Conversation manager to Admin: global agent/session management, including imported sessions
+  and live updates. Harness credentials remain private.

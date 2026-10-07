@@ -107,28 +107,35 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     }
 
     [Theory]
-    [InlineData(UserRoles.ConversationReader)]
+    [InlineData(UserRoles.ConversationManager)]
     [InlineData(UserRoles.Admin)]
-    public async Task ConversationReaders_OpenEveryAgentAndSessionWithoutOwnershipOrShares(UserRoles roles)
+    public async Task ConversationManagers_OpenEveryAgentAndSessionWithoutOwnershipOrShares(UserRoles roles)
     {
         var things = await SeedAsync(User.BootstrapId);
         var (reader, readerId) = await SignedInAsNewUserWithIdAsync(roles);
-        Assert.Equal(AgentAccess.Read, (await AgentAsync(reader, things.AgentId)).Access);
+        Assert.Equal(AgentAccess.Owner, (await AgentAsync(reader, things.AgentId)).Access);
         Assert.Contains(things.AgentId.ToString(), await reader.GetStringAsync("/api/agents"));
         Assert.Equal(HttpStatusCode.OK, (await reader.GetAsync($"/api/agents/{things.AgentId}/session")).StatusCode);
         foreach (var id in new[] { things.SessionId, things.ImportedSessionId })
         {
-            Assert.Equal(SessionAccess.Read, (await reader.GetFromJsonAsync<SessionDto>($"/api/sessions/{id}", ApiJson.Options))!.Access);
+            Assert.Equal(SessionAccess.Owner, (await reader.GetFromJsonAsync<SessionDto>($"/api/sessions/{id}", ApiJson.Options))!.Access);
             Assert.Contains(id.ToString(), await reader.GetStringAsync("/api/sessions"));
-            Assert.Equal(HttpStatusCode.Forbidden, (await reader.DeleteAsync($"/api/sessions/{id}")).StatusCode);
-            Assert.Equal(HttpStatusCode.Forbidden, (await reader.PutAsJsonAsync($"/api/sessions/{id}/title", new RenameSessionRequest("changed"))).StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, (await reader.PutAsJsonAsync($"/api/sessions/{id}/title", new RenameSessionRequest("changed"))).StatusCode);
         }
-        Assert.Equal(HttpStatusCode.Forbidden, (await reader.PostAsync($"/api/agents/{things.AgentId}/stop", null)).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await reader.DeleteAsync($"/api/agents/{things.AgentId}")).StatusCode);
+        var recipient = await Users.CreateAsync(TestUsers.Admin, NewUsername(), null, Password, UserRoles.None);
+        var sharing = manager.Services.GetRequiredService<Sharing>();
+        var actor = CurrentUser.From((await Users.GetAsync(readerId))!);
+        await sharing.ShareAgentAsync(actor, things.AgentId, recipient.Id, AgentAccess.Write);
+        await sharing.UnshareAgentAsync(actor, things.AgentId, recipient.Id);
+        await sharing.ShareSessionAsync(actor, things.ImportedSessionId, recipient.Id);
+        await sharing.UnshareSessionAsync(actor, things.ImportedSessionId, recipient.Id);
+        // These rows are fixtures rather than real imports, so create the session-store directory too.
+        Directory.CreateDirectory(manager.Services.GetRequiredService<DeveAgentManager.Core.Configuration.ManagerOptions>().SessionsDirectory);
+        Assert.Equal(HttpStatusCode.NoContent, (await reader.DeleteAsync($"/api/sessions/{things.ImportedSessionId}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await reader.GetAsync($"/api/accounts/{things.AccountId}")).StatusCode);
         var access = manager.Services.GetRequiredService<AccessControl>();
         Assert.Contains(readerId, (await access.AudienceAsync(new ManagerEvent(ManagerEventKind.AgentChanged, things.RunnerId, things.AgentId)))!);
-        Assert.Contains(readerId, (await access.AudienceAsync(new ManagerEvent(ManagerEventKind.SessionChanged, SessionId: things.ImportedSessionId)))!);
+        Assert.Contains(readerId, (await access.AudienceAsync(new ManagerEvent(ManagerEventKind.SessionChanged, SessionId: things.SessionId)))!);
         await Users.UpdateAsync(TestUsers.Admin, readerId, null, UserRoles.None, disabled: false);
         Assert.Equal(AgentAccess.None, await access.AgentAsync(CurrentUser.From((await Users.GetAsync(readerId))!), things.AgentId));
         Assert.Equal(HttpStatusCode.NotFound, (await reader.GetAsync($"/api/agents/{things.AgentId}")).StatusCode);
