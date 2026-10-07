@@ -1,0 +1,91 @@
+@page "/security"
+@layout EmptyLayout
+@attribute [ExcludeFromInteractiveRouting]
+@inject IHttpContextAccessor Http
+@inject DeveAgentManager.Core.Users.SecondFactors Factors
+@inject DeveAgentManager.Core.Users.SignInSessions Sessions
+@inject Microsoft.EntityFrameworkCore.IDbContextFactory<DeveAgentManager.Core.Data.ManagerDbContext> Db
+@inject DeveAgentManager.Core.Security.SecretProtector Protector
+@inject DeveAgentManager.Core.Configuration.ManagerOptions Options
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Account security · DeveAgentManager</PageTitle>
+<div class="login-page"><div class="login-card">
+    <h1>Account security</h1>
+    @if (Error is not null) { <p class="login-error">@Error</p> }
+    <p>Confirm your password before changing security settings or performing sensitive actions. Confirmation lasts ten minutes.</p>
+    <form method="post" action="/account/security/reauth">
+        <AntiforgeryToken />
+        <label class="login-label">Password</label><input class="login-input" type="password" name="password" autocomplete="current-password" required />
+        <label class="login-label">Authenticator or recovery code (if enabled)</label><input class="login-input" name="code" autocomplete="one-time-code" />
+        <button class="login-button">Confirm identity</button>
+    </form>
+    <h2>Authenticator</h2>
+    @if (_enabled)
+    {
+        <p>Enabled. Keep your single-use recovery codes safe. Lost both? The server operator can use RESET_ADMIN_PASSWORD to recover the admin account.</p>
+        <form method="post" action="/account/security/disable"><AntiforgeryToken />
+            <input class="login-input" name="code" placeholder="Authenticator or recovery code" required />
+            <button class="login-button">Disable authenticator</button>
+        </form>
+    }
+    else if (_secret is not null)
+    {
+        <p>Add this secret to your authenticator app as a time-based, six-digit SHA1 account:</p><code>@_secret</code>
+        <p>Account: @_user?.Username · DeveAgentManager</p>
+        <form method="post" action="/account/security/confirm"><AntiforgeryToken />
+            <input class="login-input" name="code" autocomplete="one-time-code" placeholder="Six-digit code" required />
+            <button class="login-button">Enable and show recovery codes</button>
+        </form>
+    }
+    else
+    {
+        <form method="post" action="/account/security/begin"><AntiforgeryToken /><button class="login-button">Enroll authenticator</button></form>
+    }
+    <h2>Signed-in devices</h2>
+    <p>Remembered sessions expire after seven days of inactivity or thirty days after sign-in. Revoking a session closes its browser connections; agents keep running.</p>
+    @foreach (var session in _sessions)
+    {
+        <p>@session.Browser<br />@session.ClientIp · Last active @session.LastSeenAt.ToString("u") @(session.Id == _current ? "(this session)" : "")</p>
+        <form method="post" action="/account/security/revoke"><AntiforgeryToken /><input type="hidden" name="id" value="@session.Id" /><button>Sign out this device</button></form>
+    }
+    @if (_user is not null && (_user.Roles & DeveAgentManager.Core.Data.UserRoles.UserManager) != 0)
+    {
+        <h2>Require authenticators</h2><p>Current policy: @_enforcement. Every affected enabled user must enroll before this can be switched on. Newly created affected users enroll before accessing the Portal.</p>
+        <form method="post" action="/account/security/enforce"><AntiforgeryToken />
+            <select name="mode"><option value="optional">Optional</option><option value="roles">Users with roles</option><option value="everyone">Everyone</option></select><button>Save policy</button>
+        </form>
+        <h2>Public deployment</h2>
+        <p>Public Portal origins: @string.Join(", ", Options.PublicOrigins)</p>
+        <p>Editor address: @Options.EditorUrl</p>
+        <p>Trusted proxy addresses: @string.Join(", ", Options.TrustedProxies)</p>
+        <p>Configure these server settings in compose. Each editor domain uses one wildcard DNS record, certificate and NPM proxy host for every Runner, forwarding to port 8080 with WebSockets enabled. Forwarded headers are accepted only from configured proxies.</p>
+    }
+    <a href="/" class="login-link">Back to Portal</a>
+</div></div>
+@code {
+    [SupplyParameterFromQuery(Name = "error")] private string? Error { get; set; }
+    private DeveAgentManager.Core.Users.CurrentUser? _user;
+    private List<DeveAgentManager.Core.Data.SignInSession> _sessions = [];
+    private bool _enabled;
+    private string? _secret;
+    private string _enforcement = "optional";
+    private Guid _current;
+    protected override async Task OnInitializedAsync()
+    {
+        var context = Http.HttpContext!;
+        context.Response.Headers.CacheControl = "no-store";
+        _user = DeveAgentManager.Api.SignIn.Current(context);
+        _current = DeveAgentManager.Api.SignIn.SessionId(context);
+        if (_user is null) return;
+        _enabled = await Factors.EnabledAsync(_user.Id);
+        _sessions = await Sessions.ListAsync(_user.Id);
+        _enforcement = await Factors.EnforcementAsync();
+        if (!_enabled && await DeveAgentManager.Api.AccountSecurity.RecentAsync(context))
+        {
+            await using var db = await Db.CreateDbContextAsync();
+            var factor = await db.UserSecondFactors.AsNoTracking().SingleOrDefaultAsync(f => f.UserId == _user.Id);
+            _secret = Protector.Unprotect(factor?.Secret);
+        }
+    }
+}

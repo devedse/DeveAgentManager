@@ -14,31 +14,17 @@ using Yarp.ReverseProxy.Forwarder;
 namespace DeveAgentManager.Api;
 
 /// <summary>
-/// VS Code in the browser (code-server on a Runner), on an origin of its own: the Manager's second port
-/// (<see cref="ManagerOptions.EditorPort"/>). VS Code runs code that comes from the Runner (extensions; and whatever an
-/// agent there could put in code-server's place), so it must never run as the Portal, which can do anything the admin
-/// can. On its own origin, the Portal's API refuses it like any other site (see <see cref="RequestSecurity"/>).
-/// <list type="bullet">
-/// <item>Portal origin: <c>/editor/runners/{id}</c> (Use access to the Runner) and <c>/editor/agents/{id}</c> (read-write
-/// access to the agent: VS Code edits its files) send the browser on to the editor origin with a ticket for that user and
-/// that one Runner, valid for two minutes.</item>
-/// <item>Editor origin: <c>/runners/{id}/auth</c> turns the ticket into a cookie for that Runner's path only;
-/// <c>/runners/{id}/code/</c> is its code-server. It serves nothing else. Every request checks again that the user's
-/// sign-in still counts and that they still have access; an open VS Code closes when either ends.</item>
-/// <item>The browser sends the Manager's login cookie to the editor port as well (cookies don't care about ports): it is
-/// removed before a request goes to the Runner, and cookies code-server sets never reach the browser.</item>
-/// <item>A page on the editor port counts as the same site as the Portal, so its frames get the login cookie: the links
-/// only answer the Portal itself (Sec-Fetch-Site), or a page there could get tickets for every Runner.</item>
-/// </list>
-/// All Runners share the editor origin unless <see cref="ManagerOptions.EditorUrl"/> has a <c>{runner}</c> placeholder
-/// (one host per Runner, e.g. <c>https://{runner}.code.example.com</c> with a wildcard DNS name). On a shared origin,
-/// a Runner whose VS Code is open could reach the VS Code of other Runners opened in the same browser.
+/// VS Code runs on a separate origin for each public Runner, dispatched by hostname on the Portal port.
+/// Local direct IP access can use the optional editor port. Portal links check Runner Use access and issue
+/// short-lived, single-use session tickets. The bootstrap exchanges a URL fragment through a same-origin POST;
+/// every editor request and live connection checks the same revocable sign-in session and current Runner access.
+/// Runner credentials/content never become Portal credentials/content.
 /// </summary>
 public static class EditorEndpoints
 {
     public const string CookieName = "DeveAgentManager.Editor";
+    public const string PublicCookieName = "__Host-DAM.Editor";
 
-    private static readonly TimeSpan TicketLifetime = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan CookieLifetime = TimeSpan.FromHours(12);
 
     private static readonly ForwarderRequestConfig RequestConfig = new()
@@ -60,7 +46,7 @@ public static class EditorEndpoints
     });
 
     public static bool IsEditorRequest(HttpContext context) =>
-        context.Connection.LocalPort == context.RequestServices.GetRequiredService<ManagerOptions>().EditorPort;
+        DeploymentBoundary.IsEditor(context);
 
     /// <summary>The editor origin: requests to the editor port go here and nowhere else.</summary>
     public static IApplicationBuilder UseEditorOrigin(this IApplicationBuilder app) =>
@@ -73,12 +59,12 @@ public static class EditorEndpoints
 
         links.MapGet("/runners/{runnerId:guid}", async (Guid runnerId, HttpContext context, RunnerService runners, AccessControl access, CancellationToken ct) =>
             SignIn.UsableUser(context) is { } user && await access.RunnerAsync(user, runnerId, ct) >= RunnerAccess.Use && await runners.GetAsync(runnerId, ct) is { } runner
-                ? Open(context, user, runner, runner.HomeDirectory)
+                ? await OpenAsync(context, user, runner, runner.HomeDirectory)
                 : Page(StatusCodes.Status404NotFound, "This Runner doesn't exist (any more)."));
 
         links.MapGet("/agents/{agentId:guid}", async (Guid agentId, HttpContext context, AgentService agents, AccessControl access, CancellationToken ct) =>
             SignIn.UsableUser(context) is { } user && await access.AgentAsync(user, agentId, ct) >= AgentAccess.Write && await agents.GetAsync(agentId, ct) is { Runner: { } runner } agent
-                ? Open(context, user, runner, agent.WorkingDirectory)
+                ? await OpenAsync(context, user, runner, agent.WorkingDirectory)
                 : Page(StatusCodes.Status404NotFound, "This agent doesn't exist (any more), or you can only read it."));
 
         // Lets the Portal find out whether a Runner's editor origin can be reached from the browser.
@@ -97,18 +83,18 @@ public static class EditorEndpoints
     /// </summary>
     internal static string EditorBase(HttpContext context, string? runnerName)
     {
-        var options = context.RequestServices.GetRequiredService<ManagerOptions>();
-        return options.EditorUrl?.Replace("{runner}", runnerName ?? "runner", StringComparison.Ordinal)
-            ?? new UriBuilder(context.Request.Scheme, context.Request.Host.Host, options.EditorPort).Uri.GetLeftPart(UriPartial.Authority);
+        return context.RequestServices.GetRequiredService<DeploymentBoundary>().EditorOrigin(context, runnerName ?? "runner");
     }
 
     /// <summary>
     /// The Portal's own pages (or an address typed in the browser), not a page on another port of this host: browsers say
     /// where a request comes from in Sec-Fetch-Site. Browsers without it are let through.
     /// </summary>
-    private static bool FromThePortal(HttpRequest request) => request.Headers["Sec-Fetch-Site"].ToString() is "" or "same-origin" or "none";
+    private static bool FromThePortal(HttpRequest request) => RequestSecurity.IsSameOrigin(request)
+        && (request.Headers["Sec-Fetch-Site"].ToString() is "same-origin" or "none"
+            || DeploymentBoundary.IsLocal(request.HttpContext) && request.Headers["Sec-Fetch-Site"].Count == 0);
 
-    private static IResult Open(HttpContext context, CurrentUser user, Runner runner, string? folder)
+    private static async Task<IResult> OpenAsync(HttpContext context, CurrentUser user, Runner runner, string? folder)
     {
         if (!FromThePortal(context.Request))
         {
@@ -120,20 +106,32 @@ public static class EditorEndpoints
             return Page(StatusCodes.Status409Conflict, $"VS Code is not installed on '{runner.Name}'. Install it on the Runner page, under Operations.");
         }
 
-        var ticket = Protectors(context).Ticket.Protect(new EditorPass(user.Id, SignIn.SecurityStamp(context) ?? "", runner.Id).Format(), TicketLifetime);
+        if (await context.RequestServices.GetRequiredService<AccessControl>().RunnerAsync(user, runner.Id, context.RequestAborted) < RunnerAccess.Use)
+            return Page(StatusCodes.Status404NotFound, "Runner access is required to open VS Code.");
+        var origin = EditorBase(context, runner.Name);
+        var ticket = await context.RequestServices.GetRequiredService<SignInSessions>().IssueEditorTicketAsync(
+            SignIn.SessionId(context), runner.Id, origin, context.RequestAborted);
         var query = QueryString.Create("ticket", ticket);
         if (!string.IsNullOrEmpty(folder))
         {
             query = query.Add("folder", folder);
         }
 
-        return NoStore(context, Results.Redirect($"{EditorBase(context, runner.Name)}/runners/{runner.Id}/auth{query}"));
+        return NoStore(context, Results.Redirect($"{origin}/runners/{runner.Id}/auth#{query.ToString().TrimStart('?')}"));
     }
 
     private static async Task HandleEditorRequestAsync(HttpContext context)
     {
         context.Response.Headers["Referrer-Policy"] = "no-referrer";
+        var mutation = !HttpMethods.IsGet(context.Request.Method) && !HttpMethods.IsHead(context.Request.Method);
+        if ((mutation || context.WebSockets.IsWebSocketRequest) && !RequestSecurity.IsSameOrigin(context.Request, requireOrigin: true))
+        { context.Response.StatusCode = 403; return; }
         var path = context.Request.Path.Value ?? "";
+        if (path == "/auth.js" && HttpMethods.IsGet(context.Request.Method))
+        {
+            await WriteAsync(context, NoStore(context, Results.Content(AuthScript, "text/javascript")));
+            return;
+        }
         if (path == "/ping")
         {
             context.Response.Headers.CacheControl = "no-store";
@@ -158,7 +156,11 @@ public static class EditorEndpoints
         var prefix = $"/runners/{runnerId}/code";
         if (parts[3] == "auth")
         {
-            await WriteAsync(context, AcceptTicket(context, runnerId));
+            if (HttpMethods.IsGet(context.Request.Method))
+                await WriteAsync(context, NoStore(context, Results.Content(AuthPage, "text/html")));
+            else if (HttpMethods.IsPost(context.Request.Method) && RequestSecurity.IsSameOrigin(context.Request, requireOrigin: true))
+                await WriteAsync(context, await AcceptTicketAsync(context, runnerId));
+            else context.Response.StatusCode = StatusCodes.Status403Forbidden;
         }
         else if (parts[3] == "code")
         {
@@ -178,36 +180,40 @@ public static class EditorEndpoints
     /// <summary>With one host per Runner (EDITOR_URL with <c>{runner}</c>), a Runner is only served on its own host.</summary>
     private static async Task<bool> OnItsOwnHostAsync(HttpContext context, Guid runnerId)
     {
-        var template = context.RequestServices.GetRequiredService<ManagerOptions>().EditorUrl;
-        if (template is null || !template.Contains("{runner}", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
+        var options = context.RequestServices.GetRequiredService<ManagerOptions>();
+        if (DeploymentBoundary.IsLocal(context) && (options.EditorUrl is null || options.PublicOrigins.Length > 0)) return true;
         var runner = await context.RequestServices.GetRequiredService<RunnerService>().GetAsync(runnerId, context.RequestAborted);
-        return runner is not null && Uri.TryCreate(template.Replace("{runner}", runner.Name, StringComparison.Ordinal), UriKind.Absolute, out var own)
-            && string.Equals(own.Authority, context.Request.Host.Value, StringComparison.OrdinalIgnoreCase);
+        if (runner is null) return false;
+        if (DeploymentBoundary.IsLocal(context))
+            return Uri.TryCreate(options.EditorUrl!.Replace("{runner}", runner.Name), UriKind.Absolute, out var own)
+                && DeploymentBoundary.SameOrigin(own, context.Request);
+        return options.PublicOrigins.Any(portal => Uri.TryCreate(options.EditorUrl!.Replace("{runner}", runner.Name)
+            .Replace("{host}", new Uri(portal).Host), UriKind.Absolute, out var own) && DeploymentBoundary.SameOrigin(own, context.Request));
     }
 
     /// <summary>Turns a ticket from the Portal into this origin's cookie for the one Runner, then opens VS Code.</summary>
-    private static IResult AcceptTicket(HttpContext context, Guid runnerId)
+    private static async Task<IResult> AcceptTicketAsync(HttpContext context, Guid runnerId)
     {
-        var protectors = Protectors(context);
-        if (EditorPass.Parse(Unprotect(protectors.Ticket, context.Request.Query["ticket"])) is not { } pass || pass.RunnerId != runnerId)
-        {
+        if (!context.Request.HasFormContentType) return Results.StatusCode(400);
+        var form = await context.Request.ReadFormAsync();
+        var session = await context.RequestServices.GetRequiredService<SignInSessions>().ConsumeEditorTicketAsync(
+            form["ticket"].ToString(), runnerId, DeploymentBoundary.Origin(context.Request), context.RequestAborted);
+        if (session is null || session.Local != DeploymentBoundary.IsLocal(context)
+            || await context.RequestServices.GetRequiredService<UserService>().ValidateAsync(session.UserId, session.SecurityStamp, context.RequestAborted) is not { MustChangePassword: false } user
+            || await context.RequestServices.GetRequiredService<AccessControl>().RunnerAsync(user, runnerId, context.RequestAborted) < RunnerAccess.Use)
             return Page(StatusCodes.Status403Forbidden, "This link to VS Code has expired. Open VS Code from the Manager again.");
-        }
-
-        context.Response.Cookies.Append(CookieName, protectors.Cookie.Protect(pass.Format(), CookieLifetime), new CookieOptions
+        var protector = CookieProtector(context);
+        var pass = new EditorPass(session.UserId, session.SecurityStamp, runnerId, session.Id);
+        context.Response.Cookies.Append(DeploymentBoundary.IsLocal(context) ? CookieName : PublicCookieName, protector.Protect(pass.Format(), CookieLifetime), new CookieOptions
         {
-            Path = $"/runners/{runnerId}/",
+            Path = DeploymentBoundary.IsLocal(context) ? $"/runners/{runnerId}/" : "/",
             HttpOnly = true,
             Secure = context.Request.IsHttps,
             SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Lax,
             MaxAge = CookieLifetime,
             IsEssential = true,
         });
-        var folder = context.Request.Query["folder"].ToString();
+        var folder = form["folder"].ToString();
         var query = folder.Length > 0 ? QueryString.Create("folder", folder) : QueryString.Empty;
         return NoStore(context, Results.Redirect($"/runners/{runnerId}/code/{query}"));
     }
@@ -216,8 +222,10 @@ public static class EditorEndpoints
     {
         var services = context.RequestServices;
         var access = services.GetRequiredService<AccessControl>();
-        if (EditorPass.Parse(Unprotect(Protectors(context).Cookie, context.Request.Cookies[CookieName])) is not { } pass || pass.RunnerId != runnerId
+        if (EditorPass.Parse(Unprotect(CookieProtector(context), context.Request.Cookies[DeploymentBoundary.IsLocal(context) ? CookieName : PublicCookieName])) is not { } pass || pass.RunnerId != runnerId
             || await services.GetRequiredService<UserService>().ValidateAsync(pass.UserId, pass.SecurityStamp, context.RequestAborted) is not { MustChangePassword: false } user
+            || await services.GetRequiredService<SignInSessions>().ValidateAsync(pass.SessionId, pass.UserId, pass.SecurityStamp,
+                DeploymentBoundary.IsLocal(context), touch: true, ct: context.RequestAborted) is null
             || await access.RunnerAsync(user, runnerId, context.RequestAborted) < RunnerAccess.Use)
         {
             await WriteAsync(context, Page(StatusCodes.Status401Unauthorized, "Open VS Code from the Manager (the Runner page, or an agent's terminal)."));
@@ -226,7 +234,7 @@ public static class EditorEndpoints
 
         // VS Code keeps a WebSocket open: it closes when the user's access or sign-in ends meanwhile.
         using var watched = services.GetRequiredService<OpenConnections>().Register(user, pass.SecurityStamp,
-            async (current, ct) => await access.RunnerAsync(current, runnerId, ct) >= RunnerAccess.Use, context.Abort);
+            async (current, ct) => await access.RunnerAsync(current, runnerId, ct) >= RunnerAccess.Use, context.Abort, pass.SessionId);
         var runner = await services.GetRequiredService<RunnerService>().GetAsync(runnerId, context.RequestAborted);
         if (runner is null || !runner.ToolIds.Contains(VsCodeTool.ToolId))
         {
@@ -250,7 +258,7 @@ public static class EditorEndpoints
         catch (Exception ex) when (!context.RequestAborted.IsCancellationRequested)
         {
             services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(EditorEndpoints)).LogWarning(ex, "Could not open VS Code on {Runner}", runner.Name);
-            await WriteAsync(context, Page(StatusCodes.Status502BadGateway, $"Could not open VS Code on '{runner.Name}': {ex.Message}"));
+            await WriteAsync(context, Page(StatusCodes.Status502BadGateway, $"Could not open VS Code on '{runner.Name}'. Try again later."));
             return;
         }
 
@@ -272,6 +280,21 @@ public static class EditorEndpoints
             // code-server accepts WebSockets only from the page it served itself (Origin must match Host).
             proxyRequest.Headers.Host = httpContext.Request.Host.Value;
             // The browser's cookies for this host include the Manager's login: none of them go to the Runner.
+            foreach (var header in proxyRequest.Headers.Select(h => h.Key).ToArray())
+            {
+                if (header.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+                    || header.Equals("Proxy-Authorization", StringComparison.OrdinalIgnoreCase)
+                    || header.StartsWith("X-Auth", StringComparison.OrdinalIgnoreCase)
+                    || header.StartsWith("X-Forwarded", StringComparison.OrdinalIgnoreCase)
+                    || header.Equals("Remote-User", StringComparison.OrdinalIgnoreCase)
+                    || header.Equals("X-Remote-User", StringComparison.OrdinalIgnoreCase)
+                    || header.Equals("X-Remote-Email", StringComparison.OrdinalIgnoreCase)
+                    || header.Equals("X-User", StringComparison.OrdinalIgnoreCase)
+                    || header.Equals("X-Email", StringComparison.OrdinalIgnoreCase)
+                    || header.Equals("Forwarded", StringComparison.OrdinalIgnoreCase)
+                    || httpContext.RequestServices.GetRequiredService<ManagerOptions>().ProxyIdentityHeaders.Contains(header, StringComparer.OrdinalIgnoreCase))
+                    proxyRequest.Headers.Remove(header);
+            }
             proxyRequest.Headers.Remove(HeaderNames.Cookie);
             proxyRequest.Headers.TryAddWithoutValidation(HeaderNames.Cookie, sessionCookie);
         }
@@ -303,6 +326,21 @@ public static class EditorEndpoints
         }
     }
 
+    private const string AuthPage = """
+        <!doctype html><html><head><meta name="referrer" content="no-referrer"><title>Opening VS Code</title></head>
+        <body>Opening VS Code…<script src="/auth.js"></script></body></html>
+        """;
+
+    private const string AuthScript = """
+        (async () => {
+          const values = new URLSearchParams(location.hash.slice(1));
+          history.replaceState(null, '', location.pathname);
+          const response = await fetch(location.pathname, { method: 'POST', body: values, credentials: 'same-origin' });
+          if (response.redirected) location.replace(response.url);
+          else document.body.textContent = 'This link has expired. Open VS Code from the Manager again.';
+        })();
+        """;
+
     private static string? Unprotect(ITimeLimitedDataProtector protector, string? value)
     {
         if (string.IsNullOrEmpty(value))
@@ -320,12 +358,8 @@ public static class EditorEndpoints
         }
     }
 
-    private static (ITimeLimitedDataProtector Ticket, ITimeLimitedDataProtector Cookie) Protectors(HttpContext context)
-    {
-        var provider = context.RequestServices.GetRequiredService<IDataProtectionProvider>();
-        return (provider.CreateProtector("DeveAgentManager.Editor.Ticket").ToTimeLimitedDataProtector(),
-            provider.CreateProtector("DeveAgentManager.Editor.Cookie").ToTimeLimitedDataProtector());
-    }
+    private static ITimeLimitedDataProtector CookieProtector(HttpContext context) =>
+        context.RequestServices.GetRequiredService<IDataProtectionProvider>().CreateProtector("DeveAgentManager.Editor.Cookie.v2").ToTimeLimitedDataProtector();
 
     private static IResult NoStore(HttpContext context, IResult result)
     {
@@ -344,12 +378,12 @@ public static class EditorEndpoints
 }
 
 /// <summary>Who may use VS Code on which Runner: what the editor ticket and cookie carry (protected).</summary>
-internal sealed record EditorPass(Guid UserId, string SecurityStamp, Guid RunnerId)
+internal sealed record EditorPass(Guid UserId, string SecurityStamp, Guid RunnerId, Guid SessionId)
 {
-    public string Format() => $"{UserId:N}.{RunnerId:N}.{SecurityStamp}";
+    public string Format() => $"{UserId:N}.{RunnerId:N}.{SessionId:N}.{SecurityStamp}";
 
     public static EditorPass? Parse(string? value) =>
-        value?.Split('.', 3) is [var user, var runner, var stamp] && Guid.TryParseExact(user, "N", out var userId) && Guid.TryParseExact(runner, "N", out var runnerId)
-            ? new EditorPass(userId, stamp, runnerId)
+        value?.Split('.', 4) is [var user, var runner, var session, var stamp] && Guid.TryParseExact(user, "N", out var userId) && Guid.TryParseExact(runner, "N", out var runnerId) && Guid.TryParseExact(session, "N", out var sessionId)
+            ? new EditorPass(userId, stamp, runnerId, sessionId)
             : null;
 }

@@ -73,7 +73,7 @@ public sealed class ProxmoxUsageTests
         await using var manager = new SamplingManager();
         var client = manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         var ct = TestContext.Current.CancellationToken;
-        using var login = await client.PostAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string>
+        using var login = await client.PostAccountAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["username"] = "admin", ["password"] = "usage-test-password", ["returnUrl"] = "/"
         }), ct);

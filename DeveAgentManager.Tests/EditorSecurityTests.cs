@@ -121,6 +121,9 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
                 query = context.Request.QueryString.Value,
                 host = context.Request.Headers.Host.ToString(),
                 cookie = context.Request.Headers.Cookie.ToString(),
+                authorization = context.Request.Headers.Authorization.ToString(),
+                proxyAuthorization = context.Request.Headers["Proxy-Authorization"].ToString(),
+                identity = context.Request.Headers["X-Auth-Request-User"].ToString(),
             });
         });
         await _codeServer.StartAsync();
@@ -156,7 +159,7 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
 
     private async Task<string> ManagerCookieAsync()
     {
-        var response = await Client().PostAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = Password }));
+        var response = await Client().PostAccountAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = Password }));
         return string.Join("; ", response.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0]));
     }
 
@@ -171,7 +174,7 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
         Assert.Equal(EditorPort, auth.Port);
         Assert.Equal($"/runners/{_runnerId}/auth", auth.AbsolutePath);
 
-        var signIn = await Client(EditorPort).GetAsync(auth.PathAndQuery);
+        var signIn = await Client(EditorPort).ExchangeEditorAsync(auth);
         Assert.Equal(HttpStatusCode.Redirect, signIn.StatusCode);
         Assert.Equal($"/runners/{_runnerId}/code/?folder=%2Fhome%2Ftest", signIn.Headers.Location?.ToString());
         var cookie = signIn.Headers.GetValues("Set-Cookie").Single();
@@ -212,7 +215,7 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
     public async Task Editor_WithoutItsCookie_OrWithABadTicket_IsRefused()
     {
         Assert.Equal(HttpStatusCode.Unauthorized, (await Client(EditorPort).GetAsync($"/runners/{_runnerId}/code/")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await Client(EditorPort).GetAsync($"/runners/{_runnerId}/auth?ticket=made-up")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Client(EditorPort).ExchangeEditorAsync(new Uri($"http://localhost:{EditorPort}/runners/{_runnerId}/auth#ticket=made-up"))).StatusCode);
 
         // The Manager's own login cookie is not an editor cookie.
         var client = Client(EditorPort);
@@ -226,8 +229,8 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
         var portal = Client();
         portal.DefaultRequestHeaders.Add("Cookie", await ManagerCookieAsync());
         var auth = (await portal.GetAsync($"/editor/runners/{_runnerId}")).Headers.Location!;
-        var otherRunner = auth.PathAndQuery.Replace(_runnerId.ToString(), Guid.NewGuid().ToString());
-        Assert.Equal(HttpStatusCode.Forbidden, (await Client(EditorPort).GetAsync(otherRunner)).StatusCode);
+        var otherRunner = new Uri(auth.ToString().Replace(_runnerId.ToString(), Guid.NewGuid().ToString()));
+        Assert.Equal(HttpStatusCode.Forbidden, (await Client(EditorPort).ExchangeEditorAsync(otherRunner)).StatusCode);
     }
 
     [Fact]
@@ -239,6 +242,9 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
         // A browser sends every cookie of the host, whatever the port.
         client.DefaultRequestHeaders.Add("Cookie", $"{managerCookie}; {editorCookie}");
 
+        client.DefaultRequestHeaders.Add("Authorization", "Basic browser-secret");
+        client.DefaultRequestHeaders.Add("Proxy-Authorization", "Basic proxy-secret");
+        client.DefaultRequestHeaders.Add("X-Auth-Request-User", "admin");
         var response = await client.GetAsync($"/runners/{_runnerId}/code/static/app.js?v=1");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var upstream = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
@@ -246,6 +252,9 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
         Assert.Equal("?v=1", upstream.GetProperty("query").GetString());
         Assert.Equal("code-server-session=runner-session", upstream.GetProperty("cookie").GetString());
         Assert.Equal("localhost", upstream.GetProperty("host").GetString());
+        Assert.Equal("", upstream.GetProperty("authorization").GetString());
+        Assert.Equal("", upstream.GetProperty("proxyAuthorization").GetString());
+        Assert.Equal("", upstream.GetProperty("identity").GetString());
         Assert.False(response.Headers.Contains("Set-Cookie"));
         Assert.False(response.Headers.Contains("Clear-Site-Data"));
         Assert.Equal($"/runners/{_runnerId}/code/", response.Headers.GetValues("Service-Worker-Allowed").Single());
@@ -269,7 +278,25 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
     public async Task Portal_CannotBeFramedByOtherPages()
     {
         var response = await Client().GetAsync("/login");
-        Assert.Equal("frame-ancestors 'self'", response.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Contains("frame-ancestors 'self'", response.Headers.GetValues("Content-Security-Policy").Single());
+    }
+
+    [Fact]
+    public async Task EditorMutationsAndWebSocketsRejectOtherOrigins()
+    {
+        var cookie = await EditorCookieAsync(await ManagerCookieAsync());
+        var client = Client(EditorPort);
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        client.DefaultRequestHeaders.Add("Origin", "http://attacker.test");
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsync($"/runners/{_runnerId}/code/change", new StringContent("x"))).StatusCode);
+        var sockets = _manager.Server.CreateWebSocketClient();
+        sockets.ConfigureRequest = request =>
+        {
+            request.Headers[PortHeader] = EditorPort.ToString();
+            request.Headers.Cookie = cookie;
+            request.Headers.Origin = "http://attacker.test";
+        };
+        await Assert.ThrowsAnyAsync<Exception>(() => sockets.ConnectAsync(new Uri($"ws://localhost/runners/{_runnerId}/code/socket"), CancellationToken.None));
     }
 
     [Fact]
@@ -352,7 +379,7 @@ public sealed class EditorHostPerRunnerTests : IClassFixture<EditorHostPerRunner
         }
 
         var anonymous = _manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
-        var login = await anonymous.PostAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = Password }));
+        var login = await anonymous.PostAccountAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = Password }));
         var portal = _manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
         portal.DefaultRequestHeaders.Add("Cookie", string.Join("; ", login.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0])));
         var auth = (await portal.GetAsync($"/editor/runners/{id}")).Headers.Location!;
@@ -360,7 +387,7 @@ public sealed class EditorHostPerRunnerTests : IClassFixture<EditorHostPerRunner
 
         var editor = _manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
         var onItsHost = new HttpRequestMessage(HttpMethod.Get, auth);
-        Assert.Equal(HttpStatusCode.Redirect, (await editor.SendAsync(onItsHost)).StatusCode);
+        Assert.Equal(HttpStatusCode.Redirect, (await editor.ExchangeEditorAsync(auth)).StatusCode);
         var onAnotherRunnersHost = new HttpRequestMessage(HttpMethod.Get, new Uri(auth.ToString().Replace("alpha.code.test", "beta.code.test")));
         Assert.Equal(HttpStatusCode.NotFound, (await editor.SendAsync(onAnotherRunnersHost)).StatusCode);
     }

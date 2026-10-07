@@ -16,7 +16,7 @@ public sealed class ManagerOptions
 
     public string AdminPassword { get; init; } = DefaultAdminPassword;
 
-    public bool UsesDefaultAdminPassword => AdminPassword == DefaultAdminPassword;
+    public bool UsesDefaultAdminPassword => string.IsNullOrEmpty(AdminPassword) || AdminPassword == DefaultAdminPassword;
 
     /// <summary>
     /// RESET_ADMIN_PASSWORD=true: at start-up, <see cref="AdminUsername"/> gets all roles and <see cref="AdminPassword"/>
@@ -34,13 +34,18 @@ public sealed class ManagerOptions
     public int DefaultDiskGb { get; init; } = 64;
 
     /// <summary>
-    /// The Manager's second port, which only serves VS Code. VS Code runs code from the Runner (extensions, and anything
-    /// that took over code-server there), so it gets an origin of its own instead of running as the Portal.
+    /// Optional local editor-only port. Public deployments route separate Runner editor hostnames on the Portal port.
     /// </summary>
     public int EditorPort { get; init; } = 8081;
 
-    /// <summary>How browsers reach <see cref="EditorPort"/> when that isn't the Portal's host on that port (e.g. behind a proxy).</summary>
+    /// <summary>Public editor origin template; {runner} is the first hostname label, {host} comes from the public allowlist.</summary>
     public string? EditorUrl { get; init; }
+
+    public string[] PublicOrigins { get; init; } = [];
+    public string[] TrustedProxies { get; init; } = [];
+    public bool AllowLocalAccess { get; init; } = true;
+    public string[] ProxyIdentityHeaders { get; init; } = [];
+
 
     public string DatabasePath => Path.Combine(DataDirectory, "deveagentmanager.db");
 
@@ -73,8 +78,15 @@ public sealed class ManagerOptions
             DefaultDiskGb = Int(configuration, "RUNNER_DEFAULT_DISK_GB", 64),
             EditorPort = Int(configuration, "EDITOR_PORT", 8081),
             EditorUrl = Value(configuration, "EDITOR_URL")?.TrimEnd('/'),
+            PublicOrigins = List(configuration, "PUBLIC_ORIGINS"),
+            TrustedProxies = List(configuration, "TRUSTED_PROXIES"),
+            ProxyIdentityHeaders = List(configuration, "PROXY_IDENTITY_HEADERS"),
+            AllowLocalAccess = !string.Equals(Value(configuration, "ALLOW_LOCAL_ACCESS"), "false", StringComparison.OrdinalIgnoreCase),
         };
     }
+
+    private static string[] List(IConfiguration configuration, string key) =>
+        (Value(configuration, key) ?? "").Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
     private static string? Value(IConfiguration configuration, string key)
     {

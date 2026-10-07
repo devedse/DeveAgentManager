@@ -2,13 +2,13 @@
 @layout EmptyLayout
 @attribute [AllowAnonymous]
 @attribute [ExcludeFromInteractiveRouting]
-@inject DeveAgentManager.Core.Users.UserService Users
 
 <PageTitle>Sign in · DeveAgentManager</PageTitle>
 
 <div class="login-page">
     <div class="login-glow"></div>
     <form method="post" action="account/login" class="login-card">
+        <AntiforgeryToken />
         <div class="login-brand">
             <img src="favicon.svg" alt="" width="44" height="44" />
             <div>
@@ -24,24 +24,23 @@
 
         <input type="hidden" name="returnUrl" value="@ReturnUrl" />
         <label class="login-label" for="username">Username</label>
-        <input class="login-input" id="username" name="username" autocomplete="username" autocapitalize="none" value="@_defaultUser" required autofocus />
+        <input class="login-input" id="username" name="username" autocomplete="username" autocapitalize="none" required autofocus />
         <label class="login-label" for="password">Password</label>
         <input class="login-input" id="password" name="password" type="password" autocomplete="current-password" required />
+        <label class="login-label" for="code">Authenticator or recovery code (if enabled)</label>
+        <input class="login-input" id="code" name="code" autocomplete="one-time-code" />
         <label class="login-remember">
             <input type="checkbox" name="remember" checked />
             <span>Keep me signed in</span>
         </label>
         <button type="submit" class="login-button">Sign in</button>
 
-        @if (_defaultUser is not null)
-        {
-            <div class="login-hint">No ADMIN_PASSWORD is set: sign in as <code>@_defaultUser</code> with <code>@ManagerOptions.DefaultAdminPassword</code>, then choose your own password.</div>
-        }
+        <div class="login-note">On first start, use the setup code from the Manager's startup log as the initial password.</div>
     </form>
 </div>
 
 @code {
-    private string? _defaultUser;
+
 
     [SupplyParameterFromQuery(Name = "failed")]
     private string? FailedValue { get; set; }
@@ -51,5 +50,5 @@
 
     private bool Failed => FailedValue == "1";
 
-    protected override async Task OnInitializedAsync() => _defaultUser = await Users.DefaultPasswordUserAsync();
+
 }

@@ -40,13 +40,9 @@
                 <MudMenuItem Icon="@Icons.Material.Rounded.Settings" Href="settings">My settings</MudMenuItem>
                 @* The change-password page is the Manager's own (also used when a new password is required). *@
                 <MudMenuItem Icon="@Icons.Material.Rounded.Password" Href="@ChangePasswordUrl" ForceLoad="true">Change password</MudMenuItem>
-                @* A plain form: signing out clears the cookie on the server and goes to the login page. *@
-                <form method="post" action="account/logout" class="menu-form">
-                    <button type="submit" class="menu-form-button">
-                        <MudIcon Icon="@Icons.Material.Rounded.Logout" Size="Size.Small" />
-                        <span>Sign out</span>
-                    </button>
-                </form>
+                @* Server-rendered security pages supply antiforgery tokens and revoke sessions. *@
+                <MudMenuItem Icon="@Icons.Material.Rounded.Security" Href="/security" ForceLoad="true">Account security</MudMenuItem>
+                <a href="/logout" class="login-link">Sign out</a>
             </ChildContent>
         </MudMenu>
     </MudAppBar>

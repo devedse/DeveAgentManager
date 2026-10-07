@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#0d1017" />
     @* Light or dark before anything paints (My settings → Appearance; "system" follows the device). terminal.js keeps it up to date. *@
-    <script>
+    <script nonce="@HttpContext.Items[DeveAgentManager.Api.SecurityHeaders.NonceKey]">
         (function () {
             var mode = "system";
             try { mode = localStorage.getItem("dam-theme") || "system"; } catch (e) { }
@@ -22,7 +22,7 @@
     <link rel="stylesheet" href="@Assets["_content/MudBlazor/MudBlazor.min.css"]" />
     <link rel="stylesheet" href="@Assets["_content/XtermBlazor/XtermBlazor.min.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
-    <ImportMap />
+    <ImportMap nonce="@HttpContext.Items[DeveAgentManager.Api.SecurityHeaders.NonceKey]" />
     <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 

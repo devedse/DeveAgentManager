@@ -28,8 +28,6 @@ public sealed partial class UserService(
 {
     public const int MinPasswordLength = 8;
     public const int MaxPasswordLength = 256;
-    public const int MaxFailedSignIns = 5;
-    public static readonly TimeSpan LockoutTime = TimeSpan.FromMinutes(5);
 
     private readonly PasswordHasher<User> _hasher = new();
 
@@ -49,6 +47,7 @@ public sealed partial class UserService(
     /// <summary>Checks a username and password; null when they don't match or the user can't sign in now.</summary>
     public async Task<User?> SignInAsync(string username, string password, CancellationToken cancellationToken = default)
     {
+        if (username.Length > 64 || password.Length > MaxPasswordLength) return null;
         var name = username.Trim().ToLowerInvariant();
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var user = await db.Users.FirstOrDefaultAsync(u => u.Username == name, cancellationToken);
@@ -61,7 +60,7 @@ public sealed partial class UserService(
             return null;
         }
 
-        if (user.Disabled || user.LockedUntil > now)
+        if (user.Disabled)
         {
             _hasher.VerifyHashedPassword(user, user.PasswordHash, password);
             await audit.RecordAsync(null, AuditActions.SignInFailed, $"User {user.Username}", user.Disabled ? "The user is disabled" : "Locked after too many wrong passwords", cancellationToken);
@@ -71,18 +70,7 @@ public sealed partial class UserService(
         var result = _hasher.VerifyHashedPassword(user, user.PasswordHash, password);
         if (result == PasswordVerificationResult.Failed)
         {
-            user.FailedSignIns++;
-            var locked = user.FailedSignIns >= MaxFailedSignIns;
-            if (locked)
-            {
-                user.FailedSignIns = 0;
-                user.LockedUntil = now + LockoutTime;
-            }
-
-            await db.SaveChangesAsync(cancellationToken);
-            Invalidate(user.Id);
-            await audit.RecordAsync(null, locked ? AuditActions.SignInLocked : AuditActions.SignInFailed, $"User {user.Username}",
-                locked ? $"Locked for {LockoutTime.TotalMinutes:0} minutes after {MaxFailedSignIns} wrong passwords" : "Wrong password", cancellationToken);
+            await audit.RecordAsync(null, AuditActions.SignInFailed, $"User {user.Username}", "Wrong password", cancellationToken);
             return null;
         }
 
@@ -96,23 +84,8 @@ public sealed partial class UserService(
         user.LastSignInAt = now;
         await db.SaveChangesAsync(cancellationToken);
         Invalidate(user.Id);
-        await audit.RecordAsync(CurrentUser.From(user), AuditActions.SignedIn, $"User {user.Username}", cancellationToken: cancellationToken);
+
         return user;
-    }
-
-    /// <summary>
-    /// The first user's username while they still have the default password (no ADMIN_PASSWORD was set), for the hint on
-    /// the sign-in page; null otherwise.
-    /// </summary>
-    public async Task<string?> DefaultPasswordUserAsync(CancellationToken cancellationToken = default)
-    {
-        if (!options.UsesDefaultAdminPassword)
-        {
-            return null;
-        }
-
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.Users.Where(u => u.Id == User.BootstrapId && u.MustChangePassword && !u.Disabled).Select(u => u.Username).FirstOrDefaultAsync(cancellationToken);
     }
 
     public async Task<List<User>> ListAsync(CancellationToken cancellationToken = default)
@@ -328,11 +301,22 @@ public sealed partial class UserService(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var name = ValidUsername().IsMatch(options.AdminUsername.ToLowerInvariant()) ? options.AdminUsername.ToLowerInvariant() : "admin";
         var bootstrap = await db.Users.FirstOrDefaultAsync(u => u.Id == User.BootstrapId, cancellationToken);
+        if (bootstrap is { PasswordHash.Length: > 0, MustChangePassword: true }
+            && _hasher.VerifyHashedPassword(bootstrap, bootstrap.PasswordHash, ManagerOptions.DefaultAdminPassword) != PasswordVerificationResult.Failed)
+        {
+            var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
+            SetPassword(bootstrap, code, mustChange: true);
+            await db.SaveChangesAsync(cancellationToken);
+            logger.LogWarning("Replaced legacy default password. SETUP CODE for {User}: {Code}", bootstrap.Username, code);
+        }
         if (bootstrap is { PasswordHash.Length: 0 })
         {
             bootstrap.Username = name;
             bootstrap.DisplayName = options.AdminUsername;
-            SetPassword(bootstrap, options.AdminPassword, mustChange: options.UsesDefaultAdminPassword);
+            var initialPassword = options.UsesDefaultAdminPassword ? Convert.ToHexString(RandomNumberGenerator.GetBytes(24)) : options.AdminPassword;
+            SetPassword(bootstrap, initialPassword, mustChange: options.UsesDefaultAdminPassword);
+            if (options.UsesDefaultAdminPassword)
+                logger.LogWarning("FIRST-RUN SETUP CODE for {User}: {Code}. Use this as the initial password, then choose your own. This code is never shown in the UI.", name, initialPassword);
             await db.SaveChangesAsync(cancellationToken);
             logger.LogInformation("Created the first user, {User}, from ADMIN_USERNAME and ADMIN_PASSWORD", name);
         }
@@ -354,7 +338,13 @@ public sealed partial class UserService(
         admin.Disabled = false;
         admin.LockedUntil = null;
         admin.FailedSignIns = 0;
-        SetPassword(admin, options.AdminPassword, mustChange: options.UsesDefaultAdminPassword);
+        var resetPassword = options.UsesDefaultAdminPassword ? Convert.ToHexString(RandomNumberGenerator.GetBytes(24)) : options.AdminPassword;
+        SetPassword(admin, resetPassword, mustChange: true);
+        // Operator recovery explicitly removes the second factor and revokes existing credentials.
+        await db.UserSecondFactors.Where(f => f.UserId == admin.Id).ExecuteDeleteAsync(cancellationToken);
+        var enforcement = await db.Settings.FindAsync(["totp-enforcement"], cancellationToken);
+        if (enforcement is not null) enforcement.Value = "optional";
+        if (options.UsesDefaultAdminPassword) logger.LogWarning("ADMIN RECOVERY CODE for {User}: {Code}", name, resetPassword);
         await db.SaveChangesAsync(cancellationToken);
         Invalidate(admin.Id);
         await audit.RecordAsync(null, AuditActions.AdminPasswordReset, $"User {admin.Username}", "RESET_ADMIN_PASSWORD was set at start-up", cancellationToken);

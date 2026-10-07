@@ -4,7 +4,7 @@
 # 3. The image is private (like the repo): log in once with a GitHub token that has read:packages:
 #      echo <token> | docker login ghcr.io -u devedse --password-stdin
 # 4. docker compose up -d, then open http://<this-host>:8080
-#    (8081 is VS Code in the browser: it needs a port of its own, see README.md.)
+#    First-start password: use the setup code from docker compose logs. See README.md for public HTTPS setup.
 services:
   deveagentmanager:
     image: ghcr.io/devedse/deveagentmanager:latest
@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080" # the Portal
-      - "8081:8081" # VS Code (EDITOR_PORT)
+      - "8081:8081" # Optional local editor port. Public Portal + editors both use 8080.
     volumes:
       # Database, encryption keys and the Manager's SSH key. Back this up.
       - deveagentmanager-data:/data
@@ -22,7 +22,7 @@ services:
       # The first user, with all roles. The password only counts at the very first start; afterwards everyone changes
       # theirs in the Portal. RESET_ADMIN_PASSWORD: "true" gives this user all roles and ADMIN_PASSWORD again (remove it after).
       ADMIN_USERNAME: admin
-      ADMIN_PASSWORD: change-me # CHANGE ME
+      # ADMIN_PASSWORD: choose-a-strong-initial-password # optional; otherwise a random setup code is logged
       # RESET_ADMIN_PASSWORD: "true"
 
       # Proxmox API (token from README.md)
@@ -49,8 +49,12 @@ services:
       RUNNER_DEFAULT_MEMORY_MB: "8192"
       RUNNER_DEFAULT_DISK_GB: "64"
 
-      # VS Code is served on its own port. Behind a reverse proxy, set where browsers reach that port:
-      # EDITOR_URL: https://code.example.com
+      # Public HTTPS setup (configure once; one wildcard NPM host per editor domain covers EVERY Runner).
+      # PUBLIC_ORIGINS: https://dam.example.com;https://dam.example.net
+      # EDITOR_URL: https://{runner}.code.{host}
+      # TRUSTED_PROXIES: 192.168.1.20 # actual NPM socket address, NOT every private network
+      # ALLOW_LOCAL_ACCESS: "true" # direct LAN IP HTTP keeps separate local cookies; proxy traffic cannot use it
+      # PROXY_IDENTITY_HEADERS: X-Custom-Authenticated-User # extra identity headers to strip at editor proxy
 
       # Each person's git identity, GitHub token, environment variables and SSH keys are set in the Portal (My settings).
 

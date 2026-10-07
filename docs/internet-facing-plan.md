@@ -1,257 +1,224 @@
-# Internet-facing deployment — plan
+# Internet-facing deployment — implementation and validation
 
-Status: **implementation started** on `feature/internet-facing`; not yet ready for public deployment.
-Last updated 2026-10-07. Implementation delegated to Sol 6.1 with Medium reasoning.
+Updated 2026-10-07. Branch: `feature/internet-facing`. PR: https://github.com/devedse/DeveAgentManager/pull/3.
 
-Today the Manager is meant for a LAN, a VPN, or behind a reverse proxy with its own login. This plan makes it safe to
-expose directly: HTTPS through a plain reverse proxy, no extra login in front. A Portal login is effectively a shell
-on every Runner it can reach (agents and shells have sudo), so a stolen or guessed password costs a lot.
+The user authorized the complete implementation on this branch. Public HTTPS terminates at a plain reverse proxy,
+with **no Basic authentication or other proxy login**. DAM performs authentication and resource authorization.
+Local direct IP HTTP access remains convenient, with explicitly reduced editor isolation. The shared Runner Linux
+account remains a trust boundary: Runner members and agents can read files and use sudo on that Runner. A Portal
+account is therefore powerful; browser origin separation does not isolate Linux processes on a shared Runner.
 
-Deployment preferences confirmed during review: local access by IP should stay simple, including HTTP without
-public certificates or wildcard DNS. The user accepts reduced isolation for that local workflow. This does not
-request removing the Portal login locally. The final public setup uses Nginx Proxy Manager for HTTPS and routing,
-with **no Basic authentication or other extra login at the proxy**. Public traffic must not inherit local exceptions
-merely because it arrives from the proxy's private IP or supplies a private Host/forwarded header.
+## Status
 
-| Part | Status |
+| Part | Implementation | Validation |
+|---|---|---|
+| Explicit public origins and trusted proxy peers | Implemented | Host, forwarded scheme/IP and local-exception regression tests |
+| Same backend port with separate Runner editor hosts | Implemented | Host/Runner mismatch, two users/two Runners, alternate-origin ticket tests |
+| Single-use session-bound editor tickets | Implemented | Concurrent exchange, expiry, logout; fragments exclude tickets from request logs |
+| Credential stripping at Runner proxy | Implemented | Fake upstream sees only code-server's cookie; incoming authentication headers removed |
+| Account antiforgery and Origin checks | Implemented | Missing/null, foreign and same-site editor Origin rejected; real browser form checks |
+| Public cookies and CSP | Implemented | Production published app booted in Chromium behind an isolated HTTPS proxy |
+| Durable sign-in sessions and live revocation | Implemented | Copied cookie rejected after logout; connection revocation and expiry tests |
+| TOTP, recovery, enforcement and recent authentication | Implemented | RFC vector, concurrent replay/recovery tests; enrollment safeguards |
+| Bounded login throttles | Implemented | Concurrency/account regression tests; existing sessions unaffected |
+| First-run setup and operator recovery | Implemented | Existing user/access tests; startup code replaces known default, chosen passwords preserved |
+| Dependency failure policy | Implemented | NuGet restore and locked npm audits passed locally; container CI scan configured |
+| Isolated browser attack checks | Implemented and run | Hostile editor cannot read Portal, log it out or plant its auth cookie |
+| Anonymous/authenticated ZAP baseline | Script and CI configured | Not run locally: Docker and Java/ZAP unavailable |
+
+This table records implementation evidence, **not certification of a live public deployment**. Real NPM/DNS,
+certificates and Runner code-server instances have not been changed or exercised by this work. CI and external scans
+must be assessed separately; passive scans are never proof of authorization. Current test counts and results belong
+in the PR description; don't infer them from the table or an image build number.
+
+## 1. Public and local deployment boundaries
+
+Server settings are shown under **Account menu → Account security** for user managers and configured in compose:
+
+| Setting | Example / default |
 |---|---|
-| Phase 1: fix what is unsafe when exposed (section 3) | In progress; host/proxy boundaries and sessions underpin editor routing |
-| Phase 2: second factor and sessions (section 4) | In scope; implementation defaults below |
-| Phase 3: review and checks (section 6) | In scope; tests accompany each change |
-| Reverse proxy guidance for nginx proxy manager (section 5) | Written; verify against implementation |
+| `PUBLIC_ORIGINS` | `https://dam.devedse.click;https://dam.devedse.duckdns.org` |
+| `EDITOR_URL` | `https://{runner}.code.{host}` |
+| `TRUSTED_PROXIES` | Exact NPM socket IPs separated by semicolons; empty trusts nobody |
+| `ALLOW_LOCAL_ACCESS` | `true` |
+| `PROXY_IDENTITY_HEADERS` | Additional header names separated by semicolons |
+| `EDITOR_PORT` | `8081`, optional for direct local access |
 
-### Implementation scope and defaults
+Public origins must be HTTPS hostnames with no path, credentials, query or fragment. Public configuration requires
+`{runner}` in the editor template and a different editor hostname. `{host}` is derived exclusively from an allowed
+Portal origin; request-supplied or forwarded hostnames never become arbitrary ticket destinations.
 
-The user requested implementation of the complete plan, including the security review corrections and wildcard NPM
-setup. The following are implementation defaults chosen to make that request concrete, not prior user choices:
+Only explicit proxy peers may supply forwarded client IP and scheme, with one forwarding hop. `X-Forwarded-Host` is
+ignored; NPM preserves the requested Host. Unknown public origins receive 421. Unknown Runner editor hosts receive
+404; editor hosts serve only editor endpoints, never the Portal, API, login page or hub. The Runner ID in an editor
+URL must match its hostname. Host routing works on port 8080, including WebSocket upgrades.
 
-- Implement the reviewed public origin allowlist, explicit trusted proxies, antiforgery/cookie protections and
-  server-side session revocation in phase 1. Treat later references to these as review proposals as historical
-  context and update each section as implemented. Keep local IP access convenient without allowing public requests
-  to activate local exceptions.
-- Start with authenticator-app TOTP plus single-use recovery codes. Make enforcement configurable by a user manager
-  for everyone or users with roles; enrollment must happen before enforcement locks anyone out. Do not add an
-  external identity provider or passkey implementation in this PR.
-- Use seven days of sliding inactivity and a thirty-day absolute maximum for remembered sessions initially, subject
-  to validation and clear UI documentation. Tie editor access and live connections to the same revocable session.
-- Require recent authentication for the sensitive actions listed in section 4. Choose bounded, documented login
-  throttling defaults and operator recovery. Keep existing sessions usable during failed-login attacks.
-- Implement automated dependency checks and targeted security regression tests; run the available browser and ZAP
-  checks against an isolated test instance. Record any unavailable external validation honestly, without claiming
-  the public deployment is verified merely because compilation or unit tests pass.
-- Keep this document, README, compose example and PR description aligned with actual behavior. Existing deployment
-  credentials and the user's live NPM/DNS configuration are not to be modified by this work.
+A direct private/loopback client using a private/loopback IP Host (or the explicit local editor template on its editor
+port) can use local mode. Trusted proxy connections and any requests carrying forwarding headers cannot activate it,
+even if the proxy or forwarded Host is private. This retains the local workflow without letting public proxy traffic
+become local by spoofing headers. Public and local authentication use distinct cookie schemes and sessions record
+which boundary issued them. Public requests cannot use local credentials.
 
-## 1. What is already in place
+Keep backend ports off the internet and trust only intended proxy peers. A Runner or unrelated private container must
+not belong to the proxy trust list. NPM must overwrite forwarded headers and supply the actual client IP and scheme.
 
-- Every page, API call, live update and terminal needs a sign-in (fallback policy). Only the sign-in page, static
-  files and `/health` are anonymous.
-- Passwords are hashed (ASP.NET Core Identity). Changing a password or disabling a user signs them out everywhere
-  (security stamp), including open terminals and VS Code.
-- Every API endpoint declares who may call it; a test checks this against the full route table. Other people's things
-  answer 404.
-- Changes through the API need the Portal's header and the same origin; terminal and live-update sockets refuse other
-  origins. The Portal can't be framed by other sites.
-- Secrets are encrypted at rest. Harness credentials and GitHub tokens are not returned by settings APIs; Runner
-  passwords are deliberately available through the password-reveal endpoint to authorized Runner managers.
-- **VS Code** runs on an origin of its own (section 2), and access to it is checked like the Portal's:
-  - The Portal's VS Code link (`/editor/runners/{id}`, or `/editor/agents/{id}` with read-write access to the agent)
-    needs the Portal sign-in and **Use access to that Runner**, and only answers the Portal's own pages
-    (`Sec-Fetch-Site`), so other sites and VS Code pages can't get tickets.
-  - It sends the browser to the VS Code host with a ticket for one user and one Runner: encrypted and signed by the
-    Manager, with the user's security stamp, valid for 2 minutes.
-  - The ticket becomes a cookie for that one Runner (and, with `{runner}` in `EDITOR_URL`, only on that Runner's own
-    hostname).
-  - **Every request** checks again: the right Runner, the user exists and is enabled, the security stamp is unchanged,
-    and they still have Use access now. Open VS Code connections close as soon as that ends.
-  - The Portal's cookie is removed before anything goes to the Runner; code-server's own password stays in the
-    Manager; cookies code-server sets never reach the browser.
-  - VS Code needs **Runner** access: it has a terminal, so it is a shell on the Runner. Read-write access to a shared
-    agent alone isn't enough.
-  - Tickets are only issued to a signed-in Portal session, so a second factor (phase 2) covers VS Code automatically.
+## 2. Why editors keep separate origins
 
-## 2. Why VS Code needs a hostname of its own
+Browsers isolate origins (scheme + hostname + port), not paths. A script served by a Runner on the Portal origin could
+call Portal APIs, read responses and perform actions as whoever opened it. Runner content can be modified by members,
+agents, extensions or compromised dependencies. An HttpOnly cookie cannot be read, but the browser still sends it.
+Cookie Path and CSP are not substitutes for origin separation. **Public VS Code never runs on a Portal path.**
 
-Browsers isolate **origins** (scheme + host + port), not paths. Every script on an origin can call that origin's API
-with the user's cookies (an HttpOnly cookie can't be read, but it is sent), set any header, read the answers, and reach
-into other pages of that origin, including the Portal page that embeds VS Code. A cookie's `Path` is no security
-boundary (RFC 6265, section 8.5).
+Each Runner therefore has its own editor hostname, e.g. `runner-01.code.dam.devedse.click`. A compromised Runner cannot
+read the Portal or another Runner's editor responses. Same site is not same origin: sibling subdomains can still
+trigger requests with cookies, so API mutations require the Portal header and matching Origin, sockets check Origin,
+account forms require antiforgery tokens and strict Origin, and editor links require same-origin/direct navigation
+Fetch Metadata. Public requests without the expected Fetch Metadata do not receive tickets.
 
-What VS Code runs in the browser comes from the Runner: code-server is a program there, and whoever can write to the
-Runner decides what it serves: everyone with access (one shared Linux account), every agent (with sudo, and possibly
-prompt-injected by a repository it cloned), extensions with webviews, packages with install scripts.
+Direct local IP access can use a separate editor port. Cookies do not isolate ports, and a shared editor origin does
+not isolate multiple Runners; these are the reduced local protections the user explicitly accepted. Local mode still
+requires sign-in and Runner authorization.
 
-- **On a path of the Portal's host** (`/vscode/...`) such a script would run as the Portal: list Runners, read their
-  passwords, create and share agents and, for an admin, create users or reset passwords, all as the user who opened
-  VS Code and looking legitimate in the audit log. A Content-Security-Policy can't prevent it: the script arrives in
-  VS Code's own responses. One compromised Runner would compromise the Portal account of everyone who opens VS Code
-  there. **Never on a path.**
-- **On another hostname** the same script can't read Portal responses (no CORS), can't send the Portal's custom header
-  (the preflight is refused), has the wrong Origin for the API and sockets, can't touch the Portal's page, and its own
-  requests don't carry the Portal's cookie. The damage stays on that Runner.
-- **Same site is not same origin.** `code.dam.devedse.click` is the same *site* as `dam.devedse.click`, so the browser
-  does send the Portal's `SameSite=Lax` cookie with requests a VS Code page makes to the Portal. That is why the API
-  also needs its header and Origin, the VS Code links check `Sec-Fetch-Site`, and the account forms need the origin
-  check (phase 1).
-- **One hostname per Runner** (`{runner}`): on one shared VS Code host, Runner 1's compromised VS Code could make
-  requests to `/runners/{runner 2}/code/...`, and the browser would attach Runner 2's cookie (a terminal there). Only
-  separate hostnames keep Runners apart in the browser.
+## 3. Editor authentication and credentials
 
-## 3. Phase 1 — fix what is unsafe when exposed
+Opening VS Code requires a usable Portal sign-in and **Use access to the Runner**. Opening it from an agent also
+requires read-write agent access; sharing an agent alone does not grant a Runner shell.
 
-The implementation order and the proposals marked below are under review; they have not been implemented.
+Tickets are random, durable, single-use and valid for 30 seconds. Each is bound to a Runner, exact destination origin
+and revocable Portal sign-in session. An atomic database delete permits precisely one exchange, including concurrent
+requests. The ticket travels in the redirect URL **fragment**, not the query string: fragments never reach reverse
+proxy or application access logs. An external bootstrap script clears the fragment before exchanging it through a
+same-origin POST. The body is not logged. Editor mutations and WebSockets independently reject foreign Origins. Failed or expired links ask the user to open VS Code from the Portal again.
 
-1. **VS Code by hostname.**
-   - Serve VS Code on the Portal's port, chosen by hostname. **Review proposal:** configure the public Portal origins
-     explicitly, derive editor hosts only from them, and reject unknown hosts. Never fall through from an unknown
-     editor host to the Portal. Retain an explicitly separated local IP access path. Port 8081 becomes optional
-     (kept for local setups without a hostname of their own). The
-     Portal's cookie isn't even sent to another hostname, unlike another port of the same host today.
-   - Allow `{host}` in `EDITOR_URL` (the Portal's host the browser used), so a Portal reachable on two hostnames gets
-     the matching VS Code host for each, e.g. `https://{runner}.code.{host}`.
-   - **Review proposal:** require `{runner}` in public mode; a warning alone does not isolate Runner origins.
-   - **Single-use tickets**, valid about 30 seconds: consume atomically, bind to the intended editor origin and
-     sign-in session, and prevent tickets appearing in proxy/application access logs. A short expiry still allows
-     someone who sees an unused ticket to race the real browser.
-   - **Accepted:** strip incoming `Authorization`, `Proxy-Authorization` and configured proxy identity headers before
-     forwarding to a Runner, as well as browser cookies. Supply only the Manager's code-server credential. No proxy
-     Basic authentication is planned, but credential isolation should also hold when it is temporarily enabled.
-     Test this without breaking code-server's normal authentication and WebSockets.
-2. **Trusted proxies.** `X-Forwarded-For/Proto/Host` are accepted from any client today, so exposed directly a client
-   can fake its IP address (defeating per-IP limits and the audit log) and the scheme/host the Manager thinks it is on.
-   **Review proposal:** trust explicitly configured proxy addresses or narrowly controlled proxy networks, rather
-   than all private networks. Local convenience must not let a Runner or unrelated container forge proxy headers.
-   Keep public traffic on the HTTPS proxy; backend ports remain accessible only through intended LAN/proxy routes.
-3. **Same-origin check on the account forms.** Sign-in, sign-out and change-password are plain form posts without the
-   origin check the API has: another site, or a VS Code page (same site), can sign a visitor in as the attacker (login
-   CSRF) or sign them out. **Review proposal:** use framework antiforgery tokens plus Origin validation; define
-   handling of absent and `null` Origins instead of copying the API helper, which currently accepts missing Origin.
-   Tests must include same-site editor subdomains, not just unrelated attacker sites.
-4. **Password guessing.**
-   - Coordinate limits per client IP, account and overall (ASP.NET Core rate limiting), with concurrency limits
-     before password hashing and bounded limiter storage. Parallel requests must not bypass the limits.
-   - Replace the blanket growing-delay proposal with a bounded policy tested for guessing and deliberate denial of
-     sign-in. A growing delay can still lock out the account owner. Keep existing signed-in sessions usable and
-     provide an operator recovery path; exact thresholds remain to be chosen and tested.
-   - Record the client IP with failed and successful sign-ins in the audit log.
-5. **Security headers.** HSTS over HTTPS; `X-Content-Type-Options: nosniff`; `Referrer-Policy: same-origin`;
-   `Permissions-Policy` (no camera, microphone, geolocation); a Content-Security-Policy that fits the Blazor
-   WebAssembly app and xterm (`script-src 'self' 'wasm-unsafe-eval'`, no inline scripts, `connect-src 'self'`,
-   `frame-src` limited to the VS Code hosts). The sign-in cookie becomes `Secure` over HTTPS.
-   **Review proposal:** public authentication cookies use `__Host-`, `Secure`, `HttpOnly`, `Path=/` and no Domain,
-   preventing an editor subdomain from planting a parent-domain cookie with the same name. Separate per-Runner
-   hosts allow the editor cookie to use `Path=/`. Local HTTP uses distinct cookies that public endpoints do not
-   accept. Validate CSP against the actual app (including inline boot code/import maps), not only a header test.
-6. **First start.** Without `ADMIN_PASSWORD`, the sign-in page shows the default password and whoever arrives first gets
-   in. Instead, print a one-time setup code to the container log; the first sign-in needs it. The hint on the sign-in
-   page goes away.
-7. **Error responses.** No stack traces or internal details for anonymous visitors in Production (the developer
-   exception page is only on in Development; check the problem-details output).
+Public editor cookies use `__Host-DAM.Editor`, Secure, HttpOnly, SameSite=Lax and Path=/ with no Domain. Every request
+checks the session, user/security stamp, Runner identity and current Use access. Cookie lifetime cannot override a
+revoked or expired sign-in session. Logout ends Portal and editor access without asking for another password merely
+to open VS Code. Agents keep running.
 
-## 4. Phase 2 — second factor and sessions (decisions needed)
+The proxy removes browser cookies, Authorization, Proxy-Authorization, forwarded headers, common authentication/
+identity headers and configured extra identity headers. Only DAM's own code-server session cookie is injected.
+Runner Set-Cookie and Clear-Site-Data never reach the browser; service workers are limited to that editor path.
+No proxy Basic auth is planned, but incoming credentials remain isolated if an operator temporarily enables it.
 
-- **Second factor.** Options:
-  - Authenticator-app codes (TOTP) with recovery codes: built in, works everywhere. **Suggested first.**
-  - Passkeys (WebAuthn): phishing-resistant; more code and browser quirks.
-  - Sign-in through an external identity provider (OIDC: Authentik, Keycloak, Google): best when one already exists.
+## 4. Account forms, sessions and second factor
 
-  Also decide whether user managers can require it for everyone, or for users with roles.
-- **Sign-in sessions, kept by the Manager.** Today a sign-in cookie is self-contained: signing out only deletes it
-  from that browser. A copy of it (or a VS Code cookie, up to 12 hours) keeps working after signing out, unless the
-  password changes. With sessions:
-  - signing out ends that session on the server: its Portal cookie and its VS Code cookies stop working;
-  - a list of your signed-in devices (browser, IP, last seen) that you can sign out;
-  - "remember me" shorter than the current 30 days (suggested: 7 days sliding).
-  **Review proposal:** move the underlying revocable-session support to phase 1, independent of choosing a second
-  factor. Portal cookies, editor tickets and editor cookies refer to the same server-side session. Logout, session
-  revocation and expiry close existing editor/terminal connections too. Define an absolute lifetime as well as idle
-  or sliding expiry. Device-list UI can follow later. This adds no extra sign-in when opening VS Code.
-- **Asking again before sensitive actions** (password or code): viewing or setting a Runner password, changing roles,
-  resetting someone's password, deleting a user.
+Login, logout, password-change and account-security forms include ASP.NET antiforgery tokens. Missing, null,
+malformed, foreign and same-site editor Origins are rejected. Logout uses a server-rendered confirmation form so the
+WebAssembly client does not invent or bypass antiforgery tokens. Public Portal cookies use `__Host-DAM.Auth`, Secure,
+HttpOnly, SameSite=Lax, Path=/ and no Domain. Browser rules prevent editor subdomains planting these cookie names for
+the parent domain. Local HTTP credentials have different names and scheme protection.
 
-## 5. Reverse proxy: nginx proxy manager
+Sign-in sessions are stored by the Manager. Remembered sessions have **seven days of inactivity** and a **thirty-day
+absolute maximum**; non-remembered cookies are discarded at browser shutdown. Session activity is touched at most once
+per minute. A user has at most twenty retained active sessions. The device list shows browser, client IP and last
+activity and supports revocation. Logout and explicit revocation close registered live connections; expiry and other
+changes are checked periodically every fifteen seconds as well as per HTTP request. User security-stamp changes end
+old credentials. Revocation never stops the agent process on a Runner.
 
-For `dam.devedse.click` and `dam.devedse.duckdns.org`. HTTPS stays in the proxy; HTTPS inside the Manager is not
-planned.
+TOTP uses RFC 6238 SHA1, six digits, thirty-second intervals and one interval of clock skew. Secrets are encrypted at
+rest. Enrollment requires recent authentication and a valid first code. Ten random recovery codes are shown once in a
+POST response, hashed at rest and atomically consumed. TOTP counters are atomically advanced to prevent concurrent
+replay. Enabling or disabling an authenticator revokes other sessions; disabling requires a current code and cannot
+violate enforcement.
 
-**Portal proxy host** (both domain names on one proxy host is fine):
+A user manager can choose optional, users-with-roles or everyone enforcement. Activation is refused until all affected
+enabled users have enrolled. New affected users must change their initial password, then enroll before accessing the
+Portal. Enrollment/recovery pages and static assets remain available during this flow. There is no passkey or external
+identity-provider implementation in this PR.
 
-- Scheme `http`, forward to the Manager host, port `8080`.
-- **Websockets Support: on.** Terminals, live updates and VS Code use WebSockets; without it they keep reconnecting.
-- **Cache Assets: off.** The Manager sets its own cache headers; nginx caching can serve an old app after an update.
-- Block Common Exploits: can stay on.
-- SSL: Let's Encrypt certificate, Force SSL, HTTP/2, HSTS on. "HSTS Subdomains" also covers the VS Code hosts below,
-  which is fine as long as they are all HTTPS.
-- Nothing needed under Advanced: nginx proxy manager already sends `Host`, `X-Forwarded-For` and `X-Forwarded-Proto`,
-  allows large uploads (session imports) and keeps WebSockets open (the Manager pings every 15–30 seconds).
-- Keep the access list (extra login) until phases 1 and 2 are done.
-  The final deployment intentionally removes this extra login; DAM enforces authentication itself.
+Viewing/changing a Runner password and mutating users (including roles, resets and deletion) require authentication
+within ten minutes. **Account security → Confirm identity** checks the password and, when enrolled, a current
+TOTP/recovery code. Account-security changes also require this recent confirmation. A refusal explains where to
+confirm; return to the action afterward.
 
-**VS Code proxy host**, with a wildcard name so each Runner gets its own host (section 2):
+## 5. Guessing protection, first start and recovery
 
-- **One wildcard NPM entry covers every Runner. Never require an NPM entry per Runner.** Configure the wildcard
-  DNS record, certificate and proxy host once for each public domain used for editors. New Runners automatically get
-  their own editor hostname through the same wildcard; they require no NPM, DNS or certificate changes.
-- Example for the `.click` domain:
+Login and identity confirmation share fixed five-minute windows: **20 attempts/account, 30/IP, 200 globally**, with at
+most **four concurrent password checks** and at most **4096 limiter entries**. Counters are coordinated under one
+lock, expired entries are removed and exceeding limits returns 429 rather than sleeping. These are per Manager
+process; scaling to multiple active instances would need a shared limiter and coordinated session event delivery.
+This deployment uses a single Manager. Existing sessions continue working during guessing attacks. There is no fixed
+account lockout or promise that distributed attackers cannot interfere with legitimate new sign-ins. Success and
+failure are audited with the client IP; failed password checks also retain the existing user-service audit details.
 
-  | Configure once | Value |
-  |---|---|
-  | Wildcard DNS record | `*.code.dam.devedse.click` pointing to the public address of NPM |
-  | NPM proxy host domain | `*.code.dam.devedse.click` |
-  | Forward destination | Manager's address, using HTTP |
-  | Forward port | `8081` today; `8080` after hostname routing is implemented |
-  | WebSockets / asset caching | On / off |
-  | Certificate coverage | `*.code.dam.devedse.click`, obtained with a DNS challenge |
+On first start without ADMIN_PASSWORD, a random setup code is printed in the operator's startup log and used as the
+initial password; the UI never reveals it. It must be replaced after sign-in. Existing chosen passwords are never
+reset at normal startup. A legacy bootstrap account still using known `change-me` with mandatory password change gets
+a fresh logged setup code instead. ADMIN_USERNAME/ADMIN_PASSWORD otherwise apply only to initial setup.
 
-  `runner-01.code.dam.devedse.click`, `runner-02.code.dam.devedse.click` and future Runner names all use this
-  single entry. NPM preserves the requested hostname. DAM matches it to the Runner, validates the signed-in user's
-  access, and rejects unknown names or a Runner ID in the URL that does not match the hostname. Routing to DAM is
-  not permission to open VS Code. Each hostname remains a distinct browser origin despite sharing one proxy entry.
-  The wildcard certificate covers these Runner names, not deeper nested subdomains or the bare `code.dam` host.
-- Domain `*.code.dam.devedse.click` (and/or `*.code.dam.devedse.duckdns.org`), forward to the Manager host: port
-  `8081` today, port `8080` once VS Code is served by hostname (phase 1). Websockets Support on, Cache Assets off.
-- A wildcard certificate needs a Let's Encrypt DNS challenge (nginx proxy manager supports DuckDNS and most DNS
-  providers). The name must resolve: DuckDNS resolves every name under `devedse.duckdns.org` already; for
-  `devedse.click` add a wildcard record `*.code.dam` pointing to the proxy.
-- Compose: `EDITOR_URL=https://{runner}.code.dam.devedse.click`. Until `{host}` exists (phase 1), choose one domain:
-  from the Portal on the other domain, VS Code still works through **Open in a new tab**. Embedded in the Portal, VS
-  Code only works when it is the same site as the Portal (`code.dam.devedse.click` with `dam.devedse.click` is).
-  Once VS Code is served by hostname, the `8081` port line can go from the compose file.
-- Without a wildcard: one host, e.g. `code.dam.devedse.click`, and `EDITOR_URL=https://code.dam.devedse.click`. It
-  works, but Runners opened in the same browser can reach each other's VS Code (section 2); not for internet-facing.
+Operator recovery is explicit: `RESET_ADMIN_PASSWORD=true` restores the named admin, resets its password (random
+logged recovery code if unspecified), removes its authenticator, relaxes enforcement to optional and requires password
+change. Old security stamps stop working. Remove the flag immediately after recovery, enroll again and restore the
+policy. Protect startup logs and `/data`. This recovery deliberately changes security settings only when an operator
+requests it; normal restarts do not reset existing accounts.
 
-**After phase 1 (review proposal):** configure NPM's actual connection address as a trusted proxy, and the two public
-Portal origins. The UI should explain these settings and help identify the proxy address, without automatically
-trusting headers from every private address. Verify normal pages, WebSockets, uploads and forwarded HTTPS/IP behavior
-on the installed NPM version. Local IP access remains available through the intended LAN path.
+## 6. Headers and production errors
 
-## 6. Phase 3 — review and checks
+The Portal sends HSTS for HTTPS, nosniff, same-origin Referrer-Policy, restrictive Permissions-Policy and CSP with
+self-only scripts/connections, wasm-unsafe-eval, per-response nonces for the theme boot script/import map, and editor
+frames derived from configured origins. Inline styles remain allowed for MudBlazor/xterm. The Portal cannot be framed
+by other origins. Image responses retain their stricter sandbox CSP. Editor responses keep their own policies and
+no-referrer; Portal CSP is not imposed on Runner content.
 
-- **Dependency check in CI (design pending):** explicitly fail on the chosen vulnerability severities, for example
-  with NuGet audit warnings promoted to errors; listing vulnerable packages alone is not a failure policy. Include
-  transitive dependencies and decide how audit-source failures are handled. Also cover bundled browser dependencies
-  and container packages; rebuilding an image alone does not prove they are patched.
-- **Automated scan:** an OWASP ZAP baseline scan against a test instance, signed in and not. Baseline scanning is
-  passive; supplement it with targeted authorization tests using two users, two Runners and a hostile editor page.
-- **Review** of everything that answers without a sign-in: the sign-in page and form, static files, `/health`, the VS
-  Code ticket and ping endpoints, WebSocket upgrades.
-- **Tests** for each phase-1 item: VS Code only on its matching hostname, the Portal never on a VS Code hostname,
-  tickets refused the second time and after their lifetime, forged forwarded headers from an untrusted address, form
-  posts from another origin, rate limits, headers present, setup code required.
+Production page errors show a generic message/request ID. Unexpected API failures return a generic problem, with
+details confined to operator logs; editor tunnel errors do not reveal internal exception messages.
 
-## 7. Decisions
+## 7. Nginx Proxy Manager: configure once
 
-- 2026-10-07 — HTTPS stays in the reverse proxy.
-- 2026-10-07 — VS Code keeps an origin of its own, never a path on the Portal's host; it can share the Portal's port,
-  chosen by hostname. Internet-facing setups use one hostname per Runner.
-- 2026-10-07 — VS Code needs Use access to the Runner (it is a shell there), not only access to an agent.
-- 2026-10-07 — Phase 1 starts with VS Code by hostname, since it changes the proxy setup.
-- 2026-10-07 — Review: preserve convenient local IP access; the user accepts local limitations. No proxy Basic auth
-  in the final public setup. Strip incoming proxy/browser authentication headers before forwarding to Runners.
-- 2026-10-07 — Review: coordinated guessing protection accepted; thresholds and recovery behavior still need design.
-  CI/scan improvements are under consideration. Origin allowlists, antiforgery/cookie hardening and moving revocable
-  sessions earlier are recommendations being explained, not yet settled configuration/UI decisions.
-- 2026-10-07 — One wildcard proxy setup per editor domain handles all Runners. Adding Runners must never require
-  individual NPM entries, DNS records or certificates. The user authorized a new branch and PR and delegated full
-  implementation to a Sol 6.1 agent with Medium reasoning.
-- Open: second factor (TOTP first?), requiring it, session lifetime, re-authentication for sensitive actions.
+For `dam.devedse.click` and `dam.devedse.duckdns.org`, HTTPS remains in NPM; internal TLS is not required.
+
+**Portal proxy host** (both names can share one entry): forward HTTP to Manager port **8080**, WebSockets on, asset
+caching off, Force SSL on, valid certificate, HSTS on. HSTS subdomains should only be enabled when those subdomains
+are served over HTTPS. Final configuration has no proxy access-list login. Preserve Host and supply forwarded HTTPS
+and real client IP; configure NPM's actual socket address in TRUSTED_PROXIES.
+
+**One wildcard editor entry per public editor domain, never an entry per Runner:**
+
+| Configure once | Example |
+|---|---|
+| Wildcard DNS | `*.code.dam.devedse.click` → public NPM address |
+| NPM proxy hostname | `*.code.dam.devedse.click` |
+| Destination | Manager's address, HTTP, port **8080** |
+| WebSockets / asset cache | On / off |
+| Certificate | `*.code.dam.devedse.click` via DNS challenge |
+| DAM editor template | `https://{runner}.code.{host}` |
+
+`runner-01.code.dam.devedse.click`, `runner-02.code.dam.devedse.click` and every future Runner use the same entry.
+Adding Runners needs no NPM, DNS or certificate changes. NPM routes; DAM checks identity and authorization. The wildcard
+certificate covers one Runner-label level, not deeper names or bare `code.dam.devedse.click`.
+
+Configure a second wildcard entry/certificate once if editors are wanted under the DuckDNS domain as well. Verify
+wildcard DNS/certificate support on the chosen provider; this implementation has not changed live DNS. Local optional
+8081 mappings can remain on intended LAN routes or be removed. Backend ports must not be publicly reachable.
+
+## 8. Checks and remaining external validation
+
+- Targeted HTTP tests: exact hosts, proxy spoofing, local/public separation, two users/two Runners, missing/null and
+  same-site Origins, atomic ticket replay, destination binding, session revocation/expiry, credential stripping,
+  TOTP vector/replay/recovery, bounded throttling and the full existing authorization regression suite.
+- Published production browser test: `tools/security-browser/check.mjs` boots an isolated Manager and HTTPS proxy,
+  loads Blazor under CSP, submits legitimate forms, checks hardened cookies and runs a hostile sibling-origin page.
+  The hostile page is an explicit fixture, not a claim that live code-server or every extension has been audited.
+- NuGet audit fails on high/critical transitive advisories and audit-source failures through Directory.Build.props.
+  npm lockfiles audit vendored addons and browser-test tooling; the addon bytes are verified against their packages.
+  Browser dependencies embedded inside upstream NuGet bundles depend on upstream inventory/advisories and still need
+  review. Container CI uses Trivy for high/critical OS/application advisories, including unfixed vulnerabilities.
+- `tools/security-browser/zap.sh` builds an isolated container and records anonymous/authenticated passive baseline
+  reports. Authentication cookies are in temporary test files, never command arguments or logs. Warnings are reported;
+  explicit scanner failures/errors fail CI. Passive scanning does not prove authorization or Runner isolation.
+- Docker and Java/ZAP are unavailable in the implementation environment. Container/scan jobs are configured but have
+  not been claimed as locally passed. Real NPM forwarding, wildcard certificates, production uploads/WebSockets,
+  code-server extensions and public DNS must be verified on the operator's deployment before removing external access
+  restrictions. No live deployment or master changes are authorized in this implementation worktree.
+
+## Decisions
+
+- Public HTTPS terminates at NPM; final proxy has no additional login.
+- Public editors have one hostname per Runner and share the Portal's backend port through hostname dispatch.
+- Each public editor domain uses one wildcard proxy/DNS/certificate setup for all Runners.
+- Runner Use access is mandatory for VS Code; an agent share alone cannot grant a shell.
+- Exact public origins and trusted proxy peers are explicit configuration; public requests cannot activate local mode.
+- Local direct IP HTTP remains supported with separate credentials and accepted reduced editor isolation.
+- Durable revocable sessions, TOTP/recovery, enrollment safeguards and recent authentication are in this PR.
+- Initial defaults: seven-day inactivity, thirty-day absolute session limit, ten-minute recent-authentication window;
+  bounded guessing thresholds as documented above. Passkeys/OIDC and multi-instance deployment are outside this scope.

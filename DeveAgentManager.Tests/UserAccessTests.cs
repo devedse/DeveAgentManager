@@ -187,7 +187,7 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/runners")).StatusCode);
         Assert.False((await client.GetFromJsonAsync<CurrentUserDto>("/api/me", ApiJson.Options))!.MustChangePassword);
 
-        var old = await Anonymous().PostAsync("/account/login", Form(("username", username), ("password", Password)));
+        var old = await Anonymous().PostAccountAsync("/account/login", Form(("username", username), ("password", Password)));
         Assert.Contains("failed=1", old.Headers.Location?.ToString());
     }
 
@@ -204,7 +204,7 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         await Users.ResetPasswordAsync(TestUsers.Admin, user.Id, "set-by-admin-1");
         Assert.Equal(HttpStatusCode.Unauthorized, (await second.GetAsync("/api/me")).StatusCode);
         await Users.UpdateAsync(TestUsers.Admin, user.Id, null, UserRoles.None, disabled: true);
-        Assert.Contains("failed=1", (await Anonymous().PostAsync("/account/login", Form(("username", username), ("password", "set-by-admin-1")))).Headers.Location?.ToString());
+        Assert.Contains("failed=1", (await Anonymous().PostAccountAsync("/account/login", Form(("username", username), ("password", "set-by-admin-1")))).Headers.Location?.ToString());
     }
 
     [Fact]
@@ -227,18 +227,18 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     }
 
     [Fact]
-    public async Task WrongPasswords_LockTheUserForAFewMinutes()
+    public async Task WrongPasswords_DoNotLockOutTheAccountOwner()
     {
         var username = NewUsername();
         await Users.CreateAsync(TestUsers.Admin, username, null, Password, UserRoles.None);
-        for (var i = 0; i < UserService.MaxFailedSignIns; i++)
+        for (var i = 0; i < 10; i++)
         {
             Assert.Null(await Users.SignInAsync(username, "wrong-password"));
         }
 
-        Assert.Null(await Users.SignInAsync(username, Password));
+        Assert.NotNull(await Users.SignInAsync(username, Password));
         var user = (await Users.ListAsync()).Single(u => u.Username == username);
-        Assert.True(user.LockedUntil > DateTime.UtcNow);
+        Assert.Null(user.LockedUntil);
         Assert.Null(await Users.SignInAsync("nobody-" + username, Password));
     }
 
@@ -364,7 +364,7 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     private async Task<HttpClient> SignInAsync(string username, string password, string returnUrl = "/")
     {
         var client = Anonymous();
-        var response = await client.PostAsync("/account/login", Form(("username", username), ("password", password), ("returnUrl", returnUrl)));
+        var response = await client.PostAccountAsync("/account/login", Form(("username", username), ("password", password), ("returnUrl", returnUrl)));
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.DoesNotContain("failed=1", response.Headers.Location?.ToString());
         client.DefaultRequestHeaders.Add(ApiHeaders.Request, "1");
@@ -373,7 +373,7 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     }
 
     private static Task<HttpResponseMessage> ChangePasswordAsync(HttpClient client, string current, string next) =>
-        client.PostAsync("/account/password", Form(("currentPassword", current), ("newPassword", next), ("confirmPassword", next), ("returnUrl", "/agents")));
+        client.PostAccountAsync("/account/password", Form(("currentPassword", current), ("newPassword", next), ("confirmPassword", next), ("returnUrl", "/agents")));
 
     private HttpClient Anonymous() => manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 

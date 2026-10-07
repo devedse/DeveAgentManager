@@ -102,7 +102,7 @@ public static class ManagerApi
                     .LogError(ex, "{Method} {Path} failed", context.HttpContext.Request.Method, context.HttpContext.Request.Path);
             }
 
-            return Results.Problem(detail: ex.Message, statusCode: status);
+            return Results.Problem(detail: status == 500 ? "The request failed. Check the Manager log." : ex.Message, statusCode: status);
         }
     }
 }

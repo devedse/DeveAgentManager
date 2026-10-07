@@ -9,7 +9,7 @@ namespace DeveAgentManager.Api;
 /// open; this closes them when it ends while they are open: access to a Runner removed, a share ended, a role taken
 /// away, or the user disabled, deleted or their password changed (a new security stamp).
 /// </summary>
-public sealed class OpenConnections(ManagerEvents events, UserService users, ILogger<OpenConnections> logger) : IHostedService
+public sealed class OpenConnections(ManagerEvents events, UserService users, SignInSessions sessions, ILogger<OpenConnections> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<Guid, Connection> _open = new();
 
@@ -17,23 +17,30 @@ public sealed class OpenConnections(ManagerEvents events, UserService users, ILo
     /// Keeps a connection open for as long as <paramref name="stillAllowed"/> says so for its user (as they are then);
     /// <paramref name="close"/> ends it. Dispose the result when the connection ends by itself.
     /// </summary>
-    public IDisposable Register(CurrentUser user, string? securityStamp, Func<CurrentUser, CancellationToken, Task<bool>> stillAllowed, Action close)
+    public IDisposable Register(CurrentUser user, string? securityStamp, Func<CurrentUser, CancellationToken, Task<bool>> stillAllowed, Action close, Guid sessionId)
     {
         var id = Guid.NewGuid();
-        _open[id] = new Connection(user.Id, securityStamp, stillAllowed, close);
+        _open[id] = new Connection(user.Id, securityStamp, stillAllowed, close, sessionId);
         return new Registration(() => _open.TryRemove(id, out _));
     }
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         events.Changed += OnChanged;
-        return Task.CompletedTask;
+        sessions.Revoked += OnRevoked;
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+                foreach (var (id, connection) in _open.ToArray()) await RecheckAsync(id, connection);
+        }
+        finally { events.Changed -= OnChanged; sessions.Revoked -= OnRevoked; }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    private void OnRevoked(Guid session)
     {
-        events.Changed -= OnChanged;
-        return Task.CompletedTask;
+        foreach (var (id, connection) in _open.Where(c => c.Value.SessionId == session).ToArray())
+            if (_open.TryRemove(id, out _)) connection.Close();
     }
 
     private void OnChanged(ManagerEvent change)
@@ -56,7 +63,9 @@ public sealed class OpenConnections(ManagerEvents events, UserService users, ILo
         try
         {
             var user = await users.ValidateAsync(connection.UserId, connection.SecurityStamp);
-            if (user is not null && !user.MustChangePassword && await connection.StillAllowed(user, CancellationToken.None))
+            if (user is not null && !user.MustChangePassword
+                && await sessions.ValidateAsync(connection.SessionId, user.Id, connection.SecurityStamp) is not null
+                && await connection.StillAllowed(user, CancellationToken.None))
             {
                 return;
             }
@@ -76,7 +85,7 @@ public sealed class OpenConnections(ManagerEvents events, UserService users, ILo
         }
     }
 
-    private sealed record Connection(Guid UserId, string? SecurityStamp, Func<CurrentUser, CancellationToken, Task<bool>> StillAllowed, Action Close);
+    private sealed record Connection(Guid UserId, string? SecurityStamp, Func<CurrentUser, CancellationToken, Task<bool>> StillAllowed, Action Close, Guid SessionId);
 
     private sealed class Registration(Action release) : IDisposable
     {

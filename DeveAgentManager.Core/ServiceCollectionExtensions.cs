@@ -34,6 +34,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ManagerEvents>();
         services.AddSingleton<AuditLog>();
         services.AddSingleton<UserService>();
+        services.AddSingleton<SignInSessions>();
+        services.AddSingleton<SecondFactors>();
         services.AddSingleton<AccessControl>();
         services.AddSingleton<Sharing>();
         services.AddSingleton<RunnerLogStore>();
