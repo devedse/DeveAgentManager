@@ -90,7 +90,6 @@ app.UseWhen(context => !RequestSecurity.IsMachinePath(context.Request.Path), pag
 
 app.UseAuthentication();
 app.UsePasswordChangeFirst();
-app.UseEnrollmentRequirement();
 app.UseAuthorization();
 app.UseSameOriginForSockets();
 app.UseAntiforgery();

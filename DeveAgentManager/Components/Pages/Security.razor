@@ -7,70 +7,142 @@
 @inject Microsoft.EntityFrameworkCore.IDbContextFactory<DeveAgentManager.Core.Data.ManagerDbContext> Db
 @inject DeveAgentManager.Core.Security.SecretProtector Protector
 @inject DeveAgentManager.Core.Configuration.ManagerOptions Options
+@inject TimeProvider Clock
 @using Microsoft.EntityFrameworkCore
 
+@* Static page with plain forms (they post to AccountSecurity.MapSecurityForms), styled like the sign-in page. *@
 <PageTitle>Account security · DeveAgentManager</PageTitle>
-<div class="login-page"><div class="login-card">
-    <h1>Account security</h1>
-    @if (Error is not null) { <p class="login-error">@Error</p> }
-    <p>Confirm your password before changing security settings or performing sensitive actions. Confirmation lasts ten minutes.</p>
-    <form method="post" action="/account/security/reauth">
-        <AntiforgeryToken />
-        <label class="login-label">Password</label><input class="login-input" type="password" name="password" autocomplete="current-password" required />
-        <label class="login-label">Authenticator or recovery code (if enabled)</label><input class="login-input" name="code" autocomplete="one-time-code" />
-        <button class="login-button">Confirm identity</button>
-    </form>
-    <h2>Authenticator</h2>
-    @if (_enabled)
-    {
-        <p>Enabled. Keep your single-use recovery codes safe. Lost both? The server operator can use RESET_ADMIN_PASSWORD to recover the admin account.</p>
-        <form method="post" action="/account/security/disable"><AntiforgeryToken />
-            <input class="login-input" name="code" placeholder="Authenticator or recovery code" required />
-            <button class="login-button">Disable authenticator</button>
-        </form>
-    }
-    else if (_secret is not null)
-    {
-        <p>Add this secret to your authenticator app as a time-based, six-digit SHA1 account:</p><code>@_secret</code>
-        <p>Account: @_user?.Username · DeveAgentManager</p>
-        <form method="post" action="/account/security/confirm"><AntiforgeryToken />
-            <input class="login-input" name="code" autocomplete="one-time-code" placeholder="Six-digit code" required />
-            <button class="login-button">Enable and show recovery codes</button>
-        </form>
-    }
-    else
-    {
-        <form method="post" action="/account/security/begin"><AntiforgeryToken /><button class="login-button">Enroll authenticator</button></form>
-    }
-    <h2>Signed-in devices</h2>
-    <p>Remembered sessions expire after seven days of inactivity or thirty days after sign-in. Revoking a session closes its browser connections; agents keep running.</p>
-    @foreach (var session in _sessions)
-    {
-        <p>@session.Browser<br />@session.ClientIp · Last active @session.LastSeenAt.ToString("u") @(session.Id == _current ? "(this session)" : "")</p>
-        <form method="post" action="/account/security/revoke"><AntiforgeryToken /><input type="hidden" name="id" value="@session.Id" /><button>Sign out this device</button></form>
-    }
-    @if (_user is not null && (_user.Roles & DeveAgentManager.Core.Data.UserRoles.UserManager) != 0)
-    {
-        <h2>Require authenticators</h2><p>Current policy: @_enforcement. Every affected enabled user must enroll before this can be switched on. Newly created affected users enroll before accessing the Portal.</p>
-        <form method="post" action="/account/security/enforce"><AntiforgeryToken />
-            <select name="mode"><option value="optional">Optional</option><option value="roles">Users with roles</option><option value="everyone">Everyone</option></select><button>Save policy</button>
-        </form>
-        <h2>Public deployment</h2>
-        <p>Public Portal origins: @string.Join(", ", Options.PublicOrigins)</p>
-        <p>Editor address: @Options.EditorUrl</p>
-        <p>Trusted proxy addresses: @string.Join(", ", Options.TrustedProxies)</p>
-        <p>Configure these server settings in compose. Each editor domain uses one wildcard DNS record, certificate and NPM proxy host for every Runner, forwarding to port 8080 with WebSockets enabled. Forwarded headers are accepted only from configured proxies.</p>
-    }
-    <a href="/" class="login-link">Back to Portal</a>
-</div></div>
+<div class="login-page">
+    <div class="login-glow"></div>
+    <div class="login-card security-card">
+        <a href="/" class="security-back">← Back to the Portal</a>
+        <h1 class="login-title">Account security</h1>
+        <div class="login-subtitle">@_user?.Username</div>
+        @if (Error is not null)
+        {
+            <div class="login-error security-gap">@Error</div>
+        }
+
+        <section class="security-section">
+            <div class="security-heading">
+                <div class="help-heading">
+                    <h2>Authenticator app</h2>
+                    <StaticHelpTip Label="Authenticator app">
+                        <p>Optional. When it's on, signing in asks for your password and a six-digit code from an app on your phone
+                        (Google Authenticator, Microsoft Authenticator, 1Password, …), so a stolen password alone isn't enough.</p>
+                        <p>Turning it on gives you ten recovery codes. Each works once instead of a code, if you lose your phone.
+                        Without your phone or a recovery code you can't sign in, so keep them somewhere safe.</p>
+                        <p>Turning it on or off signs out your other devices.</p>
+                    </StaticHelpTip>
+                </div>
+                <span class="security-badge @(_enabled ? "on" : "")">@(_enabled ? "On" : "Off")</span>
+            </div>
+            @if (_enabled)
+            {
+                <p>Signing in asks for a code from your app.</p>
+                <form method="post" action="/account/security/disable" class="security-form">
+                    <AntiforgeryToken />
+                    <label class="login-label" for="disable-password">Password</label>
+                    <input class="login-input" id="disable-password" type="password" name="password" autocomplete="current-password" required />
+                    <label class="login-label" for="disable-code">Code from your app, or a recovery code</label>
+                    <input class="login-input" id="disable-code" name="code" autocomplete="one-time-code" required />
+                    <button class="security-button danger">Turn off</button>
+                </form>
+            }
+            else if (_secret is not null)
+            {
+                <ol class="security-steps">
+                    <li>
+                        In your authenticator app (Google Authenticator, Microsoft Authenticator, 1Password, …), add an account with this key.
+                        On your phone, <a href="@OtpAuthUrl">open it in your app</a> directly.
+                        <code class="security-secret">@Grouped(_secret)</code>
+                    </li>
+                    <li>Enter the six-digit code the app shows.</li>
+                </ol>
+                <form method="post" action="/account/security/confirm" class="security-form">
+                    <AntiforgeryToken />
+                    <input class="login-input" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" aria-label="Code" required autofocus />
+                    <button class="login-button">Turn on</button>
+                </form>
+                <form method="post" action="/account/security/cancel"><AntiforgeryToken /><button class="login-link">Cancel</button></form>
+            }
+            else
+            {
+                <p>Optional: also ask for a code from your phone when signing in.</p>
+                <form method="post" action="/account/security/begin" class="security-form">
+                    <AntiforgeryToken />
+                    <label class="login-label" for="begin-password">Password</label>
+                    <input class="login-input" id="begin-password" type="password" name="password" autocomplete="current-password" required />
+                    <button class="login-button">Set up</button>
+                </form>
+            }
+        </section>
+
+        <section class="security-section">
+            <div class="security-heading">
+                <div class="help-heading">
+                    <h2>Signed-in devices</h2>
+                    <StaticHelpTip Label="Signed-in devices">
+                        <p>Every browser where you're signed in. A device stays signed in for up to 30 days, or 7 days without use
+                        (or until the browser closes, without "Keep me signed in").</p>
+                        <p>Signing one out ends its Portal, terminals and VS Code right away. Agents keep running on their Runners.</p>
+                    </StaticHelpTip>
+                </div>
+            </div>
+            <ul class="security-devices">
+                @foreach (var session in _sessions)
+                {
+                    <li>
+                        <div>
+                            <div class="security-device-name">@Device(session.Browser)</div>
+                            <div class="security-device-detail">@Ip(session.ClientIp) · @(session.Id == _current ? "this device" : Ago(session.LastSeenAt))</div>
+                        </div>
+                        @if (session.Id != _current)
+                        {
+                            <form method="post" action="/account/security/revoke">
+                                <AntiforgeryToken /><input type="hidden" name="id" value="@session.Id" />
+                                <button class="security-button">Sign out</button>
+                            </form>
+                        }
+                    </li>
+                }
+            </ul>
+        </section>
+
+        @if (_user is not null && (_user.Roles & DeveAgentManager.Core.Data.UserRoles.UserManager) != 0 && Options.PublicOrigins.Length > 0)
+        {
+            <section class="security-section">
+                <div class="security-heading">
+                    <div class="help-heading">
+                        <h2>Public access</h2>
+                        <StaticHelpTip Label="Public access">
+                            <p>Set in the compose file: PUBLIC_ORIGINS, EDITOR_URL and TRUSTED_PROXIES.</p>
+                            <p>The Manager only answers on these Portal addresses (and on local IP addresses). Each Runner's VS Code
+                            gets its own address from the VS Code pattern, so one wildcard DNS record, certificate and proxy host cover
+                            every Runner. Only the trusted proxies may pass on the visitor's IP address and HTTPS.</p>
+                        </StaticHelpTip>
+                    </div>
+                </div>
+                <dl class="security-settings">
+                    <dt>Portal</dt><dd>@string.Join(", ", Options.PublicOrigins)</dd>
+                    <dt>VS Code</dt><dd>@Options.EditorUrl</dd>
+                    <dt>Trusted proxies</dt><dd>@string.Join(", ", Options.TrustedProxies)</dd>
+                </dl>
+            </section>
+        }
+    </div>
+</div>
+
 @code {
     [SupplyParameterFromQuery(Name = "error")] private string? Error { get; set; }
     private DeveAgentManager.Core.Users.CurrentUser? _user;
     private List<DeveAgentManager.Core.Data.SignInSession> _sessions = [];
     private bool _enabled;
     private string? _secret;
-    private string _enforcement = "optional";
     private Guid _current;
+
+    private string OtpAuthUrl => $"otpauth://totp/DeveAgentManager:{Uri.EscapeDataString(_user!.Username)}?secret={_secret}&issuer=DeveAgentManager";
+
     protected override async Task OnInitializedAsync()
     {
         var context = Http.HttpContext!;
@@ -80,7 +152,7 @@
         if (_user is null) return;
         _enabled = await Factors.EnabledAsync(_user.Id);
         _sessions = await Sessions.ListAsync(_user.Id);
-        _enforcement = await Factors.EnforcementAsync();
+        // A started setup shows its key only to the session that just entered the password.
         if (!_enabled && await DeveAgentManager.Api.AccountSecurity.RecentAsync(context))
         {
             await using var db = await Db.CreateDbContextAsync();
@@ -88,4 +160,29 @@
             _secret = Protector.Unprotect(factor?.Secret);
         }
     }
+
+    private static string Grouped(string secret) => string.Join(' ', secret.Chunk(4).Select(c => new string(c)));
+
+    private static string Ip(string ip) => ip.StartsWith("::ffff:", StringComparison.Ordinal) ? ip[7..] : ip;
+
+    // ponytail: a few well-known names, not a user-agent parser; anything else shows as "Browser".
+    private static string Device(string agent)
+    {
+        var browser = agent.Contains("Edg/") ? "Edge" : agent.Contains("Firefox/") ? "Firefox" : agent.Contains("Chrome/") ? "Chrome"
+            : agent.Contains("Safari/") ? "Safari" : "Browser";
+        var system = agent.Contains("Android") ? "Android" : agent.Contains("iPhone") || agent.Contains("iPad") ? "iOS"
+            : agent.Contains("Windows") ? "Windows" : agent.Contains("Mac OS") ? "macOS" : agent.Contains("Linux") ? "Linux" : null;
+        return system is null ? browser : $"{browser} on {system}";
+    }
+
+    private string Ago(DateTime at)
+    {
+        var span = Clock.GetUtcNow().UtcDateTime - at;
+        return span.TotalMinutes < 2 ? "active now"
+            : span.TotalHours < 1 ? $"active {(int)span.TotalMinutes} minutes ago"
+            : span.TotalDays < 1 ? $"active {Count((int)span.TotalHours, "hour")} ago"
+            : $"active {Count((int)span.TotalDays, "day")} ago";
+    }
+
+    private static string Count(int n, string unit) => n == 1 ? $"1 {unit}" : $"{n} {unit}s";
 }

@@ -153,7 +153,7 @@ Everything is set with environment variables in the compose file.
 | Variable | Default | What it does |
 |---|---|---|
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / random setup code | First-start credentials. Without a password, a random code is printed once in startup logs and must be changed after sign-in. Existing chosen passwords are never reset at normal startup. Legacy `change-me` credentials are replaced with a logged random setup code. |
-| `RESET_ADMIN_PASSWORD` | `false` | Operator recovery: restores the named admin, resets its password, removes its authenticator and sets enforcement to optional. Without `ADMIN_PASSWORD`, logs a fresh recovery code. Ends old credentials; requires password change. Remove it immediately after recovery. |
+| `RESET_ADMIN_PASSWORD` | `false` | Operator recovery: restores the named admin, resets its password, removes its authenticator. Without `ADMIN_PASSWORD`, logs a fresh recovery code. Ends old credentials; requires password change. Remove it immediately after recovery. |
 | `PROXMOX_URL` | | e.g. `https://proxmox1:8006`. Without it only existing machines can be added. |
 | `PROXMOX_TOKEN_ID` / `PROXMOX_TOKEN_SECRET` | | The API token. |
 | `PROXMOX_VERIFY_TLS` | `true` | `false` accepts Proxmox's self-signed certificate. |
@@ -204,26 +204,24 @@ agents continue running. HTTP requests recheck immediately; long-lived connectio
 
 ### Account security
 
-Use **Account menu → Account security** to enroll an authenticator, save ten single-use recovery codes, inspect your
-signed-in devices or revoke one. Authenticator codes accept a 30-second clock skew and cannot be reused. Enabling or
-disabling an authenticator revokes other sessions. User managers can require enrollment for everyone or users with
-roles, once all affected enabled users are enrolled. New affected users complete enrollment before using the Portal.
+Use **Account menu → Account security** to turn on an authenticator app (optional, per user; nothing requires it),
+save its ten single-use recovery codes, and see or sign out your signed-in devices. Setting it up or turning it off asks
+for your password on the same form. Authenticator codes accept a 30-second clock skew and cannot be reused. Turning it on
+or off signs out your other devices.
 
 Upgrading from self-contained cookies requires a fresh sign-in; existing chosen passwords are preserved.
 
-Remembered sessions have seven days of inactivity and a thirty-day absolute limit. Confirm your password and, if
-enabled, your authenticator/recovery code within ten minutes of viewing/changing a Runner password or changing users.
+Remembered sessions have seven days of inactivity and a thirty-day absolute limit.
 Account forms use antiforgery tokens and reject absent, null or foreign Origins. Public cookies use `__Host-`, Secure,
 HttpOnly and Path=/; local HTTP credentials are separate and cannot authenticate public endpoints.
 
-Login, identity confirmation, password changes and authenticator confirmation/removal share limits of
+Sign-in, password changes and authenticator setup/removal share limits of
 20 attempts per account, 30 per IP and 200 globally in a fixed
 five-minute window, with at most four concurrent password checks. There are at most 4096 limiter entries, and no
 fixed account lockout or sleeping requests. Excess requests receive 429; existing sessions continue working.
 Distributed attacks can still interfere with new sign-ins; these controls do not promise immunity to denial of service.
 
 Operator recovery uses `RESET_ADMIN_PASSWORD=true` as described above. Restrict access to startup logs and `/data`.
-Removing authenticators during recovery also relaxes enforcement so the operator can enroll again safely.
 
 Dependency CI fails on high/critical NuGet advisories, including transitive dependencies, and audit-feed failures.
 Vendored addons are compared with locked npm packages and audited. The container job scans OS/application packages.

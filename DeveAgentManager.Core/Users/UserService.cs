@@ -350,8 +350,6 @@ public sealed partial class UserService(
         SetPassword(admin, resetPassword, mustChange: true);
         // Operator recovery explicitly removes the second factor and revokes existing credentials.
         await db.UserSecondFactors.Where(f => f.UserId == admin.Id).ExecuteDeleteAsync(cancellationToken);
-        var enforcement = await db.Settings.FindAsync(["totp-enforcement"], cancellationToken);
-        if (enforcement is not null) enforcement.Value = "optional";
         if (options.UsesDefaultAdminPassword) logger.LogWarning("ADMIN RECOVERY CODE for {User}: {Code}", name, resetPassword);
         await db.SaveChangesAsync(cancellationToken);
         Invalidate(admin.Id);

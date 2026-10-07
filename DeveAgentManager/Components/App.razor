@@ -6,15 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#0d1017" />
     @* Light or dark before anything paints (My settings → Appearance; "system" follows the device). terminal.js keeps it up to date. *@
-    <script nonce="@HttpContext.Items[DeveAgentManager.Api.SecurityHeaders.NonceKey]">
-        (function () {
-            var mode = "system";
-            try { mode = localStorage.getItem("dam-theme") || "system"; } catch (e) { }
-            var dark = mode === "dark" || (mode !== "light" && !(window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches));
-            document.documentElement.dataset.theme = dark ? "dark" : "light";
-            document.querySelector('meta[name="theme-color"]').content = dark ? "#0d1017" : "#f5f6fa";
-        })();
-    </script>
+    <script nonce="@HttpContext.Items[DeveAgentManager.Api.SecurityHeaders.NonceKey]">@((MarkupString)DeveAgentManager.Api.AccountSecurity.ThemeScript)</script>
     <base href="/" />
     <title>DeveAgentManager</title>
     <link rel="icon" type="image/svg+xml" href="@Assets["favicon.svg"]" />

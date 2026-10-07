@@ -27,7 +27,13 @@
         <input class="login-input" id="username" name="username" autocomplete="username" autocapitalize="none" required autofocus />
         <label class="login-label" for="password">Password</label>
         <input class="login-input" id="password" name="password" type="password" autocomplete="current-password" required />
-        <label class="login-label" for="code">Authenticator or recovery code (if enabled)</label>
+        <div class="help-heading login-label-row">
+            <label class="login-label" for="code">Authenticator code</label>
+            <StaticHelpTip Label="Authenticator code">
+                <p>Only if you turned on an authenticator app under Account security: the six-digit code from the app, or one of
+                your recovery codes. Otherwise leave it empty.</p>
+            </StaticHelpTip>
+        </div>
         <input class="login-input" id="code" name="code" autocomplete="one-time-code" />
         <label class="login-remember">
             <input type="checkbox" name="remember" checked />

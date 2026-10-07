@@ -7,7 +7,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DeveAgentManager.Core.Users;
 
-/// <summary>RFC 6238 SHA1 TOTP with atomic replay prevention and hashed, single-use recovery codes.</summary>
+/// <summary>
+/// Optional, per user: RFC 6238 SHA1 TOTP with atomic replay prevention and hashed, single-use recovery codes. Nothing
+/// requires it; whoever turns it on is asked for a code at sign-in.
+/// </summary>
 public sealed class SecondFactors(IDbContextFactory<ManagerDbContext> factory, SecretProtector protector, TimeProvider clock)
 {
     private const string Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -62,31 +65,6 @@ public sealed class SecondFactors(IDbContextFactory<ManagerDbContext> factory, S
     {
         await using var db = await factory.CreateDbContextAsync(ct);
         await db.UserSecondFactors.Where(f => f.UserId == user).ExecuteDeleteAsync(ct);
-    }
-    public async Task<string> EnforcementAsync(CancellationToken ct = default)
-    {
-        await using var db = await factory.CreateDbContextAsync(ct);
-        return (await db.Settings.FindAsync(["totp-enforcement"], ct))?.Value ?? "optional";
-    }
-    public async Task<bool> RequiredAsync(CurrentUser user, CancellationToken ct = default) => await EnforcementAsync(ct) switch
-    {
-        "everyone" => true, "roles" => user.Roles != UserRoles.None, _ => false,
-    };
-    public async Task<bool> CanUseAsync(CurrentUser user, CancellationToken ct = default) =>
-        !await RequiredAsync(user, ct) || await EnabledAsync(user.Id, ct);
-
-    public async Task EnforceAsync(string mode, CancellationToken ct = default)
-    {
-        if (mode is not ("optional" or "everyone" or "roles")) throw new ArgumentException("Choose optional, roles or everyone.");
-        await using var db = await factory.CreateDbContextAsync(ct);
-        // Enforcement only activates once every affected account has enrolled; never surprise-lock someone out.
-        if (mode != "optional" && await db.Users.AnyAsync(u => !u.Disabled && (mode == "everyone" || u.Roles != UserRoles.None)
-            && !db.UserSecondFactors.Any(f => f.UserId == u.Id && f.Enabled), ct))
-            throw new InvalidOperationException("Every affected enabled user must enroll before enforcement can be enabled.");
-        var setting = await db.Settings.FindAsync(["totp-enforcement"], ct);
-        if (setting is null) { setting = new SettingEntry { Key = "totp-enforcement" }; db.Settings.Add(setting); }
-        setting.Value = mode; setting.UpdatedAt = clock.GetUtcNow().UtcDateTime;
-        await db.SaveChangesAsync(ct);
     }
     private long? Match(string? secret, string code)
     {

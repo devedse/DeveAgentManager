@@ -82,11 +82,6 @@ public static class EndpointAccess
             }
         }
 
-        var path = http.Request.Path.Value ?? "";
-        var sensitive = path.StartsWith("/api/runners/", StringComparison.Ordinal) && path.EndsWith("/password", StringComparison.Ordinal)
-            || path.StartsWith("/api/users", StringComparison.Ordinal) && !HttpMethods.IsGet(http.Request.Method);
-        if (sensitive && !await AccountSecurity.RecentAsync(http))
-            return Results.Problem("Confirm your identity under Account security (/security), then try again.", statusCode: 403);
         return await next(context);
     }
 

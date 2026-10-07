@@ -19,7 +19,7 @@ account is therefore powerful; browser origin separation does not isolate Linux 
 | Account antiforgery and Origin checks | Implemented | Missing/null, foreign and same-site editor Origin rejected; real browser form checks |
 | Public cookies and CSP | Implemented | Production published app booted in Chromium behind an isolated HTTPS proxy |
 | Durable sign-in sessions and live revocation | Implemented | Copied cookie rejected after logout; connection revocation and expiry tests |
-| TOTP, recovery, enforcement and recent authentication | Implemented | RFC vector, concurrent replay/recovery tests; enrollment safeguards |
+| Optional TOTP and recovery codes | Implemented | RFC vector, concurrent replay/recovery tests; setup needs the password |
 | Bounded login throttles | Implemented | Concurrency/account regression tests; existing sessions unaffected |
 | First-run setup and operator recovery | Implemented | Existing user/access tests; startup code replaces known default, chosen passwords preserved |
 | Dependency failure policy | Implemented | NuGet/npm passed locally; initial container/Trivy CI scan passed |
@@ -113,25 +113,17 @@ absolute maximum**; non-remembered cookies are discarded at browser shutdown. Se
 per minute. A user has at most twenty retained active sessions, and sixty-four pending editor tickets. The device list shows browser, client IP and last
 activity and supports revocation. Logout and explicit revocation close registered live connections; expiry and other
 changes are checked periodically every fifteen seconds as well as per HTTP request. User security-stamp changes end
-old credentials. Gaining a role that requires an authenticator closes unenrolled live connections and blocks editor
-requests until enrollment; editor dispatch enforces this independently of Portal middleware. Revocation never stops the agent process on a Runner.
+old credentials. Revocation never stops the agent process on a Runner.
 
 TOTP uses RFC 6238 SHA1, six digits, thirty-second intervals and one interval of clock skew. Secrets are encrypted at
-rest. Enrollment requires recent authentication and a valid first code. Ten random recovery codes are shown once in a
+rest. Setup asks for the password and a valid first code. Ten random recovery codes are shown once in a
 POST response, hashed at rest and atomically consumed. TOTP counters are atomically advanced to prevent concurrent
-replay. Enabling or disabling an authenticator revokes other sessions; disabling requires a current code and cannot
-violate enforcement.
+replay. Enabling or disabling an authenticator revokes other sessions; disabling requires the password and a current
+code.
 
-A user manager can choose optional, users-with-roles or everyone enforcement. Activation is refused until all affected
-enabled users have enrolled. An unenrolled user manager cannot relax the policy to bypass their own enrollment.
-New affected users must change their initial password, then enroll before accessing the Portal. Enrollment/recovery
-pages and static assets remain available during this flow. There is no passkey or external
-identity-provider implementation in this PR.
-
-Viewing/changing a Runner password and mutating users (including roles, resets and deletion) require authentication
-within ten minutes. **Account security → Confirm identity** checks the password and, when enrolled, a current
-TOTP/recovery code. Account-security changes also require this recent confirmation. A refusal explains where to
-confirm; return to the action afterward.
+The authenticator is optional for everyone; there is no policy that requires it, and no separate "confirm your
+password" step before managing users or viewing Runner passwords (decided 2026-10-07: the extra steps cost more than
+they protected, with sign-in sessions revocable). There is no passkey or external identity-provider implementation.
 
 ## 5. Guessing protection, first start and recovery
 
@@ -150,9 +142,9 @@ reset at normal startup. A legacy bootstrap account still using known `change-me
 a fresh logged setup code instead. ADMIN_USERNAME/ADMIN_PASSWORD otherwise apply only to initial setup.
 
 Operator recovery is explicit: `RESET_ADMIN_PASSWORD=true` restores the named admin, resets its password (random
-logged recovery code if unspecified), removes its authenticator, relaxes enforcement to optional and requires password
-change. Old security stamps stop working. Remove the flag immediately after recovery, enroll again and restore the
-policy. Protect startup logs and `/data`. This recovery deliberately changes security settings only when an operator
+logged recovery code if unspecified), removes its authenticator and requires password
+change. Old security stamps stop working. Remove the flag immediately after recovery and set up the authenticator
+again if wanted. Protect startup logs and `/data`. This recovery deliberately changes security settings only when an operator
 requests it; normal restarts do not reset existing accounts.
 
 ## 6. Headers and production errors
@@ -237,6 +229,7 @@ wildcard DNS/certificate support on the chosen provider; this implementation has
 - Runner Use access is mandatory for VS Code; an agent share alone cannot grant a shell.
 - Exact public origins and trusted proxy peers are explicit configuration; public requests cannot activate local mode.
 - Local direct IP HTTP remains supported with separate credentials and accepted reduced editor isolation.
-- Durable revocable sessions, TOTP/recovery, enrollment safeguards and recent authentication are in this PR.
-- Initial defaults: seven-day inactivity, thirty-day absolute session limit, ten-minute recent-authentication window;
+- Durable revocable sessions and optional TOTP/recovery are in this PR.
+- 2026-10-07 — The authenticator is fully optional (no enforcement policy) and managing users needs no re-confirmation.
+- Initial defaults: seven-day inactivity, thirty-day absolute session limit;
   bounded guessing thresholds as documented above. Passkeys/OIDC and multi-instance deployment are outside this scope.

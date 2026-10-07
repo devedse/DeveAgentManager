@@ -206,16 +206,37 @@ public sealed class InternetSecurityTests : IClassFixture<InternetSecurityTests.
     }
 
     [Fact]
-    public async Task SensitiveActionsRequireRecentAuthentication()
+    public async Task ManagingUsersNeedsNoExtraConfirmation()
     {
         var portal = Client(); await LoginAsync(portal);
         _manager.Clock.Advance(TimeSpan.FromMinutes(11));
+        var name = "no-reauth-" + Guid.NewGuid().ToString("N")[..8];
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/users")
-        { Content = new StringContent("{\"username\":\"recent-auth-test\",\"password\":\"test-password-1234\",\"roles\":0}", System.Text.Encoding.UTF8, "application/json") };
+        { Content = new StringContent($"{{\"username\":\"{name}\",\"password\":\"test-password-1234\",\"roles\":0}}", System.Text.Encoding.UTF8, "application/json") };
         request.Headers.Add("Origin", "https://dam.test"); request.Headers.Add(DeveAgentManager.Contracts.ApiHeaders.Request, "1");
-        var result = await portal.SendAsync(request);
-        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
-        Assert.Contains("Confirm your identity", await result.Content.ReadAsStringAsync());
+        Assert.True((await portal.SendAsync(request)).IsSuccessStatusCode);
+    }
+
+    [Fact]
+    public async Task SettingUpAnAuthenticatorNeedsThePassword_AndShowsTheKeyOnlyThen()
+    {
+        using var manager = new Manager();
+        var factors = manager.Services.GetRequiredService<SecondFactors>();
+        var client = manager.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://dam.test"), AllowAutoRedirect = false, HandleCookies = false });
+        var login = await client.PostAccountAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = Password }));
+        client.DefaultRequestHeaders.Add("Cookie", login.Headers.GetValues("Set-Cookie").Single(c => c.StartsWith("__Host-DAM.Auth=")).Split(';')[0]);
+        manager.Clock.Advance(TimeSpan.FromMinutes(11));
+
+        var wrong = await client.PostAccountAsync("/account/security/begin", new FormUrlEncodedContent(new Dictionary<string, string> { ["password"] = "wrong" }));
+        Assert.Contains("error=", wrong.Headers.Location!.ToString());
+        Assert.DoesNotContain("security-secret", await client.GetStringAsync("/security"));
+
+        var right = await client.PostAccountAsync("/account/security/begin", new FormUrlEncodedContent(new Dictionary<string, string> { ["password"] = Password }));
+        Assert.Equal("/security", right.Headers.Location!.ToString());
+        Assert.Contains("security-secret", await client.GetStringAsync("/security"));
+        Assert.False(await factors.EnabledAsync(User.BootstrapId));
+        // Without confirming, the Portal stays usable: nothing requires an authenticator.
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/me")).StatusCode);
     }
 
     [Fact]
@@ -246,7 +267,6 @@ public sealed class InternetSecurityTests : IClassFixture<InternetSecurityTests.
         Assert.Single(attempts, v => v);
         var recoveries = await Task.WhenAll(Enumerable.Range(0,4).Select(_ => factors.VerifyAsync(user.Id, recovery[0])));
         Assert.Single(recoveries, v => v);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => factors.EnforceAsync("everyone"));
     }
     [Fact]
     public async Task FailedSecondFactorDoesNotIssueCredentialsOrRecordSuccessfulSignIn()
@@ -271,46 +291,6 @@ public sealed class InternetSecurityTests : IClassFixture<InternetSecurityTests.
     }
 
     [Fact]
-    public async Task UnenrolledUserManagerCannotRelaxTheEnrollmentPolicy()
-    {
-        using var manager = new Manager();
-        var users = manager.Services.GetRequiredService<UserService>();
-        var factors = manager.Services.GetRequiredService<SecondFactors>();
-        var secret = await factors.BeginAsync(User.BootstrapId);
-        await factors.ConfirmAsync(User.BootstrapId, SecondFactors.Code(secret, manager.Clock.GetUtcNow().ToUnixTimeSeconds() / 30));
-        await factors.EnforceAsync("roles");
-        var user = await users.CreateAsync(TestUsers.Admin, "new-manager", null, Password, UserRoles.UserManager);
-        user = await users.ChangeOwnPasswordAsync(user.Id, Password, Password + "-own");
-        var client = manager.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://dam.test"), AllowAutoRedirect = false, HandleCookies = false });
-        var login = await client.PostAccountAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string,string>
-            { ["username"] = user.Username, ["password"] = Password + "-own" }));
-        client.DefaultRequestHeaders.Add("Cookie", login.Headers.GetValues("Set-Cookie").Single(c => c.StartsWith("__Host-DAM.Auth=")).Split(';')[0]);
-        var result = await client.PostAccountAsync("/account/security/enforce", new FormUrlEncodedContent(new Dictionary<string,string> { ["mode"] = "optional" }));
-        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
-        Assert.Equal("roles", await factors.EnforcementAsync());
-    }
-
-    [Fact]
-    public async Task GainingAnEnforcedRoleClosesAnUnenrolledUsersLiveConnections()
-    {
-        using var manager = new Manager();
-        var users = manager.Services.GetRequiredService<UserService>();
-        var factors = manager.Services.GetRequiredService<SecondFactors>();
-        var sessions = manager.Services.GetRequiredService<SignInSessions>();
-        var secret = await factors.BeginAsync(User.BootstrapId);
-        await factors.ConfirmAsync(User.BootstrapId, SecondFactors.Code(secret, manager.Clock.GetUtcNow().ToUnixTimeSeconds() / 30));
-        var plain = await users.CreateAsync(TestUsers.Admin, "unenrolled", null, Password, UserRoles.None);
-        plain = await users.ChangeOwnPasswordAsync(plain.Id, Password, Password + "-own");
-        await factors.EnforceAsync("roles");
-        var session = await sessions.CreateAsync(plain, false, "test", "test");
-        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var registration = manager.Services.GetRequiredService<OpenConnections>().Register(CurrentUser.From(plain), plain.SecurityStamp,
-            (_, _) => Task.FromResult(true), () => closed.TrySetResult(), session.Id);
-        await users.UpdateAsync(TestUsers.Admin, plain.Id, null, UserRoles.RunnerCreator, false);
-        await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    }
-
-    [Fact]
     public void ThrottleHasConcurrencyAndAccountBounds()
     {
         var throttle = new LoginThrottle(new Clock());
@@ -323,6 +303,7 @@ public sealed class InternetSecurityTests : IClassFixture<InternetSecurityTests.
 
     [Theory]
     [InlineData("/account/password")]
+    [InlineData("/account/security/begin")]
     [InlineData("/account/security/confirm")]
     [InlineData("/account/security/disable")]
     public async Task CredentialFormsCannotBypassTheSharedGuessingBudget(string path)

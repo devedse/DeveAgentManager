@@ -52,20 +52,21 @@ try {
   assert.equal(await page.evaluate(async()=> (await fetch('/api/me')).status),200);
   await page.goto(portal+'/security');await page.getByRole('heading',{name:'Account security',exact:true}).waitFor();
   assert.equal(await page.locator('input[name=__RequestVerificationToken]').count()>0,true);
-  await Promise.all([page.waitForURL(portal+'/security'), page.getByRole('button',{name:'Enroll authenticator',exact:true}).click()]);
-  const secret=await page.locator('code').innerText();
+  await page.locator('form[action="/account/security/begin"] input[name=password]').fill(password);
+  await Promise.all([page.waitForURL(portal+'/security'), page.getByRole('button',{name:'Set up',exact:true}).click()]);
+  const secret=(await page.locator('code.security-secret').innerText()).replace(/\s/g,'');
   const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let buffer=0,bits=0;const bytes=[];
   for(const char of secret){buffer=(buffer<<5)|alphabet.indexOf(char);bits+=5;if(bits>=8){bits-=8;bytes.push((buffer>>bits)&255);}}
   const counter=Buffer.alloc(8);counter.writeBigInt64BE(BigInt(Math.floor(Date.now()/30000)));
   const digest=createHmac('sha1',Buffer.from(bytes)).update(counter).digest();const offset=digest[digest.length-1]&15;
   const code=String((digest.readUInt32BE(offset)&0x7fffffff)%1000000).padStart(6,'0');
   await page.locator('form[action="/account/security/confirm"] input[name=code]').fill(code);
-  await Promise.all([page.waitForURL(portal+'/account/security/confirm'),page.getByRole('button',{name:'Enable and show recovery codes',exact:true}).click()]);
+  await Promise.all([page.waitForURL(portal+'/account/security/confirm'),page.getByRole('button',{name:'Turn on',exact:true}).click()]);
   const recovery=(await page.locator('pre').innerText()).trim().split('\n');assert.equal(recovery.length,10);
-  await page.getByRole('link',{name:'Back to account security',exact:true}).click();
-  await page.locator('form[action="/account/security/reauth"] input[name=password]').fill(password);
-  await page.locator('form[action="/account/security/reauth"] input[name=code]').fill(recovery[0]);
-  await Promise.all([page.waitForURL(portal+'/security'),page.getByRole('button',{name:'Confirm identity',exact:true}).click()]);
+  await Promise.all([page.waitForURL(portal+'/security'),page.getByRole('link',{name:'I saved them',exact:true}).click()]);
+  await page.locator('.security-badge.on').waitFor();
+  await page.getByRole('button',{name:'Help about Authenticator app'}).click();
+  await page.locator('.static-help-popover:popover-open').waitFor();await page.keyboard.press('Escape');
   const auth=(await context.cookies(portal)).find(c=>c.name==='__Host-DAM.Auth');assert(auth?.secure && auth.httpOnly && auth.path==='/');
   const hostile=await context.newPage();await hostile.goto(editor+'/hostile-fixture');
   const outcomes=await hostile.evaluate(async({portal})=> {
@@ -82,7 +83,7 @@ try {
   await Promise.all([page.waitForURL(portal+'/'),page.locator('button[type=submit]').click()]);
   assert.equal(await page.evaluate(async()=> (await fetch('/api/me')).status),200);
   assert.deepEqual(errors,[]);
-  console.log('PASS: production Portal boots under CSP, forms work, public cookie hardened, hostile editor cannot read Portal or log it out or plant auth cookie, logout ends API access; TOTP enrollment, recovery display, recent authentication and recovery-code sign-in work.');
+  console.log('PASS: production Portal boots under CSP, forms work, public cookie hardened, hostile editor cannot read Portal or log it out or plant auth cookie, logout ends API access; optional TOTP setup with password, recovery display, help popovers and recovery-code sign-in work.');
 } finally {
   await browser?.close();proxy?.closeAllConnections();await new Promise(r=>proxy ? proxy.close(r) : r());
   if(manager){manager.kill('SIGTERM');await new Promise(r=>manager.once('exit',r));}
