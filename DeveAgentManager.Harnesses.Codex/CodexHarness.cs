@@ -218,6 +218,43 @@ public sealed class CodexHarness : IHarness
         ApiKeyName: "OPENAI_API_KEY",
         PasteHint: null);
 
+    public string RefreshedAccountFile => "codex/auth.json";
+
+    public bool IsNewerAccountSecret(string current, string candidate)
+    {
+        var before = ReadRenewal(current);
+        var after = ReadRenewal(candidate);
+        return before is not null && after is not null
+            && before.Value.Identity == after.Value.Identity && after.Value.Refreshed > before.Value.Refreshed;
+    }
+
+    private static (string Identity, DateTimeOffset Refreshed)? ReadRenewal(string secret)
+    {
+        try
+        {
+            var auth = JsonNode.Parse(secret);
+            if (auth?["auth_mode"]?.GetValue<string>() != "chatgpt"
+                || auth["tokens"] is not JsonObject tokens
+                || !DateTimeOffset.TryParse(auth["last_refresh"]?.GetValue<string>(),
+                    System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var refreshed)
+                || refreshed > DateTimeOffset.UtcNow.AddMinutes(5)) return null;
+            var identity = tokens["account_id"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(identity)
+                || new[] { "id_token", "access_token", "refresh_token" }.Any(k => string.IsNullOrWhiteSpace(tokens[k]?.GetValue<string>()))) return null;
+            var jwt = tokens["id_token"]!.GetValue<string>().Split('.');
+            if (jwt.Length != 3) return null;
+            var payload = jwt[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight((payload.Length + 3) / 4 * 4, '=');
+            var subject = JsonNode.Parse(Convert.FromBase64String(payload))?["sub"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(subject)) return null;
+            return ($"{identity}/{subject}", refreshed);
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or FormatException)
+        {
+            return null;
+        }
+    }
+
     public HarnessAccountSetup BuildAccountSetup(string accountFolder, AccountKind kind, string secret)
     {
         var auth = kind == AccountKind.Subscription

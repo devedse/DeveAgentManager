@@ -246,3 +246,22 @@ Conversation manager is an explicit role included in Admin. It allows opening, p
 and reading, exporting, renaming, sharing and deleting every conversation, including imports. It does not expose
 other users’ harness credentials. Existing users with all four previous admin roles are promoted once by migration;
 their sessions are invalidated, so they must sign in again. Role removal takes effect on subsequent requests and revokes live access.
+
+
+## Subscription credential renewal across Runners
+
+Codex renews its OAuth credentials in each managed account's `CODEX_HOME/auth.json`. The account version marker
+identifies a user login generation, not token freshness. Previously DAM left the renewed file on its Runner but kept
+the original encrypted copy, so starting on a different Runner could install expired credentials and show sign-in.
+
+The monitor now captures newer complete renewals from ready Runners every full pass, and account setup collects
+renewals before launch. Renewals must match both the subscription account ID and the ID token's user subject, have a
+newer valid refresh timestamp, and come from the currently installed login generation. DAM encrypts the new copy;
+compare-and-swap updates protect reconnects, deletion and concurrent renewals. The login generation stays unchanged.
+On launch, an existing older Runner copy gets an atomic credential replacement guarded by its previous file hash and
+version marker. A locally newer copy stays untouched. API keys and harnesses without rotating file credentials keep
+the existing behavior. Unavailable Runners cannot supply renewals; a genuinely revoked login still needs reconnecting.
+
+Validation: regression tests cover encrypted persistence, stale/concurrent renewals, reconnect/deletion races,
+subscription/user identity, malformed/incomplete/future credentials; runner-02's sign-in screen was reproduced with its
+September 26 credentials and bypassed using the same account's October 7 renewal from runner-01.

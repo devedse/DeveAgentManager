@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Agents;
+using DeveAgentManager.Core.Accounts;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Sessions;
@@ -144,6 +145,7 @@ public sealed class RunnerStatusCache
 /// </summary>
 public sealed class RunnerMonitor(
     RunnerService runners,
+    AccountService accounts,
     AgentService agents,
     SessionService sessions,
     RunnerShell shell,
@@ -215,6 +217,9 @@ public sealed class RunnerMonitor(
                         await agents.MarkObservationUnavailableAsync(runner.Id, ct);
                     }
                 }
+
+                if (full && runner.State == RunnerState.Ready)
+                    await accounts.CaptureRunnerRenewalsAsync(runner, ct);
 
                 var provider = runners.FindProvider(runner.ProviderId);
                 if (full && provider is not null && runner.MachineId is not null && runner.State is RunnerState.Ready or RunnerState.Stopped or RunnerState.Error)

@@ -59,6 +59,12 @@ public interface IHarness
     /// <summary>How accounts (subscriptions, API keys) log in; null when the harness logs in on its own (pi: /login).</summary>
     HarnessAccountSupport? AccountSupport => null;
 
+    /// <summary>A subscription credential file the harness renews, relative to its managed account folder.</summary>
+    string? RefreshedAccountFile => null;
+
+    /// <summary>Accepts only a complete, newer renewal of the same subscription identity.</summary>
+    bool IsNewerAccountSecret(string current, string candidate) => false;
+
     /// <summary>
     /// What makes an account usable on a Runner: files under the account's folder, the environment an agent runs with,
     /// and a script run after the files are written. Only called when <see cref="AccountSupport"/> is set.
