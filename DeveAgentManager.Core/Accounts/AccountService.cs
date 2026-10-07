@@ -1,4 +1,3 @@
-using System.Text;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
@@ -153,38 +152,21 @@ public sealed class AccountService(
     }
 
     /// <summary>
-    /// Puts the account on the Runner. Collects newer subscription renewals first; a matching login generation
-    /// keeps its setup files and receives only a newer credential, leaving locally renewed credentials alone.
+    /// Puts the account on the Runner, unless the Runner already has this version of it (one quick check). Files are only
+    /// rewritten for a new version, so a login the harness renewed on the Runner itself (Codex) is left alone.
     /// </summary>
     public async Task EnsureOnRunnerAsync(Runner runner, Account account, CancellationToken cancellationToken = default)
     {
-        var harness = GetHarness(account.HarnessId);
-        if (account.Kind == AccountKind.Subscription && harness.RefreshedAccountFile is not null)
-        {
-            // Collect renewals before copying a login to another Runner. A matching version only says which
-            // user login was installed; it does not mean its rotating OAuth tokens are still current.
-            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-            var sources = await db.Runners.AsNoTracking().Where(r => r.State == RunnerState.Ready).ToListAsync(cancellationToken);
-            foreach (var source in sources) await CaptureRenewalAsync(source, account.Id, cancellationToken);
-            account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == account.Id, cancellationToken);
-        }
-
         var folder = Folder(account.Id);
         var marker = $"{account.Version}-{account.Kind}";
         var current = await shell.RunAsync(runner, $"cat \"{folder}/version\" 2>/dev/null || true", TimeSpan.FromSeconds(20), cancellationToken);
-        var secret = protector.Unprotect(account.ProtectedSecret) ?? throw new InvalidOperationException($"The login of account '{account.Name}' can't be read. Connect it again.");
         if (current.Output.Trim() == marker)
         {
-            if (account.Kind == AccountKind.Subscription && harness.RefreshedAccountFile is { } file)
-            {
-                var local = await ReadRenewalAsync(runner, account, file, cancellationToken);
-                // Leave a newer Runner copy alone. Refreshes keep the login generation unchanged.
-                if (local is null || harness.IsNewerAccountSecret(local, secret))
-                    await InstallRenewalAsync(runner, account, file, local, secret, cancellationToken);
-            }
             return;
         }
 
+        var harness = GetHarness(account.HarnessId);
+        var secret = protector.Unprotect(account.ProtectedSecret) ?? throw new InvalidOperationException($"The login of account '{account.Name}' can't be read. Connect it again.");
         var setup = harness.BuildAccountSetup(folder, account.Kind, secret);
         var remote = $"~/.deveagentmanager/accounts/{account.Id:N}";
         foreach (var (path, content, mode) in setup.Files)
@@ -200,85 +182,6 @@ public sealed class AccountService(
 
         await shell.UploadAsync(runner, $"{remote}/version", marker + "\n", "600", cancellationToken);
         logger.LogInformation("Account {Account} ({Harness}) set up on {Runner}", account.Name, account.HarnessId, runner.Name);
-    }
-
-    private async Task InstallRenewalAsync(Runner runner, Account account, string file, string? previous, string secret, CancellationToken cancellationToken)
-    {
-        var temporary = $"{file}.dam-{Guid.NewGuid():N}";
-        await shell.UploadAsync(runner, $"~/.deveagentmanager/accounts/{account.Id:N}/{temporary}", secret, "600", cancellationToken);
-        (await shell.RunAsync(runner, BuildRenewalInstallScript(account, file, temporary, previous),
-            TimeSpan.FromSeconds(20), cancellationToken)).EnsureSuccess("Updating renewed account credential");
-    }
-
-    internal static string BuildRenewalInstallScript(Account account, string file, string temporary, string? previous)
-    {
-        var path = $"{Folder(account.Id)}/{file}";
-        // Codex may renew again while we upload. Only replace the exact copy we inspected, with an
-        // atomic rename so the harness never reads a half-written credential file.
-        var condition = previous is null ? $"[ ! -e \"{path}\" ]"
-            : $"[ \"$(sha256sum \"{path}\" 2>/dev/null | cut -d ' ' -f 1)\" = '{Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(previous)))}' ]";
-        var tempPath = $"{Folder(account.Id)}/{temporary}";
-        return $"if [ \"$(cat \"{Folder(account.Id)}/version\" 2>/dev/null)\" = '{account.Version}-{account.Kind}' ] && {condition}; then mv -f \"{tempPath}\" \"{path}\"; fi\nrm -f \"{tempPath}\"";
-    }
-
-    /// <summary>Keeps renewed subscription credentials encrypted in DAM, even when an agent stays running.</summary>
-    public async Task CaptureRunnerRenewalsAsync(Runner runner, CancellationToken cancellationToken = default)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var accounts = await db.Accounts.AsNoTracking().Where(a => a.Kind == AccountKind.Subscription).ToListAsync(cancellationToken);
-        foreach (var account in accounts.Where(a => _harnesses.GetValueOrDefault(a.HarnessId)?.RefreshedAccountFile is not null))
-            await CaptureRenewalAsync(runner, account.Id, cancellationToken);
-    }
-
-    private async Task CaptureRenewalAsync(Runner runner, Guid accountId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(10));
-            await using var db = await dbFactory.CreateDbContextAsync(timeout.Token);
-            var account = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == accountId, timeout.Token);
-            if (account is null || account.Kind != AccountKind.Subscription
-                || _harnesses.GetValueOrDefault(account.HarnessId) is not { RefreshedAccountFile: { } file } harness) return;
-            var marker = await shell.RunAsync(runner, $"cat \"{Folder(account.Id)}/version\" 2>/dev/null || true", TimeSpan.FromSeconds(10), timeout.Token);
-            if (marker.Output.Trim() != $"{account.Version}-{account.Kind}") return;
-            var candidate = await ReadRenewalAsync(runner, account, file, timeout.Token);
-            if (candidate is null) return;
-            await SaveRenewalAsync(account, candidate, timeout.Token);
-        }
-        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
-        {
-            // Never include credential content (or command output) in logs.
-            logger.LogInformation("Could not capture account renewal {Account} on {Runner} ({ErrorType})", accountId, runner.Name, ex.GetType().Name);
-        }
-    }
-
-    internal async Task SaveRenewalAsync(Account account, string candidate, CancellationToken cancellationToken)
-    {
-        if (account.Kind != AccountKind.Subscription
-            || _harnesses.GetValueOrDefault(account.HarnessId) is not { RefreshedAccountFile: not null } harness) return;
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        // A reconnect or another Runner's newer renewal can win while SSH is in flight. Re-evaluate
-        // after a failed compare-and-swap, never overwrite a different login generation.
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            var existing = protector.Unprotect(account.ProtectedSecret);
-            if (existing is null || !harness.IsNewerAccountSecret(existing, candidate)) return;
-            var encrypted = protector.Protect(candidate)!;
-            var now = DateTime.UtcNow;
-            if (await db.Accounts.Where(a => a.Id == account.Id && a.Version == account.Version
-                    && a.Kind == account.Kind && a.ProtectedSecret == account.ProtectedSecret)
-                .ExecuteUpdateAsync(s => s.SetProperty(a => a.ProtectedSecret, encrypted).SetProperty(a => a.UpdatedAt, now), cancellationToken) != 0) return;
-            var latest = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == account.Id, cancellationToken);
-            if (latest is null || latest.Version != account.Version || latest.Kind != account.Kind) return;
-            account = latest;
-        }
-    }
-
-    private async Task<string?> ReadRenewalAsync(Runner runner, Account account, string file, CancellationToken cancellationToken)
-    {
-        var bytes = await shell.DownloadBytesAsync(runner, $"~/.deveagentmanager/accounts/{account.Id:N}/{file}", 64 * 1024, cancellationToken);
-        return bytes is null ? null : Encoding.UTF8.GetString(bytes);
     }
 
     /// <summary>A fresh folder on the Runner for a login's files (<c>$DAM_LOGIN_DIR</c>).</summary>

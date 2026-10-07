@@ -250,6 +250,9 @@ their sessions are invalidated, so they must sign in again. Role removal takes e
 
 ## Subscription credential renewal across Runners
 
+**Reverted (2026-10-08).** The automatic capture/install described below was removed from this PR: it fixed stale copies
+but not concurrent refresh. Central renewal replaces it in its own PR; see [codex-central-auth-plan.md](codex-central-auth-plan.md).
+
 Codex renews its OAuth credentials in each managed account's `CODEX_HOME/auth.json`. The account version marker
 identifies a user login generation, not token freshness. Previously DAM left the renewed file on its Runner but kept
 the original encrypted copy, so starting on a different Runner could install expired credentials and show sign-in.
