@@ -47,8 +47,9 @@ public sealed class LimitTerminalTests
             // Working output changed since observation; slash commands should still reach the empty prompt.
             if (outputChanged) ready = ready with { Hash = "older-output" };
             var guardedScreen = command == "continue";
-            var rejected = edited || (outputChanged && guardedScreen);
-            Assert.Equal(rejected ? "CHANGED" : "SENT", (await Run(LimitTerminal.BuildSubmitScript("limit", ready, command, guardedScreen))).Trim());
+            // A changed screen types nothing; a prompt edited while typing leaves the text without Enter.
+            Assert.Equal(outputChanged && guardedScreen ? "CHANGED" : edited ? "UNCONFIRMED" : "SENT",
+                (await Run(LimitTerminal.BuildSubmitScript("limit", ready, command, guardedScreen))).Trim());
             if (outputChanged && guardedScreen)
             {
                 Assert.False(File.Exists(Path.Combine(temp, "state.json")));
@@ -57,6 +58,56 @@ public sealed class LimitTerminalTests
             using var state = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(temp, "state.json"), TestContext.Current.CancellationToken));
             if (edited) Assert.False(state.RootElement.TryGetProperty("entered", out _));
             else Assert.True(state.RootElement.GetProperty("entered").GetDouble() - state.RootElement.GetProperty("typed").GetDouble() >= 0.3);
+        }
+        finally { Directory.Delete(temp, true); }
+
+        async Task<string> Run(string script)
+        {
+            var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true, RedirectStandardError = true };
+            start.Environment["PATH"] = temp + ":" + Environment.GetEnvironmentVariable("PATH");
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+            var error = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+            await process.WaitForExitAsync(TestContext.Current.CancellationToken);
+            Assert.True(process.ExitCode == 0, await error);
+            return await output;
+        }
+    }
+
+    [Theory]
+    [InlineData("", "SENT")]
+    [InlineData("my draft", "CHANGED")]
+    public async Task Pi_ContinueGoesIntoItsEmptyPromptBox_NeverOverADraft(string draft, string expected)
+    {
+        // pi's prompt is an unprefixed box between two rules, with the cursor on its (blank) line and a usage footer below.
+        if (OperatingSystem.IsWindows()) return;
+        var temp = Directory.CreateTempSubdirectory("dam-pi-submit-").FullName;
+        await File.WriteAllTextAsync(Path.Combine(temp, "state.json"), JsonSerializer.Serialize(new { text = draft }), TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(Path.Combine(temp, "tmux"), $$"""
+            #!/usr/bin/python3
+            import json,pathlib,sys,time
+            root=pathlib.Path(__file__).parent
+            args=sys.argv[1:]
+            path=root/'state.json'
+            state=json.loads(path.read_text())
+            if args[0]=='display-message':
+                print('%1|{{Environment.ProcessId}}|0|2|'+str(1+len(state['text'])))
+            elif args[0]=='capture-pane':
+                print(' The answer.\n' + '─'*40 + '\n ' + state['text'] + '\n' + '─'*40 + '\n~/work/x\n↑1 ↓2 R3 W4 CH0% $0.1 (sub) 1.0%/1.0M (auto)\nthink:medium')
+            elif args[0]=='send-keys':
+                if '-l' in args: state['text']+=args[-1]
+                if 'Enter' in args: state['entered']=state['text']
+                path.write_text(json.dumps(state))
+            """, TestContext.Current.CancellationToken);
+        File.SetUnixFileMode(Path.Combine(temp, "tmux"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        try
+        {
+            var screen = JsonSerializer.Deserialize<LimitScreen>(await Run(LimitTerminal.BuildReadScript("pi")))!;
+            Assert.Equal(draft.Length == 0, screen.InputEmpty);
+            Assert.Equal(expected, (await Run(LimitTerminal.BuildContinueScript("pi", screen))).Trim());
+            using var state = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(temp, "state.json"), TestContext.Current.CancellationToken));
+            Assert.Equal(draft.Length == 0 ? "continue" : draft, state.RootElement.GetProperty("text").GetString());
+            Assert.Equal(draft.Length == 0, state.RootElement.TryGetProperty("entered", out _));
         }
         finally { Directory.Delete(temp, true); }
 

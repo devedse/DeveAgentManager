@@ -7,9 +7,9 @@
         <div class="help-heading mb-3">
         <MudSelect T="bool" @bind-Value="_autoMode" Label="Continuation mode" Variant="Variant.Outlined" Class="flex-grow-1">
             <MudSelectItem T="bool" Value="false">One-time schedule</MudSelectItem>
-            <MudSelectItem T="bool" Value="true">Automatic after usage limits</MudSelectItem>
+            <MudSelectItem T="bool" Value="true" Disabled="!Automatic.Available && !Automatic.Enabled">Automatic after usage limits@(Automatic.Available ? "" : " (Codex and Claude)")</MudSelectItem>
         </MudSelect>
-        <HelpTip Label="Continuation modes">A one-time schedule types and sends <b>continue</b> once: one minute after the chosen reset, or after the chosen duration. If the agent is busy or you have a draft, it stays armed until the prompt is empty and the agent is ready. Automatic mode repeats after detected usage-limit resets until disabled or its count is reached.</HelpTip>
+        <HelpTip Label="Continuation modes">A one-time schedule types and sends <b>continue</b> once: one minute after the chosen reset, or after the chosen duration. If the agent is busy or you have a draft, it stays armed until the prompt is empty and the agent is ready. Automatic mode repeats after detected usage-limit resets until disabled or its count is reached; it needs the usage-limit messages of Codex or Claude.</HelpTip>
         </div>
         @if (_autoMode)
         {
@@ -58,7 +58,7 @@
             @if (Limit.Detail is not null) { <MudAlert Severity="Severity.Info" Class="mb-3">@Limit.Detail</MudAlert> }
             @if (Limit.DetectedResetAt is not null)
             {
-                <MudButton Color="Color.Primary" Disabled="!_loaded || _busy" OnClick="UseDetectedAsync">Use detected reset (+1 minute)</MudButton>
+                <MudButton Color="Color.Primary" Disabled="!_loaded || _busy" OnClick="UseDetectedAsync">Use detected reset time (+1 min)</MudButton>
             }
             <MudSwitch T="bool" @bind-Value="_relative" Color="Color.Primary" Label="Continue after a duration" />
             @if (_relative)

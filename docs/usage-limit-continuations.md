@@ -4,6 +4,10 @@ Settings → Timezones sets the default timezone for new harness processes. A Ru
 
 The terminal header shows an amber, gently blinking hourglass when it detects an active Codex or Claude usage-limit error. Click it to review the reset and schedule a single `continue` for reset + one minute. A scheduled button becomes a steady clock and lets you cancel. Reduced-motion preferences disable blinking.
 
+Every harness gets one-time schedules (a chosen time or duration), pi included: `continue` goes into pi's empty prompt box the same guarded way. Detected limits and automatic mode need a recognized usage-limit message, which only Codex and Claude show; pi shows its provider's raw error, which differs per provider.
+
+A limit belongs to the harness, conversation and login it was seen with. After continuing in another harness, with another login or in a new conversation, it no longer applies: the button stops showing it at once, and the next check clears it. A one-time schedule you made stays and waits ("the agent's harness or session changed") until you cancel it.
+
 ## Reading reset times
 
 The monitor reads the visible tmux pane with wrapped lines joined; it does not search arbitrary scrollback. It looks for a harness error immediately before the current prompt, excluding old errors followed by new prompts, tool output, and ordinary low-quota warnings. A short allowlist of English error formats is intentional: a new or truncated format must not silently turn into a guessed schedule.
@@ -16,7 +20,7 @@ The resolved UTC instant is stored once per observed limit/process/session, rath
 
 ## Sending and recovery
 
-Schedules are stored in SQLite and checked by the Manager every five seconds, including while browsers are closed. Sending starts no earlier than reset + one minute (or the chosen time). A due schedule stays armed until it can send or you cancel it, and says what it waits for: the same harness and conversation/account, an idle agent, an empty prompt. Before sending, a second check on the Runner verifies the pane identity, captured screen hash and empty prompt; it never clears the input buffer. This also catches drafts entered through another tmux client when they are visible. Concurrent activity from external tmux clients cannot be made fully atomic with a screen capture.
+Schedules are stored in SQLite and checked by the Manager every five seconds, including while browsers are closed. Sending starts no earlier than reset + one minute (or the chosen time). A due schedule stays armed until it can send or you cancel it, and says what it waits for: the same harness and conversation/account, an idle agent, an empty prompt. Before sending, a second check on the Runner verifies the pane identity, captured screen hash and empty prompt; it never clears the input buffer. If the screen changed since it was read, nothing is typed and it tries again on the next check; only when the prompt changes between typing `continue` and Enter is Enter left unsent, with a note to check the prompt. This also catches drafts entered through another tmux client when they are visible. Concurrent activity from external tmux clients cannot be made fully atomic with a screen capture.
 
 A one-time continue is done without sending when the agent got going again without it: it is working when the continue is due, or replied after the reset. Claude continues by itself at the reset ("continuing automatically at 6:40pm"), and someone may have prompted the agent; a late `continue` would otherwise prompt a finished turn or run into the next limit.
 
@@ -35,4 +39,4 @@ Reviewed on 2026-09-30:
 - [Claude issue #15685](https://github.com/anthropics/claude-code/issues/15685): an explicit year in the reset date.
 - Codex: the supplied screenshot and the read-only capture of the running QueueCache terminal (its process timezone was `Etc/UTC`).
 
-Regression tests cover these formats, timezone precedence, midnight/year rollover, DST uncertainty, stale conversation text, native auto-continue, persistence, cancellation, one-shot delivery, and a real isolated tmux session that verifies a draft is preserved and exactly `continue` plus Enter is sent.
+Regression tests cover these formats, timezone precedence, midnight/year rollover, DST uncertainty, stale conversation text, native auto-continue, limits left from before a switch of harness, login or conversation, pi schedules, persistence, cancellation, one-shot delivery, and a real isolated tmux session that verifies a draft is preserved and exactly `continue` plus Enter is sent.

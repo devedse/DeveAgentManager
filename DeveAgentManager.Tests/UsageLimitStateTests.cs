@@ -15,9 +15,11 @@ public class UsageLimitStateTests
         var before = new DateTime(2026, 10, 2, 12, 59, 0, DateTimeKind.Utc);
         var after = before.AddMinutes(1);
         var agent = new Agent { Id = Guid.NewGuid(), HarnessId = harness, State = AgentState.Running };
-        var limit = new AgentLimit { SessionId = UsageLimitState.Session(agent), PaneIdentity = "%1:123:456:boot-id", Message = message,
-            TimeZoneId = zone, DetectedAt = before, ResetAt = after.AddHours(1) }; // A manual override must not change expiry.
         var screen = message + "\n❯ ";
+        // Stored as parsed: Claude's └ / ⎿ connector is not part of the message.
+        var limit = new AgentLimit { SessionId = UsageLimitState.Session(agent), PaneIdentity = "%1:123:456:boot-id",
+            Message = UsageLimitParser.Parse(harness, screen, zone, before)!.Message,
+            TimeZoneId = zone, DetectedAt = before, ResetAt = after.AddHours(1) }; // A manual override must not change expiry.
         var detection = new AgentScreenDetection(AgentActivityStatus.UsageLimited, "limit", "usage-limit", message);
         Assert.Equal(detection, UsageLimitState.ApplyExpiry(agent, limit, screen, "%1|123|456|boot-id", detection, before));
         AgentActivityTracker.Apply(agent, detection, "%1|123|456|boot-id", before);
