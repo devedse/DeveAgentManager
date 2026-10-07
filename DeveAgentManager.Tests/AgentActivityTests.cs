@@ -163,7 +163,7 @@ public class AgentActivityTests
         var screen = Screen("claude-session-limit");
         var parsed = UsageLimitParser.Parse("claude", screen, "UTC", now);
         Assert.NotNull(parsed);
-        Assert.Equal("⎿ You've hit your session limit · resets 6:40pm (Europe/Amsterdam)", parsed.Message);
+        Assert.Equal("You've hit your session limit · resets 6:40pm (Europe/Amsterdam)", parsed.Message);
         Assert.Equal(new DateTime(2026, 10, 6, 16, 40, 0, DateTimeKind.Utc), parsed.ResetAt);
         Assert.Equal("Europe/Amsterdam", parsed.TimeZoneId);
         Assert.True(parsed.NativeAutoContinue);

@@ -45,6 +45,9 @@ public static class UsageLimitParser
             @"^\s*(?:⚠(?:️)?\s*)?(?:[0-9]+ background terminals? running\b|(?:5h|weekly)\s+(?:limit:\s*)?[0-9]+%\s+left\b)").Success;
         var message = Regex.Replace(start < 0 ? nativeFooter! : string.Join(" ", new[] { lines[start] }
             .Concat(following.TakeWhile(line => !CompletedFooter(line) && !StatusFooter(line) && !LimitNotice(line)))), @"\s+", " ").Trim();
+        // Claude shows its error under a tool-result connector (⎿); it is not part of the message. (Codex's ■ stays:
+        // its prefix requires it when a stored message is parsed again.)
+        message = Regex.Replace(message, @"^[⎿└]\s*", "", RegexOptions.None, TimeSpan.FromMilliseconds(100));
         if (harness == "codex")
             message = Regex.Replace(message, @"\s+(?:\d+ background terminals? running\b|⚠(?:️)?\s*(?:5h|weekly)\s+(?:limit:\s*)?\d+%\s+left\b).*$", "",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)).Trim();

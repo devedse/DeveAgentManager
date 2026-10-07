@@ -4,7 +4,9 @@ using DeveAgentManager.Core.Setup;
 
 namespace DeveAgentManager.Contracts;
 
-public sealed record AutoContinueDto(bool Enabled = false, int? Remaining = null, int Sent = 0, string? Detail = null);
+/// <param name="Available">Whether the agent's harness shows usage limits the Manager recognizes (Codex, Claude); without
+/// that, only one-time schedules work.</param>
+public sealed record AutoContinueDto(bool Enabled = false, int? Remaining = null, int Sent = 0, string? Detail = null, bool Available = true);
 public sealed record AutoContinueRequest(bool Enabled, int? Remaining = null);
 public sealed record TimeZoneRequest(string? TimeZoneId);
 public sealed record TimeZoneConfigDto(string DefaultTimeZoneId, string? OverrideTimeZoneId);

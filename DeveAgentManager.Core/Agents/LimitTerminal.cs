@@ -6,10 +6,23 @@ namespace DeveAgentManager.Core.Agents;
 
 public sealed record LimitScreen(string Screen, string Identity, string? TimeZone, bool InputEmpty, string Hash, DateTime? ObservedAt = null);
 
+/// <summary>What happened when typing continue.</summary>
+public enum ContinueDelivery
+{
+    /// <summary>Typed and submitted with Enter.</summary>
+    Sent,
+
+    /// <summary>Nothing was typed: the screen changed since it was read, or the prompt had a draft.</summary>
+    NotTyped,
+
+    /// <summary>The text was typed but the prompt changed before Enter, so Enter was not sent: the text may still be there.</summary>
+    Unconfirmed,
+}
+
 public interface ILimitTerminal
 {
     Task<LimitScreen> ReadAsync(Agent agent, CancellationToken ct);
-    Task<bool> SendContinueAsync(Agent agent, LimitScreen expected, CancellationToken ct);
+    Task<ContinueDelivery> SendContinueAsync(Agent agent, LimitScreen expected, CancellationToken ct);
 }
 
 /// <summary>Reads only the visible pane, not scrollback. Checks it again on the Runner immediately before typing.</summary>
@@ -70,10 +83,15 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
         return JsonSerializer.Deserialize<LimitScreen>(result.Output.Trim()) ?? throw new InvalidOperationException("No terminal snapshot returned.");
     }
 
-    public async Task<bool> SendContinueAsync(Agent agent, LimitScreen expected, CancellationToken ct)
+    public async Task<ContinueDelivery> SendContinueAsync(Agent agent, LimitScreen expected, CancellationToken ct)
     {
         var result = (await shell.RunAsync(agent.Runner!, BuildContinueScript(agent.TmuxSession, expected), TimeSpan.FromSeconds(10), ct)).EnsureSuccess("Sending continue");
-        return result.Output.Trim() == "SENT";
+        return result.Output.Trim() switch
+        {
+            "SENT" => ContinueDelivery.Sent,
+            "CHANGED" => ContinueDelivery.NotTyped,
+            _ => ContinueDelivery.Unconfirmed,
+        };
     }
 
     internal static string BatchProbe => Probe + "\n" + """
@@ -91,6 +109,7 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
 
     internal static string BuildContinueScript(string session, LimitScreen expected) => BuildSubmitScript(session, expected, "continue");
 
+    /// <summary>Prints SENT, CHANGED (nothing typed) or UNCONFIRMED (typed, but Enter was not sent).</summary>
     internal static string BuildSubmitScript(string session, LimitScreen expected, string command, bool requireUnchangedScreen = true)
     {
         var expectedJson = JsonSerializer.Serialize(new { expected.Identity, expected.Hash });
@@ -118,7 +137,7 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
                 time.sleep(0.35)
                 ready=snapshot()
                 if ready['Identity']!=expected['Identity'] or ready['InputText']!=command:
-                    print('CHANGED')
+                    print('UNCONFIRMED')
                 else:
                     tmux('send-keys','-t',pane,'Enter')
                     print('SENT')

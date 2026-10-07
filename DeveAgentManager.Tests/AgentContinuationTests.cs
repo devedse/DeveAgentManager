@@ -216,20 +216,24 @@ public sealed class AgentContinuationTests
         Assert.Equal(0, rig.Terminal.Sends);
     }
 
-    [Fact]
-    public async Task ChangedScreenDuringSubmissionWaitsAndRetriesOnlyWhilePromptIsEmpty()
+    [Theory]
+    [InlineData(ContinueDelivery.NotTyped, "nothing was typed")]
+    [InlineData(ContinueDelivery.Unconfirmed, "Enter was not sent")]
+    public async Task ChangedScreenDuringSubmissionWaitsAndRetriesOnlyWhilePromptIsEmpty(ContinueDelivery outcome, string detail)
     {
         await using var rig = await Rig.Create();
         await rig.Service.ScheduleAsync(rig.Id, null, Ct);
-        rig.Terminal.SendResult = false;
+        rig.Terminal.SendResult = outcome;
         rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
         await rig.Service.RefreshAsync(rig.Id, Ct);
-        Assert.Equal("Scheduled", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        var waiting = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal("Scheduled", waiting.Status);
+        Assert.Contains(detail, waiting.Detail);
         rig.Terminal.Screen = rig.Terminal.Screen with { InputEmpty = false };
         await rig.Service.RefreshAsync(rig.Id, Ct);
         Assert.Equal(1, rig.Terminal.Sends);
         rig.Terminal.Screen = rig.Terminal.Screen with { InputEmpty = true };
-        rig.Terminal.SendResult = true;
+        rig.Terminal.SendResult = ContinueDelivery.Sent;
         await rig.Service.RefreshAsync(rig.Id, Ct);
         Assert.Equal("Sent", await rig.StatusAsync());
         Assert.Equal(2, rig.Terminal.Sends);
@@ -650,6 +654,145 @@ public sealed class AgentContinuationTests
         Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
     }
 
+    private static string PiScreen => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", "pi-idle-cursor-line.txt"));
+
+    private static string CodexIdle => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", "codex-idle.txt"));
+
+    /// <summary>Continues the agent in another harness, with another login or in a new conversation.</summary>
+    private static async Task SwitchAsync(Rig rig, string change)
+    {
+        await using var db = rig.Factory.CreateDbContext();
+        var agent = (await db.Agents.FindAsync([rig.Id], Ct))!;
+        switch (change)
+        {
+            case "harness": agent.HarnessId = "pi"; agent.HarnessSessionId = "pi-session"; rig.Terminal.Screen = rig.Terminal.Screen with { Screen = PiScreen }; break;
+            case "login":
+                // As if the limit was seen with another login of this harness.
+                (await db.AgentLimits.FindAsync([rig.Id], Ct))!.SessionId = $"codex|session|{Guid.NewGuid()}";
+                rig.Terminal.Screen = rig.Terminal.Screen with { Screen = CodexIdle };
+                break;
+            default: agent.HarnessSessionId = "new-conversation"; rig.Terminal.Screen = rig.Terminal.Screen with { Screen = CodexIdle }; break;
+        }
+        await db.SaveChangesAsync(Ct);
+    }
+
+    [Theory]
+    [InlineData("harness", "Detected")]
+    [InlineData("harness", "Sent")]
+    [InlineData("harness", "Uncertain")]
+    [InlineData("login", "Detected")]
+    [InlineData("conversation", "Sent")]
+    public async Task LimitFromBeforeASwitch_IsGoneAtOnce_AndClearedWithoutSending(string change, string status)
+    {
+        // The reported case: Claude's weekly limit kept showing on the agent after it continued in pi.
+        await using var rig = await Rig.Create();
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            (await db.AgentLimits.FindAsync([rig.Id], Ct))!.Status = status;
+            await db.SaveChangesAsync(Ct);
+        }
+        Assert.NotNull(await rig.Service.GetAsync(rig.Id, Ct));
+
+        await SwitchAsync(rig, change);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct)); // Before any observation of the new harness.
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal("Cleared", await rig.StatusAsync());
+
+        // It stays cleared after its old reset passed, rather than coming back as Expired.
+        rig.Clock.Utc = rig.Clock.Utc.AddHours(1);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal("Cleared", await rig.StatusAsync());
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+        Assert.Equal(0, rig.Terminal.Sends);
+    }
+
+    [Fact]
+    public async Task YourScheduleSurvivesASwitch_WaitsVisibly_AndCanBeCancelled()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct);
+        await SwitchAsync(rig, "harness");
+        Assert.Equal("Scheduled", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(5);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var waiting = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal("Scheduled", waiting.Status);
+        Assert.Contains("harness or session changed", waiting.Detail);
+        Assert.Equal(0, rig.Terminal.Sends);
+
+        await rig.Service.CancelAsync(rig.Id, "Cancelled by you.", Ct);
+        Assert.Equal("Cancelled", await rig.StatusAsync());
+        // A one-time schedule for the new harness replaces it.
+        await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true);
+        Assert.Equal("Scheduled", await rig.StatusAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Pi_GetsOneTimeSchedules_ButNotAutomaticMode(bool chosenTime)
+    {
+        await using var rig = await Rig.Create();
+        await SwitchAsync(rig, "harness");
+        Assert.False((await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Available);
+        await Assert.ThrowsAsync<ArgumentException>(() => rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct));
+
+        if (chosenTime) await rig.Service.ScheduleAsync(rig.Id, rig.Clock.Utc.AddMinutes(10).UtcDateTime, Ct);
+        else await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 11, manual: true);
+        var scheduled = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal(rig.Clock.Utc.AddMinutes(11).UtcDateTime, scheduled.ContinueAt);
+
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(10);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(1);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends); // pi's empty prompt box is ready.
+        Assert.Equal("Sent", await rig.StatusAsync());
+
+        // pi's prompt is ready again afterwards: done.
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal("Cleared", await rig.StatusAsync());
+        Assert.Equal(1, rig.Terminal.Sends);
+    }
+
+    [Fact]
+    public async Task ClaudeMessageStoredWithItsConnector_IsRepairedInPlace()
+    {
+        // Limits stored before the ⎿ connector was dropped keep their schedule and detection.
+        await using var rig = await Rig.Create();
+        var screen = UsageLimitParserTests.Claude("  ⎿  You've hit your weekly limit · resets Oct 2, 3pm (UTC)");
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            (await db.Agents.FindAsync([rig.Id], Ct))!.HarnessId = "claude";
+            await db.SaveChangesAsync(Ct);
+        }
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = screen };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        DateTime detectedAt;
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            var row = (await db.AgentLimits.FindAsync([rig.Id], Ct))!;
+            row.Message = "⎿ " + row.Message;
+            detectedAt = row.DetectedAt;
+            await db.SaveChangesAsync(Ct);
+        }
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var limit = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal("You've hit your weekly limit · resets Oct 2, 3pm (UTC)", limit.Message);
+        Assert.Equal(detectedAt, limit.DetectedAt); // Repaired, not detected again.
+        Assert.Equal(new DateTime(2026, 10, 2, 15, 0, 0, DateTimeKind.Utc), limit.DetectedResetAt);
+    }
+
+    [Fact]
+    public async Task CodexAndClaude_OfferAutomaticMode()
+    {
+        await using var rig = await Rig.Create();
+        Assert.True((await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Available);
+    }
+
     private sealed class FakeClock : TimeProvider
     {
         public DateTimeOffset Utc = new(2026, 9, 30, 14, 0, 0, TimeSpan.Zero);
@@ -662,9 +805,9 @@ public sealed class AgentContinuationTests
         public int Sends;
         public int Reads;
         public bool ThrowOnSend;
-        public bool SendResult = true;
+        public ContinueDelivery SendResult = ContinueDelivery.Sent;
         public Task<LimitScreen> ReadAsync(Agent agent, CancellationToken ct) { Reads++; return Task.FromResult(Screen); }
-        public Task<bool> SendContinueAsync(Agent agent, LimitScreen expected, CancellationToken ct)
+        public Task<ContinueDelivery> SendContinueAsync(Agent agent, LimitScreen expected, CancellationToken ct)
         {
             Sends++;
             if (ThrowOnSend) throw new IOException("Connection lost after sending");

@@ -556,7 +556,9 @@ public sealed partial class AgentService(
             }
         }
         if (continuations is null) return;
-        await Parallel.ForEachAsync(agents.Where(a => a.HarnessId is "codex" or "claude"),
+        // Every harness: limits are detected for Codex and Claude, but schedules and limits left from before a switch to
+        // another harness need the observation too.
+        await Parallel.ForEachAsync(agents,
             new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (agent, ct) =>
         {
             var snapshot = screens.GetValueOrDefault(agent.TmuxSession)?.ToLimitScreen();
