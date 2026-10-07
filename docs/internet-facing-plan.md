@@ -53,7 +53,17 @@ No decisions needed.
      otherwise.
    - Allow `{host}` in `EDITOR_URL` (the Portal's host the browser used), so a Portal reachable on two hostnames gets
      the matching editor host for each, e.g. `https://{runner}.code.{host}`.
-   - Review the ticket flow against the open internet (lifetime, single use, binding to the user).
+   - How VS Code is protected today: the Portal issues a ticket (signed, 2 minutes) for one user and one Runner, only to
+     a signed-in user with Use access, and only to the Portal's own pages; it becomes a cookie for that Runner only;
+     every request checks again that the user exists, is enabled, has the same security stamp and still has access;
+     open connections close when that ends. A second factor (phase 2) covers it automatically.
+   - **Single-use tickets** with a shorter lifetime (about 30 seconds): a ticket is in the URL, and URLs end up in
+     proxy access logs.
+   - **Signing out ends VS Code too.** Today the VS Code cookie stays valid for up to 12 hours after signing out of
+     the Portal (signing out doesn't change the security stamp). Tie it to the sign-in session (phase 2 sessions).
+   - **Require `{runner}` in `EDITOR_URL` when internet-facing** (or warn): on a shared VS Code host the per-Runner
+     cookie path is no boundary, so a compromised Runner's VS Code could use the cookie of another Runner opened in
+     the same browser.
    - **Serve VS Code on the Portal's port, by hostname.** A request whose host matches `EDITOR_URL` goes to VS Code;
      everything else to the Portal. Port 8081 and its proxy upstream are then optional (kept for setups without a
      hostname of their own). The Portal's cookie isn't even sent to another hostname, unlike another port today.
@@ -76,6 +86,7 @@ No decisions needed.
   - Asking for the password (or code) again before sensitive actions: viewing or setting a Runner password, changing
     roles, resetting someone's password, deleting a user.
   - "Remember me" shorter than the current 30 days (suggested: 7 days sliding).
+  - VS Code cookies belong to the sign-in session: signing out, or signing a device out, ends them.
 - **HTTPS.** Keep it in the reverse proxy (nginx proxy manager, Caddy): less code and certificates kept up to date
   elsewhere. HTTPS inside the Manager is not planned.
 
