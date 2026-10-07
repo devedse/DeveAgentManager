@@ -27,6 +27,15 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 {
     private Task<ManagerInfoDto>? _info;
 
+    /// <summary>
+    /// Asks for the password (true: and an authenticator code) before an admin action; true when it was confirmed. Set by
+    /// the layout, which can show dialogs. When an admin action needs it, the request is repeated once afterwards.
+    /// </summary>
+    public Func<bool, Task<bool>>? ConfirmPassword { get; set; }
+
+    public Task ConfirmPasswordAsync(string password, string? code) =>
+        SendAsync(HttpMethod.Post, "api/me/confirm-password", new ConfirmPasswordRequest(password, code));
+
     /// <summary>The Manager's info (version, harnesses, providers); asked once (shared by every page), then kept.</summary>
     public Task<ManagerInfoDto> InfoAsync(bool refresh = false)
     {
@@ -257,7 +266,7 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     private async Task<T> GetAsync<T>(string url)
     {
-        using var response = await http.GetAsync(url);
+        using var response = await ConfirmedAsync(() => http.GetAsync(url));
         await EnsureSuccessAsync(response);
         return (await response.Content.ReadFromJsonAsync<T>(ApiJson.Options))!;
     }
@@ -265,7 +274,7 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     /// <summary>Null when the thing doesn't exist (any more).</summary>
     private async Task<T?> FindAsync<T>(string url) where T : class
     {
-        using var response = await http.GetAsync(url);
+        using var response = await ConfirmedAsync(() => http.GetAsync(url));
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return null;
@@ -277,15 +286,30 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     private async Task SendAsync(HttpMethod method, string url, object? body = null)
     {
-        using var response = await SendRawAsync(method, url, body);
+        using var response = await ConfirmedAsync(() => SendRawAsync(method, url, body));
         await EnsureSuccessAsync(response);
     }
 
     private async Task<T> SendAsync<T>(HttpMethod method, string url, object? body = null)
     {
-        using var response = await SendRawAsync(method, url, body);
+        using var response = await ConfirmedAsync(() => SendRawAsync(method, url, body));
         await EnsureSuccessAsync(response);
         return (await response.Content.ReadFromJsonAsync<T>(ApiJson.Options))!;
+    }
+
+    /// <summary>Sends; when the Manager asks for the password first (an admin action), prompts and sends once more.</summary>
+    private async Task<HttpResponseMessage> ConfirmedAsync(Func<Task<HttpResponseMessage>> send)
+    {
+        var response = await send();
+        if (response.StatusCode != HttpStatusCode.Forbidden || ConfirmPassword is null
+            || !response.Headers.TryGetValues(ApiHeaders.ConfirmPassword, out var asked)
+            || !await ConfirmPassword(asked.FirstOrDefault() == "password+code"))
+        {
+            return response;
+        }
+
+        response.Dispose();
+        return await send();
     }
 
     private Task<HttpResponseMessage> SendRawAsync(HttpMethod method, string url, object? body)

@@ -206,15 +206,39 @@ public sealed class InternetSecurityTests : IClassFixture<InternetSecurityTests.
     }
 
     [Fact]
-    public async Task ManagingUsersNeedsNoExtraConfirmation()
+    public async Task AdminActionsAskForThePasswordAgain_WhichThePortalConfirmsInPlace()
     {
         var portal = Client(); await LoginAsync(portal);
+        HttpRequestMessage CreateUser(string name)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/api/users")
+            { Content = new StringContent($"{{\"username\":\"{name}\",\"password\":\"test-password-1234\",\"roles\":0}}", System.Text.Encoding.UTF8, "application/json") };
+            request.Headers.Add("Origin", "https://dam.test"); request.Headers.Add(DeveAgentManager.Contracts.ApiHeaders.Request, "1");
+            return request;
+        }
+        HttpRequestMessage Confirm(string password)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/api/me/confirm-password")
+            { Content = new StringContent($"{{\"password\":\"{password}\"}}", System.Text.Encoding.UTF8, "application/json") };
+            request.Headers.Add("Origin", "https://dam.test"); request.Headers.Add(DeveAgentManager.Contracts.ApiHeaders.Request, "1");
+            return request;
+        }
+        var name = "reauth-" + Guid.NewGuid().ToString("N")[..8];
+
+        // Right after signing in: no prompt.
+        Assert.True((await portal.SendAsync(CreateUser(name))).IsSuccessStatusCode);
+
+        // Later: refused with the header the Portal turns into a password prompt; ordinary actions aren't affected.
         _manager.Clock.Advance(TimeSpan.FromMinutes(11));
-        var name = "no-reauth-" + Guid.NewGuid().ToString("N")[..8];
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/users")
-        { Content = new StringContent($"{{\"username\":\"{name}\",\"password\":\"test-password-1234\",\"roles\":0}}", System.Text.Encoding.UTF8, "application/json") };
-        request.Headers.Add("Origin", "https://dam.test"); request.Headers.Add(DeveAgentManager.Contracts.ApiHeaders.Request, "1");
-        Assert.True((await portal.SendAsync(request)).IsSuccessStatusCode);
+        var refused = await portal.SendAsync(CreateUser(name + "-2"));
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Equal("password", refused.Headers.GetValues(DeveAgentManager.Contracts.ApiHeaders.ConfirmPassword).Single());
+        Assert.Equal(HttpStatusCode.OK, (await portal.GetAsync("/api/users")).StatusCode);
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await portal.SendAsync(Confirm("wrong"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await portal.SendAsync(CreateUser(name + "-2"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await portal.SendAsync(Confirm(Password))).StatusCode);
+        Assert.True((await portal.SendAsync(CreateUser(name + "-2"))).IsSuccessStatusCode);
     }
 
     [Fact]

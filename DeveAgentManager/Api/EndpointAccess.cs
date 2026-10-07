@@ -1,3 +1,4 @@
+using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Users;
 
@@ -82,7 +83,27 @@ public static class EndpointAccess
             }
         }
 
+        if (NeedsRecentPassword(http, requirements) && !await AccountSecurity.RecentAsync(http))
+        {
+            var withCode = await http.RequestServices.GetRequiredService<SecondFactors>().EnabledAsync(user.Id, http.RequestAborted);
+            http.Response.Headers[ApiHeaders.ConfirmPassword] = withCode ? "password+code" : "password";
+            return Results.Problem("Enter your password to continue.", statusCode: StatusCodes.Status403Forbidden);
+        }
+
         return await next(context);
+    }
+
+    /// <summary>
+    /// Admin actions ask for the password again when it was last entered more than <see cref="SignInSessions.RecentLifetime"/>
+    /// ago (the Portal prompts for it): changes only user or settings managers may make, and a Runner's password.
+    /// </summary>
+    private static bool NeedsRecentPassword(HttpContext http, IReadOnlyList<Requirement> requirements)
+    {
+        var path = http.Request.Path.Value ?? "";
+        if (path.StartsWith("/api/runners/", StringComparison.Ordinal) && path.EndsWith("/password", StringComparison.Ordinal)) return true;
+        const UserRoles admin = UserRoles.UserManager | UserRoles.SettingsManager;
+        return !HttpMethods.IsGet(http.Request.Method)
+            && requirements.FirstOrDefault(r => r.Kind == Kind.Role)?.Roles is { } roles && roles != UserRoles.None && (roles & ~admin) == 0;
     }
 
     private static async Task<IResult?> CheckAsync(Requirement requirement, HttpContext http, CurrentUser user, AccessControl access)

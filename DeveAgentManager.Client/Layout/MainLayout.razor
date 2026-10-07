@@ -3,6 +3,8 @@
 @inject SignedInUser Me
 @inject LiveUpdates Live
 @inject NavigationManager Navigation
+@inject ManagerApi Api
+@inject IDialogService Dialogs
 
 <MudProviders />
 <LoadingDone />
@@ -70,6 +72,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        Api.ConfirmPassword = ConfirmPasswordAsync;
         Live.StateChanged += OnChanged;
         Me.Changed += OnUserChanged;
         await LoadUserAsync();
@@ -88,6 +91,13 @@
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task<bool> ConfirmPasswordAsync(bool withCode)
+    {
+        var dialog = await Dialogs.ShowAsync<ConfirmPasswordDialog>(null, new DialogParameters<ConfirmPasswordDialog> { { d => d.WithCode, withCode } },
+            new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true });
+        return await dialog.Result is { Canceled: false };
+    }
 
     private void OnUserChanged() => InvokeAsync(async () =>
     {

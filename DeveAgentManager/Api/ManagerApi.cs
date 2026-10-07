@@ -44,6 +44,29 @@ public static class ManagerApi
         api.MapGet("/harnesses/{harnessId}/models", async (string harnessId, CurrentUser user, RunnerSetupService setup, RunnerService runners, CancellationToken ct) =>
             await setup.ListModelsAsync(harnessId, await runners.ListVisibleAsync(user, ct), ct)).ForAnyUser();
 
+        // The Portal's password prompt for admin actions (see EndpointAccess.NeedsRecentPassword). Shares the sign-in limits.
+        api.MapPost("/me/confirm-password", async (ConfirmPasswordRequest request, HttpContext context, CurrentUser user, UserService users,
+            SecondFactors factors, SignInSessions sessions, LoginThrottle throttle, AuditLog audit, CancellationToken ct) =>
+        {
+            if (request.Password is not { Length: > 0 } password || password.Length > UserService.MaxPasswordLength || request.Code?.Length > 100)
+                throw new ArgumentException("Enter your password.");
+            var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            using var lease = throttle.TryEnter(ip, user.Username);
+            if (lease is null)
+            {
+                context.Response.Headers.RetryAfter = "300";
+                return Results.Problem("Too many attempts. Wait a few minutes.", statusCode: StatusCodes.Status429TooManyRequests);
+            }
+
+            if (await users.SignInAsync(user.Username, password, ct) is null)
+                throw new ArgumentException("That password is incorrect.");
+            if (await factors.EnabledAsync(user.Id, ct) && !await factors.VerifyAsync(user.Id, request.Code ?? "", ct))
+                throw new ArgumentException("That code is incorrect.");
+            await sessions.ReauthenticateAsync(SignIn.SessionId(context), ct);
+            await audit.RecordAsync(user, AuditActions.IdentityConfirmed, "Portal session", $"IP: {ip}", ct);
+            return Results.NoContent();
+        }).ForAnyUser();
+
         api.MapUserEndpoints();
         api.MapRunnerEndpoints();
         api.MapAgentEndpoints();

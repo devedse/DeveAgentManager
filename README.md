@@ -211,11 +211,13 @@ or off signs out your other devices.
 
 Upgrading from self-contained cookies requires a fresh sign-in; existing chosen passwords are preserved.
 
-Remembered sessions have seven days of inactivity and a thirty-day absolute limit.
+Remembered sessions have seven days of inactivity and a thirty-day absolute limit. Admin actions (changes only user or
+settings managers can make, and viewing or changing a Runner's password) ask for your password again in a dialog when
+you last entered it more than ten minutes ago; the action then continues.
 Account forms use antiforgery tokens and reject absent, null or foreign Origins. Public cookies use `__Host-`, Secure,
 HttpOnly and Path=/; local HTTP credentials are separate and cannot authenticate public endpoints.
 
-Sign-in, password changes and authenticator setup/removal share limits of
+Sign-in, password prompts, password changes and authenticator setup/removal share limits of
 20 attempts per account, 30 per IP and 200 globally in a fixed
 five-minute window, with at most four concurrent password checks. There are at most 4096 limiter entries, and no
 fixed account lockout or sleeping requests. Excess requests receive 429; existing sessions continue working.

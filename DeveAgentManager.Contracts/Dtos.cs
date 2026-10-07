@@ -322,7 +322,15 @@ public static class TerminalSocket
 public static class ApiHeaders
 {
     public const string Request = "X-DAM-Request";
+
+    /// <summary>
+    /// On a 403 for an admin action: the password was last entered too long ago. "password" or "password+code" (when the
+    /// user has an authenticator). The Portal asks for it in a dialog, confirms it, and repeats the request.
+    /// </summary>
+    public const string ConfirmPassword = "X-DAM-Confirm-Password";
 }
+
+public sealed record ConfirmPasswordRequest(string Password, string? Code = null);
 
 public sealed record SelectSessionRequest(Guid? SessionId, string? Title = null);
 public sealed record RenameSessionRequest(string Title);

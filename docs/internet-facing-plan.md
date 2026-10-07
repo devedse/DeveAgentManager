@@ -121,9 +121,14 @@ POST response, hashed at rest and atomically consumed. TOTP counters are atomica
 replay. Enabling or disabling an authenticator revokes other sessions; disabling requires the password and a current
 code.
 
-The authenticator is optional for everyone; there is no policy that requires it, and no separate "confirm your
-password" step before managing users or viewing Runner passwords (decided 2026-10-07: the extra steps cost more than
-they protected, with sign-in sessions revocable). There is no passkey or external identity-provider implementation.
+The authenticator is optional for everyone; there is no policy that requires it. There is no passkey or external
+identity-provider implementation.
+
+Admin actions ask for the password again when it was last entered more than ten minutes ago: non-GET endpoints that
+need only the user-manager or settings-manager role, and viewing or changing a Runner's password. The API answers 403
+with `X-DAM-Confirm-Password: password` (or `password+code` with an authenticator); the Portal shows a password dialog,
+posts it to `/api/me/confirm-password` (same guessing limits as sign-in) and repeats the request once. There is no
+separate page to visit.
 
 ## 5. Guessing protection, first start and recovery
 
@@ -230,6 +235,7 @@ wildcard DNS/certificate support on the chosen provider; this implementation has
 - Exact public origins and trusted proxy peers are explicit configuration; public requests cannot activate local mode.
 - Local direct IP HTTP remains supported with separate credentials and accepted reduced editor isolation.
 - Durable revocable sessions and optional TOTP/recovery are in this PR.
-- 2026-10-07 — The authenticator is fully optional (no enforcement policy) and managing users needs no re-confirmation.
+- 2026-10-07 — The authenticator is fully optional (no enforcement policy). Admin actions re-ask the password in a
+  dialog in place, never by sending the user to another page.
 - Initial defaults: seven-day inactivity, thirty-day absolute session limit;
   bounded guessing thresholds as documented above. Passkeys/OIDC and multi-instance deployment are outside this scope.
