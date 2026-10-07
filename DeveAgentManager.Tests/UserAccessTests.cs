@@ -106,6 +106,34 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         Assert.DoesNotContain(admins.SessionId.ToString(), await manager.GetStringAsync("/api/sessions"));
     }
 
+    [Theory]
+    [InlineData(UserRoles.ConversationReader)]
+    [InlineData(UserRoles.Admin)]
+    public async Task ConversationReaders_OpenEveryAgentAndSessionWithoutOwnershipOrShares(UserRoles roles)
+    {
+        var things = await SeedAsync(User.BootstrapId);
+        var (reader, readerId) = await SignedInAsNewUserWithIdAsync(roles);
+        Assert.Equal(AgentAccess.Read, (await AgentAsync(reader, things.AgentId)).Access);
+        Assert.Contains(things.AgentId.ToString(), await reader.GetStringAsync("/api/agents"));
+        Assert.Equal(HttpStatusCode.OK, (await reader.GetAsync($"/api/agents/{things.AgentId}/session")).StatusCode);
+        foreach (var id in new[] { things.SessionId, things.ImportedSessionId })
+        {
+            Assert.Equal(SessionAccess.Read, (await reader.GetFromJsonAsync<SessionDto>($"/api/sessions/{id}", ApiJson.Options))!.Access);
+            Assert.Contains(id.ToString(), await reader.GetStringAsync("/api/sessions"));
+            Assert.Equal(HttpStatusCode.Forbidden, (await reader.DeleteAsync($"/api/sessions/{id}")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await reader.PutAsJsonAsync($"/api/sessions/{id}/title", new RenameSessionRequest("changed"))).StatusCode);
+        }
+        Assert.Equal(HttpStatusCode.Forbidden, (await reader.PostAsync($"/api/agents/{things.AgentId}/stop", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reader.DeleteAsync($"/api/agents/{things.AgentId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await reader.GetAsync($"/api/accounts/{things.AccountId}")).StatusCode);
+        var access = manager.Services.GetRequiredService<AccessControl>();
+        Assert.Contains(readerId, (await access.AudienceAsync(new ManagerEvent(ManagerEventKind.AgentChanged, things.RunnerId, things.AgentId)))!);
+        Assert.Contains(readerId, (await access.AudienceAsync(new ManagerEvent(ManagerEventKind.SessionChanged, SessionId: things.ImportedSessionId)))!);
+        await Users.UpdateAsync(TestUsers.Admin, readerId, null, UserRoles.None, disabled: false);
+        Assert.Equal(AgentAccess.None, await access.AgentAsync(CurrentUser.From((await Users.GetAsync(readerId))!), things.AgentId));
+        Assert.Equal(HttpStatusCode.NotFound, (await reader.GetAsync($"/api/agents/{things.AgentId}")).StatusCode);
+    }
+
     [Fact]
     public async Task SharingAnAgent_ReadOnly_ReadWrite_AndLeaving()
     {

@@ -22,15 +22,17 @@
             <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Casino" OnClick="GeneratePassword">Make one up</MudButton>
         }
 
-        <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">Roles</MudText>
-        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">Everyone can use the Runners they get access to and what is shared with them. Admin is all four roles.</MudText>
+        <div class="help-heading mt-4 mb-1">
+            <MudText Typo="Typo.subtitle2">Roles</MudText>
+            <HelpTip Label="Roles"><p>Everyone can use the Runners they get access to and what is shared with them. Admin includes every role, including reading everyone’s conversations.</p></HelpTip>
+        </div>
         @foreach (var role in Roles.All)
         {
             var mine = (ActorRoles & role) == role;
-            <div class="role-choice">
+            <div class="role-choice help-heading">
                 <MudCheckBox T="bool" Value="(_roles & role) == role" ValueChanged="on => _roles = on ? _roles | role : _roles & ~role" Disabled="!mine" Color="Color.Primary"
                              Label="@Roles.Name(role)" />
-                <div class="role-choice-help">@Roles.Explain(role)@(mine ? "" : " You don't have this role, so you can't give or take it.")</div>
+                <HelpTip Label="@Roles.Name(role)"><p>@Roles.Explain(role)@(mine ? "" : " You don't have this role, so you can't give or take it.")</p></HelpTip>
             </div>
         }
 

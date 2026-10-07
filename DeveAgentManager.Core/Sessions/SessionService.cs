@@ -37,7 +37,7 @@ public sealed class SessionService(
         {
             await using var db = await dbFactory.CreateDbContextAsync(ct);
             var saved = await db.Sessions.AsNoTracking()
-                .Where(s => s.AgentId != null && (s.Agent!.OwnerId == user.Id || s.Agent.Shares.Any(x => x.UserId == user.Id))).ToListAsync(ct);
+                .Where(s => s.AgentId != null && (user.Has(UserRoles.ConversationReader) || s.Agent!.OwnerId == user.Id || s.Agent.Shares.Any(x => x.UserId == user.Id))).ToListAsync(ct);
             var ids = saved.Select(s => s.Id).ToHashSet();
             foreach (var id in _previews.Keys.Where(id => !ids.Contains(id)).ToArray()) _previews.Remove(id);
             var result = new List<DeveAgentManager.Contracts.AgentReplyPreviewDto>();

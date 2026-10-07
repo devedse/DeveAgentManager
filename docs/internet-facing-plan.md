@@ -239,3 +239,10 @@ wildcard DNS/certificate support on the chosen provider; this implementation has
   dialog in place, never by sending the user to another page.
 - Initial defaults: seven-day inactivity, thirty-day absolute session limit;
   bounded guessing thresholds as documented above. Passkeys/OIDC and multi-instance deployment are outside this scope.
+
+## Global conversation access
+
+Conversation reader is an explicit role included in Admin. It allows watching every agent and reading/exporting all
+conversations, including imported conversations. It does not allow prompting, sharing, deleting other users’ content
+or reading their harness credentials. Existing users with all four previous admin roles are promoted once by migration;
+their sessions are invalidated, so they must sign in again. Role removal takes effect on subsequent requests and revokes live access.
