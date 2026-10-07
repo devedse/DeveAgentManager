@@ -17,6 +17,7 @@
     --dam-info: #60a5fa;
     --dam-warning: #fbbf24;
     --dam-error: #f87171;
+    --dam-unclear: #f472b6;
     --dam-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
     --dam-radius: 14px;
     /* Accent text (links, the active page, tool names), hover tints and scrollbars. */
@@ -49,6 +50,7 @@
     --dam-info: #2563eb;
     --dam-warning: #b45309;
     --dam-error: #dc2626;
+    --dam-unclear: #db2777;
     --dam-primary-text: #5846e0;
     --dam-hover: rgba(15, 23, 42, 0.04);
     --dam-scrollbar: #c5cbd8;
@@ -676,6 +678,7 @@ a {
 .status-info { color: var(--dam-info); background: rgba(96, 165, 250, 0.1); border-color: rgba(96, 165, 250, 0.2); }
 .status-warning { color: var(--dam-warning); background: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.2); }
 .status-error { color: var(--dam-error); background: rgba(248, 113, 113, 0.1); border-color: rgba(248, 113, 113, 0.22); }
+.status-unclear { color: var(--dam-unclear); background: color-mix(in srgb, var(--dam-unclear) 10%, transparent); border-color: color-mix(in srgb, var(--dam-unclear) 22%, transparent); }
 .status-neutral { color: var(--dam-muted); background: rgba(142, 152, 173, 0.1); border-color: rgba(142, 152, 173, 0.18); }
 
 @keyframes dam-pulse {
@@ -2884,7 +2887,7 @@ html:has(.terminal-layout) body {
 .attention-item { display: flex; flex-direction: column; gap: 4px; max-width: min(340px, 75vw); white-space: normal; }
 .attention-item span, .attention-item small { color: var(--mud-palette-text-secondary); }
 .nav-agent-dot.warning { background: var(--mud-palette-warning); }
-.nav-agent-dot.neutral { background: var(--mud-palette-text-disabled); }
+.nav-agent-dot.unclear { background: var(--dam-unclear); }
 @media (max-width: 600px) { .terminal-name-row .agent-status-extra { display: none; } }
 
 .usage-disk { background: linear-gradient(90deg, #f59e0b, #fcd34d); }
