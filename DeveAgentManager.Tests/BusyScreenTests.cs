@@ -18,6 +18,7 @@ public sealed class BusyScreenTests : IDisposable
     [Theory]
     [InlineData("pi-working", true)]
     [InlineData("pi-idle", false)]
+    [InlineData("pi-idle-cursor-line", false)]
     [InlineData("claude-working", true)]
     [InlineData("claude-working-narrow", true)]
     [InlineData("claude-idle", false)]

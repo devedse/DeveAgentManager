@@ -1,0 +1,22 @@
+ now outdated compared to the installed app, I should note that the user should rely 
+ on the installed version instead.        
+
+ Timing has a real cost when switched on and no measurable cost when off. The        
+ numbers are now in the setting's description, the docs and PR #6:                   
+ https://github.com/devedse/QueueCache/pull/6. Windows CI passed on the latest       
+ commit, which built as 0.4.405.1. It differs from 0.4.403.1 only in the setting's   
+ description text and the docs.           
+
+ What timing costs   
+
+ ┌─────────────────────────────────────┬───────────────────────────────┐             
+ │ Workload                            │ Timing on vs off              │             
+ ├─────────────────────────────────────┼───────────────────────────────┤             
+ │ Cache: 4 KiB random w ↓ Jump to latest message · Ctrl+End           │             
+
+─────────────────────────────────────────────────────────────────────────────────────
+                     
+─────────────────────────────────────────────────────────────────────────────────────
+~/work/queuecache (feature/ram-disk-statistics) • queuecache
+↑274 ↓110k R38M W1.9M CH0.0% $19.544 (sub) 39.8%/1.0M (auto)  claude-opus-5.5 • mediu
+think:medium ○ 🐴 ponytail: ⚡ FULL

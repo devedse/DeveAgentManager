@@ -164,8 +164,11 @@ public static class AgentScreenDetector
         if (c.Harness != "pi" || !(Has(c.Tail, @"^↑[0-9]+ .*↓[0-9]+") && Has(c.Tail, @"^think:")
             || Has(c.Tail, @"[0-9]+(?:\.[0-9]+)?%/[0-9].* ·|[0-9]+(?:\.[0-9]+)?%/[0-9].* •"))) return null;
         var separator = Array.FindLastIndex(c.Lines, l => Has(l, @"^─{4,}\s*$"));
-        if (separator < 1 || !Has(c.Lines[separator - 1], @"^─{4,}\s*$")) return null;
-        var body = c.Lines.Take(separator - 1).ToArray();
+        // The empty prompt box: two separators with nothing but blank (cursor) lines between them.
+        var open = separator - 1;
+        while (open >= 0 && string.IsNullOrWhiteSpace(c.Lines[open])) open--;
+        if (separator < 1 || open < 0 || !Has(c.Lines[open], @"^─{4,}\s*$")) return null;
+        var body = c.Lines.Take(open).ToArray();
         var end = Array.FindLastIndex(body, l => Has(l, @"^─{4,}\s*$"));
         var response = string.Join('\n', body.Skip(end + 1)).Trim();
         return new(AgentActivityStatus.Ready, "Pi's prompt is ready for input.", "", "Empty prompt box and usage footer are visible.",
