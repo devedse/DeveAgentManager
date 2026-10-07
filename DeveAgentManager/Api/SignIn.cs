@@ -132,6 +132,11 @@ public static class SignIn
         {
             if (!await ValidateFormAsync(context)) return Results.StatusCode(403);
             var form = await context.Request.ReadFormAsync();
+            if (form["currentPassword"].ToString().Length > UserService.MaxPasswordLength)
+                return Results.StatusCode(400);
+            using var lease = context.RequestServices.GetRequiredService<LoginThrottle>().TryEnter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown", user.Username);
+            if (lease is null) { context.Response.Headers.RetryAfter = "300"; return Results.StatusCode(429); }
             var returnUrl = LocalUrl(form["returnUrl"]);
             string? error = null;
             if (form["newPassword"] != form["confirmPassword"])

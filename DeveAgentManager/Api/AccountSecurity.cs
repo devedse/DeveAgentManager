@@ -22,12 +22,14 @@ public static class AccountSecurity
             if (!await SignIn.ValidateFormAsync(context)) return Results.StatusCode(403);
             var form = await context.Request.ReadFormAsync();
             var ct = context.RequestAborted;
+            if (form["password"].ToString().Length > UserService.MaxPasswordLength || form["code"].ToString().Length > 100)
+                return Results.StatusCode(400);
             try
             {
                 if (action == "reauth")
                 {
                     using var lease = throttle.TryEnter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", user.Username);
-                    if (lease is null) return Results.StatusCode(429);
+                    if (lease is null) { context.Response.Headers.RetryAfter = "300"; return Results.StatusCode(429); }
                     if (await users.SignInAsync(user.Username, form["password"].ToString(), ct) is null
                         || await factors.EnabledAsync(user.Id, ct) && !await factors.VerifyAsync(user.Id, form["code"].ToString(), ct))
                     {
@@ -41,6 +43,13 @@ public static class AccountSecurity
                     return Results.LocalRedirect("/security");
                 }
                 if (!await RecentAsync(context)) return Results.LocalRedirect("/security?error=Confirm%20your%20password%20first");
+                // Enrollment and removal verify short codes too. They must not bypass the guessing budget simply
+                // because the browser has a recent session; coordinate them with login and password verification.
+                using var factorLease = action is "confirm" or "disable"
+                    ? throttle.TryEnter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", user.Username)
+                    : null;
+                if ((action is "confirm" or "disable") && factorLease is null)
+                { context.Response.Headers.RetryAfter = "300"; return Results.StatusCode(429); }
                 switch (action)
                 {
                     case "begin":
@@ -68,6 +77,7 @@ public static class AccountSecurity
                         await sessions.RevokeAsync(user.Id, id, ct);
                         break;
                     case "enforce":
+                        if (!await factors.CanUseAsync(user, ct)) return Results.StatusCode(403);
                         if ((user.Roles & DeveAgentManager.Core.Data.UserRoles.UserManager) == 0) return Results.StatusCode(403);
                         await factors.EnforceAsync(form["mode"].ToString(), ct);
                         break;

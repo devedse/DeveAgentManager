@@ -123,8 +123,9 @@ replay. Enabling or disabling an authenticator revokes other sessions; disabling
 violate enforcement.
 
 A user manager can choose optional, users-with-roles or everyone enforcement. Activation is refused until all affected
-enabled users have enrolled. New affected users must change their initial password, then enroll before accessing the
-Portal. Enrollment/recovery pages and static assets remain available during this flow. There is no passkey or external
+enabled users have enrolled. An unenrolled user manager cannot relax the policy to bypass their own enrollment.
+New affected users must change their initial password, then enroll before accessing the Portal. Enrollment/recovery
+pages and static assets remain available during this flow. There is no passkey or external
 identity-provider implementation in this PR.
 
 Viewing/changing a Runner password and mutating users (including roles, resets and deletion) require authentication
@@ -134,7 +135,8 @@ confirm; return to the action afterward.
 
 ## 5. Guessing protection, first start and recovery
 
-Login and identity confirmation share fixed five-minute windows: **20 attempts/account, 30/IP, 200 globally**, with at
+Login, identity confirmation, password changes and authenticator confirmation/removal share fixed five-minute windows:
+**20 attempts/account, 30/IP, 200 globally**, with at
 most **four concurrent password checks** and at most **4096 limiter entries**. Counters are coordinated under one
 lock, expired entries are removed and exceeding limits returns 429 rather than sleeping. These are per Manager
 process; scaling to multiple active instances would need a shared limiter and coordinated session event delivery.

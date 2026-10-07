@@ -210,7 +210,8 @@ enabled, your authenticator/recovery code within ten minutes of viewing/changing
 Account forms use antiforgery tokens and reject absent, null or foreign Origins. Public cookies use `__Host-`, Secure,
 HttpOnly and Path=/; local HTTP credentials are separate and cannot authenticate public endpoints.
 
-Login and identity-confirmation attempts are limited to 20 per account, 30 per IP and 200 globally in a fixed
+Login, identity confirmation, password changes and authenticator confirmation/removal share limits of
+20 attempts per account, 30 per IP and 200 globally in a fixed
 five-minute window, with at most four concurrent password checks. There are at most 4096 limiter entries, and no
 fixed account lockout or sleeping requests. Excess requests receive 429; existing sessions continue working.
 Distributed attacks can still interfere with new sign-ins; these controls do not promise immunity to denial of service.

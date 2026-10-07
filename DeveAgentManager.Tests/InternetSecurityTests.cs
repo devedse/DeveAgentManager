@@ -266,6 +266,26 @@ public sealed class InternetSecurityTests : IClassFixture<InternetSecurityTests.
     }
 
     [Fact]
+    public async Task UnenrolledUserManagerCannotRelaxTheEnrollmentPolicy()
+    {
+        using var manager = new Manager();
+        var users = manager.Services.GetRequiredService<UserService>();
+        var factors = manager.Services.GetRequiredService<SecondFactors>();
+        var secret = await factors.BeginAsync(User.BootstrapId);
+        await factors.ConfirmAsync(User.BootstrapId, SecondFactors.Code(secret, manager.Clock.GetUtcNow().ToUnixTimeSeconds() / 30));
+        await factors.EnforceAsync("roles");
+        var user = await users.CreateAsync(TestUsers.Admin, "new-manager", null, Password, UserRoles.UserManager);
+        user = await users.ChangeOwnPasswordAsync(user.Id, Password, Password + "-own");
+        var client = manager.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://dam.test"), AllowAutoRedirect = false, HandleCookies = false });
+        var login = await client.PostAccountAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string,string>
+            { ["username"] = user.Username, ["password"] = Password + "-own" }));
+        client.DefaultRequestHeaders.Add("Cookie", login.Headers.GetValues("Set-Cookie").Single(c => c.StartsWith("__Host-DAM.Auth=")).Split(';')[0]);
+        var result = await client.PostAccountAsync("/account/security/enforce", new FormUrlEncodedContent(new Dictionary<string,string> { ["mode"] = "optional" }));
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        Assert.Equal("roles", await factors.EnforcementAsync());
+    }
+
+    [Fact]
     public async Task GainingAnEnforcedRoleClosesAnUnenrolledUsersLiveConnections()
     {
         using var manager = new Manager();
@@ -295,6 +315,43 @@ public sealed class InternetSecurityTests : IClassFixture<InternetSecurityTests.
         for (var i = 4; i < 20; i++) { using var lease = throttle.TryEnter("ip-" + i, "account"); Assert.NotNull(lease); }
         Assert.Null(throttle.TryEnter("new", "account"));
     }
+
+    [Theory]
+    [InlineData("/account/password")]
+    [InlineData("/account/security/confirm")]
+    [InlineData("/account/security/disable")]
+    public async Task CredentialFormsCannotBypassTheSharedGuessingBudget(string path)
+    {
+        using var manager = new Manager();
+        var factors = manager.Services.GetRequiredService<SecondFactors>();
+        var secret = await factors.BeginAsync(User.BootstrapId);
+        string? recoveryCode = null;
+        if (path.EndsWith("disable", StringComparison.Ordinal))
+            recoveryCode = (await factors.ConfirmAsync(User.BootstrapId,
+                SecondFactors.Code(secret, manager.Clock.GetUtcNow().ToUnixTimeSeconds() / 30)))[0];
+        var client = manager.CreateClient(new WebApplicationFactoryClientOptions
+            { BaseAddress = new Uri("https://dam.test"), AllowAutoRedirect = false, HandleCookies = false });
+        var login = await client.PostAccountAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string>
+            { ["username"] = "admin", ["password"] = Password, ["code"] = recoveryCode ?? "" }));
+        client.DefaultRequestHeaders.Add("Cookie", login.Headers.GetValues("Set-Cookie")
+            .Single(c => c.StartsWith("__Host-DAM.Auth=", StringComparison.Ordinal)).Split(';')[0]);
+
+        // The successful login uses the first attempt. All credential forms use the same account budget.
+        for (var i = 0; i < 20; i++)
+        {
+            var result = await client.PostAccountAsync(path, new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["currentPassword"] = "incorrect", ["newPassword"] = Password + "-new",
+                ["confirmPassword"] = Password + "-new", ["code"] = "invalid",
+            }));
+            Assert.Equal(i < 19 ? HttpStatusCode.Redirect : HttpStatusCode.TooManyRequests, result.StatusCode);
+            if (i == 19) Assert.Equal(TimeSpan.FromMinutes(5), result.Headers.RetryAfter?.Delta);
+        }
+        // Failed credential checks don't revoke the session or alter its authenticator.
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/me")).StatusCode);
+        Assert.Equal(recoveryCode is not null, await factors.EnabledAsync(User.BootstrapId));
+    }
+
     [Fact]
     public void TotpMatchesRfc6238Vector() => Assert.Equal("287082", SecondFactors.Code("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", 1));
 }
