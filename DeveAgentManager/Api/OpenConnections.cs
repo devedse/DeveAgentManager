@@ -9,7 +9,7 @@ namespace DeveAgentManager.Api;
 /// open; this closes them when it ends while they are open: access to a Runner removed, a share ended, a role taken
 /// away, or the user disabled, deleted or their password changed (a new security stamp).
 /// </summary>
-public sealed class OpenConnections(ManagerEvents events, UserService users, SignInSessions sessions, ILogger<OpenConnections> logger) : BackgroundService
+public sealed class OpenConnections(ManagerEvents events, UserService users, SignInSessions sessions, SecondFactors factors, ILogger<OpenConnections> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<Guid, Connection> _open = new();
 
@@ -65,6 +65,7 @@ public sealed class OpenConnections(ManagerEvents events, UserService users, Sig
             var user = await users.ValidateAsync(connection.UserId, connection.SecurityStamp);
             if (user is not null && !user.MustChangePassword
                 && await sessions.ValidateAsync(connection.SessionId, user.Id, connection.SecurityStamp) is not null
+                && await factors.CanUseAsync(user)
                 && await connection.StillAllowed(user, CancellationToken.None))
             {
                 return;

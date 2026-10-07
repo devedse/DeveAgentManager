@@ -22,9 +22,9 @@ account is therefore powerful; browser origin separation does not isolate Linux 
 | TOTP, recovery, enforcement and recent authentication | Implemented | RFC vector, concurrent replay/recovery tests; enrollment safeguards |
 | Bounded login throttles | Implemented | Concurrency/account regression tests; existing sessions unaffected |
 | First-run setup and operator recovery | Implemented | Existing user/access tests; startup code replaces known default, chosen passwords preserved |
-| Dependency failure policy | Implemented | NuGet restore and locked npm audits passed locally; container CI scan configured |
+| Dependency failure policy | Implemented | NuGet/npm passed locally; initial container/Trivy CI scan passed |
 | Isolated browser attack checks | Implemented and run | Hostile editor cannot read Portal, log it out or plant its auth cookie |
-| Anonymous/authenticated ZAP baseline | Script and CI configured | Not run locally: Docker and Java/ZAP unavailable |
+| Anonymous/authenticated ZAP baseline | Script and CI configured | Initial CI baselines completed; warnings assessed below. Docker and Java/ZAP unavailable locally |
 
 This table records implementation evidence, **not certification of a live public deployment**. Real NPM/DNS,
 certificates and Runner code-server instances have not been changed or exercised by this work. CI and external scans
@@ -110,10 +110,11 @@ the parent domain. Local HTTP credentials have different names and scheme protec
 
 Sign-in sessions are stored by the Manager. Remembered sessions have **seven days of inactivity** and a **thirty-day
 absolute maximum**; non-remembered cookies are discarded at browser shutdown. Session activity is touched at most once
-per minute. A user has at most twenty retained active sessions. The device list shows browser, client IP and last
+per minute. A user has at most twenty retained active sessions, and sixty-four pending editor tickets. The device list shows browser, client IP and last
 activity and supports revocation. Logout and explicit revocation close registered live connections; expiry and other
 changes are checked periodically every fifteen seconds as well as per HTTP request. User security-stamp changes end
-old credentials. Revocation never stops the agent process on a Runner.
+old credentials. Gaining a role that requires an authenticator closes unenrolled live connections and blocks editor
+requests until enrollment; editor dispatch enforces this independently of Portal middleware. Revocation never stops the agent process on a Runner.
 
 TOTP uses RFC 6238 SHA1, six digits, thirty-second intervals and one interval of clock skew. Secrets are encrypted at
 rest. Enrollment requires recent authentication and a valid first code. Ten random recovery codes are shown once in a
@@ -138,8 +139,8 @@ most **four concurrent password checks** and at most **4096 limiter entries**. C
 lock, expired entries are removed and exceeding limits returns 429 rather than sleeping. These are per Manager
 process; scaling to multiple active instances would need a shared limiter and coordinated session event delivery.
 This deployment uses a single Manager. Existing sessions continue working during guessing attacks. There is no fixed
-account lockout or promise that distributed attackers cannot interfere with legitimate new sign-ins. Success and
-failure are audited with the client IP; failed password checks also retain the existing user-service audit details.
+account lockout or promise that distributed attackers cannot interfere with legitimate new sign-ins. Completed sign-ins and
+failures are audited with the client IP; password-only verification does not update the displayed last sign-in time; failed password checks also retain the existing user-service audit details.
 
 On first start without ADMIN_PASSWORD, a random setup code is printed in the operator's startup log and used as the
 initial password; the UI never reveals it. It must be replaced after sign-in. Existing chosen passwords are never
@@ -154,7 +155,7 @@ requests it; normal restarts do not reset existing accounts.
 
 ## 6. Headers and production errors
 
-The Portal sends HSTS for HTTPS, nosniff, same-origin Referrer-Policy, restrictive Permissions-Policy and CSP with
+The Portal sends HSTS for HTTPS, nosniff, same-origin Referrer/Opener/Resource policies, restrictive Permissions-Policy and CSP with
 self-only scripts/connections, wasm-unsafe-eval, per-response nonces for the theme boot script/import map, and editor
 frames derived from configured origins. Inline styles remain allowed for MudBlazor/xterm. The Portal cannot be framed
 by other origins. Image responses retain their stricter sandbox CSP. Editor responses keep their own policies and
@@ -206,6 +207,13 @@ wildcard DNS/certificate support on the chosen provider; this implementation has
 - `tools/security-browser/zap.sh` builds an isolated container and records anonymous/authenticated passive baseline
   reports. Authentication cookies are in temporary test files, never command arguments or logs. Warnings are reported;
   explicit scanner failures/errors fail CI. Passive scanning does not prove authorization or Runner isolation.
+- Initial CI completed dependency, container/Trivy, build/test, browser and both passive ZAP checks successfully.
+  Passive reports flagged the intentional inline-style CSP allowance (Medium), missing cross-origin headers (Low),
+  timestamps in assets (Low) and informational items. Opener/resource policies were added after review. COEP remains
+  unset because embedding restrictions would require changes to authenticated cross-origin editor frames. Inline
+  styles are needed by the current MudBlazor/xterm app. Framework/static timestamps and comments do not disclose
+  credentials; return-URL attributes are Razor-encoded and redirect targets restricted to local paths. Assess the
+  final-head CI separately; these reports are supporting evidence, not authorization proof.
 - Docker and Java/ZAP are unavailable in the implementation environment. Container/scan jobs are configured but have
   not been claimed as locally passed. Real NPM forwarding, wildcard certificates, production uploads/WebSockets,
   code-server extensions and public DNS must be verified on the operator's deployment before removing external access

@@ -147,7 +147,7 @@ loopback, so neither is a way in.)
 
 ## 9. Manager changes
 
-- **Login**: ASP.NET Core Identity password hashing and lockout after repeated failures; a security stamp, so
+- **Login**: ASP.NET Core Identity password hashing and bounded account/IP/global/concurrent throttles; a security stamp, so
   disabling a user or changing a password signs them out everywhere; a page to change your own password; a password
   reset forces a change at the next login. Single sign-on (OIDC, e.g. Authentik or Keycloak) is optional later.
 - **One access service** with every check (can see / use / manage a Runner, can read / write an agent, can see a
@@ -224,3 +224,8 @@ Phases 1–2 are useful on their own: several people, each on their own Runners.
   of your choice; a role check comes before the check on the thing itself.
 - 2026-10-07 — `GITHUB_PAT`, `GIT_USER_NAME` and `GIT_USER_EMAIL` are removed from the compose file; the admin
   enters their token and git identity under My settings like everyone else.
+
+- 2026-10-07 — Internet-facing implementation adds revocable sign-in sessions, TOTP/recovery, recent authentication,
+  strict account-form protection and wildcard per-Runner editor origins on the Portal port. Fixed account lockouts
+  are replaced by bounded throttles; direct local IP access uses separate credentials. Deployment defaults and
+  validation are maintained in [internet-facing-plan.md](internet-facing-plan.md).

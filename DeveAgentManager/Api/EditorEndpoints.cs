@@ -200,6 +200,7 @@ public static class EditorEndpoints
             form["ticket"].ToString(), runnerId, DeploymentBoundary.Origin(context.Request), context.RequestAborted);
         if (session is null || session.Local != DeploymentBoundary.IsLocal(context)
             || await context.RequestServices.GetRequiredService<UserService>().ValidateAsync(session.UserId, session.SecurityStamp, context.RequestAborted) is not { MustChangePassword: false } user
+            || !await context.RequestServices.GetRequiredService<SecondFactors>().CanUseAsync(user, context.RequestAborted)
             || await context.RequestServices.GetRequiredService<AccessControl>().RunnerAsync(user, runnerId, context.RequestAborted) < RunnerAccess.Use)
             return Page(StatusCodes.Status403Forbidden, "This link to VS Code has expired. Open VS Code from the Manager again.");
         var protector = CookieProtector(context);
@@ -226,6 +227,7 @@ public static class EditorEndpoints
             || await services.GetRequiredService<UserService>().ValidateAsync(pass.UserId, pass.SecurityStamp, context.RequestAborted) is not { MustChangePassword: false } user
             || await services.GetRequiredService<SignInSessions>().ValidateAsync(pass.SessionId, pass.UserId, pass.SecurityStamp,
                 DeploymentBoundary.IsLocal(context), touch: true, ct: context.RequestAborted) is null
+            || !await services.GetRequiredService<SecondFactors>().CanUseAsync(user, context.RequestAborted)
             || await access.RunnerAsync(user, runnerId, context.RequestAborted) < RunnerAccess.Use)
         {
             await WriteAsync(context, Page(StatusCodes.Status401Unauthorized, "Open VS Code from the Manager (the Runner page, or an agent's terminal)."));

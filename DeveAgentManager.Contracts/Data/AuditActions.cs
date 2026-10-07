@@ -3,6 +3,8 @@ namespace DeveAgentManager.Core.Data;
 /// <summary>The actions the audit log records, and how the Portal says them.</summary>
 public static class AuditActions
 {
+    public const string AccountSecurityChanged = "account-security-changed";
+    public const string IdentityConfirmed = "identity-confirmed";
     public const string SignedIn = "signed-in";
     public const string SignInFailed = "sign-in-failed";
     public const string SignInLocked = "sign-in-locked";
@@ -27,6 +29,8 @@ public static class AuditActions
 
     public static string Describe(string action) => action switch
     {
+        AccountSecurityChanged => "Changed account security",
+        IdentityConfirmed => "Confirmed their identity",
         SignedIn => "Signed in",
         SignInFailed => "Sign-in refused",
         SignInLocked => "Signing in locked",

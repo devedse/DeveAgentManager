@@ -81,11 +81,19 @@ public sealed partial class UserService(
 
         user.FailedSignIns = 0;
         user.LockedUntil = null;
-        user.LastSignInAt = now;
         await db.SaveChangesAsync(cancellationToken);
         Invalidate(user.Id);
 
         return user;
+    }
+
+    /// <summary>Only a completed password/second-factor sign-in updates the displayed last sign-in time.</summary>
+    public async Task RecordSignInAsync(Guid userId, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var now = DateTime.UtcNow;
+        await db.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(u => u.SetProperty(x => x.LastSignInAt, now), ct);
+        Invalidate(userId);
     }
 
     public async Task<List<User>> ListAsync(CancellationToken cancellationToken = default)

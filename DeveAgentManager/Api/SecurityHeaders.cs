@@ -19,6 +19,8 @@ public static class SecurityHeaders
         context.Response.Headers.ContentSecurityPolicy = $"default-src 'self'; script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src {string.Join(' ', frames)}; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'";
         context.Response.Headers.XFrameOptions = "SAMEORIGIN";
         context.Response.Headers.XContentTypeOptions = "nosniff";
+        context.Response.Headers["Cross-Origin-Opener-Policy"] = "same-origin";
+        context.Response.Headers["Cross-Origin-Resource-Policy"] = "same-origin";
         context.Response.Headers["Referrer-Policy"] = "same-origin";
         context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
         if (context.Request.IsHttps) context.Response.Headers.StrictTransportSecurity = "max-age=31536000";

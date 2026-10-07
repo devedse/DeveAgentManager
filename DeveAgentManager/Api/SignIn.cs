@@ -117,12 +117,13 @@ public static class SignIn
             if (user is not null && await factors.EnabledAsync(user.Id, context.RequestAborted)
                 && !await factors.VerifyAsync(user.Id, form["code"].ToString(), context.RequestAborted)) user = null;
             await context.RequestServices.GetRequiredService<AuditLog>().RecordAsync(user is null ? null : CurrentUser.From(user),
-                user is null ? "login-rejected" : DeveAgentManager.Core.Data.AuditActions.SignedIn, "Portal sign-in", $"IP: {context.Connection.RemoteIpAddress}", context.RequestAborted);
+                user is null ? DeveAgentManager.Core.Data.AuditActions.SignInFailed : DeveAgentManager.Core.Data.AuditActions.SignedIn, "Portal sign-in", $"IP: {context.Connection.RemoteIpAddress}", context.RequestAborted);
             if (user is null)
             {
                 return Results.LocalRedirect($"/login?failed=1&returnUrl={Uri.EscapeDataString(returnUrl)}");
             }
 
+            await users.RecordSignInAsync(user.Id, context.RequestAborted);
             await SignInAsync(context, user.Id, user.Username, user.SecurityStamp, persistent: form["remember"] == "on");
             return Results.LocalRedirect(user.MustChangePassword ? $"/password?returnUrl={Uri.EscapeDataString(returnUrl)}" : returnUrl);
         }).AllowAnonymous();

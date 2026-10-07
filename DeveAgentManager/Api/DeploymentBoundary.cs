@@ -82,8 +82,9 @@ public sealed class DeploymentBoundary
         if (context.Request.IsHttps && _portals.Any(p => MatchesEditor(context.Request, p)))
         {
             await using var db = await context.RequestServices.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync(context.RequestAborted);
-            var names = await db.Runners.Select(r => r.Name).ToListAsync(context.RequestAborted);
-            if (!names.Any(name => _portals.Any(p => SameOrigin(ParseOrigin(_options.EditorUrl!.Replace("{host}", p.Host).Replace("{runner}", name)), context.Request))))
+            var name = context.Request.Host.Host.Split('.')[0].ToLowerInvariant();
+            // The validated template uses the first complete label, so this uses the unique name index.
+            if (!await db.Runners.AnyAsync(r => r.Name == name, context.RequestAborted))
             { context.Response.StatusCode = 404; return; }
             context.Items[EditorKey] = true;
             await next(context);

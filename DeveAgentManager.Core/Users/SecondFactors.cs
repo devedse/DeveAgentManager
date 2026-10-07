@@ -72,6 +72,9 @@ public sealed class SecondFactors(IDbContextFactory<ManagerDbContext> factory, S
     {
         "everyone" => true, "roles" => user.Roles != UserRoles.None, _ => false,
     };
+    public async Task<bool> CanUseAsync(CurrentUser user, CancellationToken ct = default) =>
+        !await RequiredAsync(user, ct) || await EnabledAsync(user.Id, ct);
+
     public async Task EnforceAsync(string mode, CancellationToken ct = default)
     {
         if (mode is not ("optional" or "everyone" or "roles")) throw new ArgumentException("Choose optional, roles or everyone.");

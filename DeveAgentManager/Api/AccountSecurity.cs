@@ -1,4 +1,5 @@
 using DeveAgentManager.Core.Users;
+using DeveAgentManager.Core.Data;
 
 namespace DeveAgentManager.Api;
 
@@ -29,8 +30,14 @@ public static class AccountSecurity
                     if (lease is null) return Results.StatusCode(429);
                     if (await users.SignInAsync(user.Username, form["password"].ToString(), ct) is null
                         || await factors.EnabledAsync(user.Id, ct) && !await factors.VerifyAsync(user.Id, form["code"].ToString(), ct))
+                    {
+                        await context.RequestServices.GetRequiredService<AuditLog>().RecordAsync(user, AuditActions.SignInFailed,
+                            "Identity confirmation", $"IP: {context.Connection.RemoteIpAddress}", ct);
                         return Results.LocalRedirect("/security?error=Authentication%20failed");
+                    }
                     await sessions.ReauthenticateAsync(SignIn.SessionId(context), ct);
+                    await context.RequestServices.GetRequiredService<AuditLog>().RecordAsync(user, AuditActions.IdentityConfirmed,
+                        "Portal session", $"IP: {context.Connection.RemoteIpAddress}", ct);
                     return Results.LocalRedirect("/security");
                 }
                 if (!await RecentAsync(context)) return Results.LocalRedirect("/security?error=Confirm%20your%20password%20first");
@@ -43,6 +50,8 @@ public static class AccountSecurity
                         var codes = await factors.ConfirmAsync(user.Id, form["code"].ToString(), ct);
                         foreach (var other in await sessions.ListAsync(user.Id, ct))
                             if (other.Id != SignIn.SessionId(context)) await sessions.RevokeAsync(user.Id, other.Id, ct);
+                        await context.RequestServices.GetRequiredService<AuditLog>().RecordAsync(user, AuditActions.AccountSecurityChanged,
+                            "Authenticator enabled", $"IP: {context.Connection.RemoteIpAddress}", ct);
                         // A POST response renders codes once; never place them in URLs, cookies or logs.
                         context.Response.Headers.CacheControl = "no-store";
                         return Results.Content("<!doctype html><html><head><meta name=referrer content=no-referrer><title>Recovery codes</title></head><body><h1>Save these recovery codes</h1><p>Each can be used once instead of an authenticator code. Store them somewhere safe.</p><pre>"
@@ -64,7 +73,7 @@ public static class AccountSecurity
                         break;
                     default: return Results.NotFound();
                 }
-                await context.RequestServices.GetRequiredService<AuditLog>().RecordAsync(user, "account-security-changed", action, cancellationToken: ct);
+                await context.RequestServices.GetRequiredService<AuditLog>().RecordAsync(user, AuditActions.AccountSecurityChanged, action, $"IP: {context.Connection.RemoteIpAddress}", ct);
                 return Results.LocalRedirect("/security");
             }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
@@ -78,8 +87,7 @@ public static class AccountSecurity
             && context.GetEndpoint()?.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAllowAnonymous>() is null
             && !context.Request.Path.StartsWithSegments("/security") && !context.Request.Path.StartsWithSegments("/account")
             && !context.Request.Path.StartsWithSegments("/logout")
-            && await context.RequestServices.GetRequiredService<SecondFactors>().RequiredAsync(user, context.RequestAborted)
-            && !await context.RequestServices.GetRequiredService<SecondFactors>().EnabledAsync(user.Id, context.RequestAborted))
+            && !await context.RequestServices.GetRequiredService<SecondFactors>().CanUseAsync(user, context.RequestAborted))
         {
             if (RequestSecurity.IsMachinePath(context.Request.Path)) context.Response.StatusCode = 403;
             else context.Response.Redirect("/security?error=Enroll%20an%20authenticator%20to%20continue");
