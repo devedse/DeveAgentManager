@@ -265,3 +265,54 @@ the existing behavior. Unavailable Runners cannot supply renewals; a genuinely r
 Validation: regression tests cover encrypted persistence, stale/concurrent renewals, reconnect/deletion races,
 subscription/user identity, malformed/incomplete/future credentials; runner-02's sign-in screen was reproduced with its
 September 26 credentials and bypassed using the same account's October 7 renewal from runner-01.
+
+### Follow-up investigation: simultaneous Codex refresh (2026-10-07)
+
+**The synchronization above fixes stale installation copies, not concurrent OAuth refresh. This remains unresolved.**
+Do not treat the credential persistence tests as proof that two live agents can safely refresh a copied login together.
+
+Evidence:
+
+- [Official account-auth guidance](https://learn.chatgpt.com/docs/auth/ci-cd-auth) explicitly requires one machine or
+  a serialized job stream for a copied `auth.json`, and advises against concurrent jobs/machines using that copy.
+- Inspected the source matching installed Codex **0.160.1**, tag `rust-v0.160.1`, commit
+  `d27764b82f7118f674371e6d6e76271d9d606edb`. In `codex-rs/login/src/auth/manager.rs`, the refresh semaphore belongs to
+  an individual AuthManager. It is not a cross-process or cross-Runner lock. The client classifies
+  `refresh_token_reused` as a permanent Exhausted failure, scoped to the attempted credential snapshot.
+- Before proactive refresh, Codex reloads the local credential file and skips OAuth refresh if the credentials changed.
+  A request returning 401 also has local reload/retry followed by refresh/retry. These paths can recover when a newer
+  credential is already available locally; they cannot prevent two machines submitting the same token simultaneously.
+  The access-token expiry check refreshes within five minutes of expiry; without a parseable expiry it falls back to the
+  eight-day `last_refresh` check. Codex's file storage itself uses truncate/write, not a distributed transaction.
+- Ran two isolated installed `codex app-server` processes with separate temporary CODEX_HOME folders and fake copies
+  of the same login. A localhost-only mock OAuth endpoint synchronized both requests, accepted the first and rejected the
+  second as reused. Exactly two refresh requests used the same token; one client remained usable. Retrying the loser
+  without synchronizing credentials remained unusable and made no new OAuth request. Copying the winner's auth file
+  into the still-running loser recovered it without another refresh request. This tests client behavior against the
+  modeled rotation rule; it is not a measurement of the production OAuth server's grace/reuse policy. No live login,
+  production refresh request, model prompt or agent restart was used for this investigation.
+- DAM's monitor currently captures renewals about every full polling pass, but only account setup installs them on other
+  Runners. It does not push renewals into all running agents' account folders. Database compare-and-swap prevents stale
+  persistence but does not coordinate the CLI's OAuth requests. Equal refresh timestamps with different token bundles
+  also cannot establish which bundle is valid just by comparing `last_refresh`.
+- DAM currently launches Codex with `--no-daemon` when supported because managed account paths exceed Unix socket path
+  limits. Independent agents sharing a login on the same Runner therefore also lack a shared refresh authority. Sharing
+  one file or adding a DAM database lock cannot make the independent CLIs participate in that lock.
+
+Design choices to resolve before claiming reliable shared-login renewal:
+
+1. **Independent OAuth logins per Runner** remove the cross-Runner copied-token race while still using the same ChatGPT
+   subscription. Store and renew each Runner's login separately rather than synchronizing token families between them.
+   This requires a login flow for each Runner; multiple independent processes on one Runner still need coordination.
+2. **One refresh authority per DAM account** is the design for keeping one login across concurrent Runners. Runners must
+   obtain access credentials from that authority and must not independently rotate the shared refresh token. Refresh
+   serialization, reconnect generations, revocation, authenticated transport and recovery belong in that design.
+   [App-server external ChatGPT tokens](https://learn.chatgpt.com/docs/app-server) provide an experimental host-managed
+   token interface, including refresh requests. Integrating it with DAM's existing terminal harness requires a prototype;
+   it is not a drop-in change to auth.json polling. The CLI's token-endpoint override found in source is not the documented
+   external-token integration and should not become a production dependency without establishing its support/security.
+3. Pushing renewed files to running Runners would improve recovery in the current implementation, but cannot guarantee
+   race prevention. Do not describe that alone, more frequent polling, timestamp ordering or SSH file locks as the fix.
+
+Next validation must use simultaneous refresh attempts, reconnect during a pending refresh, offline/rejoining Runners,
+multiple agents on one Runner and equal-timestamp renewals. Preserve native conversation resume and account ownership.
