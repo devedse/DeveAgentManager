@@ -4,6 +4,11 @@
 
 @* A terminal on a Runner. xterm.js talks to the Manager's terminal WebSocket (terminal.js), which connects it to an SSH
    terminal: an agent's tmux session, a shell, or a harness's login. This component shows the overlay and the keys. *@
+<div class="terminal-font-controls" role="group" aria-label="Terminal font size">
+    <button type="button" @onclick="() => ChangeFontAsync(-1)" aria-label="Decrease terminal font size">A−</button>
+    <button type="button" @onclick="() => ChangeFontAsync(1)" aria-label="Increase terminal font size">A+</button>
+    <button type="button" @onclick="() => ChangeFontAsync(0)" aria-label="Reset terminal font size">Reset</button>
+</div>
 <div class="terminal-frame">
     <div class="terminal-host">
         <Xterm @ref="_xterm" Options="_options" Addons="_addons" Class="terminal-xterm" OnFirstRender="OnFirstRenderAsync" OnTitleChange="OnTitleChange" />
@@ -134,6 +139,8 @@
 
     /// <summary>This terminal's tty on the Runner (e.g. /dev/pts/3): tells it apart from the agent's other viewers.</summary>
     public string? Tty { get; private set; }
+
+    private Task ChangeFontAsync(int change) => JS.InvokeVoidAsync("damTerminal.changeFont", _xterm.Id, change).AsTask();
 
     public async Task SendAsync(string data)
     {

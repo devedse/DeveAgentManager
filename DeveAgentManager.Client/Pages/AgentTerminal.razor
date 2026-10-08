@@ -127,7 +127,7 @@
                 <span>@AgentTable.ShareText(_agent). You can watch; typing goes nowhere.</span>
             </div>
         }
-        <TerminalView @ref="_terminal" @key="_connectionKey" AgentId="_agent.Id" HarnessId="@_agent.HarnessId" ReadOnly="@(_agent.Access < AgentAccess.Write)"
+        <TerminalView @ref="_terminal" @key="(_agent.Id, _connectionKey)" AgentId="_agent.Id" HarnessId="@_agent.HarnessId" ReadOnly="@(_agent.Access < AgentAccess.Write)"
                       Disconnected="OnDisconnectedAsync" Connected="StateHasChanged" />
     }
     else
@@ -151,6 +151,7 @@
     public Guid AgentId { get; set; }
 
     private AgentDto? _agent;
+    private Guid? _loadedAgentId;
     private Guid? _sessionId;
     private string? _sessionTitle;
     private TerminalView? _terminal;
@@ -162,6 +163,17 @@
     {
         await base.OnInitializedAsync();
         _ = RefreshStatusAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedAgentId != AgentId)
+        {
+            _agent = null;
+            _sessionId = null;
+            _sessionTitle = null;
+            await ReloadAsync();
+        }
     }
 
     private async Task RefreshStatusAsync()
@@ -181,11 +193,16 @@
 
     protected override async Task LoadAsync()
     {
+        var requestedAgent = AgentId;
         var previous = _agent?.State;
         _vsCodeIcon ??= (await Api.InfoAsync()).Tools.FirstOrDefault(t => t.Id == "vscode")?.Icon;
-        _agent = await Api.GetAgentAsync(AgentId);
+        var agent = await Api.GetAgentAsync(requestedAgent);
+        if (AgentId != requestedAgent) return;
         // Its conversation is for who can read the agent (not for people who only see it on a Runner they manage).
-        var currentSession = _agent?.Access >= AgentAccess.Read ? await Api.GetAgentSessionAsync(AgentId) : null;
+        var currentSession = agent?.Access >= AgentAccess.Read ? await Api.GetAgentSessionAsync(requestedAgent) : null;
+        if (AgentId != requestedAgent) return;
+        _agent = agent;
+        _loadedAgentId = requestedAgent;
         _sessionId = currentSession?.Id;
         _sessionTitle = currentSession?.Title;
         if (previous is not null && previous != AgentState.Running && _agent?.State == AgentState.Running)
