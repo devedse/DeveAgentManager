@@ -1681,8 +1681,10 @@ html:has(.terminal-layout) body {
     color: var(--dam-console-text);
 }
 
+.terminal-input-controls { display: none; }
+
 .terminal-keys {
-    display: none;
+    display: flex;
     gap: 4px;
     padding: 5px 6px;
     background: var(--dam-surface);
@@ -1691,8 +1693,8 @@ html:has(.terminal-layout) body {
 }
 
 @media (pointer: coarse), (max-width: 700px) {
-    .terminal-keys {
-        display: flex;
+    .terminal-input-controls {
+        display: contents;
     }
 }
 
@@ -2921,7 +2923,7 @@ html:has(.terminal-layout) body {
 .usage:not(.usage-compact) > .usage-item { display: contents; }
 
 /* Keep the quick-command activator the same size as adjacent terminal keys. */
-.terminal-keys > .quick-command-menu { flex: 1 1 0; min-width: 0; max-width: 72px; }
+.terminal-keys .quick-command-menu { flex: 1 1 0; min-width: 0; max-width: 72px; }
 .terminal-keys .quick-command-menu .mud-menu-activator { display: flex; width: 100%; }
 .terminal-keys .quick-command-menu .terminal-key { width: 100%; }
 .quick-command-popover { width: min(280px, calc(100vw - 16px)); max-width: calc(100vw - 16px); }
@@ -3052,6 +3054,3 @@ body:has(.terminal-layout) .agent-attention-popover {
 .session-image-card small { color: var(--mud-palette-text-secondary); }
 .shared-image-preview { display: block; max-width: 100%; max-height: 75dvh; width: auto; height: auto; margin: auto; object-fit: contain; }
 @media (max-width: 420px) { .desktop-view-actions > .mud-button-root { flex: 1 1 auto; } .desktop-interval { flex-basis: 100%; width: 100%; } .desktop-save-actions > .mud-button-root { width: 100%; } }
-
-.terminal-font-controls { display:flex; gap:4px; justify-content:flex-end; background:var(--dam-surface); padding:2px 8px; }
-.terminal-font-controls button { background:transparent; color:var(--dam-text); border:1px solid var(--dam-border); border-radius:4px; padding:2px 8px; cursor:pointer; }

@@ -4,11 +4,6 @@
 
 @* A terminal on a Runner. xterm.js talks to the Manager's terminal WebSocket (terminal.js), which connects it to an SSH
    terminal: an agent's tmux session, a shell, or a harness's login. This component shows the overlay and the keys. *@
-<div class="terminal-font-controls" role="group" aria-label="Terminal font size">
-    <button type="button" @onclick="() => ChangeFontAsync(-1)" aria-label="Decrease terminal font size">A−</button>
-    <button type="button" @onclick="() => ChangeFontAsync(1)" aria-label="Increase terminal font size">A+</button>
-    <button type="button" @onclick="() => ChangeFontAsync(0)" aria-label="Reset terminal font size">Reset</button>
-</div>
 <div class="terminal-frame">
     <div class="terminal-host">
         <Xterm @ref="_xterm" Options="_options" Addons="_addons" Class="terminal-xterm" OnFirstRender="OnFirstRenderAsync" OnTitleChange="OnTitleChange" />
@@ -36,11 +31,11 @@
     }
 </div>
 
-@* On-screen keys for phones and tablets: one row that always fits (no scrolling), the keys pi needs most first. A
-   read-only terminal (an agent shared read-only) has none: it is only watched. *@
+@* Font controls are available to everyone. Input keys are only shown on writable phone/tablet terminals. *@
+<div class="terminal-keys">
 @if (!ReadOnly)
 {
-<div class="terminal-keys">
+    <span class="terminal-input-controls">
     @foreach (var (label, sequence, title) in Keys)
     {
         <button type="button" class="terminal-key" title="@title" aria-label="@title" @onclick="() => SendAsync(sequence)" @onclick:preventDefault="true">@label</button>
@@ -53,8 +48,12 @@
     <button type="button" class="terminal-key" data-dam-action="image" title="Send an image (screenshot, photo)" aria-label="Send an image">
         <MudIcon Icon="@Icons.Material.Rounded.AttachFile" Size="Size.Small" />
     </button>
-</div>
+    </span>
 }
+    <button type="button" class="terminal-key" @onclick="() => ChangeFontAsync(-1)" title="Decrease terminal font size" aria-label="Decrease terminal font size">A−</button>
+    <button type="button" class="terminal-key" @onclick="() => ChangeFontAsync(1)" title="Increase terminal font size" aria-label="Increase terminal font size">A+</button>
+    <button type="button" class="terminal-key" @onclick="() => ChangeFontAsync(0)" title="Reset terminal font size" aria-label="Reset terminal font size">Reset</button>
+</div>
 
 @code {
     // On-screen keys for phones and tablets, where these are hard or impossible to type.
