@@ -13,7 +13,7 @@ All three store a session as a JSONL file (one JSON object per line) that only g
 ### pi
 
 `~/.pi/agent/sessions/--<cwd>--/<timestamp>_<session-id>.jsonl`, where `<cwd>` is the working directory with the
-leading `/` removed and `/`, `\` and `:` replaced by `-` (for example `--home-remoteman-work-maze--`). pi finds a session
+leading `/` removed and `/`, `\` and `:` replaced by `-` (for example `--home-runner-work-example--`). pi finds a session
 by the `id` in its header, **only in the folder of the current working directory**. The file name doesn't matter.
 
 | Line `type` | What it is |
@@ -74,7 +74,7 @@ One JSON document per session, stored by the Manager in `/data/sessions/<session
   "format": "deve-session",
   "version": 1,
   "title": "Fix maze generator performance",
-  "cwd": "/home/remoteman/work/devemazegeneratorcore",
+  "cwd": "/home/runner/work/example-project",
   "createdAt": "2026-09-25T11:07:36Z",
   "updatedAt": "2026-09-25T12:40:02Z",
   "leafId": "c3d4e5f6",                  // where the conversation currently is (the tree's active end)

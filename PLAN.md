@@ -16,7 +16,7 @@ Use these names everywhere: code, UI, docs.
 | **Portal** | The web UI served by the Manager. |
 | **Runner** | A Proxmox VM created and owned by the Manager. Agents run here. One Runner can host many agents at once. |
 | **Runner Template** | A Proxmox template that Runners are cloned from. There are two kinds: **Headless** (e.g. `10100 cloudimage-debian13`) and **Desktop** (e.g. `10120 cloudimage-debian13-desktop`). |
-| **Runner Account** | The Linux user the Manager uses on every Runner (default `remoteman` / `remoteman`, set in compose). |
+| **Runner Account** | The Linux user the Manager uses on every Runner (default username `remoteman`, random password per Runner). |
 | **Project** | Something you want agents to work on: a GitHub repo or a plain folder. |
 | **Workspace** | A checkout of a Project on a specific Runner. |
 | **Harness** | An agent CLI: `pi`, `claude` (Claude Code), `codex`. |
@@ -79,7 +79,7 @@ pveum user token add deveagentmanager@pve manager --privsep 0
 pveum acl modify /pool/deveagents          -user deveagentmanager@pve -role DeveAgentManager
 pveum acl modify /vms/10100                -user deveagentmanager@pve -role DeveAgentManager   # headless template
 pveum acl modify /vms/10120                -user deveagentmanager@pve -role DeveAgentManager   # desktop template
-pveum acl modify /storage/ReplicatedPool_2 -user deveagentmanager@pve -role DeveAgentManager   # disk target
+pveum acl modify /storage/example-storage -user deveagentmanager@pve -role DeveAgentManager   # disk target
 pveum acl modify /sdn/zones/localnetwork   -user deveagentmanager@pve -role DeveAgentManager   # network
 ```
 
@@ -106,16 +106,16 @@ services:
     environment:
       # Portal login
       ADMIN_USERNAME: admin
-      ADMIN_PASSWORD: change-me
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}  # first-start password from a private environment file
 
       # Proxmox
-      PROXMOX_URL: https://proxmox1:8006
+      PROXMOX_URL: https://proxmox.example.com:8006
       PROXMOX_TOKEN_ID: deveagentmanager@pve!manager
-      PROXMOX_TOKEN_SECRET: xxxxxxxx-xxxx
+      PROXMOX_TOKEN_SECRET: ${PROXMOX_TOKEN_SECRET}
       PROXMOX_VERIFY_TLS: "false"
-      PROXMOX_NODE: proxmox1
+      PROXMOX_NODE: example-node
       PROXMOX_POOL: deveagents
-      PROXMOX_STORAGE: ReplicatedPool_2
+      PROXMOX_STORAGE: example-storage
       PROXMOX_BRIDGE: vmbr0
       PROXMOX_VMID_RANGE: 30000-30999   # Runners only get IDs from this range
 
@@ -165,7 +165,7 @@ The layout is a left sidebar with the main content on the right. It has a dark t
    - Runner detail: the setup log with live bootstrap output, installed Harness versions, Workspaces on it, and Live Sessions on it.
 3. **Projects**
    - A list of Projects.
-   - **Add Project**: *From GitHub* (pick from your repos via the PAT, or paste a URL like `github.com/devedse/DeveMazeGeneratorCore`) or *Folder* (an empty folder, or an existing path on a Runner).
+   - **Add Project**: *From GitHub* (pick from your repos via the PAT, or paste a URL like `github.com/example/example-project`) or *Folder* (an empty folder, or an existing path on a Runner).
    - Project detail (shown above): Live Sessions at the top, then past Sessions (those started by a Job get a ⚙ badge), plus a **Jobs** tab and a Workspaces tab showing which Runners have a checkout.
 4. **Session detail**: the conversation rendered read-only (messages, tool calls, files touched), which Harnesses it has run in, its branch, and buttons for **Resume in pi / claude / codex**, **Fork**, **Export**, **Rename**, **Delete**.
 5. **Terminal**: full-screen browser terminal. A top bar shows the Project, Session, Harness and Runner, plus **Detach** (leave it running), **Stop**, and **Open shell here** (a plain shell in the same Workspace). Tabs let you keep several Terminals open.
@@ -254,15 +254,15 @@ POST /api/jobs
 Authorization: Bearer dam_xxxxxxxxxxxx
 
 {
-  "project": "github.com/devedse/DeveMazeGeneratorCore",
+  "project": "github.com/example/example-project",
   "harness": "claude",
   "prompt": "Fix issue #42 and add a test for it.",
   "whenDone": "pull-request",
-  "webhook": "https://n8n.local/webhook/agent-done",
+  "webhook": "https://automation.example.com/webhook/agent-done",
   "metadata": { "issue": 42 }
 }
 
-→ 202 { "jobId": "j_7f3a", "status": "queued", "url": "https://agents.local/jobs/j_7f3a" }
+→ 202 { "jobId": "j_7f3a", "status": "queued", "url": "https://agents.example.com/jobs/j_7f3a" }
 ```
 
 The other API actions are: **list** Jobs (filter by Project, status or metadata), **get** a Job's status and result, **follow** its live output as a stream, and **cancel** it. In v1 the API covers Jobs (plus listing Projects) only. Runners and interactive Sessions stay Portal-only until there's a need to expose them.

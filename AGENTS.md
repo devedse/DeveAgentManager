@@ -13,3 +13,14 @@ help button next to it.
 - Write help as plain paragraphs (`<p>`): what it does, what happens when you use it, and anything that can't be undone.
 - Everything follows the light/dark theme: use the `--dam-*` CSS variables in `wwwroot/app.css`, not fixed colours. (Pages
   on VS Code's own hostname, like its loading page in `EditorEndpoints.cs`, can't load `app.css` and copy the values.)
+
+## Documentation privacy
+
+Use reserved example domains (`example.com`, `example.org`, `.test`), placeholder credentials, and generic paths in
+documentation and agent instructions. Do not copy an operator's hostnames, IP addresses, usernames, email addresses,
+working folders, account IDs, passwords, API tokens, cookies, private keys or authentication files into tracked docs.
+Loopback addresses and documented product defaults are allowed when needed to reproduce local tests. Public project
+URLs and upstream references are allowed. Mark test-only credentials clearly; never substitute a live credential.
+Before committing docs, review the diff and scan all tracked documentation for private deployment details and secrets.
+Do not paste matching secret values into command output or reports. Removing a value from the current files does not
+remove it from Git history; report any exposed credential so its owner can rotate it.
