@@ -73,6 +73,7 @@
             }
             @if (read)
             {
+                <ScreenAwakeButton />
                 <div class="toolbar-narrow">
                     <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" aria-label="More">
                         @if (_sessionId is { } menuSessionId)
