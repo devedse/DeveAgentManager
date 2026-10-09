@@ -64,6 +64,24 @@ public interface IHarness
     /// and a script run after the files are written. Only called when <see cref="AccountSupport"/> is set.
     /// </summary>
     HarnessAccountSetup BuildAccountSetup(string accountFolder, Data.AccountKind kind, string secret) => throw new NotSupportedException();
+
+    /// <summary>
+    /// True when the Manager renews this harness's subscription logins itself (Codex). Runners then get only
+    /// <see cref="RunnerAccountCopy"/>, which can't renew, so two Runners never use up the same rotating refresh token.
+    /// </summary>
+    bool RenewsAccounts => false;
+
+    /// <summary>What a Runner gets of a subscription login the Manager renews: no refresh token.</summary>
+    string RunnerAccountCopy(string secret) => secret;
+
+    /// <summary>The renewed login when it is due, else null. Throws <see cref="AccountRenewalException"/>.</summary>
+    Task<string?> RenewAccountAsync(string secret, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+}
+
+/// <summary>A login couldn't be renewed. <paramref name="permanent"/>: the provider ended it; only connecting it again helps.</summary>
+public sealed class AccountRenewalException(string message, bool permanent) : Exception(message)
+{
+    public bool Permanent { get; } = permanent;
 }
 
 /// <param name="Files">Paths relative to the account folder, with their content and mode.</param>

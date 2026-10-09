@@ -221,7 +221,8 @@ public sealed record AccountDto(
     int Version,
     int AgentCount,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    string? RenewalNote = null);
 
 // Requests.
 

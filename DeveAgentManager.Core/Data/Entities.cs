@@ -322,6 +322,16 @@ public class Account
     /// <summary>Goes up when the credential is replaced (a new login), so Runners take the new one.</summary>
     public int Version { get; set; } = 1;
 
+    /// <summary>
+    /// The Manager renews this subscription login and Runners only get its access token (see IHarness.RenewsAccounts).
+    /// False for logins connected before that existed: their stored copy may already be used up on a Runner, so they
+    /// keep renewing on the Runner until connected again.
+    /// </summary>
+    public bool ManagedRenewal { get; set; }
+
+    /// <summary>Why the last renewal failed; null when it worked.</summary>
+    public string? RenewalProblem { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public DateTime UpdatedAt { get; set; }

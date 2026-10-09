@@ -37,8 +37,8 @@ Server settings are shown under **Account menu → Account security** for user m
 
 | Setting | Example / default |
 |---|---|
-| `PUBLIC_ORIGINS` | `https://dam.devedse.click;https://dam.devedse.duckdns.org` |
-| `EDITOR_URL` | `https://{runner}.code.{host}`, or flat `https://dam-vscode-{runner}.devedse.click` |
+| `PUBLIC_ORIGINS` | `https://dam.example.com;https://dam.example.org` |
+| `EDITOR_URL` | `https://{runner}.code.{host}`, or flat `https://dam-vscode-{runner}.example.com` |
 | `TRUSTED_PROXIES` | Exact NPM socket IPs separated by semicolons; empty trusts nobody |
 | `ALLOW_LOCAL_ACCESS` | `true` |
 | `PROXY_IDENTITY_HEADERS` | Additional header names separated by semicolons |
@@ -69,7 +69,7 @@ call Portal APIs, read responses and perform actions as whoever opened it. Runne
 agents, extensions or compromised dependencies. An HttpOnly cookie cannot be read, but the browser still sends it.
 Cookie Path and CSP are not substitutes for origin separation. **Public VS Code never runs on a Portal path.**
 
-Each Runner therefore has its own editor hostname, e.g. `runner-01.code.dam.devedse.click`. A compromised Runner cannot
+Each Runner therefore has its own editor hostname, e.g. `runner-01.code.dam.example.com`. A compromised Runner cannot
 read the Portal or another Runner's editor responses. Same site is not same origin: sibling subdomains can still
 trigger requests with cookies, so API mutations require the Portal header and matching Origin, sockets check Origin,
 account forms require antiforgery tokens and strict Origin, and editor links require same-origin/direct navigation
@@ -165,7 +165,7 @@ details confined to operator logs; editor tunnel errors do not reveal internal e
 
 ## 7. Nginx Proxy Manager: configure once
 
-For `dam.devedse.click` and `dam.devedse.duckdns.org`, HTTPS remains in NPM; internal TLS is not required.
+For `dam.example.com` and `dam.example.org`, HTTPS remains in NPM; internal TLS is not required.
 
 **Portal proxy host** (both names can share one entry): forward HTTP to Manager port **8080**, WebSockets on, asset
 caching off, Force SSL on, valid certificate, HSTS on. HSTS subdomains should only be enabled when those subdomains
@@ -176,26 +176,25 @@ and real client IP; configure NPM's actual socket address in TRUSTED_PROXIES.
 
 | Configure once | Example |
 |---|---|
-| Wildcard DNS | `*.code.dam.devedse.click` → public NPM address |
-| NPM proxy hostname | `*.code.dam.devedse.click` |
+| Wildcard DNS | `*.code.dam.example.com` → public NPM address |
+| NPM proxy hostname | `*.code.dam.example.com` |
 | Destination | Manager's address, HTTP, port **8080** |
 | WebSockets / asset cache | On / off |
-| Certificate | `*.code.dam.devedse.click` via DNS challenge |
+| Certificate | `*.code.dam.example.com` via DNS challenge |
 | DAM editor template | `https://{runner}.code.{host}` |
 
-`runner-01.code.dam.devedse.click`, `runner-02.code.dam.devedse.click` and every future Runner use the same entry.
+`runner-01.code.dam.example.com`, `runner-02.code.dam.example.com` and every future Runner use the same entry.
 Adding Runners needs no NPM, DNS or certificate changes. NPM routes; DAM checks identity and authorization. The wildcard
-certificate covers one Runner-label level, not deeper names or bare `code.dam.devedse.click`.
+certificate covers one Runner-label level, not deeper names or bare `code.dam.example.com`.
 
-**Behind Cloudflare: flat editor names.** Cloudflare's free certificate covers `*.devedse.click` (one level), not
-`runner-01.code.dam.devedse.click`, and a DNS wildcard doesn't apply below the existing `dam.devedse.click` record.
-So `EDITOR_URL=https://dam-vscode-{runner}.devedse.click`: the existing `*.devedse.click` DNS record and tunnel route
-already reach NPM (verified: `dam-vscode-runner-01.devedse.click` resolves with a valid certificate). NPM needs only one
-line in the Portal proxy host's Advanced tab: `server_name ~^dam-vscode-[a-z0-9-]+\.devedse\.click$;`. DAM accepts
-`{runner}` anywhere in the first label, so Runners stay one origin each and one name each never spans labels. From the
-DuckDNS Portal these editors are cross-site: VS Code opens there with **Open in a new tab**.
+**Behind Cloudflare: flat editor names.** Cloudflare's free certificate covers `*.example.com` (one level), not
+`runner-01.code.dam.example.com`, and a DNS wildcard doesn't apply below the existing `dam.example.com` record.
+So `EDITOR_URL=https://dam-vscode-{runner}.example.com`: a configured `*.example.com` DNS record and tunnel route
+can reach NPM. Verify DNS and certificates for your deployment. NPM needs only one
+line in the Portal proxy host's Advanced tab: `server_name ~^dam-vscode-[a-z0-9-]+\.example\.com$;`. DAM accepts
+`{runner}` anywhere in the first label, so Runners stay one origin each and one name each never spans labels. From a Portal on another registrable domain these editors are cross-site: VS Code opens there with **Open in a new tab**.
 
-Configure a second wildcard entry/certificate once if editors are wanted under the DuckDNS domain as well. Verify
+Configure a second wildcard entry/certificate once if editors are wanted under the second domain as well. Verify
 wildcard DNS/certificate support on the chosen provider; this implementation has not changed live DNS. Local optional
 8081 mappings can remain on intended LAN routes or be removed. Backend ports must not be publicly reachable.
 
@@ -271,10 +270,10 @@ September 26 credentials and bypassed using the same account's October 7 renewal
 
 ### Follow-up investigation: simultaneous Codex refresh (2026-10-07)
 
-Implementation handoff: [Codex central account renewal plan](codex-central-auth-plan.md). It defines scope separation,
-the native-terminal prototype gate, the account authority, migration and acceptance tests.
+**Resolved (2026-10-08) by [Codex login renewal](codex-central-auth-plan.md):** the Manager is the only renewer and
+Runners get access tokens only. The findings below are the investigation that led there.
 
-**The synchronization above fixes stale installation copies, not concurrent OAuth refresh. This remains unresolved.**
+**The synchronization above fixes stale installation copies, not concurrent OAuth refresh.**
 Do not treat the credential persistence tests as proof that two live agents can safely refresh a copied login together.
 
 Evidence:

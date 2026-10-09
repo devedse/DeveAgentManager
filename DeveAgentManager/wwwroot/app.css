@@ -1681,8 +1681,10 @@ html:has(.terminal-layout) body {
     color: var(--dam-console-text);
 }
 
+.terminal-input-controls { display: none; }
+
 .terminal-keys {
-    display: none;
+    display: flex;
     gap: 4px;
     padding: 5px 6px;
     background: var(--dam-surface);
@@ -1691,8 +1693,8 @@ html:has(.terminal-layout) body {
 }
 
 @media (pointer: coarse), (max-width: 700px) {
-    .terminal-keys {
-        display: flex;
+    .terminal-input-controls {
+        display: contents;
     }
 }
 
@@ -1870,6 +1872,14 @@ html:has(.terminal-layout) body {
 
 .account-meta {
     color: var(--dam-muted);
+    font-size: 0.8rem;
+}
+
+.account-note {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--dam-warning);
     font-size: 0.8rem;
 }
 
@@ -2913,7 +2923,7 @@ html:has(.terminal-layout) body {
 .usage:not(.usage-compact) > .usage-item { display: contents; }
 
 /* Keep the quick-command activator the same size as adjacent terminal keys. */
-.terminal-keys > .quick-command-menu { flex: 1 1 0; min-width: 0; max-width: 72px; }
+.terminal-keys .quick-command-menu { flex: 1 1 0; min-width: 0; max-width: 72px; }
 .terminal-keys .quick-command-menu .mud-menu-activator { display: flex; width: 100%; }
 .terminal-keys .quick-command-menu .terminal-key { width: 100%; }
 .quick-command-popover { width: min(280px, calc(100vw - 16px)); max-width: calc(100vw - 16px); }

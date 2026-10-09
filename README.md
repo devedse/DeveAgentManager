@@ -17,7 +17,9 @@ when you close the tab.
   this role on upgrade and must sign in again. See [docs/users-plan.md](docs/users-plan.md).
 - **Account** (**My settings → Harness logins**): a Claude or ChatGPT subscription, or an API key, connected once in the
   Manager and used on every Runner. Each person's own. Claude logs in with `claude setup-token` (a token valid for a year). Codex logs in
-  with `codex login --device-auth` (a code you enter on any device). A harness can have several accounts.
+  with `codex login --device-auth` (a code you enter on any device); the Manager renews that login itself and Runners
+  only get its access token, so agents on several Runners can share it ([details](docs/codex-central-auth-plan.md)).
+  A harness can have several accounts.
 - **Continue with…**: the switch button in an agent's terminal continues the conversation with another account or in
   another harness, in the same folder, e.g. when a subscription ran out. Another harness gets the conversation as
   text: messages, answers and what the tools did carry over, and the model's hidden thinking stays behind.
@@ -48,7 +50,7 @@ See [PLAN.md](PLAN.md) for where this is going (Jobs API, projects).
 2. Copy [`docker-compose.yml`](docker-compose.yml) to the Docker host and fill in the values marked `CHANGE ME`.
 3. Log in to the GitHub Container Registry once (the image is private, like the repo). Use a
    [personal access token](https://github.com/settings/tokens) with `read:packages`:
-   `echo <token> | docker login ghcr.io -u devedse --password-stdin`
+   `echo <token> | docker login ghcr.io -u <github-username> --password-stdin`
 4. Run `docker compose up -d`, open `http://<docker-host>:8080` and sign in as `ADMIN_USERNAME` using the one-time setup code in `docker compose logs` (or the optional first-start `ADMIN_PASSWORD`).
    Port `8081` serves VS Code (optional). Add the other people under **Users**.
 5. In **Manager settings → Providers**, click **Test connection**. Every check should be green.
@@ -83,7 +85,7 @@ pveum user token add deveagentmanager@pve manager --privsep 0
 pveum acl modify /pool/deveagents          --users deveagentmanager@pve --roles DeveAgentManager
 pveum acl modify /vms/10100                --users deveagentmanager@pve --roles DeveAgentManager  # headless template
 pveum acl modify /vms/10120                --users deveagentmanager@pve --roles DeveAgentManager  # desktop template
-pveum acl modify /storage/ReplicatedPool_2 --users deveagentmanager@pve --roles DeveAgentManager  # disk storage
+pveum acl modify /storage/example-storage --users deveagentmanager@pve --roles DeveAgentManager  # disk storage
 pveum acl modify /sdn/zones/localnetwork   --users deveagentmanager@pve --roles DeveAgentManager  # network
 ```
 
@@ -115,7 +117,7 @@ role have to exist before you can pick them.
    | `/pool/deveagents` | create, change, start/stop and delete Runners |
    | `/vms/10100` | clone the headless template |
    | `/vms/10120` | clone the desktop template |
-   | `/storage/ReplicatedPool_2` | create the Runners' disks |
+   | `/storage/example-storage` | create the Runners' disks |
    | `/sdn/zones/localnetwork` | connect Runners to the network |
 
    The path is a dropdown. The pool only shows up after step 1, and the SDN zone only if you use SDN (otherwise skip
@@ -156,7 +158,7 @@ Everything is set with environment variables in the compose file.
 |---|---|---|
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / random setup code | First-start credentials. Without a password, a random code is printed once in startup logs and must be changed after sign-in. Existing chosen passwords are never reset at normal startup. Legacy `change-me` credentials are replaced with a logged random setup code. |
 | `RESET_ADMIN_PASSWORD` | `false` | Operator recovery: restores the named admin, resets its password, removes its authenticator. Without `ADMIN_PASSWORD`, logs a fresh recovery code. Ends old credentials; requires password change. Remove it immediately after recovery. |
-| `PROXMOX_URL` | | e.g. `https://proxmox1:8006`. Without it only existing machines can be added. |
+| `PROXMOX_URL` | | e.g. `https://proxmox.example.com:8006`. Without it only existing machines can be added. |
 | `PROXMOX_TOKEN_ID` / `PROXMOX_TOKEN_SECRET` | | The API token. |
 | `PROXMOX_VERIFY_TLS` | `true` | `false` accepts Proxmox's self-signed certificate. |
 | `PROXMOX_NODE` | template's node | Node to create Runners on. |
@@ -171,7 +173,7 @@ Everything is set with environment variables in the compose file.
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |
 | `EDITOR_PORT` | `8081` | Optional editor-only port for direct local IP access. Public editors use hostname routing on the Portal port. |
 | `EDITOR_URL` | Local Portal host on `EDITOR_PORT` | Public mode requires `{runner}` within the first hostname label: `https://{runner}.code.{host}`, or flat names such as `https://dam-vscode-{runner}.example.com` (one level deep, so a free `*.example.com` certificate such as Cloudflare's covers them). `{host}` is derived only from an allowlisted public Portal origin. |
-| `PUBLIC_ORIGINS` | empty | Semicolon-separated HTTPS Portal origins, e.g. `https://dam.devedse.click;https://dam.devedse.duckdns.org`. Unknown public origins are rejected; editor hosts never serve the Portal. |
+| `PUBLIC_ORIGINS` | empty | Semicolon-separated HTTPS Portal origins, e.g. `https://dam.example.com;https://dam.example.org`. Unknown public origins are rejected; editor hosts never serve the Portal. |
 | `TRUSTED_PROXIES` | empty | Semicolon-separated exact proxy IP addresses (actual socket peers). Only these can set forwarded client IP and HTTPS scheme. Host is preserved directly; forwarded Host is never used. |
 | `ALLOW_LOCAL_ACCESS` | `true` | Allow direct private/loopback IP HTTP connections, with separate credentials. Proxy or forwarded traffic cannot activate this exception. |
 | `PROXY_IDENTITY_HEADERS` | empty | Extra semicolon-separated identity headers stripped before forwarding to a Runner. Authorization, Proxy-Authorization, forwarding and common authentication headers are always stripped. |
@@ -182,7 +184,7 @@ Configure the Portal proxy host for your public domains, forwarding HTTP to DAM 
 Force SSL and HSTS; disable asset caching. Set the exact public origins and NPM's actual connection IP in compose.
 The final proxy has no Basic authentication: DAM handles sign-in and Runner authorization.
 
-Configure **one wildcard editor proxy host per domain**, e.g. `*.code.dam.devedse.click`, forwarding to the same port
+Configure **one wildcard editor proxy host per domain**, e.g. `*.code.dam.example.com`, forwarding to the same port
 **8080**, with WebSockets enabled. Add the corresponding wildcard DNS record and wildcard TLS certificate obtained by
 DNS challenge. `EDITOR_URL=https://{runner}.code.{host}` chooses the matching public domain automatically. Adding a
 Runner never needs an NPM entry, DNS record or certificate. Each Runner keeps a separate browser origin.

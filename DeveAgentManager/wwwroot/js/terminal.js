@@ -463,6 +463,10 @@
         // `images`: whether images can be pasted (they go to the Runner). `readOnly`: only watched, so no phone keyboard.
         init(id, dotnet, images, readOnly) {
             const terminal = XtermBlazor.getTerminalById(id);
+            try {
+                const saved = Number(localStorage.getItem("dam-terminal-font-size"));
+                if (saved >= 10 && saved <= 28) terminal.options.fontSize = saved;
+            } catch { }
             hardenInput(terminal);
 
             // Handle keys in the browser instead of asking .NET for every key press.
@@ -550,6 +554,14 @@
                 keys.querySelector('[data-dam-action="image"]')?.addEventListener("click", () => pickImage?.());
             }
 
+            fit(id);
+        },
+
+        changeFont(id, change) {
+            const terminal = XtermBlazor.getTerminalById(id);
+            terminal.options.fontSize = change === 0 ? 14 : Math.max(10, Math.min(28, terminal.options.fontSize + change));
+            try { localStorage.setItem("dam-terminal-font-size", String(terminal.options.fontSize)); } catch { }
+            layouts.delete(id);
             fit(id);
         },
 

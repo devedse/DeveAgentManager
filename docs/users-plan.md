@@ -54,7 +54,7 @@ Global roles. A user can have any combination.
 | **Owner** | Manage, plus delete the Runner. One person; only a runner manager can change who it is. |
 
 - The creator becomes the owner. A runner manager can create a Runner for someone and make them the owner (for
-  example: create one for Ketty, make her the owner, and she logs in to it with its password or her SSH key).
+  example: create one for Alex, make her the owner, and she logs in to it with its password or her SSH key).
 - Use-level people can't see the password in the Portal, but their agents run as the same account with sudo and
   could change it. That's tidiness, not a security boundary (section 1).
 - **Removing someone's access** (or leaving) removes their agents on that Runner and deletes their harness logins,
@@ -75,7 +75,7 @@ An agent's owner can share it with other users, **read-only** or **read-write**,
 - A read-write user prompts **with the harness login the agent is using**, which can be the owner's. That's accepted:
   people who share an agent know each other.
 - **Switching the login**: anyone with read-write access can switch the agent to *their own* harness login, never to
-  someone else's. (If Ketty switches it to hers, the owner then prompts with Ketty's.)
+  someone else's. (If Alex switches it to hers, the owner then prompts with Alex's.)
 - Conversations can be shared read-only on their own. Anyone who can read someone else's conversation can **continue a
   copy** of it in a new agent of their own, on a Runner they can use, with their own login. Everyone an agent is shared
   with can read its workspace's conversations.
