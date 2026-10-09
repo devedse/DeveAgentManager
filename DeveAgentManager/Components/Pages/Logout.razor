@@ -1,0 +1,11 @@
+@page "/logout"
+@layout EmptyLayout
+@attribute [ExcludeFromInteractiveRouting]
+<PageTitle>Sign out · DeveAgentManager</PageTitle>
+<div class="login-page"><form method="post" action="/account/logout" class="login-card">
+    <AntiforgeryToken />
+    <div class="login-title">Sign out</div>
+    <p>This closes your Portal, terminal and VS Code connections on this device. Your agents keep running.</p>
+    <button type="submit" class="login-button">Sign out</button>
+    <a href="/" class="login-link">Cancel</a>
+</form></div>

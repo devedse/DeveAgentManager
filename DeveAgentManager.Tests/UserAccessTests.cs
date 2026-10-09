@@ -106,6 +106,41 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         Assert.DoesNotContain(admins.SessionId.ToString(), await manager.GetStringAsync("/api/sessions"));
     }
 
+    [Theory]
+    [InlineData(UserRoles.ConversationManager)]
+    [InlineData(UserRoles.Admin)]
+    public async Task ConversationManagers_OpenEveryAgentAndSessionWithoutOwnershipOrShares(UserRoles roles)
+    {
+        var things = await SeedAsync(User.BootstrapId);
+        var (reader, readerId) = await SignedInAsNewUserWithIdAsync(roles);
+        Assert.Equal(AgentAccess.Owner, (await AgentAsync(reader, things.AgentId)).Access);
+        Assert.Contains(things.AgentId.ToString(), await reader.GetStringAsync("/api/agents"));
+        Assert.Equal(HttpStatusCode.OK, (await reader.GetAsync($"/api/agents/{things.AgentId}/session")).StatusCode);
+        foreach (var id in new[] { things.SessionId, things.ImportedSessionId })
+        {
+            Assert.Equal(SessionAccess.Owner, (await reader.GetFromJsonAsync<SessionDto>($"/api/sessions/{id}", ApiJson.Options))!.Access);
+            Assert.Contains(id.ToString(), await reader.GetStringAsync("/api/sessions"));
+            Assert.Equal(HttpStatusCode.NoContent, (await reader.PutAsJsonAsync($"/api/sessions/{id}/title", new RenameSessionRequest("changed"))).StatusCode);
+        }
+        var recipient = await Users.CreateAsync(TestUsers.Admin, NewUsername(), null, Password, UserRoles.None);
+        var sharing = manager.Services.GetRequiredService<Sharing>();
+        var actor = CurrentUser.From((await Users.GetAsync(readerId))!);
+        await sharing.ShareAgentAsync(actor, things.AgentId, recipient.Id, AgentAccess.Write);
+        await sharing.UnshareAgentAsync(actor, things.AgentId, recipient.Id);
+        await sharing.ShareSessionAsync(actor, things.ImportedSessionId, recipient.Id);
+        await sharing.UnshareSessionAsync(actor, things.ImportedSessionId, recipient.Id);
+        // These rows are fixtures rather than real imports, so create the session-store directory too.
+        Directory.CreateDirectory(manager.Services.GetRequiredService<DeveAgentManager.Core.Configuration.ManagerOptions>().SessionsDirectory);
+        Assert.Equal(HttpStatusCode.NoContent, (await reader.DeleteAsync($"/api/sessions/{things.ImportedSessionId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await reader.GetAsync($"/api/accounts/{things.AccountId}")).StatusCode);
+        var access = manager.Services.GetRequiredService<AccessControl>();
+        Assert.Contains(readerId, (await access.AudienceAsync(new ManagerEvent(ManagerEventKind.AgentChanged, things.RunnerId, things.AgentId)))!);
+        Assert.Contains(readerId, (await access.AudienceAsync(new ManagerEvent(ManagerEventKind.SessionChanged, SessionId: things.SessionId)))!);
+        await Users.UpdateAsync(TestUsers.Admin, readerId, null, UserRoles.None, disabled: false);
+        Assert.Equal(AgentAccess.None, await access.AgentAsync(CurrentUser.From((await Users.GetAsync(readerId))!), things.AgentId));
+        Assert.Equal(HttpStatusCode.NotFound, (await reader.GetAsync($"/api/agents/{things.AgentId}")).StatusCode);
+    }
+
     [Fact]
     public async Task SharingAnAgent_ReadOnly_ReadWrite_AndLeaving()
     {
@@ -187,7 +222,7 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/runners")).StatusCode);
         Assert.False((await client.GetFromJsonAsync<CurrentUserDto>("/api/me", ApiJson.Options))!.MustChangePassword);
 
-        var old = await Anonymous().PostAsync("/account/login", Form(("username", username), ("password", Password)));
+        var old = await Anonymous().PostAccountAsync("/account/login", Form(("username", username), ("password", Password)));
         Assert.Contains("failed=1", old.Headers.Location?.ToString());
     }
 
@@ -204,7 +239,7 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         await Users.ResetPasswordAsync(TestUsers.Admin, user.Id, "set-by-admin-1");
         Assert.Equal(HttpStatusCode.Unauthorized, (await second.GetAsync("/api/me")).StatusCode);
         await Users.UpdateAsync(TestUsers.Admin, user.Id, null, UserRoles.None, disabled: true);
-        Assert.Contains("failed=1", (await Anonymous().PostAsync("/account/login", Form(("username", username), ("password", "set-by-admin-1")))).Headers.Location?.ToString());
+        Assert.Contains("failed=1", (await Anonymous().PostAccountAsync("/account/login", Form(("username", username), ("password", "set-by-admin-1")))).Headers.Location?.ToString());
     }
 
     [Fact]
@@ -227,18 +262,18 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     }
 
     [Fact]
-    public async Task WrongPasswords_LockTheUserForAFewMinutes()
+    public async Task WrongPasswords_DoNotLockOutTheAccountOwner()
     {
         var username = NewUsername();
         await Users.CreateAsync(TestUsers.Admin, username, null, Password, UserRoles.None);
-        for (var i = 0; i < UserService.MaxFailedSignIns; i++)
+        for (var i = 0; i < 10; i++)
         {
             Assert.Null(await Users.SignInAsync(username, "wrong-password"));
         }
 
-        Assert.Null(await Users.SignInAsync(username, Password));
+        Assert.NotNull(await Users.SignInAsync(username, Password));
         var user = (await Users.ListAsync()).Single(u => u.Username == username);
-        Assert.True(user.LockedUntil > DateTime.UtcNow);
+        Assert.Null(user.LockedUntil);
         Assert.Null(await Users.SignInAsync("nobody-" + username, Password));
     }
 
@@ -364,7 +399,7 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     private async Task<HttpClient> SignInAsync(string username, string password, string returnUrl = "/")
     {
         var client = Anonymous();
-        var response = await client.PostAsync("/account/login", Form(("username", username), ("password", password), ("returnUrl", returnUrl)));
+        var response = await client.PostAccountAsync("/account/login", Form(("username", username), ("password", password), ("returnUrl", returnUrl)));
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.DoesNotContain("failed=1", response.Headers.Location?.ToString());
         client.DefaultRequestHeaders.Add(ApiHeaders.Request, "1");
@@ -373,7 +408,7 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     }
 
     private static Task<HttpResponseMessage> ChangePasswordAsync(HttpClient client, string current, string next) =>
-        client.PostAsync("/account/password", Form(("currentPassword", current), ("newPassword", next), ("confirmPassword", next), ("returnUrl", "/agents")));
+        client.PostAccountAsync("/account/password", Form(("currentPassword", current), ("newPassword", next), ("confirmPassword", next), ("returnUrl", "/agents")));
 
     private HttpClient Anonymous() => manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 

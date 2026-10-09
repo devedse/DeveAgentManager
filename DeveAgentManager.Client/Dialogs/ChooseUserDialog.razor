@@ -18,7 +18,8 @@
         }
         else
         {
-            <MudSelect T="Guid?" @bind-Value="_userId" Label="Person" Variant="Variant.Outlined" Margin="Margin.Dense" AnchorOrigin="Origin.BottomCenter">
+            @* Keep matching edges: a centered anchor with a left transform overflows mobile pages and recenters the dialog. *@
+            <MudSelect T="Guid?" @bind-Value="_userId" Label="Person" Variant="Variant.Outlined" Margin="Margin.Dense" AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
                 @foreach (var user in _users)
                 {
                     <MudSelectItem T="Guid?" Value="user.Id">@user.DisplayName (@user.Username)</MudSelectItem>

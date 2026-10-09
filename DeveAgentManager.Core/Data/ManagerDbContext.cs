@@ -34,6 +34,10 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
 
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
+    public DbSet<SignInSession> SignInSessions => Set<SignInSession>();
+    public DbSet<UserSecondFactor> UserSecondFactors => Set<UserSecondFactor>();
+    public DbSet<EditorTicket> EditorTickets => Set<EditorTicket>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // SQLite has no date type: store UTC and give values back as UTC.
@@ -43,6 +47,22 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<SignInSession>(session =>
+        {
+            session.HasKey(s => s.Id);
+            session.HasIndex(s => s.UserId);
+            session.HasOne<User>().WithMany().HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<UserSecondFactor>(factor =>
+        {
+            factor.HasKey(s => s.UserId);
+            factor.HasOne<User>().WithOne().HasForeignKey<UserSecondFactor>(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<EditorTicket>(ticket =>
+        {
+            ticket.HasKey(t => t.Id);
+            ticket.HasOne<SignInSession>().WithMany().HasForeignKey(t => t.SessionId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<AgentAutoContinue>(policy =>
         {
             policy.HasKey(p => p.AgentId);

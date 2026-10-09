@@ -22,7 +22,7 @@
                 <div class="nav-agent-row">
                     <span class="nav-agent-avatar">
                         <AgentAvatar Agent="agent" Class="nav-avatar" />
-                        <span class="nav-agent-dot @(agent.State != AgentState.Running ? "" : StateStyles.For(agent).Tone == Tone.Warning ? "warning" : StateStyles.For(agent).Tone == Tone.Neutral ? "neutral" : agent.Working ? "working" : "live")" title="@(agent.Activity?.Reason ?? StateStyles.For(agent).Text)"></span>
+                        <span class="nav-agent-dot @(agent.State != AgentState.Running ? "" : StateStyles.For(agent).Tone == Tone.Warning ? "warning" : StateStyles.For(agent).Tone == Tone.Unclear ? "unclear" : agent.Working ? "working" : "live")" title="@(agent.Activity?.Reason ?? StateStyles.For(agent).Text)"></span>
                     </span>
                     <span class="nav-agent-name">@agent.Name</span>
                     <span class="nav-agent-meta">@agent.RunnerName</span>

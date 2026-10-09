@@ -37,13 +37,9 @@ builder.Services.AddSingleton<OpenConnections>();
 builder.Services.AddHostedService(provider => provider.GetRequiredService<OpenConnections>());
 builder.Services.AddHealthChecks();
 
-builder.Services.Configure<ForwardedHeadersOptions>(forwarded =>
-{
-    // The Portal normally runs behind a reverse proxy that terminates HTTPS.
-    forwarded.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
-    forwarded.KnownIPNetworks.Clear();
-    forwarded.KnownProxies.Clear();
-});
+var boundary = new DeploymentBoundary(managerOptions);
+builder.Services.AddSingleton(boundary);
+builder.Services.Configure<ForwardedHeadersOptions>(boundary.ConfigureForwarding);
 
 var app = builder.Build();
 
@@ -71,18 +67,15 @@ foreach (var (setting, instead) in new[]
     }
 }
 
+app.Use(boundary.InvokeAsync);
 app.UseForwardedHeaders();
+app.Use(boundary.RouteAsync);
 
 // The editor port serves VS Code and nothing else (see EditorEndpoints).
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 app.UseEditorOrigin();
 
-// The Portal can't be framed by other pages, such as one on the editor port (clicks on its buttons in a hidden frame).
-app.Use((context, next) =>
-{
-    context.Response.Headers.ContentSecurityPolicy = "frame-ancestors 'self'";
-    context.Response.Headers.XFrameOptions = "SAMEORIGIN";
-    return next();
-});
+app.UsePortalSecurityHeaders();
 
 // Error and "not found" pages are for pages; the API answers with problem details.
 app.UseWhen(context => !RequestSecurity.IsMachinePath(context.Request.Path), pages =>
@@ -95,7 +88,6 @@ app.UseWhen(context => !RequestSecurity.IsMachinePath(context.Request.Path), pag
     pages.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 });
 
-app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 app.UseAuthentication();
 app.UsePasswordChangeFirst();
 app.UseAuthorization();
@@ -106,6 +98,7 @@ app.MapStaticAssets().AllowAnonymous();
 app.MapHealthChecks("/health").AllowAnonymous();
 
 app.MapAccountEndpoints();
+app.MapSecurityForms();
 app.MapManagerApi();
 app.MapTerminalSocket();
 app.MapEditorLinks();

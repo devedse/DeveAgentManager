@@ -317,6 +317,31 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.ToTable("AuditEvents");
                 });
 
+            modelBuilder.Entity("DeveAgentManager.Core.Data.EditorTicket", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RunnerId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionId");
+
+                    b.ToTable("EditorTickets");
+                });
+
             modelBuilder.Entity("DeveAgentManager.Core.Data.Runner", b =>
                 {
                     b.Property<Guid>("Id")
@@ -524,6 +549,55 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.ToTable("Settings");
                 });
 
+            modelBuilder.Entity("DeveAgentManager.Core.Data.SignInSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("AbsoluteExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("AuthenticatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Browser")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ClientIp")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastSeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Local")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SecurityStamp")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("SignInSessions");
+                });
+
             modelBuilder.Entity("DeveAgentManager.Core.Data.StoredSession", b =>
                 {
                     b.Property<Guid>("Id")
@@ -670,11 +744,35 @@ namespace DeveAgentManager.Core.Data.Migrations
                             FailedSignIns = 0,
                             MustChangePassword = false,
                             PasswordHash = "",
-                            Roles = 15,
+                            Roles = 31,
                             SecurityStamp = "bootstrap",
                             UpdatedAt = new DateTime(2026, 10, 6, 0, 0, 0, 0, DateTimeKind.Utc),
                             Username = "admin"
                         });
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.UserSecondFactor", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("LastCounter")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RecoveryHashes")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Secret")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("UserSecondFactors");
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.UserSetting", b =>
@@ -777,6 +875,15 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("DeveAgentManager.Core.Data.EditorTicket", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.SignInSession", null)
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("DeveAgentManager.Core.Data.Runner", b =>
                 {
                     b.HasOne("DeveAgentManager.Core.Data.User", "Owner")
@@ -831,6 +938,15 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("DeveAgentManager.Core.Data.SignInSession", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("DeveAgentManager.Core.Data.StoredSession", b =>
                 {
                     b.HasOne("DeveAgentManager.Core.Data.Agent", "Agent")
@@ -854,6 +970,15 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Navigation("Owner");
 
                     b.Navigation("WorkspaceAgent");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.UserSecondFactor", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.User", null)
+                        .WithOne()
+                        .HasForeignKey("DeveAgentManager.Core.Data.UserSecondFactor", "UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.UserSetting", b =>

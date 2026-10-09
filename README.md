@@ -10,9 +10,11 @@ when you close the tab.
   [Codex](https://github.com/openai/codex)) running in its own tmux session and working folder on a Runner.
 - **Users**: everyone signs in with a username and password of their own and has their own harness logins, GitHub
   token, git identity, environment variables and SSH keys (**My settings**). Roles: *settings manager*, *user
-  manager*, *runner creator* and *runner manager*; *Admin* is all of them. A Runner has an owner and people with *Use*
+  manager*, *runner creator*, *runner manager* and *conversation manager*; *Admin* is all of them. A Runner has an owner and people with *Use*
   or *Manage* access, who share its Linux account (so they trust each other with what is on it). Agents can be shared
-  read-only or read-write, conversations read-only. See [docs/users-plan.md](docs/users-plan.md).
+  read-only or read-write, conversations read-only. Conversation managers (including admins) can open, prompt and manage every agent
+  and read, export, rename, share or delete every conversation. Existing admins receive
+  this role on upgrade and must sign in again. See [docs/users-plan.md](docs/users-plan.md).
 - **Account** (**My settings → Harness logins**): a Claude or ChatGPT subscription, or an API key, connected once in the
   Manager and used on every Runner. Each person's own. Claude logs in with `claude setup-token` (a token valid for a year). Codex logs in
   with `codex login --device-auth` (a code you enter on any device). A harness can have several accounts.
@@ -32,7 +34,7 @@ when you close the tab.
 - **VS Code** (opt-in per Runner: tick it in **New Runner**, or **Install VS Code** on the Runner page): VS Code in the
   browser ([code-server](https://github.com/coder/code-server)) to browse files, edit and see git changes. The Runner
   page opens it in the Runner's home folder, an agent's terminal in the agent's folder. It opens inside the Portal,
-  with buttons for a new tab and full screen. It is served on the Manager's second port (`8081`), see below.
+  with buttons for a new tab and full screen. Public editors use separate Runner hostnames on port `8080`; local IP access can use port `8081`, see below.
 - A Runner's **Activity** tab lists what ran on it (setup, starts, installs, updates), how long it took and how it ended.
 - On a Runner's page, **Re-run setup** runs the whole setup again, and **Update pi** only installs the latest pi,
   updates its packages and applies Manager settings → pi. Every step is idempotent, so both are safe to repeat. Running agents
@@ -47,7 +49,7 @@ See [PLAN.md](PLAN.md) for where this is going (Jobs API, projects).
 3. Log in to the GitHub Container Registry once (the image is private, like the repo). Use a
    [personal access token](https://github.com/settings/tokens) with `read:packages`:
    `echo <token> | docker login ghcr.io -u devedse --password-stdin`
-4. Run `docker compose up -d`, open `http://<docker-host>:8080` and sign in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
+4. Run `docker compose up -d`, open `http://<docker-host>:8080` and sign in as `ADMIN_USERNAME` using the one-time setup code in `docker compose logs` (or the optional first-start `ADMIN_PASSWORD`).
    Port `8081` serves VS Code (optional). Add the other people under **Users**.
 5. In **Manager settings → Providers**, click **Test connection**. Every check should be green.
 6. **New Runner** → Headless → Create. Watch the setup log (about 3 to 5 minutes).
@@ -152,8 +154,8 @@ Everything is set with environment variables in the compose file.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `change-me` | The first user, with all roles, who owns everything from before users existed. The password only counts at the very first start (with the default, it must be changed at the first sign-in); afterwards everyone changes theirs in the Portal. |
-| `RESET_ADMIN_PASSWORD` | `false` | `true`: at start-up, `ADMIN_USERNAME` gets all roles and `ADMIN_PASSWORD` again (the way back in). Remove it afterwards. |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / random setup code | First-start credentials. Without a password, a random code is printed once in startup logs and must be changed after sign-in. Existing chosen passwords are never reset at normal startup. Legacy `change-me` credentials are replaced with a logged random setup code. |
+| `RESET_ADMIN_PASSWORD` | `false` | Operator recovery: restores the named admin, resets its password, removes its authenticator. Without `ADMIN_PASSWORD`, logs a fresh recovery code. Ends old credentials; requires password change. Remove it immediately after recovery. |
 | `PROXMOX_URL` | | e.g. `https://proxmox1:8006`. Without it only existing machines can be added. |
 | `PROXMOX_TOKEN_ID` / `PROXMOX_TOKEN_SECRET` | | The API token. |
 | `PROXMOX_VERIFY_TLS` | `true` | `false` accepts Proxmox's self-signed certificate. |
@@ -167,18 +169,69 @@ Everything is set with environment variables in the compose file.
 | `RUNNER_USERNAME` | `remoteman` | Account created on new VMs by cloud-init. Each Runner gets a random password of its own, which whoever manages the Runner sees on its page. (`RUNNER_PASSWORD` is no longer used.) |
 | `RUNNER_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` | `4` / `8192` / `64` | Default size in the New Runner dialog. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |
-| `EDITOR_PORT` | `8081` | The port that serves VS Code, and nothing else. Publish it next to 8080. |
-| `EDITOR_URL` | Portal's host on `EDITOR_PORT` | Where browsers reach that port, when it differs (behind a proxy), e.g. `https://code.example.com`. With `{runner}` in it (e.g. `https://{runner}.code.example.com`, a wildcard DNS name), each Runner's VS Code gets a host of its own, which isolates Runners from each other too. |
+| `EDITOR_PORT` | `8081` | Optional editor-only port for direct local IP access. Public editors use hostname routing on the Portal port. |
+| `EDITOR_URL` | Local Portal host on `EDITOR_PORT` | Public mode requires `{runner}` within the first hostname label: `https://{runner}.code.{host}`, or flat names such as `https://dam-vscode-{runner}.example.com` (one level deep, so a free `*.example.com` certificate such as Cloudflare's covers them). `{host}` is derived only from an allowlisted public Portal origin. |
+| `PUBLIC_ORIGINS` | empty | Semicolon-separated HTTPS Portal origins, e.g. `https://dam.devedse.click;https://dam.devedse.duckdns.org`. Unknown public origins are rejected; editor hosts never serve the Portal. |
+| `TRUSTED_PROXIES` | empty | Semicolon-separated exact proxy IP addresses (actual socket peers). Only these can set forwarded client IP and HTTPS scheme. Host is preserved directly; forwarded Host is never used. |
+| `ALLOW_LOCAL_ACCESS` | `true` | Allow direct private/loopback IP HTTP connections, with separate credentials. Proxy or forwarded traffic cannot activate this exception. |
+| `PROXY_IDENTITY_HEADERS` | empty | Extra semicolon-separated identity headers stripped before forwarding to a Runner. Authorization, Proxy-Authorization, forwarding and common authentication headers are always stripped. |
 
-### Running behind a reverse proxy
+### Running behind Nginx Proxy Manager
 
-Terminals and live updates use WebSockets, so the proxy must forward `Upgrade` / `Connection` headers
-(nginx: `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`).
-`X-Forwarded-*` headers are honored.
+Configure the Portal proxy host for your public domains, forwarding HTTP to DAM port **8080**. Enable WebSockets,
+Force SSL and HSTS; disable asset caching. Set the exact public origins and NPM's actual connection IP in compose.
+The final proxy has no Basic authentication: DAM handles sign-in and Runner authorization.
 
-VS Code needs its own origin: proxy `EDITOR_PORT` (8081) separately, on another port or hostname, with WebSockets too,
-and set `EDITOR_URL` to it. Inside the Portal, VS Code only works when both are the same site (another port, or e.g.
-`code.example.com` next to `agents.example.com`); on an unrelated domain, use its **Open in a new tab** button.
+Configure **one wildcard editor proxy host per domain**, e.g. `*.code.dam.devedse.click`, forwarding to the same port
+**8080**, with WebSockets enabled. Add the corresponding wildcard DNS record and wildcard TLS certificate obtained by
+DNS challenge. `EDITOR_URL=https://{runner}.code.{host}` chooses the matching public domain automatically. Adding a
+Runner never needs an NPM entry, DNS record or certificate. Each Runner keeps a separate browser origin.
+
+Behind Cloudflare (proxied DNS or a tunnel), use flat editor names instead: the free Universal SSL certificate only
+covers one level (`*.example.com`). With `EDITOR_URL=https://dam-vscode-{runner}.example.com`, an existing
+`*.example.com` DNS record/tunnel route already reaches NPM; add
+`server_name ~^dam-vscode-[a-z0-9-]+\.example\.com$;` to the Portal proxy host's **Advanced** tab so NPM routes them
+to DAM. A broader NPM wildcard host such as `*.example.com` would take priority over that regex.
+
+Public deployments must keep backend ports off the internet. Trust only NPM's specific socket addresses, including
+its IPv6 address if used. Requests preserve Host; `X-Forwarded-Host` is ignored. NPM must overwrite forwarded headers
+and send the real client IP and HTTPS scheme. Verify these on your installed proxy; the app's **Account security**
+page shows its configured boundaries. Optional local port 8081 serves editors only, with reduced browser isolation
+accepted for direct LAN IP workflows; it can be removed from public compose port mappings.
+
+VS Code requires Use access to the Runner, including when opened from a shared agent. Its single-use ticket expires
+in 30 seconds and travels in a URL fragment, so proxy access logs never receive it. Portal and editor cookies refer
+to the same revocable session. Logout, disabling an account, removing access or expiry closes live connections;
+agents continue running. HTTP requests recheck immediately; long-lived connections check expiry within 15 seconds.
+
+### Account security
+
+Use **Account menu → Account security** to turn on an authenticator app (optional, per user; nothing requires it),
+save its ten single-use recovery codes, and see or sign out your signed-in devices. Setting it up or turning it off asks
+for your password on the same form. Authenticator codes accept a 30-second clock skew and cannot be reused. Turning it on
+or off signs out your other devices.
+
+Upgrading from self-contained cookies requires a fresh sign-in; existing chosen passwords are preserved.
+
+Remembered sessions have seven days of inactivity and a thirty-day absolute limit. Admin actions (changes only user or
+settings managers can make, and viewing or changing a Runner's password) ask for your password again in a dialog when
+you last entered it more than ten minutes ago; the action then continues.
+Account forms use antiforgery tokens and reject absent, null or foreign Origins. Public cookies use `__Host-`, Secure,
+HttpOnly and Path=/; local HTTP credentials are separate and cannot authenticate public endpoints.
+
+Sign-in, password prompts, password changes and authenticator setup/removal share limits of
+20 attempts per account, 30 per IP and 200 globally in a fixed
+five-minute window, with at most four concurrent password checks. There are at most 4096 limiter entries, and no
+fixed account lockout or sleeping requests. Excess requests receive 429; existing sessions continue working.
+Distributed attacks can still interfere with new sign-ins; these controls do not promise immunity to denial of service.
+
+Operator recovery uses `RESET_ADMIN_PASSWORD=true` as described above. Restrict access to startup logs and `/data`.
+
+Dependency CI fails on high/critical NuGet advisories, including transitive dependencies, and audit-feed failures.
+Vendored addons are compared with locked npm packages and audited. The container job scans OS/application packages.
+Browser packages embedded inside NuGet bundles remain dependent on their upstream inventory and advisories; scans are
+supporting evidence, not proof of authorization. See [the implementation plan](docs/internet-facing-plan.md) for
+security tests and validation limitations.
 
 ### Data and backups
 

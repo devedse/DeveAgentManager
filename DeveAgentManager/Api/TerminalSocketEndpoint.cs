@@ -56,7 +56,7 @@ public static partial class TerminalSocketEndpoint
             // Ends the terminal when the user's access ends while it is open.
             using var revoked = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
             var stamp = SignIn.SecurityStamp(context);
-            IDisposable Watch(Func<CurrentUser, CancellationToken, Task<bool>> stillAllowed) => connections.Register(user, stamp, stillAllowed, revoked.Cancel);
+            IDisposable Watch(Func<CurrentUser, CancellationToken, Task<bool>> stillAllowed) => connections.Register(user, stamp, stillAllowed, revoked.Cancel, SignIn.SessionId(context));
             try
             {
                 switch (kind)

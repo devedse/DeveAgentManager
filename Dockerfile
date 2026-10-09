@@ -11,6 +11,7 @@ ENV DATA_DIR=/data \
 # The app is platform independent, so build once on the build machine for every target platform.
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
+COPY Directory.Build.props ./
 COPY ["DeveAgentManager/DeveAgentManager.csproj", "DeveAgentManager/"]
 COPY ["DeveAgentManager.Client/DeveAgentManager.Client.csproj", "DeveAgentManager.Client/"]
 COPY ["DeveAgentManager.Contracts/DeveAgentManager.Contracts.csproj", "DeveAgentManager.Contracts/"]

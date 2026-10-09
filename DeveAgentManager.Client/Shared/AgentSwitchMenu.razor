@@ -59,7 +59,7 @@
     private bool _open;
     private bool _busy;
 
-    private bool IsOwner => Agent.Access == AgentAccess.Owner;
+    private bool IsOwner => _me?.Id == Agent.OwnerId;
 
     private string CurrentLabel
     {

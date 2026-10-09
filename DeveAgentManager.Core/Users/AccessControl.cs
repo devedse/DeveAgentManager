@@ -15,7 +15,7 @@ namespace DeveAgentManager.Core.Users;
 /// <item>A conversation: its owner, users it is shared with, and users its workspace's agent is shared with (read-only).</item>
 /// <item>A harness login: only its owner.</item>
 /// </list>
-/// Roles never give access to other users' agents or conversations.
+/// Conversation managers may manage all agents and conversations; other roles do not grant this access.
 /// </summary>
 public sealed class AccessControl(IDbContextFactory<ManagerDbContext> dbFactory)
 {
@@ -37,12 +37,13 @@ public sealed class AccessControl(IDbContextFactory<ManagerDbContext> dbFactory)
             access = AgentAccess.Read;
         }
 
+        if (user.Has(UserRoles.ConversationManager)) return AgentAccess.Owner;
         return runner >= RunnerAccess.Manage && access < AgentAccess.Listed ? AgentAccess.Listed : access;
     }
 
     public static SessionAccess ForSession(CurrentUser user, Guid ownerId, IEnumerable<SessionShare> shares, AgentAccess workspace)
     {
-        if (ownerId == user.Id)
+        if (ownerId == user.Id || user.Has(UserRoles.ConversationManager))
         {
             return SessionAccess.Owner;
         }
@@ -57,7 +58,7 @@ public sealed class AccessControl(IDbContextFactory<ManagerDbContext> dbFactory)
     /// <summary>The agents the user can see (at least <see cref="AgentAccess.Listed"/>), for lists.</summary>
     public static IQueryable<Agent> VisibleAgents(ManagerDbContext db, CurrentUser user)
     {
-        if (user.Has(UserRoles.RunnerManager))
+        if (user.Has(UserRoles.RunnerManager) || user.Has(UserRoles.ConversationManager))
         {
             return db.Agents;
         }
@@ -68,7 +69,7 @@ public sealed class AccessControl(IDbContextFactory<ManagerDbContext> dbFactory)
 
     /// <summary>The conversations the user can read, for lists.</summary>
     public static IQueryable<StoredSession> VisibleSessions(ManagerDbContext db, CurrentUser user) =>
-        db.Sessions.Where(s => s.OwnerId == user.Id || s.Shares.Any(x => x.UserId == user.Id)
+        user.Has(UserRoles.ConversationManager) ? db.Sessions : db.Sessions.Where(s => s.OwnerId == user.Id || s.Shares.Any(x => x.UserId == user.Id)
             || (s.WorkspaceAgentId != null && db.AgentShares.Any(x => x.AgentId == s.WorkspaceAgentId && x.UserId == user.Id)));
 
     public async Task<RunnerAccess> RunnerAsync(CurrentUser user, Guid runnerId, CancellationToken cancellationToken = default)
@@ -129,6 +130,9 @@ public sealed class AccessControl(IDbContextFactory<ManagerDbContext> dbFactory)
         {
             audience.Add(userId);
         }
+
+        if (change.SessionId is not null || change.AgentId is not null)
+            audience.UnionWith(await UsersWithRoleAsync(db, UserRoles.ConversationManager, cancellationToken));
 
         if (change.SessionId is { } sessionId)
         {

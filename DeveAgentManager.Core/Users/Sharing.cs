@@ -115,9 +115,9 @@ public sealed class Sharing(IDbContextFactory<ManagerDbContext> dbFactory, Audit
 
     private static void RequireOwner(CurrentUser actor, Guid ownerId, string what)
     {
-        if (ownerId != actor.Id)
+        if (ownerId != actor.Id && !actor.Has(UserRoles.ConversationManager))
         {
-            throw new UnauthorizedAccessException($"Only the owner can share this {what}.");
+            throw new UnauthorizedAccessException($"Only the owner or a conversation manager can share this {what}.");
         }
     }
 

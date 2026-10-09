@@ -46,7 +46,7 @@ public enum RunnerActivityOutcome
 
 /// <summary>
 /// What a user may do besides using what is theirs or shared with them. A user can have any combination; Admin is all of
-/// them and nothing more (it doesn't give access to other users' agents or conversations).
+/// them.
 /// </summary>
 [Flags]
 public enum UserRoles
@@ -65,7 +65,10 @@ public enum UserRoles
     /// <summary>Every Runner: see it, give people access, change its owner, view and set its password, delete it.</summary>
     RunnerManager = 8,
 
-    Admin = SettingsManager | UserManager | RunnerCreator | RunnerManager,
+    /// <summary>Manage every agent and conversation, including prompting, sharing and deletion.</summary>
+    ConversationManager = 16,
+
+    Admin = SettingsManager | UserManager | RunnerCreator | RunnerManager | ConversationManager,
 }
 
 /// <summary>What a user may do with a Runner. Each level includes the ones before it.</summary>

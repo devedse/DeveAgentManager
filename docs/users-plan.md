@@ -36,6 +36,7 @@ Global roles. A user can have any combination.
 | **User manager** | Create and disable users, reset passwords, grant roles |
 | **Runner creator** | Create Runners (a Proxmox VM or an existing machine) and become their owner |
 | **Runner manager** | Every Runner: see it, give people access, change its owner, view and set its password, delete it |
+| **Conversation manager** | Manage every agent and conversation, including prompting, sharing and deletion |
 | **Admin** | All of the above. Admin is only the collection; nothing is admin-only. |
 | *(no role)* | Use the Runners they have access to; their own agents, conversations and settings |
 
@@ -80,7 +81,8 @@ An agent's owner can share it with other users, **read-only** or **read-write**,
   with can read its workspace's conversations.
 - Reading an agent needs no access to its Runner; read-write needs Use access to the Runner as well (without it, a
   read-write share works as read-only).
-- Roles never give access to other people's agents or conversations.
+- Conversation manager (included in Admin) grants full access to all agents and conversations. Other roles do not.
+- Existing admins with all four original roles are upgraded once and their security stamps rotate; sign in again.
 
 ## 5. Settings: per user, per Runner, shared
 
@@ -147,7 +149,7 @@ loopback, so neither is a way in.)
 
 ## 9. Manager changes
 
-- **Login**: ASP.NET Core Identity password hashing and lockout after repeated failures; a security stamp, so
+- **Login**: ASP.NET Core Identity password hashing and bounded account/IP/global/concurrent throttles; a security stamp, so
   disabling a user or changing a password signs them out everywhere; a page to change your own password; a password
   reset forces a change at the next login. Single sign-on (OIDC, e.g. Authentik or Keycloak) is optional later.
 - **One access service** with every check (can see / use / manage a Runner, can read / write an agent, can see a
@@ -224,3 +226,11 @@ Phases 1–2 are useful on their own: several people, each on their own Runners.
   of your choice; a role check comes before the check on the thing itself.
 - 2026-10-07 — `GITHUB_PAT`, `GIT_USER_NAME` and `GIT_USER_EMAIL` are removed from the compose file; the admin
   enters their token and git identity under My settings like everyone else.
+
+- 2026-10-07 — Internet-facing implementation adds revocable sign-in sessions, TOTP/recovery, recent authentication,
+  strict account-form protection and wildcard per-Runner editor origins on the Portal port. Fixed account lockouts
+  are replaced by bounded throttles; direct local IP access uses separate credentials. Deployment defaults and
+  validation are maintained in [internet-facing-plan.md](internet-facing-plan.md).
+
+- 2026-10-07 — Added Conversation manager to Admin: global agent/session management, including imported sessions
+  and live updates. Harness credentials remain private.

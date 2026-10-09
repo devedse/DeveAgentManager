@@ -1,0 +1,64 @@
+name: Security checks
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '17 4 * * 1'
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Audit all NuGet dependencies (high/critical and audit failures fail)
+        run: dotnet restore DeveAgentManager.slnx --force-evaluate
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Verify and audit vendored browser addons
+        run: |
+          npm ci --prefix tools/browser-dependencies --ignore-scripts
+          node tools/browser-dependencies/verify.mjs
+          npm audit --prefix tools/browser-dependencies --audit-level=high
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build local image for scanning
+        run: docker build -t dam-security-test .
+      - uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: dam-security-test
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: false
+          scanners: vuln
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci --prefix tools/security-browser --ignore-scripts
+      - run: npm audit --prefix tools/security-browser --audit-level=high
+      - run: npx --prefix tools/security-browser playwright install --with-deps chromium
+      - run: dotnet publish DeveAgentManager/DeveAgentManager.csproj -c Release -o .validation/publish
+      - run: node tools/security-browser/check.mjs
+  passive-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: tools/security-browser/zap.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-zap-reports
+          path: .validation/zap

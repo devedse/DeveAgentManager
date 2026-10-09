@@ -4,6 +4,7 @@
 @inject ManagerApi Api
 @inject IJSRuntime JS
 @inject ISnackbar Snackbar
+@inject DeveAgentManager.Client.Services.ThemeService Theme
 
 @* VS Code for a Runner (its home folder) or an agent (its folder), in a frame under a small header. The frame comes
    from the Manager's editor port (see the Manager's EditorEndpoints); the header also opens it in a tab or full screen. *@
@@ -89,7 +90,10 @@
     private ElementReference _frame;
 
     /// <summary>The Manager's link that opens VS Code (it logs the frame or tab in on the editor port).</summary>
-    private string EditorLink => AgentId is { } agentId ? $"editor/agents/{agentId}" : $"editor/runners/{RunnerId}";
+    // The theme goes along so VS Code's loading page matches the Portal (the editor's own site can't read the choice).
+    // Read once: a theme switch must not change the frame's src, which would reload VS Code.
+    private string? _themeQuery;
+    private string EditorLink => (AgentId is { } agentId ? $"editor/agents/{agentId}" : $"editor/runners/{RunnerId}") + (_themeQuery ??= Theme.IsDark ? "" : "?theme=light");
 
     protected override Task OnParametersSetAsync() => LoadAsync();
 

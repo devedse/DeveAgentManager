@@ -54,7 +54,7 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
     private async Task<HttpClient> SignedInAsync()
     {
         var client = Anonymous();
-        var response = await client.PostAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = Password, ["returnUrl"] = "/" }));
+        var response = await client.PostAccountAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = Password, ["returnUrl"] = "/" }));
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.Equal("/", response.Headers.Location?.ToString());
         return client;
@@ -95,7 +95,7 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
     public async Task Login_WrongPassword_IsRefused()
     {
         var client = Anonymous();
-        var response = await client.PostAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = "wrong", ["returnUrl"] = "/agents" }));
+        var response = await client.PostAccountAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = "wrong", ["returnUrl"] = "/agents" }));
         Assert.Contains("failed=1", response.Headers.Location?.ToString());
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/info")).StatusCode);
     }
@@ -109,7 +109,7 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
         var info = await client.GetFromJsonAsync<ManagerInfoDto>("/api/info", ApiJson.Options);
         Assert.Contains(info!.Harnesses, h => h.Id == "pi");
 
-        await client.PostAsync("/account/logout", null);
+        await client.PostAccountAsync("/account/logout", null);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/info")).StatusCode);
     }
 
@@ -236,7 +236,7 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
 
     private async Task<string> LoginCookieAsync()
     {
-        var response = await Anonymous().PostAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = Password }));
+        var response = await Anonymous().PostAccountAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "admin", ["password"] = Password }));
         return string.Join("; ", response.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0]));
     }
 }

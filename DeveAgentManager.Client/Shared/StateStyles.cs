@@ -11,6 +11,9 @@ public enum Tone
     Success,
     Warning,
     Error,
+
+    /// <summary>Running, but what it is doing can't be told from its screen; its own color, so it never looks stopped.</summary>
+    Unclear,
 }
 
 public sealed record StateStyle(string Text, Tone Tone, bool Busy = false);
@@ -51,7 +54,7 @@ public static class StateStyles
             AgentActivityStatus.Ready => new("Ready", Tone.Success),
             AgentActivityStatus.NeedsInput => new("Needs input", Tone.Warning),
             AgentActivityStatus.UsageLimited => new("Usage limit", Tone.Warning),
-            _ => new("Unclear", Tone.Neutral),
+            _ => new("Unclear", Tone.Unclear),
         },
         AgentState.Running when agent.Working => new("Working", Tone.Info, true),
         AgentState.Running => new("Idle", Tone.Success),

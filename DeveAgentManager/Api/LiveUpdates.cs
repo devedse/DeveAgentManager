@@ -30,7 +30,7 @@ public sealed class LiveUpdatesHub(RunnerLogStore logs, AccessControl access, Op
             return Task.CompletedTask;
         }
 
-        Context.Items[RegistrationItem] = connections.Register(user, SignIn.SecurityStamp(http), (_, _) => Task.FromResult(true), Context.Abort);
+        Context.Items[RegistrationItem] = connections.Register(user, SignIn.SecurityStamp(http), (_, _) => Task.FromResult(true), Context.Abort, SignIn.SessionId(http));
         return base.OnConnectedAsync();
     }
 

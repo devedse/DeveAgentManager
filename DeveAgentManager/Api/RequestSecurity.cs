@@ -16,18 +16,18 @@ public static class RequestSecurity
 {
     /// <summary>API, live hub and terminal paths: they answer 401/403 instead of redirecting to the login page.</summary>
     public static bool IsMachinePath(PathString path) =>
-        path.StartsWithSegments("/api") || path.StartsWithSegments("/hubs") || path.StartsWithSegments("/ws");
+        path.StartsWithSegments("/account") || path.StartsWithSegments("/api") || path.StartsWithSegments("/hubs") || path.StartsWithSegments("/ws");
 
     /// <summary>True when the request has no Origin, or one that is this Manager (same scheme, host and port).</summary>
-    public static bool IsSameOrigin(HttpRequest request)
+    public static bool IsSameOrigin(HttpRequest request, bool requireOrigin = false)
     {
         var origin = request.Headers.Origin.ToString();
         if (string.IsNullOrEmpty(origin))
         {
-            return true;
+            return !requireOrigin;
         }
 
-        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) || uri.UserInfo.Length > 0 || uri.AbsolutePath != "/" || uri.Query.Length > 0 || uri.Fragment.Length > 0)
         {
             return false;
         }
@@ -43,7 +43,7 @@ public static class RequestSecurity
     public static IApplicationBuilder UseSameOriginForSockets(this IApplicationBuilder app) => app.Use(async (context, next) =>
     {
         var path = context.Request.Path;
-        if ((path.StartsWithSegments("/hubs") || path.StartsWithSegments("/ws")) && !IsSameOrigin(context.Request))
+        if ((path.StartsWithSegments("/hubs") || path.StartsWithSegments("/ws")) && !IsSameOrigin(context.Request, requireOrigin: !DeploymentBoundary.IsLocal(context)))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return;
