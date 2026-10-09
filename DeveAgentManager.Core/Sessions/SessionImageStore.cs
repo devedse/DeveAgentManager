@@ -69,7 +69,7 @@ public sealed class SessionImageStore(ManagerOptions options)
         if (Directory.Exists(folder))
             foreach (var path in Directory.EnumerateFiles(folder, "*.json"))
                 if (Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "N", out var id) && await GetAsync(sessionId, id, ct) is { } dto) result.Add(dto);
-        return result.OrderBy(i => i.CreatedAt).ToList();
+        return result.OrderByDescending(i => i.CreatedAt).ThenBy(i => i.Id).ToList();
     }
 
     public async Task<(SessionImageDto Image, byte[] Data)?> ReadAsync(Guid sessionId, Guid id, CancellationToken ct)

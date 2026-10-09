@@ -27,6 +27,6 @@ else if (Loaded)
     private async Task LoadImagesAsync() => _images = await Api.GetSessionImagesAsync(SessionId);
     private static string Title(SessionImageDto image) => string.IsNullOrWhiteSpace(image.Caption) ? image.FileName : image.Caption;
     private Task OpenAsync(SessionImageDto image) => Dialogs.ShowAsync<ImagePreviewDialog>(Title(image),
-        new DialogParameters<ImagePreviewDialog> { { d => d.Image, image } },
+        new DialogParameters<ImagePreviewDialog> { { d => d.Images, _images.ToArray() }, { d => d.ImageId, image.Id } },
         new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.ExtraLarge, CloseButton = true });
 }

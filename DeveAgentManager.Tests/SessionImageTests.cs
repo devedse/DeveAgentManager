@@ -18,6 +18,18 @@ public sealed class SessionImageTests : IDisposable
     private static readonly byte[] Png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j2ioAAAAASUVORK5CYII=");
 
     [Fact]
+    public async Task NewestImagesComeFirstRegardlessOfImportOrder()
+    {
+        var store = new SessionImageStore(Options);
+        var session = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var middle = await store.SaveAsync(session, Guid.NewGuid(), Png, "middle.png", "", default, now.AddMinutes(-1));
+        var newest = await store.SaveAsync(session, Guid.NewGuid(), Png, "newest.png", "", default, now);
+        var oldest = await store.SaveAsync(session, Guid.NewGuid(), Png, "oldest.png", "", default, now.AddMinutes(-2));
+        Assert.Equal(new[] { newest, middle, oldest }, await new SessionImageStore(Options).ListAsync(session, default));
+    }
+
+    [Fact]
     public async Task ImagesPersistAcrossRestartAreIsolatedBySessionAndImportOnlyOnce()
     {
         var session = Guid.NewGuid(); var id = Guid.NewGuid();
