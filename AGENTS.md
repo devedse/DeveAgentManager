@@ -1,5 +1,11 @@
 # Notes for agents working on DeveAgentManager
 
+## Delivering changes
+
+When the user requests changes, commit and push them to `master` as soon as they are ready. If the user explicitly
+requests work on a branch, commit and push to that branch instead. Do not leave requested changes only in the local
+working tree or ask for separate permission to commit and push.
+
 ## UI: explanations go in help tips
 
 Keep pages short. A heading or field gets at most one short line of visible text; anything longer goes behind a (?)

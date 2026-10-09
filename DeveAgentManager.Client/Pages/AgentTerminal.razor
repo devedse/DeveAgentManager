@@ -30,7 +30,7 @@
             </div>
             @if (write)
             {
-                <MudIconButton Icon="@Icons.Material.Rounded.FolderOpen" Class="session-picker-button" aria-label="Switch session" title="@(_sessionTitle ?? "Sessions")" OnClick="OpenSessionsAsync" />
+                <MudIconButton Icon="@Icons.Material.Rounded.FolderOpen" Size="Size.Small" Class="session-picker-button" aria-label="Switch session" title="@(_sessionTitle ?? "Sessions")" OnClick="OpenSessionsAsync" />
             }
             <AttentionMenu />
             <AgentSeenWatcher @key="(AgentId, nameof(AgentSeenWatcher))" Agent="_agent" />
