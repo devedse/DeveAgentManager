@@ -40,6 +40,7 @@ public class AgentActivityTests
     [InlineData("pi-working", AgentActivityStatus.Working)]
     [InlineData("pi-idle", AgentActivityStatus.Ready)]
     [InlineData("pi-idle-cursor-line", AgentActivityStatus.Ready)]
+    [InlineData("pi-quota-exceeded", AgentActivityStatus.UsageLimited)]
     [InlineData("claude-working", AgentActivityStatus.Working)]
     [InlineData("claude-working-narrow", AgentActivityStatus.Working)]
     [InlineData("claude-working-feedback", AgentActivityStatus.Working)]

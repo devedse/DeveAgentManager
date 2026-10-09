@@ -9,7 +9,7 @@ namespace DeveAgentManager.Core.Agents;
 
 /// <summary>
 /// Durable one-time schedules (any harness) and opt-in recurring usage-limit continuation (Codex and Claude, whose
-/// limit messages are recognized). A limit belongs to the harness, conversation and login it was seen with
+/// limit reset times are recognized). A limit belongs to the harness, conversation and login it was seen with
 /// (<see cref="UsageLimitState.Session"/>): after a switch it no longer applies, unless you scheduled it yourself.
 /// </summary>
 public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> factory, ILimitTerminal terminal,
@@ -20,7 +20,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
     private DateTime Now => clock.GetUtcNow().UtcDateTime;
     private static string Session(Agent a) => UsageLimitState.Session(a);
 
-    /// <summary>Harnesses whose usage-limit messages are recognized, so automatic continuation can work.</summary>
+    /// <summary>Harnesses whose usage-limit reset times are recognized, so automatic continuation can work.</summary>
     public static bool DetectsLimits(string harnessId) => harnessId is "codex" or "claude";
 
     /// <summary>
@@ -56,7 +56,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             await using var db = await factory.CreateDbContextAsync(ct);
             var agent = await db.Agents.FindAsync([id], ct) ?? throw new KeyNotFoundException("Agent not found.");
             if (enabled && !DetectsLimits(agent.HarnessId))
-                throw new ArgumentException("Automatic continuation needs a recognized usage-limit message, which only Codex and Claude show. Use a one-time schedule.");
+                throw new ArgumentException("Automatic continuation needs a recognized usage-limit reset time, which only Codex and Claude provide. Use a one-time schedule.");
             var limit = await db.AgentLimits.FindAsync([id], ct);
             if (enabled && (limit?.Status is "Sending" or "Uncertain" || limit is { Automatic: false, Status: "Scheduled" }))
                 throw new InvalidOperationException("Cancel or resolve the existing one-time continuation first.");
@@ -212,7 +212,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         if (row is not null && IsStale(row, agent)) Clear(row);
         LimitScreen? screen = null;
         ParsedUsageLimit? parsed = null;
-        // Every harness: a one-time schedule waits for an empty, ready prompt. Limits are only parsed for Codex and Claude.
+        // Every harness: a one-time schedule waits for an empty, ready prompt. Pi's quota errors have no reset time.
         if (agent.State == AgentState.Running && agent.Runner?.State == RunnerState.Ready)
         {
             screen = observed ?? await terminal.ReadAsync(agent, ct);

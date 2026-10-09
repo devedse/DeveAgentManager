@@ -7,6 +7,62 @@ public sealed class UsageLimitParserTests
 {
     internal static string Codex(string reset) => $"■ You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro),\nvisit https://chatgpt.com/codex/settings/usage to purchase more credits or try again\nat {reset}.\n\n› Ask Codex to do anything\n  ? for shortcuts";
     internal static string Claude(string message) => $"{message}\n\n❯ \n  bypass permissions on";
+    internal static string PiQuotaScreen => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", "pi-quota-exceeded.txt"));
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PiQuotaErrorHasNoResetTime(bool wrapped)
+    {
+        var screen = PiQuotaScreen;
+        if (wrapped) screen = screen.Replace("quota exceeded", "quota\n exceeded")
+            .Replace("/bug sends a report", "/bug sends\n a report");
+        var parsed = UsageLimitParser.Parse("pi", screen, "UTC", DateTime.UtcNow);
+        Assert.NotNull(parsed);
+        Assert.Equal("Error: 429 quota exceeded", parsed.Message);
+        Assert.Null(parsed.ResetAt);
+        Assert.False(parsed.NativeAutoContinue);
+        Assert.Equal("Pi did not provide a reset time.", parsed.Detail);
+    }
+
+    [Fact]
+    public void PiQuotaErrorDoesNotRequireBugHintOrAnEmptyDraft()
+    {
+        var screen = PiQuotaScreen.Replace(" If this looks like a pi bug, /bug sends a report to the developers.", "")
+            .Replace("─\n\n─", "─\nmy draft\n─");
+        Assert.NotNull(UsageLimitParser.Parse("pi", screen, "UTC", DateTime.UtcNow));
+    }
+
+    [Theory]
+    [InlineData("\nThe operation succeeded.")]
+    [InlineData("\n$ echo done\ndone\nTook 1.5s")]
+    [InlineData("\n── ⠼ Working (medium effort)... ─────")]
+    public void PiHistoricalQuotaErrorIsNotAnActiveLimit(string laterOutput)
+    {
+        var screen = PiQuotaScreen.Replace("to the developers.", "to the developers." + laterOutput);
+        Assert.Null(UsageLimitParser.Parse("pi", screen, "UTC", DateTime.UtcNow));
+        Assert.NotEqual(DeveAgentManager.Contracts.AgentActivityStatus.UsageLimited,
+            AgentScreenDetector.Detect("pi", screen, DateTime.UtcNow).Status);
+    }
+
+    [Theory]
+    [InlineData("Error: 500 server error")]
+    [InlineData("Error: 429 Too Many Requests")]
+    [InlineData("The example says Error: 429 quota exceeded")]
+    public void PiOnlyRecognizesTheQuotaError(string message)
+    {
+        var screen = PiQuotaScreen.Replace("Error: 429 quota exceeded", message);
+        Assert.Null(UsageLimitParser.Parse("pi", screen, "UTC", DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void PiQuotaTextNeedsAComposerAndCannotComeFromItsDraft()
+    {
+        Assert.Null(UsageLimitParser.Parse("pi", "Error: 429 quota exceeded", "UTC", DateTime.UtcNow));
+        var screen = PiQuotaScreen.Replace("Error: 429 quota exceeded", "Done.")
+            .Replace("─\n\n─", "─\nError: 429 quota exceeded\n─");
+        Assert.Null(UsageLimitParser.Parse("pi", screen, "UTC", DateTime.UtcNow));
+    }
 
     [Theory]
     [InlineData("⚠ 5h limit: 48% left · /status")]

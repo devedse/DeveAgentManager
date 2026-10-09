@@ -4,7 +4,7 @@ using DeveAgentManager.Core.Setup;
 
 namespace DeveAgentManager.Contracts;
 
-/// <param name="Available">Whether the agent's harness shows usage limits the Manager recognizes (Codex, Claude); without
+/// <param name="Available">Whether the agent's harness shows usage-limit reset times the Manager recognizes (Codex, Claude); without
 /// that, only one-time schedules work.</param>
 public sealed record AutoContinueDto(bool Enabled = false, int? Remaining = null, int Sent = 0, string? Detail = null, bool Available = true);
 public sealed record AutoContinueRequest(bool Enabled, int? Remaining = null);

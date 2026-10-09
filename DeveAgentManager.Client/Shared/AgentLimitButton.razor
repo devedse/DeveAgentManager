@@ -29,7 +29,8 @@
         : _limit?.Status == "Sent" ? "Continue submitted; view result"
         : _limit?.Status == "Cancelled" ? "Continue cancelled; view reason"
         : _limit?.Status == "Uncertain" ? "Continue delivery uncertain; check the terminal"
-        : _limit?.Manual == true ? "Schedule continue" : "Usage limit: schedule continue after reset";
+        : _limit?.Manual == true ? "Schedule continue"
+        : _limit?.ResetAt is null ? "Usage limit" : "Usage limit: schedule continue after reset";
     protected override bool IsRelevant(ManagerEvent change) => change.AgentId == AgentId;
     protected override async Task LoadAsync()
     {

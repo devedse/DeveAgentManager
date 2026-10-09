@@ -1,0 +1,12 @@
+ git push -q origin master && git log --oneline -1
+ 4da02df Turn on prefetch and in-chunk coalesced copies
+ Took 1.5s
+
+ Error: 429 quota exceeded
+
+ If this looks like a pi bug, /bug sends a report to the developers.
+
+─────────────────────────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────────────────────────
+~/work/queuecache (master) • queuecache

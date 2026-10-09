@@ -11,11 +11,33 @@ public static class UsageLimitParser
     private static Match Match(string text, string pattern) => Regex.Match(text, pattern,
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Multiline, TimeSpan.FromMilliseconds(100));
 
+    private static ParsedUsageLimit? ParsePi(string[] lines, string? processTimeZone)
+    {
+        // Pi has a boxed composer rather than a prompt marker. Require its workspace footer,
+        // but not the usage counters: short terminals can show only the workspace line.
+        var close = Array.FindLastIndex(lines, line => Match(line, @"^\s*─{4,}\s*$").Success);
+        if (close < 1) return null;
+        var workspace = lines.Skip(close + 1).FirstOrDefault(line => !string.IsNullOrWhiteSpace(line));
+        if (workspace is null || !Match(workspace, @"^\s*(?:~/|/|[A-Z]:[\\/])").Success) return null;
+        var open = Array.FindLastIndex(lines, close - 1, line => Match(line, @"^\s*─{4,}\s*$").Success);
+        if (open < 0 || lines.Skip(open + 1).Any(line => Match(line, @"^\s*─+\s+[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working\b").Success)) return null;
+
+        var body = string.Join('\n', lines.Take(open));
+        var error = Match(body, @"^[ \t]*(?<message>Error:\s*429\s+quota\s+exceeded\.?)\s*"
+            + @"(?:If\s+this\s+looks\s+like\s+a\s+pi\s+bug,\s*/bug\s+sends\s+a\s+report\s+to\s+the\s+developers\.\s*)?\z");
+        if (!error.Success) return null;
+        // Only the current error and pi's optional bug-report hint may precede the composer.
+        // A later response, tool result or retry makes an earlier quota error historical.
+        var message = Regex.Replace(error.Groups["message"].Value, @"\s+", " ");
+        return new(message, null, processTimeZone, false, "Pi did not provide a reset time.");
+    }
+
     public static ParsedUsageLimit? Parse(string harness, string screen, string? processTimeZone, DateTime nowUtc)
     {
-        if (harness is not ("codex" or "claude")) return null;
         screen = screen.Replace('’', '\'').Replace('\u00a0', ' ');
         var lines = screen.Split('\n');
+        if (harness == "pi") return ParsePi(lines, processTimeZone);
+        if (harness is not ("codex" or "claude")) return null;
         var prompt = Array.FindLastIndex(lines, line => Match(line, @"^\s*[›❯](?:\s|$)").Success);
         if (prompt < 0) return null;
         var prefix = harness == "codex"

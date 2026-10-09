@@ -656,6 +656,33 @@ public sealed class AgentContinuationTests
 
     private static string PiScreen => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", "pi-idle-cursor-line.txt"));
 
+    [Fact]
+    public async Task PiQuotaLimitIsReportedWithoutAResetOrAutomaticContinuation()
+    {
+        await using var rig = await Rig.Create();
+        await SwitchAsync(rig, "harness");
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.PiQuotaScreen };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var limit = await rig.Service.GetAsync(rig.Id, Ct);
+        Assert.NotNull(limit);
+        Assert.Equal("Detected", limit.Status);
+        Assert.Equal("Error: 429 quota exceeded", limit.Message);
+        Assert.Null(limit.ResetAt);
+        Assert.Null(limit.DetectedResetAt);
+        Assert.Null(limit.ContinueAt);
+        Assert.False(limit.Manual);
+        Assert.False((await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Available);
+
+        rig.Clock.Utc = rig.Clock.Utc.AddDays(1);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(limit, await rig.Service.GetAsync(rig.Id, Ct));
+        Assert.Equal(0, rig.Terminal.Sends);
+
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = PiScreen };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+    }
+
     private static string CodexIdle => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", "codex-idle.txt"));
 
     /// <summary>Continues the agent in another harness, with another login or in a new conversation.</summary>
