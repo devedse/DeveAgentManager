@@ -18,6 +18,13 @@ public sealed class UserSettingsStore(
 {
     private const string ProfileKey = "profile";
     private const string GitHubTokenKey = "github-token";
+    private const string ScreenAwakeKey = "screen-awake";
+
+    public async Task<bool> GetScreenAwakeAsync(Guid userId, CancellationToken cancellationToken = default) =>
+        protector.Unprotect(await GetRawAsync(userId, ScreenAwakeKey, cancellationToken)) == "true";
+
+    public Task SaveScreenAwakeAsync(Guid userId, bool enabled, CancellationToken cancellationToken = default) =>
+        SetRawAsync(userId, ScreenAwakeKey, protector.Protect(enabled ? "true" : "false"), cancellationToken);
 
     public async Task<UserProfile> GetProfileAsync(Guid userId, CancellationToken cancellationToken = default)
     {

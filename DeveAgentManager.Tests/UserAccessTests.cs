@@ -31,6 +31,24 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     private const string Password = "ketty-password-1";
 
     [Fact]
+    public async Task ScreenAwakePreference_IsSavedForTheSignedInUserOnly()
+    {
+        var first = await SignedInAsNewUserWithIdAsync();
+        var second = await SignedInAsNewUserAsync();
+        const string path = "/api/me/settings/screen-awake";
+        Assert.False((await first.Client.GetFromJsonAsync<ScreenAwakeSettings>(path, ApiJson.Options))!.Enabled);
+        (await first.Client.PutAsJsonAsync(path, new ScreenAwakeSettings(true), ApiJson.Options)).EnsureSuccessStatusCode();
+        Assert.True((await first.Client.GetFromJsonAsync<ScreenAwakeSettings>(path, ApiJson.Options))!.Enabled);
+        Assert.False((await second.GetFromJsonAsync<ScreenAwakeSettings>(path, ApiJson.Options))!.Enabled);
+        var user = await Users.GetAsync(first.Id);
+        var newSignIn = await SignInAsync(user!.Username, Password);
+        Assert.True((await newSignIn.GetFromJsonAsync<ScreenAwakeSettings>(path, ApiJson.Options))!.Enabled);
+        (await newSignIn.PutAsJsonAsync(path, new ScreenAwakeSettings(false), ApiJson.Options)).EnsureSuccessStatusCode();
+        Assert.False((await first.Client.GetFromJsonAsync<ScreenAwakeSettings>(path, ApiJson.Options))!.Enabled);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Anonymous().GetAsync(path)).StatusCode);
+    }
+
+    [Fact]
     public void EveryApiEndpoint_DeclaresWhoMayCallIt()
     {
         var endpoints = ApiEndpoints();

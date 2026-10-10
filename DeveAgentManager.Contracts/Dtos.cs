@@ -61,6 +61,8 @@ public sealed record AuditEventDto(long Id, DateTime At, string? ActorName, stri
 /// <summary>A user's own settings. The GitHub token is never sent back, only whether there is one.</summary>
 public sealed record MySettingsDto(UserProfile Profile, bool HasGitHubToken);
 
+public sealed record ScreenAwakeSettings(bool Enabled);
+
 /// <summary>Someone with access to a Runner besides its owner.</summary>
 public sealed record RunnerMemberDto(Guid UserId, string Username, string DisplayName, RunnerAccess Access, DateTime GrantedAt);
 

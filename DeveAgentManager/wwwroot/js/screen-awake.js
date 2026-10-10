@@ -1,8 +1,8 @@
-const controllers = new WeakMap();
+let controller;
 
 function report(state, error = null) {
     if (!state.stopped)
-        state.self.invokeMethodAsync('ScreenAwakeChanged', state.enabled, !!state.lock, error).catch(() => {});
+        state.self.invokeMethodAsync('ScreenAwakeChanged', !!state.lock, error).catch(() => {});
 }
 
 async function release(state) {
@@ -13,13 +13,13 @@ async function release(state) {
 }
 
 function acquire(state) {
-    if (state.stopped || !state.enabled || document.visibilityState !== 'visible' || state.lock)
+    if (state.stopped || !state.available || !state.enabled || document.visibilityState !== 'visible' || state.lock)
         return Promise.resolve();
     if (state.pending) return state.pending.then(() => acquire(state));
     state.pending = (async () => {
         try {
             const lock = await navigator.wakeLock.request('screen');
-            // A request can finish after the user turns the toggle off or leaves the terminal.
+            // A request can finish after the user turns the preference off or closes the app.
             if (state.stopped || !state.enabled || document.visibilityState !== 'visible') {
                 await lock.release();
                 return;
@@ -28,14 +28,12 @@ function acquire(state) {
             lock.addEventListener('release', () => {
                 if (state.lock !== lock) return;
                 state.lock = null;
-                // Keep the preference when backgrounded; a visible system revocation turns it off.
-                if (document.visibilityState === 'visible') state.enabled = false;
+                // Platform revocation pauses the lock without changing the saved preference.
                 report(state);
             });
             report(state);
         } catch {
             if (!state.stopped && state.enabled && document.visibilityState === 'visible') {
-                state.enabled = false;
                 report(state, 'Could not keep the screen awake. Check your battery saver and browser settings.');
             }
         }
@@ -43,33 +41,42 @@ function acquire(state) {
     return state.pending;
 }
 
-export function start(host, self) {
-    if (!window.isSecureContext) return 'Keep screen awake requires HTTPS';
-    if (!navigator.wakeLock) return 'Keep screen awake is unavailable in this browser';
-    const state = { self, enabled: false, lock: null, pending: null, stopped: false };
+export function start(self, enabled) {
+    const unavailable = !window.isSecureContext ? 'Keep screen awake requires HTTPS'
+        : !navigator.wakeLock ? 'Keep screen awake is unavailable in this browser' : null;
+    const state = controller = { self, enabled, available: !unavailable, lock: null, pending: null, stopped: false };
     state.visibilityChanged = () => {
         if (document.visibilityState === 'visible') void acquire(state);
         else void release(state).catch(() => {});
     };
-    controllers.set(host, state);
+    state.pageHidden = () => { void release(state).catch(() => {}); };
+    state.pageShown = () => { void acquire(state); };
     document.addEventListener('visibilitychange', state.visibilityChanged);
-    return null;
+    window.addEventListener('pagehide', state.pageHidden);
+    window.addEventListener('pageshow', state.pageShown);
+    report(state);
+    void acquire(state);
+    return unavailable;
 }
 
-export async function toggle(host) {
-    const state = controllers.get(host);
+export function setEnabled(enabled) {
+    const state = controller;
     if (!state || state.stopped) return;
-    state.enabled = !state.enabled;
-    if (state.enabled) await acquire(state);
-    else await release(state);
+    if (state.enabled === enabled) { report(state); return; }
+    state.enabled = enabled;
+    // Saving a preference should not block the UI on an in-flight platform request.
+    if (enabled) void acquire(state);
+    else void release(state).catch(() => {});
 }
 
-export async function stop(host) {
-    const state = controllers.get(host);
+export async function stop() {
+    const state = controller;
     if (!state) return;
     state.stopped = true;
     state.enabled = false;
     document.removeEventListener('visibilitychange', state.visibilityChanged);
-    controllers.delete(host);
+    window.removeEventListener('pagehide', state.pageHidden);
+    window.removeEventListener('pageshow', state.pageShown);
+    controller = null;
     await release(state);
 }

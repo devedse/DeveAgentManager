@@ -71,6 +71,15 @@ internal static class SettingsEndpoints
 
         var mine = api.MapGroup("/me/settings");
 
+        mine.MapGet("/screen-awake", async (CurrentUser user, UserSettingsStore store, CancellationToken ct) =>
+            new ScreenAwakeSettings(await store.GetScreenAwakeAsync(user.Id, ct))).ForAnyUser();
+
+        mine.MapPut("/screen-awake", async (ScreenAwakeSettings request, CurrentUser user, UserSettingsStore store, CancellationToken ct) =>
+        {
+            await store.SaveScreenAwakeAsync(user.Id, request.Enabled, ct);
+            return request;
+        }).ForAnyUser();
+
         mine.MapGet("/", async (CurrentUser user, UserSettingsStore store, CancellationToken ct) =>
             new MySettingsDto(await store.GetProfileAsync(user.Id, ct), await store.GetGitHubTokenAsync(user.Id, ct) is not null)).ForAnyUser();
 

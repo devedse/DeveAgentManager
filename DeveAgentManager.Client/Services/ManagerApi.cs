@@ -53,6 +53,11 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task<MySettingsDto> GetMySettingsAsync() => GetAsync<MySettingsDto>("api/me/settings");
 
+    public Task<ScreenAwakeSettings> GetScreenAwakeAsync() => GetAsync<ScreenAwakeSettings>("api/me/settings/screen-awake");
+
+    public Task<ScreenAwakeSettings> SaveScreenAwakeAsync(bool enabled) =>
+        SendAsync<ScreenAwakeSettings>(HttpMethod.Put, "api/me/settings/screen-awake", new ScreenAwakeSettings(enabled));
+
     public Task<UserProfile> SaveMyProfileAsync(UserProfile profile) => SendAsync<UserProfile>(HttpMethod.Put, "api/me/settings/profile", profile);
 
     public Task SaveGitHubTokenAsync(string? token) => SendAsync(HttpMethod.Put, "api/me/settings/github-token", new GitHubTokenRequest(token));

@@ -1,5 +1,6 @@
 @implements IDisposable
 @inject ThemeService ThemeService
+@inject ScreenAwakeService Awake
 
 @* MudBlazor's theme, dialogs, popovers and snackbars: in the Portal's layouts (not in Routes, which the Manager also
    renders for its login page, without MudBlazor). Light or dark as My settings → Appearance says. *@
@@ -16,6 +17,11 @@
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await Awake.InitializeAsync();
+    }
 
     public void Dispose() => ThemeService.Changed -= OnChanged;
 }

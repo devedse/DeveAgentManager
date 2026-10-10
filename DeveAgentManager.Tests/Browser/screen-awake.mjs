@@ -40,8 +40,10 @@ try {
     });
     const page = await context.newPage();
     const errors = [];
+    const startupMessages = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => {
+        if (message.type() === 'error') startupMessages.push(message.text().slice(0, 1200));
         if (message.type() === 'error' && message.text().includes('Unhandled exception')) errors.push(message.text());
     });
     const base = process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
@@ -49,23 +51,42 @@ try {
     await page.locator('input[name="username"]').fill('admin');
     await page.locator('input[name="password"]').fill(process.env.DAM_TEST_PASSWORD ?? 'preview-test-only');
     await Promise.all([page.waitForURL(base + '/'), page.locator('button[type="submit"]').click()]);
+    const preferencePath = '/api/me/settings/screen-awake';
+    const savePreference = async enabled => {
+        const response = await context.request.put(base + preferencePath, { data: { enabled }, headers: { 'X-DAM-Request': '1', Origin: base } });
+        assert.ok(response.ok());
+    };
+    const savedPreference = async () => (await (await context.request.get(base + preferencePath)).json()).enabled;
+    await savePreference(false);
     const info = await (await context.request.get(base + '/api/info')).json();
     const id = '00000000-0000-0000-0000-000000000001', now = new Date().toISOString();
     const agent = { id, runnerId: id, runnerName: 'Test runner', runnerState: 'Ready', runnerHarnessIds: ['codex'],
         runnerToolIds: ['vscode'], name: 'Screen awake', harnessId: 'codex', workingDirectory: '/work/example',
         state: 'Running', access: 'Owner', accountName: 'Test account', createdAt: now, updatedAt: now };
-    await page.route('**/api/**', async route => {
+    const otherId = '00000000-0000-0000-0000-000000000002';
+    const otherAgent = { ...agent, id: otherId, name: 'Another agent' };
+    let failNextSave = false;
+    await context.route('**/api/**', async route => {
         const path = new URL(route.request().url()).pathname;
-        if (path === '/api/me') return route.continue();
+        if (path === preferencePath && route.request().method() === 'PUT' && failNextSave) {
+            failNextSave = false;
+            return route.fulfill({ status: 500, json: { message: 'Test-only save failure' } });
+        }
+        if (path === '/api/me' || path === preferencePath) return route.continue();
         const body = path === '/api/info' ? info : path === `/api/agents/${id}` ? agent
-            : path === '/api/agents' ? [agent] : path.endsWith('/limit/automatic') ? { enabled: false, sent: 0 }
+            : path === `/api/agents/${otherId}` ? otherAgent : path === '/api/agents' ? [agent, otherAgent] : path.endsWith('/limit/automatic') ? { enabled: false, sent: 0 }
             : path.endsWith('/limit') || path.endsWith('/session') ? null : [];
         await route.fulfill({ json: body });
     });
-    await page.routeWebSocket('**/ws/terminal?**', ws => ws.send(JSON.stringify({ type: 'ready', tty: '/dev/pts/99' })));
+    await context.routeWebSocket('**/ws/terminal?**', ws => ws.send(JSON.stringify({ type: 'ready', tty: '/dev/pts/99' })));
     const open = async mode => {
         await page.goto(base + `/agents/${id}` + (mode ? `?wake-test=${mode}` : ''));
-        await page.getByRole('button', { name: /Keep screen awake/ }).waitFor({ timeout: 60000 });
+        try { await page.getByRole('button', { name: /Keep screen awake/ }).waitFor({ timeout: 60000 }); }
+        catch (error) {
+            await page.screenshot({ path: '/tmp/dam-screen-awake-start-failure.png' });
+            console.log('Startup diagnostics:', await page.locator('button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label'))), startupMessages, errors.map(error => error.slice(0, 600)));
+            throw error;
+        }
     };
     const button = () => page.getByRole('button', { name: /Keep screen awake/ });
     const waitState = async (label, pressed) => {
@@ -116,37 +137,72 @@ try {
     await button().click();
     await waitState('on', true);
     await page.evaluate(() => wakeTest.locks.at(-1).release());
+    await waitState('paused', true);
+    assert.equal(await savedPreference(), true, 'system revocation must preserve the preference');
+    await button().click();
     await waitState('off', false);
     await page.evaluate(() => { wakeTest.rejectNext = true; });
     await button().click();
     await page.getByText('Could not keep the screen awake. Check your battery saver and browser settings.', { exact: true }).waitFor();
+    await waitState('paused', true);
+    assert.equal(await savedPreference(), true, 'platform rejection must preserve the preference');
+    await button().click();
     await waitState('off', false);
-    // Leaving while active must release without leaving visibility handlers behind.
+    // The same lock stays active while moving between layouts and different agents.
     await button().click();
     await waitState('on', true);
-    await page.getByRole('link', { name: 'Back to agents', exact: true }).click();
-    await button().waitFor({ state: 'detached' });
-    await page.waitForFunction(() => wakeTest.locks.every(lock => lock.released));
     const requests = await page.evaluate(() => wakeTest.requests);
-    await page.evaluate(() => { wakeTest.visibility('hidden'); wakeTest.visibility('visible'); });
+    await page.getByRole('link', { name: 'Back to agents', exact: true }).click();
+    await page.locator('.terminal-layout').waitFor({ state: 'detached' });
+    await waitState('on', true);
+    assert.ok(await page.evaluate(() => !wakeTest.locks.at(-1).released), 'app navigation must keep the global lock');
+    await page.locator(`a.agent-row-main[href="agents/${otherId}"]`).click();
+    await page.locator('.terminal-layout').waitFor();
+    await waitState('on', true);
     assert.equal(await page.evaluate(() => wakeTest.requests), requests);
-    // A request resolving after navigation must also be released.
-    await page.goto(base + `/agents/${id}`);
+    await page.reload();
+    await waitState('on', true);
+    assert.equal(await page.evaluate(() => wakeTest.requests), 1, 'refresh must restore the account preference');
+    failNextSave = true;
+    await button().click();
+    await page.getByText('Could not save the screen-awake setting. Try again.', { exact: true }).waitFor();
+    await waitState('on', true);
+    assert.equal(await savedPreference(), true);
+    // Changes made in another tab arrive through the live connection.
+    const secondPage = await context.newPage();
+    await secondPage.goto(base + `/agents/${id}`);
+    await secondPage.getByRole('button', { name: 'Keep screen awake: on', exact: true }).waitFor({ timeout: 60000 });
+    await secondPage.getByRole('button', { name: 'Keep screen awake: on', exact: true }).tap();
     await waitState('off', false);
+    await page.waitForFunction(() => wakeTest.locks.every(lock => lock.released));
+    await secondPage.close();
+    await page.reload();
+    await waitState('off', false);
+    assert.equal(await page.evaluate(() => wakeTest.requests), 0, 'refresh must also preserve off');
+    // A pending request may span navigation, then must release if the global preference is disabled.
     await page.evaluate(() => { wakeTest.holdNext = true; });
     await button().click();
     await page.waitForFunction(() => !!wakeTest.resolveRequest);
     await page.getByRole('link', { name: 'Back to agents', exact: true }).click();
-    await button().waitFor({ state: 'detached' });
+    await page.locator('.terminal-layout').waitFor({ state: 'detached' });
+    await waitState('paused', true);
+    await button().click();
+    await waitState('off', false);
     await page.evaluate(() => wakeTest.resolveRequest());
     await page.waitForFunction(() => wakeTest.locks.length === 1 && wakeTest.locks[0].released);
+    await savePreference(true);
     for (const [mode, hint] of [['insecure', 'Keep screen awake requires HTTPS'], ['unsupported', 'Keep screen awake is unavailable in this browser']]) {
         await open(mode);
         await page.getByRole('button', { name: hint, exact: true }).waitFor();
         assert.ok(await button().isDisabled());
+        assert.equal(await button().getAttribute('aria-pressed'), 'true', 'unsupported browsers must not reset the preference');
     }
+    await open();
+    await waitState('on', true);
+    await button().click();
+    await waitState('off', false);
     assert.deepEqual(errors, []);
-    console.log('Passed: wake lock on/off icons, mobile touch and rotation without viewport growth or zoom, background resume, denial, revocation, navigation and pending-request cleanup, HTTPS and support detection.');
+    console.log('Passed: account preference survives navigation, agent switches and refresh; live tab updates, save failure, mobile touch and rotation, background resume, platform rejection, pending requests and unsupported browsers.');
 } finally {
     await browser.close();
 }
