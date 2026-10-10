@@ -1,0 +1,32 @@
+@implements IDisposable
+@inject AppUpdateService Updates
+@inject NavigationManager Navigation
+
+@if (Updates.Available is { } build)
+{
+    <aside class="app-update-prompt" aria-label="Application update" role="status" aria-live="polite">
+        <div class="app-update-icon"><MudIcon Icon="@Icons.Material.Rounded.SystemUpdateAlt" /></div>
+        <div class="app-update-body">
+            <div class="help-heading">
+                <h2>Update available</h2>
+                <HelpTip Label="application updates">
+                    <p>Reload to load the latest version and return to this page. Unsaved edits may be lost.</p>
+                    <p>Later hides this update for this tab. Your agents keep running when you reload.</p>
+                </HelpTip>
+            </div>
+            <p>Version <strong>@build.Version</strong> is ready.</p>
+            <div class="app-update-actions">
+                <MudButton Variant="Variant.Text" OnClick="Updates.Dismiss">Later</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Refresh"
+                           OnClick="Reload" aria-label="Reload to update">Reload</MudButton>
+            </div>
+        </div>
+    </aside>
+}
+
+@code {
+    protected override void OnInitialized() => Updates.Changed += OnChanged;
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+    private void Reload() => Navigation.Refresh(forceReload: true);
+    public void Dispose() => Updates.Changed -= OnChanged;
+}

@@ -24,6 +24,11 @@ public static class ManagerApi
             .DisableAntiforgery();
 
         api.MapGet("/info", (CurrentUser user, DtoMapper map) => map.Info(user)).ForAnyUser();
+        api.MapGet("/build", (HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            return new AppBuildDto(DtoMapper.BuildId, DtoMapper.Version);
+        }).ForAnyUser();
 
         api.MapGet("/providers/{providerId}/check", async (string providerId, RunnerService runners, CancellationToken ct) =>
         {

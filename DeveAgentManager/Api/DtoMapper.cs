@@ -25,8 +25,9 @@ public sealed class DtoMapper(
     ManagerOptions options,
     ManagerSshKey sshKey)
 {
-    public static readonly string Version =
-        (Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "dev").Split('+')[0];
+    public static readonly string BuildId =
+        Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "dev";
+    public static readonly string Version = BuildId.Split('+')[0];
 
     public ManagerInfoDto Info(CurrentUser user)
     {

@@ -3057,4 +3057,20 @@ body:has(.terminal-layout) .agent-attention-popover {
 .shared-image-preview { display: block; max-width: 100%; max-height: min(75dvh, calc(100dvh - 200px)); width: auto; height: auto; margin: auto; object-fit: contain; }
 .shared-image-stage[data-image-busy] .shared-image-preview { width: 100%; height: 100%; object-fit: scale-down; }
 .shared-image-neighbor { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: scale-down; pointer-events: none; }
+
+/* An update stays visible without taking focus from the terminal or covering the phone keyboard. */
+.app-update-prompt { position: fixed; top: max(76px, calc(env(safe-area-inset-top) + 64px)); right: max(20px, env(safe-area-inset-right)); z-index: 1350; display: flex; gap: 14px; width: min(360px, calc(100% - 40px)); padding: 20px; border: 1px solid var(--dam-border-strong); border-radius: var(--dam-radius); background: var(--dam-surface); color: var(--dam-text); box-shadow: 0 12px 40px color-mix(in srgb, var(--dam-console) 24%, transparent); animation: app-update-enter 180ms ease-out; }
+.app-update-icon { display: grid; place-items: center; flex: 0 0 42px; height: 42px; border-radius: 12px; background: var(--dam-primary-soft); color: var(--dam-primary); }
+.app-update-body { flex: 1; min-width: 0; }
+.app-update-body .help-heading { gap: 4px; margin: -5px 0 2px; }
+.app-update-body h2 { margin: 0; font-size: 1rem; font-weight: 650; }
+.app-update-body p { margin: 0; color: var(--dam-muted); font-size: .875rem; overflow-wrap: anywhere; }
+.app-update-body strong { color: var(--dam-text); font-weight: 500; }
+.app-update-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.app-update-actions .mud-button-root { border-radius: 9px; }
+.app-update-actions .mud-button-text { color: var(--dam-muted); }
+/* Closed help popovers must not retain an offscreen desktop position after a phone resize. */
+.help-tooltip:not(.mud-popover-open) { display: none !important; }
+@keyframes app-update-enter { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .app-update-prompt { animation: none; } }
 @media (max-width: 420px) { .desktop-view-actions > .mud-button-root { flex: 1 1 auto; } .desktop-interval { flex-basis: 100%; width: 100%; } .desktop-save-actions > .mud-button-root { width: 100%; } }

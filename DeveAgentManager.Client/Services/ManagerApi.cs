@@ -49,6 +49,8 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     // You
 
+    public Task<AppBuildDto> GetBuildAsync() => GetAsync<AppBuildDto>("api/build");
+
     public Task<CurrentUserDto> MeAsync() => GetAsync<CurrentUserDto>("api/me");
 
     public Task<MySettingsDto> GetMySettingsAsync() => GetAsync<MySettingsDto>("api/me/settings");

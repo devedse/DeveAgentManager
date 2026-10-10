@@ -53,12 +53,11 @@
     </MudNavMenu>
 
     <div class="nav-footer">
-        <MudText Typo="Typo.caption" Class="mud-text-secondary">DeveAgentManager @_version</MudText>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">DeveAgentManager @AppUpdateService.CurrentVersion</MudText>
     </div>
 </div>
 
 @code {
-    private string? _version;
     private int _runningAgents;
     private int _readyRunners;
     private List<AgentDto> _liveAgents = [];
@@ -83,7 +82,6 @@
     protected override async Task LoadAsync()
     {
         _user = await Me.GetAsync();
-        _version ??= (await Api.InfoAsync()).Version;
         var runners = await Api.ListRunnersAsync();
         _readyRunners = runners.Count(r => r.State == RunnerState.Ready);
         _liveAgents = runners.SelectMany(r => r.Agents)

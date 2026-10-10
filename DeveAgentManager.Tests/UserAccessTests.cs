@@ -31,6 +31,19 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     private const string Password = "ketty-password-1";
 
     [Fact]
+    public async Task BuildCheck_IsAvailableToAnySignedInUser_AndCannotBeCached()
+    {
+        var client = await SignedInAsNewUserAsync();
+        var response = await client.GetAsync("/api/build");
+        response.EnsureSuccessStatusCode();
+        Assert.True(response.Headers.CacheControl!.NoStore);
+        var build = await response.Content.ReadFromJsonAsync<AppBuildDto>(ApiJson.Options);
+        Assert.False(string.IsNullOrWhiteSpace(build!.BuildId));
+        Assert.Equal(build.BuildId.Split('+')[0], build.Version);
+        Assert.Equal((await client.GetFromJsonAsync<ManagerInfoDto>("/api/info", ApiJson.Options))!.Version, build.Version);
+    }
+
+    [Fact]
     public async Task ScreenAwakePreference_IsSavedForTheSignedInUserOnly()
     {
         var first = await SignedInAsNewUserWithIdAsync();

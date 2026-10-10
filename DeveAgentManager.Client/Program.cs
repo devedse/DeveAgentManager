@@ -20,6 +20,7 @@ builder.Services.AddSingleton<SignedInUser>();
 builder.Services.AddSingleton<ThemeService>();
 // WebAssembly's scope lasts for the browser app, including navigation between layouts.
 builder.Services.AddScoped<ScreenAwakeService>();
+builder.Services.AddScoped<AppUpdateService>();
 builder.Services.AddMudServices(config =>
 {
     config.SnackbarConfiguration.PositionClass = Defaults.Classes.Position.BottomRight;
