@@ -65,6 +65,10 @@ else
                 </div>
             }
 
+            @if (_viewers is null)
+            {
+                <MenuLoading Label="Loading screens" />
+            }
             @if (_viewers is { Count: 0 })
             {
                 <div class="viewers-hint">No screens attached.</div>

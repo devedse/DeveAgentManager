@@ -29,7 +29,13 @@ public abstract class LiveComponent : ComponentBase, IDisposable
     [Inject]
     protected ISnackbar Snackbar { get; set; } = default!;
 
+    /// <summary>True once data loaded successfully; until then show the section as loading (AGENTS.md, "UI: loading states").</summary>
     protected bool Loaded { get; private set; }
+
+    /// <summary>Why the data couldn't be loaded yet; a section shows it with Retry instead of looking empty.</summary>
+    protected string? LoadError { get; private set; }
+
+    protected Task RetryAsync() => ReloadAsync();
 
     protected abstract Task LoadAsync();
 
@@ -41,7 +47,6 @@ public abstract class LiveComponent : ComponentBase, IDisposable
         Live.Changed += OnManagerEvent;
         Live.Reconnected += OnReconnected;
         await SafeLoadAsync();
-        Loaded = true;
         if (RefreshInterval is { } interval) _ = RefreshPeriodicallyAsync(interval);
     }
 
@@ -66,14 +71,19 @@ public abstract class LiveComponent : ComponentBase, IDisposable
         try
         {
             await LoadAsync();
+            Loaded = true;
+            LoadError = null;
         }
         catch (ApiException ex)
         {
-            Snackbar.Add(ex.Message, Severity.Error);
+            // Before anything loaded, the section shows it; afterwards the data stays and a message says why it is stale.
+            if (Loaded) Snackbar.Add(ex.Message, Severity.Error);
+            else LoadError = ex.Message;
         }
         catch (HttpRequestException)
         {
             // The Manager is not reachable right now; the live connection reloads once it is back.
+            if (!Loaded) LoadError = LoadingSection.Unreachable;
         }
     }
 

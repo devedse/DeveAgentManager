@@ -23,6 +23,9 @@
                 <RunnerTimeZoneEditor />
             </MudTabPanel>
             <MudTabPanel Text="Providers" Icon="@Icons.Material.Rounded.Cloud">
+                <LoadingSection Loaded="@(_info is not null)" Error="@_loadError" Retry="LoadAsync" Label="Loading providers">
+                <Placeholder><SkeletonForm Fields="3" /></Placeholder>
+                <ChildContent>
                 @foreach (var provider in (_info?.Providers ?? []).OrderBy(p => p.Capabilities.RequiresConnectionDetails))
                 {
                     <div class="settings-section">
@@ -68,9 +71,14 @@
                         }
                     </div>
                 }
+                </ChildContent>
+                </LoadingSection>
             </MudTabPanel>
 
             <MudTabPanel Text="Setup Profile" Icon="@Icons.Material.Rounded.Checklist">
+                <LoadingSection Loaded="_profile is not null" Error="@_loadError" Retry="LoadAsync" Label="Loading the Setup Profile">
+                <Placeholder><SkeletonForm Fields="4" /></Placeholder>
+                <ChildContent>
                 @if (_profile is not null)
                 {
                     <div class="help-heading mb-3"><MudText Typo="Typo.subtitle1">Setup Profile</MudText>
@@ -130,6 +138,8 @@
                         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Save" Disabled="_saving" OnClick="SaveProfileAsync">Save Setup Profile</MudButton>
                     </div>
                 }
+                </ChildContent>
+                </LoadingSection>
             </MudTabPanel>
 
             @foreach (var harness in (_info?.Harnesses ?? []).Where(h => h.ConfigSupport is not null))
@@ -171,6 +181,9 @@
             }
 
             <MudTabPanel Text="Manager" Icon="@Icons.Material.Rounded.Info">
+                <LoadingSection Loaded="@(_info is not null)" Error="@_loadError" Retry="LoadAsync" Label="Loading the Manager's details">
+                <Placeholder><SkeletonForm Fields="2" /></Placeholder>
+                <ChildContent>
                 <div class="settings-section">
                     <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">SSH key</MudText>
                         <HelpTip Label="SSH key">The Manager logs in to Runners with this key. It is injected into new VMs automatically; add it to <code>~/.ssh/authorized_keys</code> to use a machine without a password.</HelpTip></div>
@@ -192,6 +205,8 @@
                     </dl>
                     <MudText Typo="Typo.body2" Class="mud-text-secondary mt-3">Back up the data folder.</MudText>
                 </div>
+                </ChildContent>
+                </LoadingSection>
             </MudTabPanel>
         </MudTabs>
     </div>
@@ -221,9 +236,17 @@
     private bool _saving;
     private bool? _allowed;
 
+    private string? _loadError;
+
     protected override async Task OnInitializedAsync()
     {
         Live.OperationFinished += OnOperationFinished;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loadError = null;
         try
         {
             _allowed = (await Me.GetAsync()).Has(UserRoles.SettingsManager);
@@ -241,7 +264,11 @@
         }
         catch (ApiException ex)
         {
-            Snackbar.Add(ex.Message, Severity.Error);
+            _loadError = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = LoadingSection.Unreachable;
         }
     }
 

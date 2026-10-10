@@ -9,12 +9,14 @@
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page">
     @if (_runner is null)
     {
-        @if (Loaded)
-        {
-            <EmptyState Icon="@Icons.Material.Rounded.SearchOff" Title="Runner not found" Text="It may have been deleted.">
-                <MudButton Href="runners" Variant="Variant.Outlined">Back to Runners</MudButton>
-            </EmptyState>
-        }
+        <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading the Runner">
+            <Placeholder><SkeletonDetail /></Placeholder>
+            <ChildContent>
+                <EmptyState Icon="@Icons.Material.Rounded.SearchOff" Title="Runner not found" Text="It may have been deleted.">
+                    <MudButton Href="runners" Variant="Variant.Outlined">Back to Runners</MudButton>
+                </EmptyState>
+            </ChildContent>
+        </LoadingSection>
     }
     else
     {

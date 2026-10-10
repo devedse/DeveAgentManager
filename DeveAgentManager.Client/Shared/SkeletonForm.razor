@@ -1,0 +1,13 @@
+@* A heading, input fields and a button, for settings forms that are loading. *@
+<div class="skeleton-form" aria-hidden="true">
+    <span class="skeleton" style="width:160px;height:14px"></span>
+    @for (var i = 0; i < Fields; i++)
+    {
+        <span class="skeleton skeleton-field"></span>
+    }
+    <span class="skeleton skeleton-button"></span>
+</div>
+
+@code {
+    [Parameter] public int Fields { get; set; } = 2;
+}

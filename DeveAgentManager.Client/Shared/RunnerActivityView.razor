@@ -1,11 +1,10 @@
 @inject ManagerApi Api
 
 @* What ran on a Runner (setup, start, updates), newest first, with how long it took and how it ended. *@
-@if (_activities is null)
-{
-    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
-}
-else if (_activities.Count == 0)
+<LoadingSection Loaded="@(_activities is not null)" Label="Loading activity">
+<Placeholder><SkeletonList Rows="3" /></Placeholder>
+<ChildContent>
+@if (_activities.Count == 0)
 {
     <EmptyState Icon="@Icons.Material.Rounded.History" Title="Nothing yet" Text="Setups, starts and updates show up here with how they ended." />
 }
@@ -38,6 +37,8 @@ else
         }
     </div>
 }
+</ChildContent>
+</LoadingSection>
 
 @code {
     [Parameter, EditorRequired]

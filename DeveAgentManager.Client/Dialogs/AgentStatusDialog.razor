@@ -34,7 +34,12 @@
                 {
                     <div class="diagnostic-entry"><small>@entry.At.ToLocalTime().ToString("MMM d HH:mm:ss") · @entry.Category @entry.Rule</small><div>@entry.Message</div></div>
                 }
+                <LoadingSection Loaded="_historyLoaded" Label="Loading diagnostic history">
+                <Placeholder><SkeletonList Rows="2" Avatar="false" /></Placeholder>
+                <ChildContent>
                 @if (_history.Count == 0) { <MudText>No diagnostic history recorded yet.</MudText> }
+                </ChildContent>
+                </LoadingSection>
             </MudExpansionPanel>
         </MudExpansionPanels>
     </DialogContent>
@@ -49,8 +54,10 @@
     {
         try { Agent = await Api.GetAgentAsync(Agent.Id) ?? Agent; _history = await Api.GetDiagnosticsAsync(Agent.Id); }
         catch (Exception ex) when (ex is ApiException or HttpRequestException) { }
+        _historyLoaded = true;
     }
     private List<AgentDiagnosticDto> _history = [];
+    private bool _historyLoaded;
     private async Task CopyAsync()
     {
         var report = System.Text.Json.JsonSerializer.Serialize(new {

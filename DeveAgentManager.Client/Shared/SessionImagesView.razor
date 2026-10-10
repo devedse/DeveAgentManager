@@ -1,6 +1,9 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
 
+<LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading shared images">
+<Placeholder><div class="session-image-gallery">@for (var i = 0; i < 3; i++) { <Skeleton Height="232px" /> }</div></Placeholder>
+<ChildContent>
 @if (_images.Count > 0)
 {
     <div class="session-image-gallery">
@@ -14,10 +17,12 @@
         }
     </div>
 }
-else if (Loaded)
+else
 {
     <MudText Typo="Typo.body2" Class="mud-text-secondary">No shared images yet.</MudText>
 }
+</ChildContent>
+</LoadingSection>
 
 @code {
     [Parameter, EditorRequired] public Guid SessionId { get; set; }

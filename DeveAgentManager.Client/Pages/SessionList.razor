@@ -34,6 +34,9 @@
             </div>
         }
 
+        <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading sessions">
+        <Placeholder><SkeletonList Rows="5" /></Placeholder>
+        <ChildContent>
         @if (Loaded && _sessions.Count == 0)
         {
             <EmptyState Icon="@Icons.Material.Rounded.Forum" Title="No sessions yet"
@@ -132,6 +135,8 @@
                 }
             </div>
         }
+        </ChildContent>
+        </LoadingSection>
     </div>
 </MudContainer>
 

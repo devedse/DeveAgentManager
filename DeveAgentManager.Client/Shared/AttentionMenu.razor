@@ -8,7 +8,18 @@
     <ChildContent>
         <MudMenuItem Href="activity" Icon="@Icons.Material.Rounded.MonitorHeart">View all agent statuses</MudMenuItem>
         <MudDivider />
-        @if (_items.Count == 0)
+        @if (!Loaded)
+        {
+            @if (LoadError is not null)
+            {
+                <MudMenuItem Icon="@Icons.Material.Rounded.Refresh" OnClick="RetryAsync" AutoClose="false">Couldn't load. Retry</MudMenuItem>
+            }
+            else
+            {
+                <MenuLoading Label="Loading notifications" />
+            }
+        }
+        else if (_items.Count == 0)
         {
             <MudMenuItem Disabled="true">Nothing needs attention</MudMenuItem>
         }

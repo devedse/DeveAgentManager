@@ -29,6 +29,9 @@
                 </MudMenu>
             }
         </div>
+        <LoadingSection Loaded="_membersLoaded" Label="Loading who has access">
+        <Placeholder><SkeletonList Rows="1" /></Placeholder>
+        <ChildContent>
         @foreach (var member in _members)
         {
             <div class="list-row">
@@ -52,6 +55,8 @@
                 }
             </div>
         }
+        </ChildContent>
+        </LoadingSection>
     </div>
 </div>
 
@@ -103,6 +108,7 @@
 @code {
     private List<RunnerMemberDto> _members = [];
     private string? _password;
+    private bool _membersLoaded;
     private bool _busy;
 
     [Parameter, EditorRequired]
@@ -125,6 +131,7 @@
         try
         {
             _members = await Api.ListRunnerMembersAsync(Runner.Id);
+            _membersLoaded = true;
         }
         catch (ApiException ex)
         {

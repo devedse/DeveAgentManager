@@ -10,12 +10,14 @@
 <MudContainer MaxWidth="MaxWidth.Large" Class="page">
     @if (_stored is null)
     {
-        @if (Loaded)
-        {
-            <EmptyState Icon="@Icons.Material.Rounded.SearchOff" Title="Session not found" Text="It may have been deleted.">
-                <MudButton Href="sessions" Variant="Variant.Outlined">Back to sessions</MudButton>
-            </EmptyState>
-        }
+        <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading the session">
+            <Placeholder><SkeletonDetail Lines="6" /></Placeholder>
+            <ChildContent>
+                <EmptyState Icon="@Icons.Material.Rounded.SearchOff" Title="Session not found" Text="It may have been deleted.">
+                    <MudButton Href="sessions" Variant="Variant.Outlined">Back to sessions</MudButton>
+                </EmptyState>
+            </ChildContent>
+        </LoadingSection>
     }
     else
     {

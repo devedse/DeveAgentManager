@@ -29,6 +29,33 @@ help button next to it.
 - Everything follows the light/dark theme: use the `--dam-*` CSS variables in `wwwroot/app.css`, not fixed colours. (Pages
   on VS Code's own hostname, like its loading page in `EditorEndpoints.cs`, can't load `app.css` and copy the values.)
 
+## UI: loading states
+
+Pages load their data over the network, which is slow on phones. Never show an empty state, a zero, a count or "not
+found" before the data has loaded: show that it is loading instead, where the content will appear. (Based on NN/g and
+GitHub Primer's loading guidance.)
+
+- **Per section.** Every section, panel, list, menu and dialog that loads data shows its own loading state in place of
+  its content. The page header, navigation, tabs and buttons that don't need the data stay usable.
+- **Shaped like the content.** Lists: `<SkeletonList>`; card grids: `<SkeletonCards>`; forms: `<SkeletonForm>`; detail
+  pages: `<SkeletonDetail>`; a single value such as a dashboard number: `<Skeleton>`; menus: `<MenuLoading>` as the
+  first entry. Small or irregular areas use `<LoadingSection>`'s default spinner with its label ("Loading agents…").
+- **No flash.** Placeholders stay invisible for the first 300 ms (the `.loading-placeholder` and `.skeleton` styles),
+  so fast loads show nothing. Once visible, `<LoadingSection>` keeps the placeholder for at least 400 ms.
+- **Use `<LoadingSection>`**: `<LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading
+  agents">` with a `<Placeholder>` and the real content as `<ChildContent>`. In a `LiveComponent`, `Loaded` only becomes
+  true after a successful load and `LoadError` says why it failed. Components that load data themselves keep `_loaded`
+  and `_loadError` the same way and catch `ApiException` and `HttpRequestException` (`LoadingSection.Unreachable`).
+- **Empty, not found and errors only after loading.** Put them in the `<ChildContent>`. A failed load shows its error
+  with Retry instead of an empty section.
+- **Refreshing keeps the data.** Later reloads (live updates, polling) never show placeholders again; the data on screen
+  stays until the new data replaces it.
+- **Menus open at once** and show `<MenuLoading>` while their entries load; don't wait for data before opening.
+- **Accessibility.** A placeholder has `role="status"`, `aria-busy="true"` and a visually hidden label; skeleton shapes
+  are `aria-hidden`. One label per section, not per row.
+
+`DeveAgentManager.Tests/Browser/loading-states.mjs` checks this with a slow and a failing API.
+
 ## Documentation privacy
 
 Use reserved example domains (`example.com`, `example.org`, `.test`), placeholder credentials, and generic paths in

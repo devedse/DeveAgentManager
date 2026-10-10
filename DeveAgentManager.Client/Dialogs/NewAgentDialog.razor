@@ -11,6 +11,9 @@
         </div>
     </TitleContent>
     <DialogContent>
+        <LoadingSection Loaded="_loaded" Error="@_loadError" Retry="LoadAsync" Label="Loading Runners and harnesses">
+        <Placeholder><SkeletonForm Fields="4" /></Placeholder>
+        <ChildContent>
         @if (_runners.Count == 0)
         {
             <EmptyState Icon="@Icons.Material.Rounded.Dns" Title="No Runner is ready" Text="Agents run on Runners. Create one first; it takes a few minutes to set up.">
@@ -99,6 +102,8 @@
                               HelperText="@NameHelp" Required="true" RequiredError="Enter a name" />
             </MudForm>
         }
+        </ChildContent>
+        </LoadingSection>
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
@@ -149,7 +154,30 @@
         ? $"Works in ~/work/{(_name.Length > 0 ? _name : "<name>")} on {runner.Name}."
         : "Lowercase letters, digits and dashes.";
 
-    protected override async Task OnInitializedAsync()
+    private bool _loaded;
+    private string? _loadError;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loadError = null;
+        try
+        {
+            await LoadCoreAsync();
+            _loaded = true;
+        }
+        catch (ApiException ex)
+        {
+            _loadError = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = LoadingSection.Unreachable;
+        }
+    }
+
+    private async Task LoadCoreAsync()
     {
         _runners = (await Api.ListRunnersAsync()).Where(r => r.State == RunnerState.Ready).ToList();
         _harnesses = (await Api.InfoAsync()).Harnesses.ToList();

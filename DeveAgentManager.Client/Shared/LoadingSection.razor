@@ -1,0 +1,87 @@
+@* A section whose data is still loading (AGENTS.md, "UI: loading states"). Nothing shows for the first 300 ms, so a fast
+   load doesn't flash; then the placeholder, shaped like the content, for at least 400 ms. A load that failed shows why,
+   with Retry, instead of an empty section. *@
+@implements IDisposable
+@inject IJSRuntime JS
+
+@if (_showContent)
+{
+    @ChildContent
+}
+else if (Error is not null)
+{
+    <div class="loading-error @Class" role="alert">
+        <MudIcon Icon="@Icons.Material.Rounded.CloudOff" Size="Size.Small" />
+        <span>@Error</span>
+        @if (Retry.HasDelegate)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary" OnClick="Retry">Retry</MudButton>
+        }
+    </div>
+}
+else
+{
+    <div class="loading-placeholder @Class" role="@(Announce ? "status" : null)" aria-busy="true" @ref="_placeholder">
+        @if (Announce)
+        {
+            <span class="visually-hidden">@Label</span>
+        }
+        <div aria-hidden="true">
+            @if (Placeholder is not null)
+            {
+                @Placeholder
+            }
+            else
+            {
+                <div class="loading-spinner"><MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" /><span>@Label…</span></div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    public const string Unreachable = "Couldn't reach the Manager. It tries again once the connection is back.";
+    private const double MinimumVisibleMs = 400;
+
+    [Parameter, EditorRequired] public bool Loaded { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public EventCallback Retry { get; set; }
+    /// <summary>What is loading, e.g. "Loading agents": read out, and shown next to the default spinner.</summary>
+    [Parameter] public string Label { get; set; } = "Loading";
+    /// <summary>Shaped like the content (see SkeletonList and Skeleton); a spinner when not set.</summary>
+    [Parameter] public RenderFragment? Placeholder { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public string? Class { get; set; }
+    /// <summary>False for parts of a group that is announced once (e.g. by aria-busy on the group).</summary>
+    [Parameter] public bool Announce { get; set; } = true;
+
+    private readonly CancellationTokenSource _lifetime = new();
+    private ElementReference _placeholder;
+    private bool _rendered, _showContent, _deciding;
+
+    protected override void OnAfterRender(bool firstRender) => _rendered = true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_showContent || !Loaded || _deciding) return;
+        _deciding = true;
+        // Only the browser knows when the placeholder became visible (its fade-in starts 300 ms after it is painted).
+        double shownFor = 0;
+        if (_rendered && Error is null)
+        {
+            try { shownFor = await JS.InvokeAsync<double>("damUi.loadingSettle", _lifetime.Token, _placeholder); }
+            catch (Exception ex) when (ex is JSException or OperationCanceledException or InvalidOperationException) { }
+        }
+
+        // Visible: keep it the minimum time, so it doesn't flash. Still invisible: the content comes straight away.
+        if (shownFor > 0 && shownFor < MinimumVisibleMs)
+        {
+            try { await Task.Delay(TimeSpan.FromMilliseconds(MinimumVisibleMs - shownFor), _lifetime.Token); }
+            catch (OperationCanceledException) { return; }
+        }
+
+        _showContent = true;
+    }
+
+    public void Dispose() => _lifetime.Cancel();
+}

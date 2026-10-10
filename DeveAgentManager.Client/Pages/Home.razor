@@ -35,25 +35,25 @@
         </MudAlert>
     }
 
-    <div class="stat-grid">
+    <div class="stat-grid" aria-busy="@(Loaded ? "false" : "true")">
         <div class="stat-card">
             <div class="stat-icon stat-icon-primary"><MudIcon Icon="@Icons.Material.Rounded.SmartToy" /></div>
             <div>
-                <div class="stat-value">@_agents.Count(a => a.State == AgentState.Running)<span class="stat-total"> / @_agents.Count</span></div>
+                <div class="stat-value">@if (!Loaded && LoadError is not null) { <span>–</span> } else { <LoadingSection Loaded="Loaded" Announce="false"><Placeholder><Skeleton Width="64px" Height="30px" /></Placeholder><ChildContent>@_agents.Count(a => a.State == AgentState.Running)<span class="stat-total"> / @_agents.Count</span></ChildContent></LoadingSection> }</div>
                 <div class="stat-label">Agents running</div>
             </div>
         </div>
         <div class="stat-card">
             <div class="stat-icon stat-icon-success"><MudIcon Icon="@Icons.Material.Rounded.Dns" /></div>
             <div>
-                <div class="stat-value">@_runners.Count(r => r.State == RunnerState.Ready)<span class="stat-total"> / @_runners.Count</span></div>
+                <div class="stat-value">@if (!Loaded && LoadError is not null) { <span>–</span> } else { <LoadingSection Loaded="Loaded" Announce="false"><Placeholder><Skeleton Width="64px" Height="30px" /></Placeholder><ChildContent>@_runners.Count(r => r.State == RunnerState.Ready)<span class="stat-total"> / @_runners.Count</span></ChildContent></LoadingSection> }</div>
                 <div class="stat-label">Runners ready</div>
             </div>
         </div>
         <div class="stat-card">
             <div class="stat-icon stat-icon-info"><MudIcon Icon="@Icons.Material.Rounded.Autorenew" /></div>
             <div>
-                <div class="stat-value">@_runners.Count(r => StateStyles.For(r.State).Busy || r.Operation is not null)</div>
+                <div class="stat-value">@if (!Loaded && LoadError is not null) { <span>–</span> } else { <LoadingSection Loaded="Loaded" Announce="false"><Placeholder><Skeleton Width="36px" Height="30px" /></Placeholder><ChildContent>@_runners.Count(r => StateStyles.For(r.State).Busy || r.Operation is not null)</ChildContent></LoadingSection> }</div>
                 <div class="stat-label">Runners busy</div>
             </div>
         </div>
@@ -64,18 +64,27 @@
                     var cores = _runners.Where(r => r.State == RunnerState.Ready).Sum(r => r.Cores);
                     var memory = _runners.Where(r => r.State == RunnerState.Ready).Sum(r => (long)r.MemoryMb);
                 }
-                <div class="stat-value">@(cores > 0 ? cores : "-")<span class="stat-total"> cores</span></div>
+                <div class="stat-value">@if (!Loaded && LoadError is not null) { <span>–</span> } else { <LoadingSection Loaded="Loaded" Announce="false"><Placeholder><Skeleton Width="90px" Height="30px" /></Placeholder><ChildContent>@(cores > 0 ? cores : "-")<span class="stat-total"> cores</span></ChildContent></LoadingSection> }</div>
                 <div class="stat-label">@(memory > 0 ? $"{FormatMemory(memory)} memory" : "Allocated to Proxmox Runners")</div>
             </div>
         </div>
     </div>
 
-    @if (Loaded && _runners.Count == 0 && _agents.Count == 0 && !CanCreateRunners)
+    <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading agents and Runners">
+    <Placeholder>
+        <MudGrid Spacing="4">
+            <MudItem xs="12" lg="7"><div class="panel"><div class="panel-header"><MudText Typo="Typo.h6">Agents</MudText></div><SkeletonList Rows="4" /></div></MudItem>
+            <MudItem xs="12" lg="5"><div class="panel"><div class="panel-header"><MudText Typo="Typo.h6">Runners</MudText></div><SkeletonList Rows="3" /></div></MudItem>
+        </MudGrid>
+    </Placeholder>
+    <ChildContent>
+    @if (_runners.Count == 0 && _agents.Count == 0 && !CanCreateRunners)
     {
         <EmptyState Icon="@Icons.Material.Rounded.Dns" Title="No Runner yet"
                     Text="Agents run on Runners. Ask a runner manager to give you access to one; agents others share with you appear here too." />
+
     }
-    else if (Loaded && _runners.Count == 0 && _agents.Count == 0)
+    else if (_runners.Count == 0 && _agents.Count == 0)
     {
         <div class="panel get-started">
             <MudText Typo="Typo.h5">Get started</MudText>
@@ -102,6 +111,7 @@
                 </button>
             </div>
         </div>
+
     }
     else
     {
@@ -114,13 +124,14 @@
                     </div>
                     @* The same rows, with the same quick actions, as on the Agents and Runner pages. *@
                     <AgentTable Agents="_agents.Take(8).ToList()" ShowRunner="true" EmptyText="Start an agent on a Runner to work on a repository.">
-                        <EmptyContent>
-                            @if (_runners.Count > 0)
-                            {
-                                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
-                            }
-                        </EmptyContent>
-                    </AgentTable>
+                                <EmptyContent>
+                                    @if (_runners.Count > 0)
+                                    {
+                                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
+                                    }
+                                </EmptyContent>
+                            </AgentTable>
+
                 </div>
             </MudItem>
             <MudItem xs="12" lg="5">
@@ -149,10 +160,14 @@
                             </a>
                         }
                     </div>
+
                 </div>
             </MudItem>
         </MudGrid>
+
     }
+    </ChildContent>
+    </LoadingSection>
 </MudContainer>
 
 @code {
@@ -166,11 +181,14 @@
 
     protected override async Task LoadAsync()
     {
+        // At the same time: on a slow connection, one request after another adds up.
+        var runners = Api.ListRunnersAsync();
+        // Agents shared with the user can be on Runners they have no access to: they come from the agent list.
+        var agents = Api.ListAgentsAsync();
         _user = await Me.GetAsync();
         _info ??= await Api.InfoAsync();
-        _runners = await Api.ListRunnersAsync();
-        // Agents shared with the user can be on Runners they have no access to: they come from the agent list.
-        _agents = (await Api.ListAgentsAsync()).OrderByDescending(a => a.State == AgentState.Running).ThenByDescending(a => a.CreatedAt).ToList();
+        _runners = await runners;
+        _agents = (await agents).OrderByDescending(a => a.State == AgentState.Running).ThenByDescending(a => a.CreatedAt).ToList();
     }
 
     private Task NewRunnerAsync() => Dialogs.ShowAsync<NewRunnerDialog>();

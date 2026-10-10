@@ -11,13 +11,8 @@
         </div>
     </TitleContent>
     <DialogContent>
-        @if (_choices is null)
-        {
-            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
-            <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">Looking at the images in @Agent.WorkingDirectory...</MudText>
-        }
-        else
-        {
+        <LoadingSection Loaded="@(_choices is not null)" Label="Loading icons">
+        <ChildContent>
             <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">@(_choices.ChosenByUser ? "Picked by you." : "Picked automatically.")</MudText>
             <div class="icon-choices">
                 <button type="button" class="icon-choice @(_choices.Current is null ? "selected" : "")" disabled="@_busy" @onclick="() => ChooseAsync(null)">
@@ -37,7 +32,9 @@
             {
                 <MudText Typo="Typo.body2" Class="mud-text-secondary mt-3">No images in the folder.</MudText>
             }
-        }
+
+        </ChildContent>
+        </LoadingSection>
     </DialogContent>
     <DialogActions>
         <MudButton Disabled="_busy || _choices is null || !_choices.ChosenByUser" StartIcon="@Icons.Material.Rounded.AutoFixHigh" OnClick="AutomaticAsync">Pick automatically</MudButton>

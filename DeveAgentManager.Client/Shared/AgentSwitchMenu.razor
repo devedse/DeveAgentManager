@@ -20,6 +20,17 @@
             {
                 <div class="switch-login-note">Runs with @(Agent.LoginOwnerName)'s login. You can continue with one of your own.</div>
             }
+            @if (!_loaded)
+            {
+                @if (_loadError is not null)
+                {
+                    <div class="switch-note">@_loadError <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary" OnClick="LoadAsync">Retry</MudButton></div>
+                }
+                else
+                {
+                    <MenuLoading Label="Loading harnesses and logins" />
+                }
+            }
             @foreach (var harness in _harnesses.Where(h => Agent.RunnerHarnessIds.Contains(h.Id)))
             {
                 <div class="switch-harness harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</div>
@@ -82,11 +93,29 @@
         ? _accounts.FirstOrDefault(a => a.Id == id)
         : IsOwner ? _accounts.FirstOrDefault(a => a.HarnessId == Agent.HarnessId && a.IsDefault) : null;
 
-    protected override async Task OnInitializedAsync()
+    private bool _loaded;
+    private string? _loadError;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
     {
-        _harnesses = (await Api.InfoAsync()).Harnesses.ToList();
-        _accounts = await Api.ListAccountsAsync();
-        _me = await Me.GetAsync();
+        _loadError = null;
+        try
+        {
+            _harnesses = (await Api.InfoAsync()).Harnesses.ToList();
+            _accounts = await Api.ListAccountsAsync();
+            _me = await Me.GetAsync();
+            _loaded = true;
+        }
+        catch (ApiException ex)
+        {
+            _loadError = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = LoadingSection.Unreachable;
+        }
     }
 
     private async Task OnOpenChangedAsync()

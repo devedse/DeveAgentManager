@@ -7,6 +7,7 @@
         <TitleContent><HelpTip Label="Desktop viewer">This is the runner's shared desktop, including windows from other agents. Live refresh pauses while hidden. Frames are temporary; Save snapshot keeps an image with the selected conversation.</HelpTip></TitleContent>
     </PageHeader>
     @if (_error is not null) { <MudAlert Severity="Severity.Warning">@_error</MudAlert> }
+    else if (_runner is null) { <LoadingSection Loaded="false" Label="Loading the desktop"><Placeholder><Skeleton Height="360px" /></Placeholder></LoadingSection> }
     @if (_runner is { Kind: RunnerKind.Desktop, State: RunnerState.Ready })
     {
         <div class="panel"><DesktopView @key="RunnerId" RunnerId="RunnerId" /></div>

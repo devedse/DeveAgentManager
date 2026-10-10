@@ -1,0 +1,22 @@
+@* Rows shaped like a .list of .list-row items (an icon and two lines), for lists that are loading. *@
+<div class="list" aria-hidden="true">
+    @for (var i = 0; i < Rows; i++)
+    {
+        <div class="list-row skeleton-row">
+            @if (Avatar)
+            {
+                <span class="skeleton skeleton-avatar"></span>
+            }
+            <div class="list-main">
+                <span class="skeleton skeleton-line" style="@($"width:{Widths[i % Widths.Length]}%")"></span>
+                <span class="skeleton skeleton-line skeleton-line-short"></span>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly int[] Widths = [62, 48, 71, 55, 66];
+    [Parameter] public int Rows { get; set; } = 3;
+    [Parameter] public bool Avatar { get; set; } = true;
+}

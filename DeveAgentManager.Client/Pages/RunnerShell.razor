@@ -9,7 +9,14 @@
         <MudIconButton Href="@($"runners/{RunnerId}")" Icon="@Icons.Material.Rounded.ArrowBack" Size="Size.Small" aria-label="Back" />
         <div class="terminal-title">
             <span class="terminal-name">Shell</span>
-            <span class="terminal-context">@_runner?.Username@@@_runner?.Name · <span class="mono">@_runner?.Host</span></span>
+            @if (_runner is null)
+            {
+                <Skeleton Width="180px" Height="10px" Class="mt-1" />
+            }
+            else
+            {
+                <span class="terminal-context">@_runner.Username@@@_runner.Name · <span class="mono">@_runner.Host</span></span>
+            }
         </div>
         <MudSpacer />
         <span class="terminal-hint d-none d-md-inline">Shift+drag selects · Ctrl+C copies a selection</span>

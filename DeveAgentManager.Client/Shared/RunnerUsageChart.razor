@@ -14,6 +14,9 @@
         </div>
     </div>
 
+    <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading usage">
+    <Placeholder><Skeleton Height="120px" /></Placeholder>
+    <ChildContent>
     @if (_samples.Count == 0)
     {
         <div class="usage-chart-empty">Collecting usage readings…</div>
@@ -67,6 +70,8 @@
             <div class="mud-text-secondary text-small">Waiting for new readings · last received @((int)(end - _samples[^1].At).TotalSeconds)s ago</div>
         }
     }
+    </ChildContent>
+    </LoadingSection>
 </div>
 
 @code {

@@ -14,6 +14,9 @@
     else
     {
         <div class="panel">
+            <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading the audit log">
+            <Placeholder><SkeletonList Rows="6" /></Placeholder>
+            <ChildContent>
             <div class="list">
                 @foreach (var entry in _entries)
                 {
@@ -33,6 +36,8 @@
                     <MudButton Variant="Variant.Text" OnClick="MoreAsync">Older entries</MudButton>
                 </div>
             }
+            </ChildContent>
+            </LoadingSection>
         </div>
     }
 </MudContainer>

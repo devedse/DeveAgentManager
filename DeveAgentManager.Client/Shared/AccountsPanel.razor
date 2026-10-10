@@ -7,6 +7,9 @@
     Runner you use; nothing to set up per Runner. You can have several per harness: when one runs out, switch the agent to another one (or to another harness) from its terminal.
     People you share an agent with read-write prompt it with the login it runs with.</HelpTip></div>
 
+<LoadingSection Loaded="_loaded" Error="@_loadError" Retry="InitializeAsync" Label="Loading your harness logins">
+<Placeholder><SkeletonList Rows="2" /></Placeholder>
+<ChildContent>
 @foreach (var harness in _harnesses)
 {
     var accounts = _accounts.Where(a => a.HarnessId == harness.Id).ToList();
@@ -66,15 +69,35 @@
         }
     </div>
 }
+</ChildContent>
+</LoadingSection>
 
 @code {
     private List<HarnessDto> _harnesses = [];
     private List<AccountDto> _accounts = [];
 
-    protected override async Task OnInitializedAsync()
+    private bool _loaded;
+    private string? _loadError;
+
+    protected override Task OnInitializedAsync() => InitializeAsync();
+
+    private async Task InitializeAsync()
     {
-        _harnesses = (await Api.InfoAsync()).Harnesses.Where(h => h.AccountSupport is not null).ToList();
-        await LoadAsync();
+        _loadError = null;
+        try
+        {
+            _harnesses = (await Api.InfoAsync()).Harnesses.Where(h => h.AccountSupport is not null).ToList();
+            await LoadAsync();
+            _loaded = true;
+        }
+        catch (ApiException ex)
+        {
+            _loadError = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = LoadingSection.Unreachable;
+        }
     }
 
     private async Task LoadAsync() => _accounts = await Api.ListAccountsAsync();

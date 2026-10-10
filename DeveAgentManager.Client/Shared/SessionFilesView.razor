@@ -1,6 +1,9 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
 
+<LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading shared files">
+<Placeholder><SkeletonList Rows="2" /></Placeholder>
+<ChildContent>
 @if (_files.Count > 0)
 {
     <ul class="session-file-list">
@@ -30,10 +33,12 @@
         }
     </ul>
 }
-else if (Loaded)
+else
 {
     <MudText Typo="Typo.body2" Class="mud-text-secondary">No shared files yet.</MudText>
 }
+</ChildContent>
+</LoadingSection>
 
 @code {
     [Parameter, EditorRequired] public Guid SessionId { get; set; }

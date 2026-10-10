@@ -15,19 +15,24 @@
         </Actions>
     </PageHeader>
 
-    @if (Loaded && _runners.Count == 0 && CanCreate)
+    <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading Runners">
+    <Placeholder><SkeletonCards Count="3" /></Placeholder>
+    <ChildContent>
+    @if (_runners.Count == 0 && CanCreate)
     {
         <div class="panel">
             <EmptyState Icon="@Icons.Material.Rounded.Dns" Title="No Runners yet" Text="A Runner is a VM cloned from your Proxmox template (or a machine you already have), set up with tmux, Node and the harnesses.">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.AddToQueue" OnClick="NewRunnerAsync">Create your first Runner</MudButton>
             </EmptyState>
         </div>
+
     }
-    else if (Loaded && _runners.Count == 0)
+    else if (_runners.Count == 0)
     {
         <div class="panel">
             <EmptyState Icon="@Icons.Material.Rounded.Dns" Title="No Runner yet" Text="Agents run on Runners. Ask a runner manager to give you access to one." />
         </div>
+
     }
     else
     {
@@ -86,7 +91,10 @@
                 </a>
             }
         </div>
+
     }
+    </ChildContent>
+    </LoadingSection>
 </MudContainer>
 
 @code {

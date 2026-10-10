@@ -29,7 +29,14 @@
             <ActivatorContent>
                 <MudButton Variant="Variant.Text" Color="Color.Inherit" StartIcon="@Icons.Material.Rounded.AccountCircle" Class="user-button" OnClick="@context.ToggleAsync"
                            aria-label="@($"Signed in as {_user?.DisplayName}")">
-                    <span class="d-none d-sm-inline">@_user?.DisplayName</span>
+                    @if (_user is null)
+                    {
+                        <Skeleton Width="64px" Height="12px" Class="d-none d-sm-inline-block" />
+                    }
+                    else
+                    {
+                        <span class="d-none d-sm-inline">@_user.DisplayName</span>
+                    }
                 </MudButton>
             </ActivatorContent>
             <ChildContent>

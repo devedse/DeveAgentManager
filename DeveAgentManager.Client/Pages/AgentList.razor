@@ -36,14 +36,19 @@
                 }
             </div>
         }
-        <AgentTable Agents="Filtered" ShowRunner="true" EmptyText="@(_agents.Count == 0 ? "Start an agent to work on a repository." : "No agents match.")">
-            <EmptyContent>
-                @if (_agents.Count == 0)
-                {
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
-                }
-            </EmptyContent>
-        </AgentTable>
+        <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading agents">
+            <Placeholder><SkeletonList Rows="5" /></Placeholder>
+            <ChildContent>
+                <AgentTable Agents="Filtered" ShowRunner="true" EmptyText="@(_agents.Count == 0 ? "Start an agent to work on a repository." : "No agents match.")">
+                    <EmptyContent>
+                        @if (_agents.Count == 0)
+                        {
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
+                        }
+                    </EmptyContent>
+                </AgentTable>
+            </ChildContent>
+        </LoadingSection>
     </div>
 </MudContainer>
 

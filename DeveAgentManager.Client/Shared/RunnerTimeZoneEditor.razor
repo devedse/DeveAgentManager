@@ -1,6 +1,9 @@
 @inject ManagerApi Api
 @inject ISnackbar Snackbar
 
+<LoadingSection Loaded="_config is not null" Error="@_loadError" Retry="RetryAsync" Label="Loading the timezone">
+<Placeholder><SkeletonForm Fields="1" /></Placeholder>
+<ChildContent>
 @if (_config is not null)
 {
     <div class="settings-section">
@@ -23,7 +26,8 @@
         }
     </div>
 }
-
+</ChildContent>
+</LoadingSection>
 @code {
     [Parameter] public Guid? RunnerId { get; set; }
 
@@ -37,16 +41,32 @@
     private bool _loaded;
     private Guid? _loadedRunnerId;
 
+    private string? _loadError;
+
     protected override async Task OnParametersSetAsync()
     {
         if (_loaded && _loadedRunnerId == RunnerId) return;
-        _zones = await Api.TimeZoneIdsAsync();
-        _config = await Api.GetTimeZoneAsync(RunnerId);
-        _inherit = _config.OverrideTimeZoneId is null;
-        _zone = _config.OverrideTimeZoneId ?? _config.DefaultTimeZoneId;
-        _loaded = true;
-        _loadedRunnerId = RunnerId;
+        _loadError = null;
+        try
+        {
+            _zones = await Api.TimeZoneIdsAsync();
+            _config = await Api.GetTimeZoneAsync(RunnerId);
+            _inherit = _config.OverrideTimeZoneId is null;
+            _zone = _config.OverrideTimeZoneId ?? _config.DefaultTimeZoneId;
+            _loaded = true;
+            _loadedRunnerId = RunnerId;
+        }
+        catch (ApiException ex)
+        {
+            _loadError = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = LoadingSection.Unreachable;
+        }
     }
+
+    private Task RetryAsync() => OnParametersSetAsync();
     private Task<IEnumerable<string>> SearchAsync(string text, CancellationToken ct) =>
         Task.FromResult(_zones.Where(z => string.IsNullOrWhiteSpace(text) || z.Contains(text, StringComparison.OrdinalIgnoreCase)));
     private async Task SaveAsync()

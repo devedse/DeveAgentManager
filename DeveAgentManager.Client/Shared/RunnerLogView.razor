@@ -3,7 +3,11 @@
 @inject IJSRuntime JS
 
 <div class="log-view" @ref="_element" style="@(Height is null ? null : $"height:{Height}")">
-    @if (_lines.Count == 0)
+    @if (!_loaded)
+    {
+        <LoadingSection Loaded="false" Label="Loading the log" />
+    }
+    else if (_lines.Count == 0)
     {
         <div class="log-empty">No log output yet.</div>
     }
@@ -30,6 +34,8 @@
     [Parameter]
     public string? Height { get; set; }
 
+    private bool _loaded;
+
     protected override async Task OnInitializedAsync()
     {
         Live.Log += OnLine;
@@ -41,6 +47,8 @@
         {
             // Not connected right now; new lines arrive once the live connection is back.
         }
+
+        _loaded = true;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

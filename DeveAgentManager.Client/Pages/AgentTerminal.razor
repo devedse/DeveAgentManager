@@ -14,6 +14,13 @@
        one by one, in the order of ToolbarOverflow (js/toolbar-overflow.js), so the agent's name stays readable. *@
     <div class="terminal-toolbar" @ref="_toolbar">
         <MudIconButton Href="agents" Icon="@Icons.Material.Rounded.ArrowBack" Size="Size.Small" aria-label="Back to agents" />
+        @if (_agent is null && !Loaded && LoadError is null)
+        {
+            <div class="terminal-title" aria-hidden="true">
+                <Skeleton Width="140px" Height="14px" />
+                <Skeleton Width="210px" Height="10px" Class="mt-1" />
+            </div>
+        }
         @if (_agent is not null)
         {
             var running = _agent.State is AgentState.Running or AgentState.Starting;
@@ -127,12 +134,13 @@
 
     @if (_agent is null)
     {
-        @if (Loaded)
-        {
-            <EmptyState Icon="@Icons.Material.Rounded.SearchOff" Title="Agent not found" Text="It may have been deleted.">
-                <MudButton Href="agents" Variant="Variant.Outlined">Back to agents</MudButton>
-            </EmptyState>
-        }
+        <div class="terminal-stopped">
+            <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading the agent">
+                <EmptyState Icon="@Icons.Material.Rounded.SearchOff" Title="Agent not found" Text="It may have been deleted.">
+                    <MudButton Href="agents" Variant="Variant.Outlined">Back to agents</MudButton>
+                </EmptyState>
+            </LoadingSection>
+        </div>
     }
     else if (_agent.Access < AgentAccess.Read)
     {

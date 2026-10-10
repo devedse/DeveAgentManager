@@ -1,0 +1,17 @@
+@* A page heading and a panel of facts, for detail pages (a Runner, a conversation) that are loading. *@
+<div aria-hidden="true">
+    <div class="skeleton-heading">
+        <span class="skeleton" style="width:64px;height:10px"></span>
+        <span class="skeleton" style="width:min(320px, 70%);height:28px"></span>
+    </div>
+    <div class="panel">
+        @for (var line = 0; line < Lines; line++)
+        {
+            <span class="skeleton skeleton-line" style="@($"width:{45 + line * 23 % 45}%")"></span>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public int Lines { get; set; } = 4;
+}

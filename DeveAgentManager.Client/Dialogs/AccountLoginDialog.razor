@@ -28,6 +28,9 @@
         @switch (_method)
         {
             case "login":
+                <LoadingSection Loaded="_loaded" Error="@_loadError" Retry="LoadAsync" Label="Loading Runners">
+                <Placeholder><SkeletonForm Fields="1" /></Placeholder>
+                <ChildContent>
                 @if (_runners.Count == 0)
                 {
                     <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
@@ -54,6 +57,8 @@
                         <TerminalView RunnerId="_runnerId" Login="_login" LoginFinished="OnLoginFinishedAsync" />
                     </div>
                 }
+                </ChildContent>
+                </LoadingSection>
 
                 break;
             case "paste":
@@ -108,7 +113,30 @@
     private bool _captured;
     private bool _busy;
 
-    protected override async Task OnInitializedAsync()
+    private bool _loaded;
+    private string? _loadError;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loadError = null;
+        try
+        {
+            await LoadCoreAsync();
+            _loaded = true;
+        }
+        catch (ApiException ex)
+        {
+            _loadError = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = LoadingSection.Unreachable;
+        }
+    }
+
+    private async Task LoadCoreAsync()
     {
         _harness = (await Api.InfoAsync()).Harnesses.FirstOrDefault(h => h.Id == HarnessId);
         _runners = (await Api.ListRunnersAsync()).Where(r => r.State == RunnerState.Ready && r.HarnessIds.Contains(HarnessId)).ToList();

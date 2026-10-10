@@ -1,0 +1,9 @@
+@* The first entry of a menu whose entries are loading. Appears after 300 ms, like other loading states. *@
+<div class="menu-loading loading-placeholder" role="status" aria-busy="true">
+    <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
+    <span>@Label…</span>
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "Loading";
+}

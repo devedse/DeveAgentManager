@@ -1,0 +1,8 @@
+@* A grey block standing in for a value that is loading, e.g. a number on the dashboard. Appears after 300 ms. *@
+<span class="skeleton @Class" style="@($"width:{Width};height:{Height}")" aria-hidden="true"></span>
+
+@code {
+    [Parameter] public string Width { get; set; } = "100%";
+    [Parameter] public string Height { get; set; } = "1em";
+    [Parameter] public string? Class { get; set; }
+}

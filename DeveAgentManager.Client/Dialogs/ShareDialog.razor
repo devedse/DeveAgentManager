@@ -23,11 +23,10 @@
             </MudText>
         }
 
-        @if (_shares is null)
-        {
-            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
-        }
-        else if (_shares.Count == 0)
+        <LoadingSection Loaded="@(_shares is not null)" Label="Loading who has access">
+        <Placeholder><SkeletonList Rows="2" /></Placeholder>
+        <ChildContent>
+        @if (_shares.Count == 0)
         {
             <MudText Typo="Typo.body2" Class="mud-text-secondary">Not shared with anyone.</MudText>
         }
@@ -59,6 +58,8 @@
                 }
             </div>
         }
+        </ChildContent>
+        </LoadingSection>
     </DialogContent>
     <DialogActions>
         @if (IsOwner)

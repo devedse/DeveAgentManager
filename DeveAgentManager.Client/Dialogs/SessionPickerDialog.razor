@@ -8,10 +8,13 @@
     <DialogContent>
         <MudText Typo="Typo.subtitle2" Class="session-workspace-name">@Agent.Name</MudText>
         @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
-        @if (_busy) { <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="my-2" /> }
+        @if (_busy && _loaded) { <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="my-2" /> }
         <MudTextField @bind-Value="_newTitle" Label="New session name (optional)" MaxLength="200" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" />
         <MudButton OnClick="NewAsync" Disabled="_busy" StartIcon="@Icons.Material.Rounded.Add" Color="Color.Primary">New session</MudButton>
         <div class="session-picker-list">
+            <LoadingSection Loaded="@(_loaded || _error is not null)" Label="Loading sessions">
+            <Placeholder><SkeletonList Rows="3" Avatar="false" /></Placeholder>
+            <ChildContent>
             @foreach (var session in _sessions)
             {
                 <div class="session-picker-row" @key="session.Id">
@@ -29,6 +32,8 @@
                     </div>
                 </div>
             }
+            </ChildContent>
+            </LoadingSection>
         </div>
     </DialogContent>
     <DialogActions><MudButton OnClick="Close" Disabled="_busy">Close</MudButton></DialogActions>
@@ -42,7 +47,12 @@
     private string? _error;
     private bool _busy;
     protected override async Task OnInitializedAsync() => await RunAsync(LoadAsync);
-    private async Task LoadAsync() => _sessions = (await Api.ListSessionsAsync()).Where(s => s.WorkspaceAgentId == Agent.Id || s.AgentId == Agent.Id).ToList();
+    private bool _loaded;
+    private async Task LoadAsync()
+    {
+        _sessions = (await Api.ListSessionsAsync()).Where(s => s.WorkspaceAgentId == Agent.Id || s.AgentId == Agent.Id).ToList();
+        _loaded = true;
+    }
     private void Close() => Dialog.Cancel();
     private Task NewAsync() => SelectAsync(null);
     private async Task SelectAsync(Guid? id)

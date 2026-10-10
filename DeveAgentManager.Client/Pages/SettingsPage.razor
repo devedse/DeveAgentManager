@@ -19,6 +19,9 @@
     <div class="panel panel-flush">
         <MudTabs Elevation="0" ApplyEffectsToContainer="true" Class="panel-tabs" TabPanelsClass="panel-tab-content" KeepPanelsAlive="true" MinimumTabWidth="0">
             <MudTabPanel Text="Git and GitHub" Icon="@Icons.Custom.Brands.GitHub">
+                <LoadingSection Loaded="_settings is not null && _profile is not null" Error="@_loadError" Retry="LoadAsync" Label="Loading your settings">
+                <Placeholder><SkeletonForm Fields="3" /></Placeholder>
+                <ChildContent>
                 @if (_settings is not null && _profile is not null)
                 {
                     <div class="settings-section">
@@ -50,9 +53,14 @@
                         </div>
                     </div>
                 }
+                </ChildContent>
+                </LoadingSection>
             </MudTabPanel>
 
             <MudTabPanel Text="Environment" Icon="@Icons.Material.Rounded.DataObject">
+                <LoadingSection Loaded="_profile is not null" Error="@_loadError" Retry="LoadAsync" Label="Loading your settings">
+                <Placeholder><SkeletonForm Fields="3" /></Placeholder>
+                <ChildContent>
                 @if (_profile is not null)
                 {
                     <div class="settings-section">
@@ -77,9 +85,14 @@
                         </div>
                     </div>
                 }
+                </ChildContent>
+                </LoadingSection>
             </MudTabPanel>
 
             <MudTabPanel Text="SSH keys" Icon="@Icons.Material.Rounded.Key">
+                <LoadingSection Loaded="_profile is not null" Error="@_loadError" Retry="LoadAsync" Label="Loading your settings">
+                <Placeholder><SkeletonForm Fields="2" /></Placeholder>
+                <ChildContent>
                 @if (_profile is not null)
                 {
                     <div class="settings-section">
@@ -100,6 +113,8 @@
                         </div>
                     </div>
                 }
+                </ChildContent>
+                </LoadingSection>
             </MudTabPanel>
 
             <MudTabPanel Text="Harness logins" Icon="@Icons.Material.Rounded.ManageAccounts">
@@ -131,8 +146,13 @@
     private bool _saving;
     private string? _token;
 
-    protected override async Task OnInitializedAsync()
+    private string? _loadError;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
     {
+        _loadError = null;
         try
         {
             _user = await Me.GetAsync();
@@ -142,7 +162,11 @@
         }
         catch (ApiException ex)
         {
-            Snackbar.Add(ex.Message, Severity.Error);
+            _loadError = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = LoadingSection.Unreachable;
         }
     }
 

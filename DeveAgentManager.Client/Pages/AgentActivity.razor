@@ -15,10 +15,13 @@
     <div class="activity-filters">
         @foreach (var filter in Filters)
         {
-            <MudButton Size="Size.Small" Variant="@(_filter == filter ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" OnClick="() => _filter = filter">@filter (@_agents.Count(a => Matches(a, filter)))</MudButton>
+            <MudButton Size="Size.Small" Variant="@(_filter == filter ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" OnClick="() => _filter = filter">@filter@(Loaded ? $" ({_agents.Count(a => Matches(a, filter))})" : "")</MudButton>
         }
     </div>
-    @if (Loaded && !Filtered.Any())
+    <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading agent activity" Class="panel">
+    <Placeholder><SkeletonList Rows="3" /></Placeholder>
+    <ChildContent>
+    @if (!Filtered.Any())
     {
         <MudText>No agents match this filter.</MudText>
     }
@@ -44,6 +47,8 @@
             </div>
         </div>
     }
+    </ChildContent>
+    </LoadingSection>
 </MudContainer>
 @code {
     private List<AgentDto> _agents = [];

@@ -11,7 +11,7 @@ else
 {
     <MudMenu Class="quick-command-menu" PopoverClass="quick-command-popover" Dense="true" AnchorOrigin="Origin.TopRight" TransformOrigin="Origin.BottomRight">
         <ActivatorContent>
-            <button type="button" class="terminal-key" disabled="@(Disabled || _sending)" aria-label="Harness quick commands" title="Harness quick commands" @onclick="async () => { await LoadAsync(); await context.ToggleAsync(); }">/</button>
+            <button type="button" class="terminal-key" disabled="@(Disabled || _sending)" aria-label="Harness quick commands" title="Harness quick commands" @onclick="async () => { await context.ToggleAsync(); await LoadAsync(); }">/</button>
         </ActivatorContent>
         <ChildContent>@Commands</ChildContent>
     </MudMenu>
@@ -24,16 +24,21 @@ else
     // The submenu only exists while the ⋮ menu is open, so it loads right away.
     protected override Task OnInitializedAsync() => InMenu ? LoadAsync() : Task.CompletedTask;
     private RenderFragment Commands => @<text>
+        @if (!_loaded)
+        {
+            <MenuLoading Label="Loading commands" />
+        }
         @foreach (var command in _commands)
         {
             <MudMenuItem Disabled="@_sending" OnClick="() => SendAsync(command.Command)">@command.Command · @command.Label</MudMenuItem>
         }
     </text>;
     private List<AgentQuickCommandDto> _commands = [];
+    private bool _loaded;
     private bool _sending;
     private async Task LoadAsync()
     {
-        try { _commands = await Api.GetQuickCommandsAsync(AgentId); }
+        try { _commands = await Api.GetQuickCommandsAsync(AgentId); _loaded = true; }
         catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
     }
     private async Task SendAsync(string command)

@@ -742,6 +742,24 @@
     };
 
     window.damUi = {
+        // Data arrived: how long its loading placeholder has been visible (AGENTS.md, "UI: loading states"), measured by
+        // the browser that paints it. 0 when it isn't visible yet; it then stays hidden, so it can't fade in while the
+        // content renders.
+        loadingSettle(element) {
+            const appear = element?.getAnimations?.().find(animation => animation.animationName === "loading-appear");
+            const shown = !appear || appear.startTime === null || document.timeline.currentTime === null ? 0
+                : document.timeline.currentTime - appear.startTime - (appear.effect?.getTiming().delay ?? 300);
+            if (shown > 0) {
+                return shown;
+            }
+
+            if (element?.style) {
+                element.style.visibility = "hidden";
+            }
+
+            return 0;
+        },
+
         // Keeps a log scrolled to the bottom, unless the user scrolled up to read.
         stickToBottom(element, force) {
             if (!element) {
