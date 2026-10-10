@@ -67,7 +67,7 @@ public sealed class AgentJobCompletions(IDbContextFactory<ManagerDbContext> fact
             agent = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == job.AgentId && a.RunnerId == runner.Id, ct);
             session = await db.Sessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == job.SessionId, ct);
             if (!Belongs(agent, session, runner.Id) || agent!.State != AgentState.Running) continue;
-            var key = job.AgentId + ":" + job.SessionId + ":" + job.Id + ":" + EventId(job);
+            var key = DeliveryKey(job, runner.Id);
             var sent = await shell.RunAsync(runner, LimitTerminal.BuildSubmitScript(agent.TmuxSession, screen, notification,
                 deliveryKey: key), TimeSpan.FromSeconds(15), ct);
             if (!sent.Succeeded) continue; // keyed Runner journal decides whether a retry is safe
@@ -80,6 +80,9 @@ public sealed class AgentJobCompletions(IDbContextFactory<ManagerDbContext> fact
     internal static bool Belongs(Agent? agent, StoredSession? session, Guid runnerId) =>
         agent is not null && session is not null && agent.RunnerId == runnerId && session.AgentId == agent.Id &&
         session.HarnessId == agent.HarnessId && session.HarnessSessionId == agent.HarnessSessionId;
+
+    internal static string DeliveryKey(AgentJobPublication job, Guid runnerId) =>
+        job.AgentId + ":" + job.SessionId + ":" + runnerId + ":" + EventId(job);
 
     internal static string EventId(AgentJobPublication job) => job.Event is { } value ? value.GetProperty("EventId").GetString()! : job.Id + ":inspection";
 

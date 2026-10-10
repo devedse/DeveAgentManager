@@ -42,6 +42,9 @@ public sealed class AgentJobCompletionTests
             ExpectedPhases = 2, CompletedPhases = 2, ExpectedCases = 3, CollectedCases = 3, Restoration = "RESTORED", Finished = DateTimeOffset.UtcNow };
         var job = new AgentJobPublication(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Test", "lab", @"C:\Results\owned", "VALIDATED", 0,
             DateTimeOffset.UtcNow.AddSeconds(-10), DateTimeOffset.UtcNow, JsonSerializer.SerializeToElement(value), null);
+        var runner = Guid.NewGuid();
+        Assert.Equal(AgentJobCompletions.DeliveryKey(job, runner), AgentJobCompletions.DeliveryKey(job with { Id = Guid.NewGuid() }, runner));
+        Assert.NotEqual(AgentJobCompletions.DeliveryKey(job, runner), AgentJobCompletions.DeliveryKey(job, Guid.NewGuid()));
         Assert.Contains("2/2 phases", AgentJobCompletions.Describe(job));
         Assert.Throws<InvalidDataException>(() => AgentJobCompletions.Describe(job with { OutputParent = @"C:\Results\another" }));
         Assert.Throws<InvalidDataException>(() => AgentJobCompletions.Describe(job with { Event = null }));
