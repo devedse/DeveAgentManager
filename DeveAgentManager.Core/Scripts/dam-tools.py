@@ -276,7 +276,7 @@ def pending_jobs():
 
 
 def ack_job(ident, delivery):
-    if delivery not in ("SENT", "UNCERTAIN", "STALE"):
+    if delivery not in ("SENT", "UNCERTAIN", "STALE", "REVIEWED"):
         raise ValueError("Invalid delivery acknowledgement.")
     folder = job_folder(ident)
     with (folder / "worker.lock").open("a") as lock:
@@ -362,6 +362,9 @@ def main():
     status = commands.add_parser("job-status", help="Inspect the exact durable job without relaunching")
     status.add_argument("id")
     status.set_defaults(run=lambda args: print(json.dumps(public_job(json.loads((job_folder(args.id) / "record.json").read_text())))))
+    reviewed = commands.add_parser("job-reviewed", help="Acknowledge that this result was already reviewed in the current turn; suppress later automatic delivery")
+    reviewed.add_argument("id")
+    reviewed.set_defaults(run=lambda args: ack_job(args.id, "REVIEWED"))
     cancel = commands.add_parser("job-cancel", help="Request cancellation of the owned local command; remote exit still requires validation")
     cancel.add_argument("id")
     cancel.set_defaults(run=lambda args: cancel_job(args.id))

@@ -86,6 +86,12 @@ class Jobs(unittest.TestCase):
         self.assertEqual("INSPECTION_REQUIRED", tools.pending_jobs()[0]["outcome"])
         self.assertIsNone(tools.pending_jobs()[0]["exitCode"])
 
+    def test_already_reviewed_result_is_not_reported_as_delivered(self):
+        tools.atomic_job(self.folder / "record.json", dict(self.record(), outcome="VALIDATED", delivery="PENDING", event=self.event))
+        tools.ack_job(self.ident, "REVIEWED")
+        self.assertEqual([], tools.pending_jobs())
+        self.assertEqual("REVIEWED", json.loads((self.folder / "record.json").read_text())["delivery"])
+
     def test_restart_pending_acknowledgement_and_uncertain_delivery(self):
         tools.atomic_job(self.folder / "record.json", dict(self.record(), outcome="VALIDATED", delivery="PENDING", event=self.event))
         self.assertEqual(self.event, tools.pending_jobs()[0]["event"])

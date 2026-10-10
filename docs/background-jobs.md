@@ -14,6 +14,7 @@ dam-tools run-job --prepare-json <argv-json> --command-json <argv-json> --comple
 dam-tools job-status <job-id>
 dam-tools job-completion <job-id>
 dam-tools job-cancel <job-id>
+dam-tools job-reviewed <job-id>
 ```
 
 The preparation command allocates and verifies an empty unique output parent on
@@ -33,7 +34,9 @@ job's folder. A nonzero workload exit can still have valid failure evidence.
 Missing/invalid evidence, preparation failure or controller death produces an
 inspection outcome. Remote transport exit alone never proves remote workload exit.
 After transport recovery, `job-completion` retries only the supported completion
-reader. A live owned worker refuses competing validation through its file lock.
+reader. A live owned worker refuses competing validation through its file lock. If the
+result has already been inspected in the active turn, `job-reviewed` records
+`REVIEWED` and suppresses a later notification; it does not claim automatic delivery.
 Cancellation signals only the recorded local process group after identity checks;
 it does not claim a remote workload stopped. Never use it as destructive recovery.
 
