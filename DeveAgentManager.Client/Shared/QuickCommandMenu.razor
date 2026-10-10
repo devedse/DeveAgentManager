@@ -1,20 +1,34 @@
 @inject ManagerApi Api
 @inject ISnackbar Snackbar
-<MudMenu Class="quick-command-menu" PopoverClass="quick-command-popover" Dense="true" AnchorOrigin="Origin.TopRight" TransformOrigin="Origin.BottomRight">
-    <ActivatorContent>
-        <button type="button" class="terminal-key" disabled="@(Disabled || _sending)" aria-label="Harness quick commands" title="Harness quick commands" @onclick="async () => { await LoadAsync(); await context.ToggleAsync(); }">/</button>
-    </ActivatorContent>
-    <ChildContent>
-        @foreach (var command in _commands)
-        {
-            <MudMenuItem Disabled="@_sending" OnClick="() => SendAsync(command.Command)">@command.Command · @command.Label</MudMenuItem>
-        }
-    </ChildContent>
-</MudMenu>
+@if (InMenu)
+{
+    @* A submenu of the toolbar's ⋮ menu, when the toolbar has no room for the / button. *@
+    <MudMenu Label="Quick commands" StartIcon="@Icons.Material.Rounded.Bolt" Dense="true" Disabled="@(Disabled || _sending)">
+        @Commands
+    </MudMenu>
+}
+else
+{
+    <MudMenu Class="quick-command-menu" PopoverClass="quick-command-popover" Dense="true" AnchorOrigin="Origin.TopRight" TransformOrigin="Origin.BottomRight">
+        <ActivatorContent>
+            <button type="button" class="terminal-key" disabled="@(Disabled || _sending)" aria-label="Harness quick commands" title="Harness quick commands" @onclick="async () => { await LoadAsync(); await context.ToggleAsync(); }">/</button>
+        </ActivatorContent>
+        <ChildContent>@Commands</ChildContent>
+    </MudMenu>
+}
 @code {
     [Parameter] public Guid AgentId { get; set; }
     [Parameter] public string HarnessId { get; set; } = "";
     [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool InMenu { get; set; }
+    // The submenu only exists while the ⋮ menu is open, so it loads right away.
+    protected override Task OnInitializedAsync() => InMenu ? LoadAsync() : Task.CompletedTask;
+    private RenderFragment Commands => @<text>
+        @foreach (var command in _commands)
+        {
+            <MudMenuItem Disabled="@_sending" OnClick="() => SendAsync(command.Command)">@command.Command · @command.Label</MudMenuItem>
+        }
+    </text>;
     private List<AgentQuickCommandDto> _commands = [];
     private bool _sending;
     private async Task LoadAsync()

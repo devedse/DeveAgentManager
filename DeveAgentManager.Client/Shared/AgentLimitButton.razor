@@ -2,14 +2,24 @@
 @inject IDialogService Dialogs
 @inject IJSRuntime Js
 
-<MudTooltip Text="@Hint">
-    <MudIconButton Icon="@StatusIcon"
-                   Class="@(_automatic.Enabled ? "auto-continue-active" : _limit?.Status == "Detected" && !_limit.NativeAutoContinue ? "limit-alert-blink" : "")"
-                   Color="@(_automatic.Enabled ? Color.Success : _limit is null ? Color.Default : Color.Warning)" Size="Size.Small" OnClick="OpenAsync" aria-label="@Hint" />
-</MudTooltip>
+@if (InMenu)
+{
+    <MudMenuItem Icon="@StatusIcon" IconColor="@StatusColor" OnClick="OpenAsync">@Hint</MudMenuItem>
+}
+else
+{
+    <MudTooltip Text="@Hint">
+        <MudIconButton Icon="@StatusIcon"
+                       Class="@(_automatic.Enabled ? "auto-continue-active" : _limit?.Status == "Detected" && !_limit.NativeAutoContinue ? "limit-alert-blink" : "")"
+                       Color="@StatusColor" Size="Size.Small" OnClick="OpenAsync" aria-label="@Hint" />
+    </MudTooltip>
+}
 
 @code {
     [Parameter] public Guid AgentId { get; set; }
+    /// <summary>An entry in the toolbar's ⋮ menu, when the toolbar has no room for the button.</summary>
+    [Parameter] public bool InMenu { get; set; }
+    private Color StatusColor => _automatic.Enabled ? Color.Success : _limit is null ? Color.Default : Color.Warning;
     private AgentLimitDto? _limit;
     private AutoContinueDto _automatic = new();
     private string? _scheduledLocal;

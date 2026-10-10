@@ -1514,11 +1514,12 @@ html:has(.terminal-layout) body {
     height: 100%;
 }
 
-/* Terminal toolbar. It gets more compact as the screen narrows:
-   wide: everything; below 900px: no hint; below 600px (phones): the state is a dot next to the name, and
-   Conversation, Restart and Stop move into the ⋮ menu. The name and context are cut off with "…" rather than overlap. */
+/* Terminal toolbar. Its buttons move into the ⋮ menu one by one when they don't fit (js/toolbar-overflow.js sets
+   `hidden` on them); below 900px the hint goes, below 600px (phones) the state is a dot next to the name. The name and
+   context are cut off with "…" rather than overlap. */
 .terminal-toolbar {
     display: flex;
+    overflow: hidden;
     align-items: center;
     gap: 6px;
     height: 52px;
@@ -1577,9 +1578,24 @@ html:has(.terminal-layout) body {
     white-space: nowrap;
 }
 
-.toolbar-narrow {
-    display: none;
+    .terminal-toolbar [hidden] {
+        display: none !important;
+    }
+
+.toolbar-item {
+    display: flex;
+    align-items: center;
 }
+
+/* Without its label, the harness/account button is just its icon. */
+.switch-chip:has(.switch-chip-label[hidden]) {
+    min-width: 0 !important;
+    padding: 0 8px !important;
+}
+
+    .switch-chip:has(.switch-chip-label[hidden]) .mud-button-icon-start {
+        margin: 0 !important;
+    }
 
 @media (max-width: 900px) {
     .terminal-hint {
@@ -1588,24 +1604,11 @@ html:has(.terminal-layout) body {
 }
 
 @media (max-width: 600px) {
-    .toolbar-wide {
-        display: none !important;
-    }
-
-    .toolbar-narrow {
-        display: block;
-    }
-
-    /* The switch and screens buttons shrink to their icon (and the screen count). */
-    .switch-chip,
+    /* The screens button shrinks to its icon and the screen count. */
     .viewers-chip {
         min-width: 0 !important;
         padding: 0 8px !important;
     }
-
-        .switch-chip .mud-button-icon-start {
-            margin: 0 !important;
-        }
 
         .viewers-chip .mud-button-icon-start {
             margin-left: 0 !important;
@@ -1971,17 +1974,6 @@ html:has(.terminal-layout) body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-@media (max-width: 600px) {
-    .switch-chip-label {
-        display: none;
-    }
-
-    .switch-chip {
-        min-width: 0 !important;
-        padding: 0 8px !important;
-    }
 }
 
 .switch-menu {
@@ -3018,10 +3010,6 @@ body:has(.terminal-layout) .agent-attention-popover {
     .terminal-toolbar .mud-icon-button { padding: 6px; }
     .terminal-name-row { gap: 4px; }
     .terminal-name-row .agent-status-button { flex: 0 0 auto; }
-    .terminal-toolbar > .terminal-avatar { display: none; }
-}
-@media (max-width: 380px) {
-    .terminal-toolbar .viewers-chip { display: none; }
 }
 
 .session-workspace-name { overflow-wrap: anywhere; }

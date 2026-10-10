@@ -1,13 +1,23 @@
 @implements IDisposable
 @inject ScreenAwakeService Awake
 
-@* A native title gives desktop hover help without a floating tooltip expanding the mobile viewport. *@
-<MudIconButton Icon="@(Awake.Enabled ? Icons.Material.Rounded.WbSunny : Icons.Material.Rounded.Bedtime)"
-               Color="@(Awake.Active ? Color.Primary : Awake.Enabled ? Color.Warning : Color.Default)" Size="Size.Small"
-               Disabled="@(!Awake.Ready || Awake.Busy || Awake.Unavailable is not null)" OnClick="Awake.ToggleAsync"
-               aria-label="@Awake.Hint" aria-pressed="@(Awake.Enabled ? "true" : "false")" title="@Awake.Hint" />
+@if (InMenu)
+{
+    <MudMenuItem Icon="@Icon" IconColor="@IconColor" Disabled="@Disabled" OnClick="Awake.ToggleAsync">@Awake.Hint</MudMenuItem>
+}
+else
+{
+    @* A native title gives desktop hover help without a floating tooltip expanding the mobile viewport. *@
+    <MudIconButton Icon="@Icon" Color="@IconColor" Size="Size.Small" Disabled="@Disabled" OnClick="Awake.ToggleAsync"
+                   aria-label="@Awake.Hint" aria-pressed="@(Awake.Enabled ? "true" : "false")" title="@Awake.Hint" />
+}
 
 @code {
+    /// <summary>An entry in the toolbar's ⋮ menu, when the toolbar has no room for the button.</summary>
+    [Parameter] public bool InMenu { get; set; }
+    private string Icon => Awake.Enabled ? Icons.Material.Rounded.WbSunny : Icons.Material.Rounded.Bedtime;
+    private Color IconColor => Awake.Active ? Color.Primary : Awake.Enabled ? Color.Warning : Color.Default;
+    private bool Disabled => !Awake.Ready || Awake.Busy || Awake.Unavailable is not null;
     protected override void OnInitialized() => Awake.Changed += OnChanged;
     private void OnChanged() => InvokeAsync(StateHasChanged);
     public void Dispose() => Awake.Changed -= OnChanged;

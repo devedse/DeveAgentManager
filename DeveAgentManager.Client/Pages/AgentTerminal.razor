@@ -4,13 +4,15 @@
 @inject IDialogService Dialogs
 @inject SignedInUser Me
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <PageTitle>@(_agent?.Name ?? "Agent") · DeveAgentManager</PageTitle>
 
 <div class="terminal-page">
-    @* Narrower screens get a more compact header: the state becomes a dot, the name and context are cut off with "…",
-       and on phones the less used actions move into the ⋮ menu (see app.css, "Terminal toolbar"). *@
-    <div class="terminal-toolbar">
+    @* Stop, Restart, VS Code, the Runner desktop, Sharing and the Conversation are always in the ⋮ menu, so they aren't
+       tapped by accident. The other buttons stay in the toolbar while they fit; when they don't, they move into the ⋮ menu
+       one by one, in the order of ToolbarOverflow (js/toolbar-overflow.js), so the agent's name stays readable. *@
+    <div class="terminal-toolbar" @ref="_toolbar">
         <MudIconButton Href="agents" Icon="@Icons.Material.Rounded.ArrowBack" Size="Size.Small" aria-label="Back to agents" />
         @if (_agent is not null)
         {
@@ -30,60 +32,79 @@
             </div>
             @if (write)
             {
-                <MudIconButton Icon="@Icons.Material.Rounded.FolderOpen" Size="Size.Small" Class="session-picker-button" aria-label="Switch session" title="@(_sessionTitle ?? "Sessions")" OnClick="OpenSessionsAsync" />
+                <span class="toolbar-item" data-toolbar="sessions">
+                    <MudIconButton Icon="@Icons.Material.Rounded.FolderOpen" Size="Size.Small" Class="session-picker-button" aria-label="Switch session" title="@(_sessionTitle ?? "Sessions")" OnClick="OpenSessionsAsync" />
+                </span>
             }
             <AttentionMenu />
             <AgentSeenWatcher @key="(AgentId, nameof(AgentSeenWatcher))" Agent="_agent" />
             <span class="terminal-hint">Shift+drag selects · Ctrl+C copies a selection</span>
             @if (_sessionId is { } sessionId)
             {
-                <span class="toolbar-wide"><SessionImageButton @key="sessionId" SessionId="sessionId" /></span>
-                <SessionFileButton @key="(sessionId, nameof(SessionFileButton))" SessionId="sessionId" Class="toolbar-wide" />
-                <span class="toolbar-wide"><MudTooltip Text="Conversation">
-                    <MudIconButton Href="@($"sessions/{sessionId}")" Icon="@Icons.Material.Rounded.Forum" Size="Size.Small" aria-label="Conversation" />
-                </MudTooltip></span>
-            }
-            @if (read)
-            {
-                <span class="toolbar-wide"><MudTooltip Text="@(_agent.Access == AgentAccess.Owner ? "Share" : AgentTable.ShareText(_agent))">
-                    <MudIconButton Icon="@(_agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" Size="Size.Small" OnClick="ShareAsync" aria-label="Sharing" />
-                </MudTooltip></span>
-            }
-            @if (write && _agent.RunnerKind == RunnerKind.Desktop)
-            {
-                <span class="toolbar-wide"><MudIconButton Href="@($"runners/{_agent.RunnerId}/desktop?agent={AgentId}")" Icon="@Icons.Material.Rounded.DesktopWindows" Size="Size.Small" aria-label="Runner desktop" title="Runner desktop" /></span>
+                <span class="toolbar-item" data-toolbar="images"><SessionImageButton @key="sessionId" SessionId="sessionId" /></span>
+                <SessionFileButton @key="(sessionId, nameof(SessionFileButton))" SessionId="sessionId" class="toolbar-item" data-toolbar="files" />
             }
             @if (running && write)
             {
-                <AgentLimitButton @key="AgentId" AgentId="AgentId" />
-                <span class="terminal-quick-desktop"><QuickCommandMenu AgentId="AgentId" HarnessId="@_agent.HarnessId" Disabled="_busy" /></span>
+                <span class="toolbar-item" data-toolbar="limit"><AgentLimitButton @key="AgentId" AgentId="AgentId" /></span>
+                <span class="toolbar-item terminal-quick-desktop" data-toolbar="quick"><QuickCommandMenu AgentId="AgentId" HarnessId="@_agent.HarnessId" Disabled="_busy" /></span>
                 <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" />
-                <AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" />
-                @if (_agent.RunnerToolIds.Contains("vscode"))
-                {
-                    <span class="toolbar-wide"><MudTooltip Text="Open this folder in VS Code">
-                        <MudIconButton Href="@($"agents/{_agent.Id}/vscode")" Icon="@(_vsCodeIcon ?? Icons.Material.Rounded.Code)" Size="Size.Small" aria-label="VS Code" />
-                    </MudTooltip></span>
-                }
-                <span class="toolbar-wide"><MudTooltip Text="Restart the harness (resumes the conversation)">
-                    <MudIconButton Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" Disabled="_busy" OnClick="RestartAsync" aria-label="Restart" />
-                </MudTooltip></span>
-                <span class="toolbar-wide"><MudTooltip Text="Stop the agent">
-                    <MudIconButton Icon="@Icons.Material.Rounded.Stop" Size="Size.Small" Disabled="_busy" OnClick="StopAsync" aria-label="Stop" />
-                </MudTooltip></span>
+                <span class="toolbar-item" data-toolbar="viewers"><AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" /></span>
             }
             @if (read)
             {
-                <ScreenAwakeButton />
-                <div class="toolbar-narrow">
-                    <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" aria-label="More">
+                <span class="toolbar-item" data-toolbar="awake"><ScreenAwakeButton /></span>
+                <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" Class="terminal-more">
+                    <ActivatorContent>
+                        <MudIconButton Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" OnClick="@context.ToggleAsync" aria-label="More actions" title="More actions" />
+                    </ActivatorContent>
+                    <ChildContent>
+                        @* What the toolbar has no room for, in toolbar order. *@
+                        @if (write && Overflowed("sessions"))
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.FolderOpen" OnClick="OpenSessionsAsync">Switch session</MudMenuItem>
+                        }
                         @if (_sessionId is { } menuSessionId)
                         {
-                            <MudMenuItem Icon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{menuSessionId}")">Conversation</MudMenuItem>
-                            <MudMenuItem Icon="@Icons.Material.Rounded.PhotoLibrary" OnClick="OpenImagesAsync">Shared images</MudMenuItem>
-                            <MudMenuItem Icon="@Icons.Material.Rounded.FileDownload" OnClick="() => SharedFilesDialog.OpenAsync(Dialogs, menuSessionId)">Shared files</MudMenuItem>
+                            @if (Overflowed("images"))
+                            {
+                                <SessionImageButton SessionId="menuSessionId" InMenu="true" />
+                            }
+                            @if (Overflowed("files"))
+                            {
+                                <SessionFileButton SessionId="menuSessionId" InMenu="true" />
+                            }
                         }
-                        <MudMenuItem Icon="@Icons.Material.Rounded.Share" OnClick="ShareAsync">Sharing</MudMenuItem>
+                        @if (running && write)
+                        {
+                            @if (Overflowed("limit"))
+                            {
+                                <AgentLimitButton AgentId="AgentId" InMenu="true" />
+                            }
+                            @if (Overflowed("quick"))
+                            {
+                                <QuickCommandMenu AgentId="AgentId" HarnessId="@_agent.HarnessId" Disabled="_busy" InMenu="true" />
+                            }
+                            @if (Overflowed("viewers"))
+                            {
+                                <AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" InMenu="true" />
+                            }
+                        }
+                        @if (Overflowed("awake"))
+                        {
+                            <ScreenAwakeButton InMenu="true" />
+                        }
+                        @if (_overflow.Overlaps(MenuEntries))
+                        {
+                            <MudDivider Class="my-1" />
+                        }
+
+                        @* Always here. *@
+                        @if (_sessionId is { } conversationId)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{conversationId}")">Conversation</MudMenuItem>
+                        }
+                        <MudMenuItem Icon="@(_agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="ShareAsync">Sharing</MudMenuItem>
                         @if (write && _agent.RunnerKind == RunnerKind.Desktop)
                         {
                             <MudMenuItem Icon="@Icons.Material.Rounded.DesktopWindows" Href="@($"runners/{_agent.RunnerId}/desktop?agent={AgentId}")">Runner desktop</MudMenuItem>
@@ -94,11 +115,12 @@
                             {
                                 <MudMenuItem Icon="@(_vsCodeIcon ?? Icons.Material.Rounded.Code)" Href="@($"agents/{_agent.Id}/vscode")">VS Code</MudMenuItem>
                             }
+                            <MudDivider Class="my-1" />
                             <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="_busy" OnClick="RestartAsync">Restart the harness</MudMenuItem>
                             <MudMenuItem Icon="@Icons.Material.Rounded.Stop" Disabled="_busy" OnClick="StopAsync">Stop the agent</MudMenuItem>
                         }
-                    </MudMenu>
-                </div>
+                    </ChildContent>
+                </MudMenu>
             }
         }
     </div>
@@ -189,7 +211,63 @@
         catch (OperationCanceledException) { }
     }
 
-    public override void Dispose() { _refreshStop.Cancel(); base.Dispose(); }
+    public override void Dispose()
+    {
+        _refreshStop.Cancel();
+        if (_toolbarModule is { } module) _ = StopToolbarAsync(module);
+        base.Dispose();
+    }
+
+    private ElementReference _toolbar;
+    private IJSObjectReference? _toolbarModule;
+    private DotNetObjectReference<AgentTerminal>? _toolbarSelf;
+    private HashSet<string> _overflow = [];
+
+    /// <summary>What leaves the toolbar first when it runs out of room. Only the last seven get an entry in the ⋮ menu.</summary>
+    private static readonly object[] ToolbarOverflow =
+    [
+        new { key = "hint", selector = ".terminal-hint" },
+        new { key = "avatar", selector = ".terminal-avatar" },
+        // The harness/account button keeps its icon.
+        new { key = "switch-label", selector = ".switch-chip-label" },
+        new { key = "viewers", selector = "[data-toolbar='viewers']" },
+        new { key = "quick", selector = "[data-toolbar='quick']" },
+        new { key = "images", selector = "[data-toolbar='images']" },
+        new { key = "files", selector = "[data-toolbar='files']" },
+        new { key = "awake", selector = "[data-toolbar='awake']" },
+        new { key = "limit", selector = "[data-toolbar='limit']" },
+        new { key = "sessions", selector = "[data-toolbar='sessions']" },
+    ];
+
+    private static readonly string[] MenuEntries = ["viewers", "quick", "images", "files", "awake", "limit", "sessions"];
+
+    private bool Overflowed(string key) => _overflow.Contains(key);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _toolbarSelf = DotNetObjectReference.Create(this);
+        _toolbarModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/toolbar-overflow.js");
+        await _toolbarModule.InvokeVoidAsync("start", _toolbar, _toolbarSelf, ToolbarOverflow, ".terminal-name");
+    }
+
+    [JSInvokable]
+    public void ToolbarOverflowChanged(string[] keys)
+    {
+        _overflow = keys.ToHashSet();
+        StateHasChanged();
+    }
+
+    private async Task StopToolbarAsync(IJSObjectReference module)
+    {
+        try
+        {
+            await module.InvokeVoidAsync("stop", _toolbar);
+            await module.DisposeAsync();
+        }
+        catch (JSDisconnectedException) { }
+        _toolbarSelf?.Dispose();
+    }
     private string? _vsCodeIcon;
 
     protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.AgentId == AgentId || managerEvent.Kind == ManagerEventKind.RunnerChanged;
@@ -248,13 +326,6 @@
             // Left the share: there is nothing here any more.
             Navigation.NavigateTo("agents");
         }
-    }
-
-    private async Task OpenImagesAsync()
-    {
-        if (_sessionId is not { } id) return;
-        await Dialogs.ShowAsync<SharedImagesDialog>("Shared images", new DialogParameters<SharedImagesDialog> { { d => d.SessionId, id } },
-            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Large, CloseButton = true });
     }
 
     private Task StartAsync() => RunAsync(() => Api.StartAgentAsync(AgentId), reconnect: true);

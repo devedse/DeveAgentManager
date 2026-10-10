@@ -295,8 +295,8 @@ means re-entering those secrets.
 - **Several screens per agent**: a phone and a PC can have the same agent open. tmux sizes the terminal to the screen
   used last, and pi redraws its whole conversation when the size changes. So a screen that joins while others are
   attached only watches (tmux's `ignore-size`) until something is typed on it. Opening or refreshing a tab changes
-  nothing. The **screens** button in the terminal's toolbar shows what is attached and can disconnect a screen, which
-  then says so and offers Reconnect.
+  nothing. The **screens** button in the terminal's toolbar (or the ⋮ menu when it has no room) shows what is
+  attached and can disconnect a screen, which then says so and offers Reconnect.
 - **Pasting** into a terminal uses your computer's clipboard. Ctrl+V (or Ctrl+Shift+V, Shift+Insert) pastes text, and
   also images such as screenshots. Images can be dropped on the terminal too, or picked with the **📎 Image** key
   (on phones: gallery, camera, screenshots). Images are stored on the Runner in `~/.deveagentmanager/uploads`, and their

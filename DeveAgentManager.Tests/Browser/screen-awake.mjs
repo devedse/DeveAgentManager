@@ -116,9 +116,17 @@ try {
     for (const width of [1280, 740, 390, 320]) {
         await page.setViewportSize({ width, height: 844 });
         await assertStableViewport();
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `toolbar overflow at ${width}`);
+        if (await page.locator('[data-toolbar="awake"]').isHidden()) {
+            // No room in the toolbar: the same toggle, with its state, is in the ⋮ menu.
+            await page.locator('.terminal-toolbar button[aria-label="More actions"]').click();
+            await page.getByRole('menuitem', { name: 'Keep screen awake: on', exact: true }).waitFor();
+            await page.locator('.terminal-toolbar button[aria-label="More actions"]').click();
+            await page.locator('.mud-popover-open .mud-menu-list').waitFor({ state: 'detached' });
+            continue;
+        }
         const box = await button().boundingBox();
         assert.ok(box.x >= 0 && box.x + box.width <= width, `toggle outside viewport at ${width}`);
-        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `toolbar overflow at ${width}`);
     }
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: '/tmp/dam-screen-awake-on.png' });

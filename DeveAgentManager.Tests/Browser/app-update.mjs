@@ -64,7 +64,7 @@ try {
         await page.waitForTimeout(200);
     };
     await page.goto(base + `/agents/${id}`);
-    await page.getByRole('button', { name: /Keep screen awake/ }).waitFor({ timeout: 60000 });
+    await page.locator('.terminal-name').waitFor({ timeout: 60000 });
     await settle();
     assert.equal(await card.count(), 0, 'published client and server must agree on the build');
     await page.locator('.dam-touch-input').focus();

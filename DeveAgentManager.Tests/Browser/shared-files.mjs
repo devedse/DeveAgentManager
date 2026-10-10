@@ -114,16 +114,17 @@ try {
     await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).last().click();
     await page.getByRole('dialog').waitFor({ state: 'detached' });
 
-    // Phones: in the ⋮ menu, and the list fits.
-    await page.setViewportSize({ width: 390, height: 844 });
+    // Narrow phones: in the ⋮ menu, and the list fits.
+    await page.setViewportSize({ width: 320, height: 700 });
+    await page.waitForTimeout(150);
     assert.equal(await toolbarButton.isVisible(), false);
-    await page.locator('.toolbar-narrow button').click();
-    await page.getByRole('menuitem', { name: 'Shared files', exact: true }).click();
+    await page.locator('.terminal-toolbar button[aria-label="More actions"]').click();
+    await page.getByRole('menuitem', { name: 'Shared files (2)', exact: true }).click();
     await page.getByRole('dialog').getByRole('link', { name: 'Download app-release.apk', exact: true }).waitFor();
     await noOverflow('files dialog on a phone');
     const dialog = await page.getByRole('dialog').boundingBox();
-    assert.ok(dialog.x >= 0 && dialog.x + dialog.width <= 391, 'files dialog fits the phone');
-    await page.screenshot({ path: '/tmp/dam-shared-files-dialog-390.png' });
+    assert.ok(dialog.x >= 0 && dialog.x + dialog.width <= 321, 'files dialog fits the phone');
+    await page.screenshot({ path: '/tmp/dam-shared-files-dialog-320.png' });
     await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).last().click();
 
     // Nothing shared: no toolbar button, and the conversation page says so.

@@ -3,13 +3,48 @@
 @inject ManagerApi Api
 @inject ISnackbar Snackbar
 
-<MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" @bind-Open="_open" @bind-Open:after="OnOpenChangedAsync">
-    <ActivatorContent>
-        @* MudBlazor 9: a custom activator opens the menu itself. *@
-        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Devices" title="@Summary" aria-label="@Summary" OnClick="@context.ToggleAsync"
-                   Class="@($"viewers-chip {(Others > 0 ? "viewers-chip-warn" : "")}")">@(_viewers?.Count ?? 0)</MudButton>
-    </ActivatorContent>
-    <ChildContent>
+@if (InMenu)
+{
+    @* A submenu of the toolbar's ⋮ menu, when the toolbar has no room for the chip. *@
+    <MudMenu Label="@($"Screens ({_viewers?.Count ?? 0})")" StartIcon="@Icons.Material.Rounded.Devices" Dense="true" @bind-Open="_open" @bind-Open:after="OnOpenChangedAsync">
+        @Content
+    </MudMenu>
+}
+else
+{
+    <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" @bind-Open="_open" @bind-Open:after="OnOpenChangedAsync">
+        <ActivatorContent>
+            @* MudBlazor 9: a custom activator opens the menu itself. *@
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Devices" title="@Summary" aria-label="@Summary" OnClick="@context.ToggleAsync"
+                       Class="@($"viewers-chip {(Others > 0 ? "viewers-chip-warn" : "")}")">@(_viewers?.Count ?? 0)</MudButton>
+        </ActivatorContent>
+        <ChildContent>@Content</ChildContent>
+    </MudMenu>
+}
+
+@code {
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
+
+    private readonly CancellationTokenSource _lifetime = new();
+    private IReadOnlyList<AgentViewer>? _viewers;
+    private bool _busy;
+    private string? _lastTty;
+
+    [Parameter, EditorRequired]
+    public Guid AgentId { get; set; }
+
+    /// <summary>This page's terminal (null until it is attached).</summary>
+    [Parameter]
+    public string? OwnTty { get; set; }
+
+    [Parameter]
+    public string Harness { get; set; } = "the harness";
+
+    /// <summary>A submenu of the toolbar's ⋮ menu instead of the chip.</summary>
+    [Parameter]
+    public bool InMenu { get; set; }
+
+    private RenderFragment Content => @<text>
         <div class="viewers-menu">
             <div class="viewers-title help-heading">Screens attached to this agent
                 <HelpTip Label="Attached screens">All screens see the agent. The screen typed on last controls its size; watching screens do not change it. Switching between different screen sizes makes @Harness redraw its conversation once.</HelpTip></div>
@@ -44,26 +79,7 @@
                 </div>
             }
         </div>
-    </ChildContent>
-</MudMenu>
-
-@code {
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
-
-    private readonly CancellationTokenSource _lifetime = new();
-    private IReadOnlyList<AgentViewer>? _viewers;
-    private bool _busy;
-    private string? _lastTty;
-
-    [Parameter, EditorRequired]
-    public Guid AgentId { get; set; }
-
-    /// <summary>This page's terminal (null until it is attached).</summary>
-    [Parameter]
-    public string? OwnTty { get; set; }
-
-    [Parameter]
-    public string Harness { get; set; } = "the harness";
+    </text>;
 
     private int Others => _viewers?.Count(v => v.Tty != OwnTty) ?? 0;
 
@@ -71,7 +87,12 @@
         : Others == 0 ? "Only this screen is attached"
         : $"{Others} other {(Others == 1 ? "screen is" : "screens are")} attached";
 
-    protected override void OnInitialized() => _ = PollAsync();
+    protected override void OnInitialized()
+    {
+        _ = PollAsync();
+        // In the ⋮ menu it only exists while the menu is open: show the count right away.
+        if (InMenu) _ = RefreshAsync();
+    }
 
     protected override async Task OnParametersSetAsync()
     {

@@ -43,6 +43,7 @@ try {
     await page.route('**/api/**', async route => {
         const path = new URL(route.request().url()).pathname;
         if (path === `/api/sessions/${sessionId}/images`) return route.fulfill({ json: images });
+        if (path === `/api/sessions/${sessionId}/files`) return route.fulfill({ json: [] });
         const index = images.findIndex(image => path === `/api/sessions/${sessionId}/images/${image.id}`);
         if (index >= 0) return route.fulfill({ contentType: 'image/png', body: imageBodies[index] });
         if (path === `/api/sessions/${sessionId}`) return route.fulfill({ json: { id: sessionId, title: 'Image navigation', harnessId: 'codex', access: 'Owner', ownerName: 'Test user', messageCount: 0, createdAt: now, updatedAt: now } });
