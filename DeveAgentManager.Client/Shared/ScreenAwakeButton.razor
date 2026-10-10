@@ -3,12 +3,11 @@
 @inject ISnackbar Snackbar
 
 <span @ref="_host">
-    <MudTooltip Text="@Hint">
-        <MudIconButton Icon="@(_active ? Icons.Material.Rounded.WbSunny : Icons.Material.Rounded.Bedtime)"
-                       Color="@(_active ? Color.Primary : Color.Default)" Size="Size.Small"
-                       Disabled="@(!_ready || _unavailable is not null)" OnClick="ToggleAsync"
-                       aria-label="@Hint" aria-pressed="@(_enabled ? "true" : "false")" title="@Hint" />
-    </MudTooltip>
+    @* A native title gives desktop hover help without a floating tooltip expanding the mobile viewport. *@
+    <MudIconButton Icon="@(_active ? Icons.Material.Rounded.WbSunny : Icons.Material.Rounded.Bedtime)"
+                   Color="@(_active ? Color.Primary : Color.Default)" Size="Size.Small"
+                   Disabled="@(!_ready || _unavailable is not null)" OnClick="ToggleAsync"
+                   aria-label="@Hint" aria-pressed="@(_enabled ? "true" : "false")" title="@Hint" />
 </span>
 
 @code {

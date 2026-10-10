@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 
 const browser = await chromium.launch();
 try {
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     await context.addInitScript(() => {
         const mode = new URL(location.href).searchParams.get('wake-test');
         if (mode === 'insecure') Object.defineProperty(window, 'isSecureContext', { value: false });
@@ -72,15 +72,29 @@ try {
         await page.getByRole('button', { name: `Keep screen awake: ${label}`, exact: true }).waitFor();
         await page.waitForFunction(pressed => document.querySelector('button[aria-label^="Keep screen awake"]')?.getAttribute('aria-pressed') === String(pressed), pressed);
     };
+    const assertStableViewport = async () => {
+        const expectedWidth = page.viewportSize().width;
+        for (let sample = 0; sample < 20; sample++) {
+            const size = await page.evaluate(() => ({ width: innerWidth, scroll: document.documentElement.scrollWidth,
+                scale: visualViewport.scale, layout: document.querySelector('.terminal-layout').getBoundingClientRect().width }));
+            if (size.width !== expectedWidth || size.scroll > expectedWidth || size.scale !== 1 || size.layout > expectedWidth) {
+                await page.screenshot({ path: '/tmp/dam-screen-awake-mobile-overflow.png' });
+                assert.fail(`screen-awake tooltip resized the mobile viewport: ${JSON.stringify(size)}; expected ${expectedWidth}`);
+            }
+            await page.waitForTimeout(100);
+        }
+    };
     await open();
     await waitState('off', false);
     const offIcon = await button().locator('svg').innerHTML();
-    await button().click();
+    await button().tap();
     await waitState('on', true);
+    await assertStableViewport();
     assert.notEqual(await button().locator('svg').innerHTML(), offIcon, 'on/off icons must differ');
     assert.ok((await button().getAttribute('class')).includes('mud-primary-text'), 'active icon must be highlighted');
     for (const width of [1280, 740, 390, 320]) {
         await page.setViewportSize({ width, height: 844 });
+        await assertStableViewport();
         const box = await button().boundingBox();
         assert.ok(box.x >= 0 && box.x + box.width <= width, `toggle outside viewport at ${width}`);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `toolbar overflow at ${width}`);
@@ -93,8 +107,9 @@ try {
     await page.evaluate(() => wakeTest.visibility('visible'));
     await waitState('on', true);
     assert.equal(await page.evaluate(() => wakeTest.requests), 2, 'returning to the tab must reacquire');
-    await button().click();
+    await button().tap();
     await waitState('off', false);
+    await assertStableViewport();
     assert.ok(await page.evaluate(() => wakeTest.locks.every(lock => lock.released)));
     await page.evaluate(() => { wakeTest.visibility('hidden'); wakeTest.visibility('visible'); });
     assert.equal(await page.evaluate(() => wakeTest.requests), 2, 'disabled toggle must stay off');
@@ -131,7 +146,7 @@ try {
         assert.ok(await button().isDisabled());
     }
     assert.deepEqual(errors, []);
-    console.log('Passed: wake lock on/off icons, mobile layout, background resume, denial, revocation, navigation and pending-request cleanup, HTTPS and support detection.');
+    console.log('Passed: wake lock on/off icons, mobile touch and rotation without viewport growth or zoom, background resume, denial, revocation, navigation and pending-request cleanup, HTTPS and support detection.');
 } finally {
     await browser.close();
 }
