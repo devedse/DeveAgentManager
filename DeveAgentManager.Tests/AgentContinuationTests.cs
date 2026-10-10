@@ -512,6 +512,30 @@ public sealed class AgentContinuationTests
     }
 
     [Fact]
+    public async Task EnablingAutomatic_SchedulesALimitAlreadyOnScreenAtOnce()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct);
+        // No background check yet: the dialog that switched it on shows the next continue straight away.
+        var limit = await rig.Service.GetAsync(rig.Id, Ct);
+        Assert.Equal("Scheduled", limit!.Status);
+        Assert.Equal(rig.Clock.Utc.AddMinutes(3).UtcDateTime, limit.ContinueAt);
+        Assert.Equal("Waiting until one minute after the detected reset.", (await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Detail);
+        Assert.Equal(0, rig.Terminal.Sends);
+    }
+
+    [Fact]
+    public async Task EnablingAutomatic_SaysAtOnceWhenTheLimitOnScreenHasNoResetTime()
+    {
+        await using var rig = await Rig.Create();
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.Codex("an unknown time") };
+        await rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct);
+        Assert.Contains("reset time is uncertain", (await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Detail);
+        Assert.NotEqual("Scheduled", await rig.StatusAsync());
+        Assert.Equal(0, rig.Terminal.Sends);
+    }
+
+    [Fact]
     public async Task AutomaticUnlimitedWaitsForDraftAndCanBeTurnedOff()
     {
         await using var rig = await Rig.Create();

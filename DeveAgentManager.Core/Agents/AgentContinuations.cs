@@ -75,8 +75,30 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             }
             await db.SaveChangesAsync(ct);
             events.AgentChanged(agent.RunnerId, id);
+            if (enabled) await ApplyToCurrentLimitAsync(id, ct);
         }
         finally { gate.Release(); }
+    }
+
+    /// <summary>
+    /// Just switched on: a usage limit already on screen is scheduled now (or explained, when its reset time is unknown),
+    /// rather than at the next background check, so the dialog that switched it on shows what will happen.
+    /// </summary>
+    private async Task ApplyToCurrentLimitAsync(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            await RefreshLockedAsync(id, false, ct);
+            // A limit seen for the first time is only recorded; arming happens on the next check, which is now.
+            await using var db = await factory.CreateDbContextAsync(ct);
+            if (await db.AgentLimits.AnyAsync(l => l.AgentId == id && l.Status == "Detected" && !l.Manual, ct))
+                await RefreshLockedAsync(id, false, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // The terminal can't be read right now: the background check does it later.
+            logger.LogDebug(ex, "Could not check agent {Agent} for a usage limit after enabling automatic continuation", id);
+        }
     }
 
     public async Task<AgentLimitDto?> GetAsync(Guid id, CancellationToken ct)

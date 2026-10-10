@@ -24,8 +24,14 @@
                 <MudNumericField T="int" @bind-Value="_remaining" Label="Continuations remaining" Min="1" Max="10000" Variant="Variant.Outlined" Disabled="_busy" />
             }
             else { <MudText Typo="Typo.body2">Unlimited continuations</MudText> }
+            @* The limit on screen now, and its reset: what switching on (or what is on) will do with it. *@
+            @if (!Limit.Manual && Limit.Status is not ("Sent" or "Cancelled"))
+            {
+                <MudText Class="mt-3">@Limit.Message</MudText>
+                <MudText Typo="Typo.body2">@_resetDescription</MudText>
+            }
             @if (Automatic.Detail is not null) { <MudAlert Severity="Severity.Info" Class="mt-3">@Automatic.Detail</MudAlert> }
-            @if (_enabled && Limit.Status == "Scheduled") { <MudText Class="mt-2">Next continue: @_continueDescription</MudText> }
+            @if (_enabled && Limit.Status == "Scheduled" && _continueDescription is not null) { <MudText Class="mt-2">Next continue: <b>@_continueDescription</b></MudText> }
             <MudText Class="mt-3" Typo="Typo.body2">Sends so far: @Automatic.Sent.</MudText>
         }
         else if (_enabled)
@@ -114,7 +120,7 @@
     private DateTime? _date;
     private TimeSpan? _time;
     private string _zone = "Loading…";
-    private string _resetDescription = "The reset time needs confirmation.";
+    private string _resetDescription = "";
     private string? _continueDescription;
     private string? _error;
     private bool _busy, _loaded, _relative, _hours;
@@ -128,7 +134,7 @@
         _limited = Automatic.Remaining is not null;
         _remaining = Math.Max(1, Automatic.Remaining ?? 1);
         _relative = Limit.Manual;
-        if (Limit.Manual) { _amount = 1; _resetDescription = "Test a one-time continuation without waiting for a usage limit."; }
+        if (Limit.Manual) _amount = 1;
         try
         {
             var local = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", Limit.ResetAt ?? Limit.DetectedResetAt ?? DateTime.UtcNow);
@@ -139,21 +145,33 @@
                 _time = TimeSpan.Parse(local.Time, CultureInfo.InvariantCulture);
 
             }
-            if (Limit.DetectedResetAt is { } detected)
-            {
-                var original = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", detected);
-                _resetDescription = $"Detected reset: {original.Date} {original.Time} ({original.Zone}). Message timezone: {Limit.TimeZoneId ?? "unknown"}.";
-            }
-            else if (!Limit.Manual && Limit.ResetAt is not null)
-                _resetDescription = "Using your previously selected reset. The message's reset time could not be detected.";
-            if (Limit.ContinueAt is { } scheduled)
-            {
-                var next = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", scheduled);
-                _continueDescription = $"{next.Date} {next.Time} ({next.Zone})";
-            }
+            await DescribeAsync();
             _loaded = true;
         }
         catch (JSException) { _error = "Could not read your local timezone. Reopen this dialog to try again."; }
+    }
+
+    /// <summary>The detected reset and the next continue in local time; again whenever the limit was reloaded.</summary>
+    private async Task DescribeAsync()
+    {
+        if (Limit.DetectedResetAt is { } detected)
+        {
+            var original = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", detected);
+            _resetDescription = $"Detected reset: {original.Date} {original.Time} ({original.Zone}). Message timezone: {Limit.TimeZoneId ?? "unknown"}.";
+        }
+        else
+        {
+            _resetDescription = Limit.Manual ? "Test a one-time continuation without waiting for a usage limit."
+                : Limit.ResetAt is not null ? "Using your previously selected reset. The message's reset time could not be detected."
+                : "No reset time was found in the message: it needs to be chosen by hand.";
+        }
+
+        _continueDescription = null;
+        if (Limit.ContinueAt is { } scheduled)
+        {
+            var next = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", scheduled);
+            _continueDescription = $"{next.Date} {next.Time} ({next.Zone})";
+        }
     }
 
     private async Task ToggleAutomaticAsync(bool enabled)
@@ -166,6 +184,8 @@
             _enabled = Automatic.Enabled;
             Limit = await Api.GetAgentLimitAsync(AgentId) ?? new("Manual continuation — no usage limit is required.", null, DateTime.UtcNow, null, null, "Detected", null, false, true);
             _relative = Limit.Manual;
+            // Switching on schedules a limit that is on screen right away: show when the continue goes.
+            await DescribeAsync();
             _error = null;
         }
         catch (Exception ex) { _error = ex.Message; }
