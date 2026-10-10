@@ -41,7 +41,8 @@ Cancellation signals only the recorded local process group after identity checks
 it does not claim a remote workload stopped. Never use it as destructive recovery.
 
 Delivery shares the terminal input lock with quick commands and continuations. A
-durable key binds job/event, agent and conversation. `SENDING` is flushed before
+durable key binds runner/event, agent and conversation, so registering the same
+event as another job does not deliver it twice. `SENDING` is flushed before
 typing, and `SENT` after Enter. A retry after acknowledgement loss returns `SENT`
 without typing. An interrupted ambiguous send becomes `UNCERTAIN`, requires
 inspection and is never automatically resubmitted. This gives duplicate-resistant,
