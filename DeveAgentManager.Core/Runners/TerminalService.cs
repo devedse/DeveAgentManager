@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Ssh;
@@ -47,8 +48,8 @@ public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactor
         return await OpenAsync(runner, command, columns, rows, cancellationToken);
     }
 
-    /// <summary>Largest image that can be pasted into a terminal.</summary>
-    public const long MaxImageBytes = 25 * 1024 * 1024;
+    /// <summary>Largest file (an image, a log, …) that can be pasted into a terminal.</summary>
+    public const long MaxUploadBytes = 25 * 1024 * 1024;
 
     /// <summary>The image types harnesses can send to a model (pi: PNG, JPEG, WebP and GIF).</summary>
     private static readonly Dictionary<string, string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -59,31 +60,49 @@ public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactor
         ["image/gif"] = "gif",
     };
 
-    /// <summary>Folder on the Runner for images pasted into terminals, outside any repository.</summary>
+    /// <summary>Folder on the Runner for files pasted into terminals, outside any repository.</summary>
     public const string UploadFolder = "~/.deveagentmanager/uploads";
 
     /// <summary>
-    /// Stores an image pasted into a terminal on the terminal's Runner and returns its path there. The terminal then gets
-    /// the path as text, like pi's own Ctrl+V does with an image from the local clipboard: the harness sends the image
-    /// to the model from that file.
+    /// Stores a file pasted into a terminal (a screenshot, a log, …) on the terminal's Runner and returns its path there.
+    /// The terminal then gets the path as text, like pi's own Ctrl+V does with an image from the local clipboard: the
+    /// harness sends an image to the model from that file, and the agent can read any other file.
     /// </summary>
-    public async Task<string> UploadImageAsync(Guid? agentId, Guid? runnerId, string contentType, byte[] bytes, CancellationToken cancellationToken)
+    public async Task<string> UploadAsync(Guid? agentId, Guid? runnerId, string? fileName, byte[] bytes, CancellationToken cancellationToken)
     {
-        if (bytes.Length == 0 || bytes.Length > MaxImageBytes)
+        if (bytes.Length == 0 || bytes.Length > MaxUploadBytes)
         {
-            throw new ArgumentException($"Images can be up to {MaxImageBytes / 1024 / 1024} MB.");
-        }
-
-        // The type the browser reports can be wrong (Android pickers call screenshots image/jpeg): the content decides.
-        var detected = DetectImageType(bytes);
-        if (detected is null || !ImageExtensions.TryGetValue(detected, out var extension))
-        {
-            throw new ArgumentException($"Only PNG, JPEG, WebP and GIF images can be pasted (this is {(string.IsNullOrEmpty(contentType) ? "an unknown type" : contentType)}).");
+            throw new ArgumentException($"Files can be up to {MaxUploadBytes / 1024 / 1024} MB, and not empty.");
         }
 
         var runner = await FindRunnerAsync(agentId, runnerId, cancellationToken);
-        var name = $"{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..8]}.{extension}";
-        return await shell.UploadAsync(runner, $"{UploadFolder}/{name}", bytes, "600", cancellationToken);
+        return await shell.UploadAsync(runner, $"{UploadFolder}/{UploadName(fileName, bytes, DateTime.Now)}", bytes, "600", cancellationToken);
+    }
+
+    /// <summary>
+    /// Where a pasted file goes in <see cref="UploadFolder"/>. An image (by its content: the type the browser reports can
+    /// be wrong, Android pickers call screenshots image/jpeg) gets a fresh name with the extension harnesses expect. Any
+    /// other file keeps its own name, in a folder of its own, so the agent sees what it is.
+    /// </summary>
+    internal static string UploadName(string? fileName, ReadOnlySpan<byte> bytes, DateTime now)
+    {
+        var unique = $"{now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..8]}";
+        return DetectImageType(bytes) is { } type && ImageExtensions.TryGetValue(type, out var extension)
+            ? $"{unique}.{extension}"
+            : $"{unique}/{SafeFileName(fileName)}";
+    }
+
+    /// <summary>A file's name without folders, spaces or shell characters: it is pasted into the terminal as one path.</summary>
+    internal static string SafeFileName(string? fileName)
+    {
+        var name = Regex.Replace(Path.GetFileName((fileName ?? "").Replace('\\', '/')), "[^A-Za-z0-9._-]+", "-").Trim('-', '.');
+        if (name.Length > 100)
+        {
+            var extension = Path.GetExtension(name);
+            name = name[..(100 - extension.Length)] + extension;
+        }
+
+        return name.Length == 0 ? "file" : name;
     }
 
     /// <summary>The image type from the file's signature, or null when it isn't one of the supported types.</summary>

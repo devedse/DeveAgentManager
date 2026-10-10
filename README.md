@@ -298,10 +298,10 @@ means re-entering those secrets.
   nothing. The **screens** button in the terminal's toolbar (or the ⋮ menu when it has no room) shows what is
   attached and can disconnect a screen, which then says so and offers Reconnect.
 - **Pasting** into a terminal uses your computer's clipboard. Ctrl+V (or Ctrl+Shift+V, Shift+Insert) pastes text, and
-  also images such as screenshots. Images can be dropped on the terminal too, or picked with the **📎 Image** key
-  (on phones: gallery, camera, screenshots). Images are stored on the Runner in `~/.deveagentmanager/uploads`, and their
-  path is pasted into the terminal, like pi's own Ctrl+V does locally. The harness sends the image to the model.
-  PNG, JPEG, WebP and GIF images, up to 25 MB.
+  also images such as screenshots and files copied in your file manager, such as a log. Files can be dropped on the
+  terminal too, and images picked with the **📎 Image** key (on phones: gallery, camera, screenshots). They are stored
+  on the Runner in `~/.deveagentmanager/uploads`, and their path is pasted into the terminal, like pi's own Ctrl+V does
+  locally. The harness sends a PNG, JPEG, WebP or GIF image to the model; the agent reads other files. Up to 25 MB.
 
 ## Development
 

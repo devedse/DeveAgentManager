@@ -238,7 +238,7 @@
     [JSInvokable]
     public Task OnLoginResult(bool ok, string message) => LoginFinished.InvokeAsync((ok, message));
 
-    /// <summary>Progress of an image pasted into the terminal: "uploading" (with its name), "error" (with why), "done".</summary>
+    /// <summary>Progress of a file (an image, a log, …) pasted into the terminal: "uploading" (with its name), "error" (with why), "done".</summary>
     [JSInvokable]
     public void OnImageStatus(string phase, string text)
     {
@@ -248,7 +248,7 @@
                 _uploading = Snackbar.Add($"Uploading {text}...", Severity.Info, options => options.VisibleStateDuration = 60_000);
                 break;
             case "error":
-                Snackbar.Add($"Could not send the image: {text}", Severity.Error);
+                Snackbar.Add($"Could not send the file: {text}", Severity.Error);
                 break;
             default:
                 if (_uploading is not null)

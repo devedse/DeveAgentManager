@@ -3,18 +3,13 @@ using Xunit;
 
 namespace DeveAgentManager.Tests;
 
-/// <summary>Images pasted into a terminal are checked before anything is sent to a Runner.</summary>
+/// <summary>Files pasted into a terminal (images, logs, …) are checked and named before anything is sent to a Runner.</summary>
 public class ImageUploadTests
 {
     // The checks run before the database or a Runner is used.
     private static TerminalService Service() => new(null!, null!, null!, null!);
-
-    [Fact]
-    public async Task RefusesContentThatIsNoImage_WhateverTheBrowserSays()
-    {
-        var error = await Assert.ThrowsAsync<ArgumentException>(() => Service().UploadImageAsync(null, Guid.NewGuid(), "image/png", "<svg></svg>"u8.ToArray(), CancellationToken.None));
-        Assert.Contains("PNG, JPEG, WebP and GIF", error.Message);
-    }
+    private static readonly DateTime Now = new(2026, 10, 11, 1, 2, 3);
+    private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0];
 
     [Theory]
     [InlineData(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0 }, "image/png")]
@@ -25,10 +20,45 @@ public class ImageUploadTests
     public void DetectsTheTypeFromTheContent(byte[] bytes, string? type) => Assert.Equal(type, TerminalService.DetectImageType(bytes));
 
     [Fact]
-    public async Task RefusesEmptyAndTooBigImages()
+    public void Images_GetAFreshNameWithTheirRealExtension_WhateverTheyWereCalled()
     {
-        await Assert.ThrowsAsync<ArgumentException>(() => Service().UploadImageAsync(null, Guid.NewGuid(), "image/png", [], CancellationToken.None));
-        var tooBig = new byte[TerminalService.MaxImageBytes + 1];
-        await Assert.ThrowsAsync<ArgumentException>(() => Service().UploadImageAsync(null, Guid.NewGuid(), "image/png", tooBig, CancellationToken.None));
+        Assert.Matches("^20261011-010203-[0-9a-f]{8}\\.png$", TerminalService.UploadName("Screenshot 2026.jpg", Png, Now));
+        Assert.Matches("^20261011-010203-[0-9a-f]{8}\\.png$", TerminalService.UploadName(null, Png, Now));
+    }
+
+    [Fact]
+    public void OtherFiles_KeepTheirNameInAFolderOfTheirOwn()
+    {
+        Assert.Matches("^20261011-010203-[0-9a-f]{8}/manager\\.log$", TerminalService.UploadName("manager.log", "started"u8, Now));
+        // An SVG or BMP isn't sent to the model as an image; the agent can still open the file.
+        Assert.Matches("/drawing\\.svg$", TerminalService.UploadName("drawing.svg", "<svg></svg>"u8, Now));
+        Assert.NotEqual(TerminalService.UploadName("a.log", "x"u8, Now), TerminalService.UploadName("a.log", "x"u8, Now));
+    }
+
+    [Theory]
+    [InlineData("manager.log", "manager.log")]
+    [InlineData("my log (1).txt", "my-log-1-.txt")]
+    [InlineData("C:\\Users\\me\\Downloads\\app.log", "app.log")]
+    [InlineData("../../etc/passwd", "passwd")]
+    [InlineData("rm -rf $(whoami); `x`.sh", "rm--rf-whoami-x-.sh")]
+    [InlineData("..", "file")]
+    [InlineData("", "file")]
+    [InlineData(null, "file")]
+    public void FileNames_BecomeOnePathWithoutFoldersOrShellCharacters(string? name, string expected) => Assert.Equal(expected, TerminalService.SafeFileName(name));
+
+    [Fact]
+    public void LongFileNames_AreCutKeepingTheirExtension()
+    {
+        var name = TerminalService.SafeFileName(new string('a', 300) + ".log");
+        Assert.Equal(100, name.Length);
+        Assert.EndsWith(".log", name);
+    }
+
+    [Fact]
+    public async Task RefusesEmptyAndTooBigFiles()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => Service().UploadAsync(null, Guid.NewGuid(), "a.log", [], CancellationToken.None));
+        var tooBig = new byte[TerminalService.MaxUploadBytes + 1];
+        await Assert.ThrowsAsync<ArgumentException>(() => Service().UploadAsync(null, Guid.NewGuid(), "a.log", tooBig, CancellationToken.None));
     }
 }

@@ -304,16 +304,17 @@
         }, { capture: true, passive: true });
     }
 
-    // Images into the terminal: pasted (Ctrl+V), dropped, or picked with the "📎 Image" key (phones: gallery, camera,
-    // screenshots). The Manager stores them on the Runner and returns the path, which is pasted into the terminal as
-    // text, like pi's own Ctrl+V does with an image from the local clipboard. The harness sends the file to the model.
+    // Files into the terminal: images and any other file (a log, …), pasted (Ctrl+V, also a file copied in the file
+    // manager), dropped, or (images) picked with the "📎 Image" key (phones: gallery, camera, screenshots). The Manager
+    // stores them on the Runner and returns the path, which is pasted into the terminal as text, like pi's own Ctrl+V
+    // does with an image from the local clipboard. The harness sends an image to the model; the agent reads other files.
     const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
-    function imageFiles(dataTransfer) {
-        return Array.from(dataTransfer?.files ?? []).filter(file => file.type.startsWith("image/"));
+    function pastedFiles(dataTransfer) {
+        return Array.from(dataTransfer?.files ?? []);
     }
 
-    const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // TerminalService.MaxImageBytes
+    const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // TerminalService.MaxUploadBytes
     const IMAGE_CHUNK_BYTES = 64 * 1024; // TerminalSocket.ImageChunkBytes
     let nextImageId = 1;
 
@@ -322,22 +323,22 @@
     // When the connection drops meanwhile (a bad network), it is sent again once the terminal has reconnected.
     async function uploadImage(id, file) {
         if (file.size > MAX_IMAGE_BYTES) {
-            throw new Error(`Images can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB.`);
+            throw new Error(`Files can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB.`);
         }
 
         const bytes = new Uint8Array(await file.arrayBuffer());
         if (bytes.length === 0) {
-            throw new Error("The image is empty.");
+            throw new Error(`${file.name || "The file"} is empty.`);
         }
 
         for (let attempt = 1; ; attempt++) {
             const connection = attempt === 1 ? openConnection(id) : await reconnected(id, 30000);
             if (!connection) {
-                throw new Error(attempt === 1 ? "The terminal isn't connected." : "The connection dropped and didn't come back. Paste the image again.");
+                throw new Error(attempt === 1 ? "The terminal isn't connected." : "The connection dropped and didn't come back. Paste it again.");
             }
 
             try {
-                return await sendImage(connection, file.type, bytes);
+                return await sendImage(connection, file.name, bytes);
             } catch (error) {
                 if (!error.dropped || attempt === 3) {
                     throw error;
@@ -366,12 +367,12 @@
         return null;
     }
 
-    function sendImage(connection, contentType, bytes) {
+    function sendImage(connection, name, bytes) {
         return new Promise((resolve, reject) => {
             const imageId = nextImageId++;
             connection.images.set(imageId, { resolve, reject });
             // Header and bytes in one go, without awaiting: nothing typed meanwhile can end up between them.
-            connection.socket.send(JSON.stringify({ type: "image", id: imageId, contentType, size: bytes.length }));
+            connection.socket.send(JSON.stringify({ type: "image", id: imageId, name: name ?? "", size: bytes.length }));
             for (let offset = 0; offset < bytes.length; offset += IMAGE_CHUNK_BYTES) {
                 connection.socket.send(bytes.subarray(offset, offset + IMAGE_CHUNK_BYTES));
             }
@@ -383,7 +384,7 @@
     async function sendImages(terminal, dotnet, id, files, afterPaste) {
         const paths = [];
         for (const file of files) {
-            dotnet?.invokeMethodAsync("OnImageStatus", "uploading", `${file.name || "image"} (${Math.max(1, Math.round(file.size / 1024))} KB)`);
+            dotnet?.invokeMethodAsync("OnImageStatus", "uploading", `${file.name || "file"} (${Math.max(1, Math.round(file.size / 1024))} KB)`);
             try {
                 paths.push(await uploadImage(id, file));
             } catch (error) {
@@ -403,10 +404,12 @@
     function enableImagePaste(terminal, element, dotnet, id, afterPaste) {
         // Capture phase: before xterm.js (and the phone keyboard input) handle the paste as text.
         element.addEventListener("paste", event => {
-            const files = imageFiles(event.clipboardData);
-            // Text wins when there is some: copying from a spreadsheet or a web page puts a picture next to it too.
+            const files = pastedFiles(event.clipboardData);
+            // Text wins when there is some (copying from a spreadsheet or a web page puts a picture next to it too), unless
+            // a file was copied in the file manager: then the text, if any, is just its name or local path.
             const text = event.clipboardData?.getData("text/plain") ?? "";
-            if (files.length === 0 || text.trim().length > 0) {
+            const copiedFile = files.some(file => !file.type.startsWith("image/") || (file.name && text.includes(file.name)));
+            if (files.length === 0 || (text.trim().length > 0 && !copiedFile)) {
                 return;
             }
 
@@ -423,7 +426,7 @@
         });
 
         element.addEventListener("drop", event => {
-            const files = imageFiles(event.dataTransfer);
+            const files = pastedFiles(event.dataTransfer);
             if (files.length === 0) {
                 return;
             }

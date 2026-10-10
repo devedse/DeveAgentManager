@@ -309,8 +309,8 @@ public static class TerminalSocket
     public const string Resize = "resize";
 
     /// <summary>
-    /// An image for the terminal's Runner. Client to server: <c>id</c>, <c>contentType</c>, <c>size</c>, followed by exactly
-    /// <c>size</c> bytes in binary frames (they are the image, not input). Server to client: <c>id</c> and the stored
+    /// A file for the terminal's Runner (an image, a log, …). Client to server: <c>id</c>, <c>name</c> (the file's name, may
+    /// be empty), <c>size</c>, followed by exactly <c>size</c> bytes in binary frames (they are the file, not input). Server to client: <c>id</c> and the stored
     /// file's <c>path</c>, or an <c>error</c>. Over the socket rather than an HTTP upload, so a reverse proxy's request
     /// size limit (nginx: 1 MB by default) doesn't apply.
     /// </summary>

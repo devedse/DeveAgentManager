@@ -10,6 +10,7 @@ using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Ssh;
 using DeveAgentManager.Core.Users;
+// A pasted file (its name, which may be empty, and bytes) to the terminal's Runner; returns its path there.
 using ImageUploader = System.Func<string, byte[], System.Threading.CancellationToken, System.Threading.Tasks.Task<string>>;
 
 namespace DeveAgentManager.Api;
@@ -74,7 +75,7 @@ public static partial class TerminalSocketEndpoint
                         using (Watch(async (current, ct) => await access.AgentAsync(current, agentId, ct) >= needed))
                         {
                             await session.RunAsync(await terminals.OpenAgentAsync(agentId, readOnly, columns, rows, context.RequestAborted), agentId, agents, login: null,
-                                readOnly ? null : (type, bytes, ct) => terminals.UploadImageAsync(agentId, null, type, bytes, ct), readOnly, revoked.Token);
+                                readOnly ? null : (name, bytes, ct) => terminals.UploadAsync(agentId, null, name, bytes, ct), readOnly, revoked.Token);
                         }
 
                         break;
@@ -88,7 +89,7 @@ public static partial class TerminalSocketEndpoint
                         using (Watch(async (current, ct) => await access.RunnerAsync(current, runnerId, ct) >= RunnerAccess.Use))
                         {
                             await session.RunAsync(await terminals.OpenShellAsync(runnerId, user.Id, columns, rows, context.RequestAborted), null, agents, login: null,
-                                (type, bytes, ct) => terminals.UploadImageAsync(null, runnerId, type, bytes, ct), readOnly: false, revoked.Token);
+                                (name, bytes, ct) => terminals.UploadAsync(null, runnerId, name, bytes, ct), readOnly: false, revoked.Token);
                         }
 
                         break;
@@ -210,7 +211,7 @@ public static partial class TerminalSocketEndpoint
             var buffer = new byte[64 * 1024];
             var sizeClaimed = false;
             // An image being received: its announced bytes arrive in binary frames, which are not terminal input.
-            (JsonNode? Id, string ContentType, MemoryStream Bytes, long Size)? image = null;
+            (JsonNode? Id, string Name, MemoryStream Bytes, long Size)? image = null;
             try
             {
                 while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
@@ -246,7 +247,7 @@ public static partial class TerminalSocketEndpoint
                         {
                             image = null;
                             // Stored while the terminal goes on; the answer names the image it is for.
-                            _ = UploadImageAsync(uploadImage!, receiving.Id, receiving.ContentType, receiving.Bytes, cancellationToken);
+                            _ = UploadImageAsync(uploadImage!, receiving.Id, receiving.Name, receiving.Bytes, cancellationToken);
                         }
                     }
                     else if (received.MessageType == WebSocketMessageType.Binary && readOnly)
@@ -276,12 +277,12 @@ public static partial class TerminalSocketEndpoint
                         // The browser checks the size first, so a wrong one isn't from the Portal: stop rather than type the
                         // image's bytes into the terminal.
                         var size = (long?)control["size"] ?? 0;
-                        if (uploadImage is null || image is not null || size <= 0 || size > TerminalService.MaxImageBytes)
+                        if (uploadImage is null || image is not null || size <= 0 || size > TerminalService.MaxUploadBytes)
                         {
                             throw new InvalidDataException("Unexpected image.");
                         }
 
-                        image = (control["id"]?.DeepClone(), (string?)control["contentType"] ?? "", new MemoryStream((int)size), size);
+                        image = (control["id"]?.DeepClone(), (string?)control["name"] ?? "", new MemoryStream((int)size), size);
                     }
                 }
             }
@@ -291,14 +292,14 @@ public static partial class TerminalSocketEndpoint
             }
         }
 
-        private async Task UploadImageAsync(ImageUploader uploadImage, JsonNode? id, string contentType, MemoryStream bytes, CancellationToken cancellationToken)
+        private async Task UploadImageAsync(ImageUploader uploadImage, JsonNode? id, string name, MemoryStream bytes, CancellationToken cancellationToken)
         {
             var answer = new JsonObject { ["type"] = TerminalSocket.Image, ["id"] = id };
             try
             {
                 using (bytes)
                 {
-                    answer["path"] = await uploadImage(contentType, bytes.ToArray(), cancellationToken);
+                    answer["path"] = await uploadImage(name, bytes.ToArray(), cancellationToken);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
