@@ -16,6 +16,15 @@
                 }
             </div>
         </MudNavLink>
+        @* While loading: rows like the running agents', and like the links that depend on the user's roles. *@
+        <LoadingSection Loaded="@(Loaded || LoadError is not null)" Label="Loading running agents">
+        <Placeholder>
+            @for (var i = 0; i < 2; i++)
+            {
+                <div class="nav-skeleton-row nav-skeleton-agent"><span class="skeleton nav-skeleton-avatar"></span><span class="skeleton nav-skeleton-line" style="@($"width:{(i == 0 ? 55 : 40)}%")"></span></div>
+            }
+        </Placeholder>
+        <ChildContent>
         @foreach (var agent in _liveAgents)
         {
             <MudNavLink Href="@($"agents/{agent.Id}")" Match="NavLinkMatch.All" Class="nav-agent">
@@ -29,6 +38,8 @@
                 </div>
             </MudNavLink>
         }
+        </ChildContent>
+        </LoadingSection>
         <MudNavLink Href="sessions" Icon="@Icons.Material.Rounded.Forum">Sessions</MudNavLink>
         <MudNavLink Href="runners" Icon="@Icons.Material.Rounded.Dns">
             <div class="nav-link-row">
@@ -41,6 +52,11 @@
         </MudNavLink>
         <div class="nav-section">Manage</div>
         <MudNavLink Href="settings" Icon="@Icons.Material.Rounded.Tune">My settings</MudNavLink>
+        <LoadingSection Loaded="@(Loaded || LoadError is not null)" Announce="false">
+        <Placeholder>
+            <div class="nav-skeleton-row"><span class="skeleton nav-skeleton-icon"></span><span class="skeleton nav-skeleton-line" style="width:50%"></span></div>
+        </Placeholder>
+        <ChildContent>
         @if (_user?.Has(UserRoles.SettingsManager) == true)
         {
             <MudNavLink Href="manager-settings" Icon="@Icons.Material.Rounded.SettingsApplications">Manager settings</MudNavLink>
@@ -50,6 +66,8 @@
             <MudNavLink Href="users" Icon="@Icons.Material.Rounded.Group">Users</MudNavLink>
             <MudNavLink Href="audit" Icon="@Icons.Material.Rounded.Policy">Audit log</MudNavLink>
         }
+        </ChildContent>
+        </LoadingSection>
     </MudNavMenu>
 
     <div class="nav-footer">

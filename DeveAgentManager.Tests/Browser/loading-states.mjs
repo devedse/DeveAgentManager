@@ -11,6 +11,7 @@ const now = new Date().toISOString();
 const id = n => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
 const runner = { id: id(1), name: 'runner-01', ownerId: id(9), ownerName: 'Test user', access: 'Owner', providerId: 'existing', kind: 'Headless', state: 'Ready',
     host: 'runner.test', cores: 4, memoryMb: 8192, diskGb: 64, agents: [], harnessIds: ['claude'], toolIds: [], createdAt: now, updatedAt: now };
+// The navigation lists the running agents from the Runners.
 const agent = n => ({ id: id(10 + n), runnerId: id(1), ownerId: id(9), ownerName: 'Test user', access: 'Owner', runnerName: 'runner-01', runnerState: 'Ready',
     runnerHarnessIds: ['claude'], runnerToolIds: [], name: `agent-${n}`, harnessId: 'claude', workingDirectory: `/work/agent-${n}`, state: 'Running',
     loginOwnerId: id(9), loginOwnerName: 'Test user', createdAt: now, updatedAt: now });
@@ -61,7 +62,7 @@ let delay = 0;                 // ms for every mocked API answer
 const slow = new Set();        // paths answered after `delay`; others at once
 let failing = new Set();       // paths answered with a 500
 let agents = [agent(1), agent(2)];
-let runners = [runner];
+let runners = [{ ...runner, agents: [agent(1)] }];
 await context.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/build') return route.continue();
@@ -91,8 +92,12 @@ try {
     assert.equal(await page.getByText('No agents', { exact: true }).count(), 0, 'no empty state while loading');
     assert.equal(await page.locator('.stat-value').filter({ hasText: /\d/ }).count(), 0, 'no zeros while loading');
     assert.equal(await page.locator('.stat-grid').getAttribute('aria-busy'), 'true');
+    assert.equal(await opacity(page.locator('.nav-skeleton-agent')), 1, 'the navigation shows where its running agents will be');
+    assert.equal(await page.locator('.app-nav').getByText('agent-1').count(), 0);
     await page.screenshot({ path: '/tmp/dam-loading-dashboard.png' });
     await page.getByText('agent-1', { exact: true }).first().waitFor({ timeout: 10000 });
+    await page.locator('.app-nav').getByText('agent-1').waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('.nav-skeleton-agent').count(), 0);
     assert.equal(await page.locator('.stat-value').first().textContent(), '2 / 2');
     assert.equal(await page.locator('.loading-placeholder').count(), 0);
 
