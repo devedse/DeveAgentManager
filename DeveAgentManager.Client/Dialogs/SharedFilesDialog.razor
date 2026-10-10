@@ -1,0 +1,12 @@
+<MudDialog>
+    <DialogContent><SessionFilesView SessionId="SessionId" /></DialogContent>
+    <DialogActions><MudButton OnClick="() => Dialog.Close()">Close</MudButton></DialogActions>
+</MudDialog>
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Guid SessionId { get; set; }
+
+    public static Task OpenAsync(IDialogService dialogs, Guid sessionId) => dialogs.ShowAsync<SharedFilesDialog>("Shared files",
+        new DialogParameters<SharedFilesDialog> { { d => d.SessionId, sessionId } },
+        new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Medium, CloseButton = true });
+}

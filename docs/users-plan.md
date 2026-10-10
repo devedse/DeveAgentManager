@@ -69,7 +69,7 @@ An agent's owner can share it with other users, **read-only** or **read-write**,
 
 | Level | Can |
 |---|---|
-| **Read-only** | Read its conversations and shared images, export them, watch the live terminal (the server drops any input) |
+| **Read-only** | Read its conversations and shared images, download its shared files, export them, watch the live terminal (the server drops any input) |
 | **Read-write** | Also type in the terminal and prompt the agent |
 
 - A read-write user prompts **with the harness login the agent is using**, which can be the owner's. That's accepted:
@@ -154,7 +154,8 @@ loopback, so neither is a way in.)
   reset forces a change at the next login. Single sign-on (OIDC, e.g. Authentik or Keycloak) is optional later.
 - **One access service** with every check (can see / use / manage a Runner, can read / write an agent, can see a
   conversation, has role). Used by all API endpoints (~80), the terminal socket (agents, shells, logins), the VS Code
-  proxy, desktop frames and snapshots, shared images and session export.
+  proxy, desktop frames and snapshots, shared images and files, and session export. Deleting a shared file takes
+  ownership of the conversation.
 - **Lists show only what you may see**, and other users' things answer 404 (not 403), so IDs don't reveal what exists.
 - **Live updates**: today every change goes to every browser (`Clients.All`). Each event goes only to the users who can
   see that Runner, agent or conversation; following a setup log checks access.

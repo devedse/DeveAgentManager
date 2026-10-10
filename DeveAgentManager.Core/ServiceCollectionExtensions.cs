@@ -60,6 +60,9 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<AgentJobCompletions>();
         services.AddSingleton<SessionImages>();
         services.AddHostedService(sp => sp.GetRequiredService<SessionImages>());
+        services.AddSingleton<SessionFileStore>();
+        services.AddSingleton<SessionFiles>();
+        services.AddHostedService(sp => sp.GetRequiredService<SessionFiles>());
         services.AddSingleton<Accounts.AccountService>();
         services.AddSingleton<AgentService>();
         services.AddSingleton<AgentAttentionService>();
@@ -72,6 +75,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IEditorUpstreams>(sp => sp.GetRequiredService<EditorTunnels>());
         services.AddHostedService(sp => sp.GetRequiredService<EditorTunnels>());
         services.AddHostedService<RunnerMonitor>();
+        services.AddHostedService<AgentToolsSync>();
         services.AddHostedService<Accounts.AccountRenewalService>();
         services.AddHostedService<RunnerUsageMonitor>();
         services.AddSingleton<AgentIconService>();

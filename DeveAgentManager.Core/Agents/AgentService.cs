@@ -741,6 +741,8 @@ public sealed partial class AgentService(
     internal const string LaunchInstructions =
         "This agent runs in DeveAgentManager. To show the user an image, such as a screenshot or chart, run "
         + "`dam-tools share-image <file> --caption \"<what it shows>\"`; it appears in their conversation. "
+        + "To give the user a file to download, such as a built APK or installer, run "
+        + "`dam-tools share-file <file> --caption \"<what it is>\"`. "
         + "Run `dam-tools --help` for other tools.";
 
     private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool useDefaultModel = false)

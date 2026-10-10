@@ -38,6 +38,7 @@
             @if (_sessionId is { } sessionId)
             {
                 <span class="toolbar-wide"><SessionImageButton @key="sessionId" SessionId="sessionId" /></span>
+                <SessionFileButton @key="(sessionId, nameof(SessionFileButton))" SessionId="sessionId" Class="toolbar-wide" />
                 <span class="toolbar-wide"><MudTooltip Text="Conversation">
                     <MudIconButton Href="@($"sessions/{sessionId}")" Icon="@Icons.Material.Rounded.Forum" Size="Size.Small" aria-label="Conversation" />
                 </MudTooltip></span>
@@ -80,6 +81,7 @@
                         {
                             <MudMenuItem Icon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{menuSessionId}")">Conversation</MudMenuItem>
                             <MudMenuItem Icon="@Icons.Material.Rounded.PhotoLibrary" OnClick="OpenImagesAsync">Shared images</MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Rounded.FileDownload" OnClick="() => SharedFilesDialog.OpenAsync(Dialogs, menuSessionId)">Shared files</MudMenuItem>
                         }
                         <MudMenuItem Icon="@Icons.Material.Rounded.Share" OnClick="ShareAsync">Sharing</MudMenuItem>
                         @if (write && _agent.RunnerKind == RunnerKind.Desktop)

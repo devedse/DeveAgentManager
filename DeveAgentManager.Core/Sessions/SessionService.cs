@@ -23,6 +23,7 @@ public sealed class SessionService(
     IEnumerable<ISessionFormat> formats,
     IEnumerable<IHarness> harnesses,
     SessionImageStore images,
+    SessionFileStore files,
     ManagerOptions options,
     ManagerEvents events,
     ILogger<SessionService> logger)
@@ -390,9 +391,19 @@ public sealed class SessionService(
         await db.Sessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync(cancellationToken);
         File.Delete(PathFor(sessionId));
         images.DeleteSession(sessionId);
+        files.DeleteSession(sessionId);
         if (Directory.Exists(options.SessionsDirectory))
             foreach (var backup in Directory.EnumerateFiles(options.SessionsDirectory, $"{sessionId:N}.*.json")) File.Delete(backup);
         events.Publish(new ManagerEvent(ManagerEventKind.SessionRemoved, SessionId: sessionId));
+    }
+
+    /// <summary>Removes a file an agent shared from the conversation; false when it wasn't there.</summary>
+    public async Task<bool> DeleteFileAsync(Guid sessionId, Guid fileId, CancellationToken ct)
+    {
+        using var lease = await LockAsync(ct);
+        if (!await files.DeleteAsync(sessionId, fileId, ct)) return false;
+        events.SessionChanged(sessionId);
+        return true;
     }
 
     public async Task RenameAsync(Guid id, string title, CancellationToken ct)
@@ -414,7 +425,7 @@ public sealed class SessionService(
         return title;
     }
 
-    /// <summary>A copy of someone's conversation for <paramref name="ownerId"/>: its content and its shared images, not its history of moves.</summary>
+    /// <summary>A copy of someone's conversation for <paramref name="ownerId"/>: its content and its shared images and files, not its history of moves.</summary>
     private async Task<StoredSession> CopyAsync(ManagerDbContext db, StoredSession source, Guid ownerId, CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
@@ -438,6 +449,7 @@ public sealed class SessionService(
         }
 
         await images.CopyAsync(source.Id, copy.Id, cancellationToken);
+        await files.CopyAsync(source.Id, copy.Id, cancellationToken);
         db.Sessions.Add(copy);
         return copy;
     }

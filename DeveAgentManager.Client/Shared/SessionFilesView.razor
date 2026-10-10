@@ -1,0 +1,86 @@
+@inherits LiveComponent
+@inject IDialogService Dialogs
+
+@if (_files.Count > 0)
+{
+    <ul class="session-file-list">
+        @foreach (var file in _files)
+        {
+            <li class="session-file" @key="file.Id">
+                <span class="session-file-icon" aria-hidden="true"><MudIcon Icon="@Icon(file.FileName)" /></span>
+                <div class="session-file-text">
+                    <span class="session-file-name">@file.FileName</span>
+                    @if (file.Caption.Length > 0)
+                    {
+                        <span class="session-file-caption">@file.Caption</span>
+                    }
+                    <small class="session-file-meta">@FileSize(file.Bytes) · @file.CreatedAt.Humanize() · <span class="mono" title="@($"SHA-256 {file.Sha256}")">SHA-256 @file.Sha256[..12]…</span></small>
+                </div>
+                <div class="session-file-actions">
+                    @* download: the browser saves it, and Blazor's router leaves the link alone. *@
+                    <MudButton Href="@ManagerApi.DownloadUrl(file)" download="@file.FileName" Class="session-file-download" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Rounded.Download" aria-label="@($"Download {file.FileName}")">Download</MudButton>
+                    @if (_canDelete == true)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Size="Size.Small" OnClick="() => DeleteAsync(file)"
+                                       aria-label="@($"Delete {file.FileName}")" title="Delete" />
+                    }
+                </div>
+            </li>
+        }
+    </ul>
+}
+else if (Loaded)
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary">No shared files yet.</MudText>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid SessionId { get; set; }
+    private List<SessionFileDto> _files = [];
+    private bool? _canDelete;
+
+    protected override bool IsRelevant(ManagerEvent e) => e.SessionId == SessionId;
+
+    protected override async Task LoadAsync()
+    {
+        _files = await Api.GetSessionFilesAsync(SessionId);
+        // Only the conversation's owner deletes; asked once, not on every conversation update.
+        _canDelete ??= (await Api.GetSessionAsync(SessionId))?.Access == SessionAccess.Owner;
+    }
+
+    private async Task DeleteAsync(SessionFileDto file)
+    {
+        if (await Dialogs.ShowMessageBoxAsync($"Delete {file.FileName}?", "It is removed from this conversation for everyone who can open it. This can't be undone.",
+                yesText: "Delete", cancelText: "Cancel") != true) return;
+        try
+        {
+            await Api.DeleteSessionFileAsync(file);
+            _files.Remove(file);
+        }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    internal static string FileSize(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} bytes",
+        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KiB",
+        < 1024L * 1024 * 1024 => $"{bytes / 1048576.0:0.#} MiB",
+        _ => $"{bytes / 1073741824.0:0.##} GiB",
+    };
+
+    internal static string Icon(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
+    {
+        ".apk" or ".aab" or ".apks" or ".xapk" => Icons.Material.Rounded.Android,
+        ".exe" or ".msi" or ".msix" or ".msixbundle" or ".appx" or ".appxbundle" or ".appinstaller" => Icons.Custom.Brands.Microsoft,
+        ".dmg" or ".pkg" or ".ipa" => Icons.Custom.Brands.Apple,
+        ".deb" or ".rpm" or ".appimage" or ".snap" or ".flatpak" => Icons.Material.Rounded.InstallDesktop,
+        ".zip" or ".7z" or ".rar" or ".tar" or ".gz" or ".tgz" or ".xz" or ".bz2" or ".zst" => Icons.Material.Rounded.FolderZip,
+        ".pdf" => Icons.Material.Rounded.PictureAsPdf,
+        ".txt" or ".log" or ".md" or ".csv" or ".json" or ".xml" => Icons.Material.Rounded.Description,
+        _ => Icons.Material.Rounded.InsertDriveFile,
+    };
+}

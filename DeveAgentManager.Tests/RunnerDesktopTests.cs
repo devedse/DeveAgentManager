@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Setup;
 using Xunit;
@@ -20,6 +21,26 @@ public class RunnerDesktopTests
         var error = process.StandardError.ReadToEnd();
         Assert.True(process.WaitForExit(30_000), "Desktop helper tests timed out.");
         Assert.True(process.ExitCode == 0, output + error);
+    }
+
+    [Fact]
+    public void AgentToolsChecksum_IsWhatSha256sumPrintsForTheUploadedScript()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var path = Path.Combine(Path.GetTempPath(), $"dam-tools-{Guid.NewGuid():N}.py");
+        try
+        {
+            // Uploaded as UTF-8 with Unix line endings, as RunnerShell.UploadAsync writes it.
+            File.WriteAllBytes(path, Encoding.UTF8.GetBytes(RunnerSetupService.ReadResource("dam-tools.py")));
+            using var process = Process.Start(new ProcessStartInfo("sha256sum", [path]) { RedirectStandardOutput = true })!;
+            var output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            Assert.Equal(output[..64], RunnerSetupService.AgentToolsSha256);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]

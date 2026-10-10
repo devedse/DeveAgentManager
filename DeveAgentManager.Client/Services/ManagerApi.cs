@@ -83,6 +83,9 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     // Runners
     public Task<List<SessionImageDto>> GetSessionImagesAsync(Guid sessionId) => GetAsync<List<SessionImageDto>>($"api/sessions/{sessionId}/images");
+    public Task<List<SessionFileDto>> GetSessionFilesAsync(Guid sessionId) => GetAsync<List<SessionFileDto>>($"api/sessions/{sessionId}/files");
+    public Task DeleteSessionFileAsync(SessionFileDto file) => SendAsync(HttpMethod.Delete, $"api/sessions/{file.SessionId}/files/{file.Id}");
+    public static string DownloadUrl(SessionFileDto file) => $"api/sessions/{file.SessionId}/files/{file.Id}/download";
     public Task<SessionImageDto> SaveDesktopSnapshotAsync(Guid runnerId, Guid sessionId) =>
         SendAsync<SessionImageDto>(HttpMethod.Post, $"api/runners/{runnerId}/desktop/snapshot", new SaveDesktopSnapshotRequest(sessionId));
 

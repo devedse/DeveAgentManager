@@ -100,11 +100,37 @@ Images appear under **Shared images** in the agent toolbar and conversation page
 download it. Images stay with the conversation across harness/session switches and runner deletion. Deleting the
 conversation removes its saved images. After successful import, the copy queued on the runner is removed.
 
+### Share files
+
+```bash
+dam-tools share-file build/app-release.apk --caption "Debug build with the new login screen"
+```
+
+For anything the user should download rather than look at: an APK, an installer, an archive or a report. Any
+regular file up to 1 GiB; archive a folder first. Like images, the tool takes a durable copy (so the original can be
+deleted), records its size and SHA-256, and the Manager collects it in the background over SFTP, streaming it to disk.
+Every runner is collected on its own, so a large transfer doesn't hold up the others. The Manager checks the size and
+checksum before the file appears, and drops a copy that changed after it was shared.
+
+Files appear under **Shared files**: a toolbar button with a count once a file exists (in the ⋮ menu on phones) and a
+panel on the conversation page. Each shows its name, caption, size, age and SHA-256. Downloads are always
+attachments that are never shown in the page, and they can be resumed. An APK downloads as an Android package, so the
+phone offers to install it. Anyone who can read the conversation can download its files; its owner can delete one
+for everyone. Files stay with the conversation across harness/session switches and runner deletion, are copied along
+when someone continues a copy of the conversation, and are removed when the conversation is deleted. They are stored
+in the Manager's data folder (`sessions/files`).
+
 ### How agents know about it
 
-The Manager adds two sentences about `dam-tools` to the system prompt of each harness it starts
+The Manager adds a few sentences about `dam-tools` (sharing images and files) to the system prompt of each harness it starts
 (`--append-system-prompt` for Claude Code and pi, `-c developer_instructions=…` for Codex). Nothing is written to
 `CLAUDE.md`, `AGENTS.md` or any other file, so it can't end up in a repository, and a harness started by hand over
 SSH doesn't get it. The harnesses record the system prompt when a conversation starts, so conversations started
 before a runner had `dam-tools` keep the prompt they started with. Runners get the sentences once Re-run setup has
 installed `dam-tools` (setup script version 4).
+
+### Keeping it current
+
+After that, the Manager keeps `dam-tools` current by itself: shortly after it starts (and after each setup) it
+compares the checksum of each Ready runner's copy with its own and replaces a different copy in one rename, so new
+commands work without re-running setup. An agent that is running `dam-tools` at that moment finishes with the old copy.

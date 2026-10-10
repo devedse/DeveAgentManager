@@ -1,0 +1,19 @@
+@inherits LiveComponent
+@inject IDialogService Dialogs
+@* Only there once the agent shared a file, so it stands out when one arrives. *@
+@if (_count > 0)
+{
+    <span class="@Class">
+        <MudBadge Content="@_count" Color="Color.Primary" Overlap="true">
+            <MudIconButton Icon="@Icons.Material.Rounded.FileDownload" Size="Size.Small" OnClick="() => SharedFilesDialog.OpenAsync(Dialogs, SessionId)"
+                           aria-label="@($"Shared files ({_count})")" title="Shared files" />
+        </MudBadge>
+    </span>
+}
+@code {
+    [Parameter] public Guid SessionId { get; set; }
+    [Parameter] public string? Class { get; set; }
+    private int _count;
+    protected override bool IsRelevant(ManagerEvent e) => e.SessionId == SessionId;
+    protected override async Task LoadAsync() => _count = (await Api.GetSessionFilesAsync(SessionId)).Count;
+}

@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using DeveAgentManager.Core.Abstractions;
@@ -32,6 +33,10 @@ public sealed partial class RunnerSetupService(
     public const int AgentToolsSetupVersion = 4;
 
     private static readonly Lazy<string> SetupScript = new(() => ReadResource("runner-setup.sh"));
+    private static readonly Lazy<string> AgentTools = new(() => ReadResource("dam-tools.py"));
+
+    /// <summary>What <c>sha256sum</c> prints for the dam-tools this Manager installs.</summary>
+    internal static string AgentToolsSha256 => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(AgentTools.Value)));
 
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
     private readonly Dictionary<string, IRunnerTool> _tools = tools.ToDictionary(t => t.Id);
@@ -96,7 +101,7 @@ public sealed partial class RunnerSetupService(
         await passwords.ApplyAtSetupAsync(runner, log, cancellationToken);
 
         // dam-tools: commands for agents, e.g. dam-tools share-image. dam-share was its earlier name.
-        await shell.UploadAsync(runner, "~/.deveagentmanager/dam-tools.py", ReadResource("dam-tools.py"), "700", cancellationToken);
+        await shell.UploadAsync(runner, "~/.deveagentmanager/dam-tools.py", AgentTools.Value, "700", cancellationToken);
         await RunScriptAsync(runner, log, "Agent tools", "mkdir -p ~/.local/bin; ln -sf ~/.deveagentmanager/dam-tools.py ~/.local/bin/dam-tools; rm -f ~/.local/bin/dam-share ~/.deveagentmanager/share-image.py", TimeSpan.FromSeconds(30), cancellationToken);
 
         if (runner.Kind == RunnerKind.Desktop)
@@ -358,6 +363,21 @@ public sealed partial class RunnerSetupService(
 
     private static string NormalizeMode(string? mode) =>
         mode is not null && Regex.IsMatch(mode.Trim(), "^[0-7]{3,4}$") ? mode.Trim() : "600";
+
+    /// <summary>
+    /// Replaces dam-tools on a set-up Runner when its copy differs from this Manager's, so new agent tools work without
+    /// re-running setup. True when it was updated.
+    /// </summary>
+    public async Task<bool> SyncAgentToolsAsync(Runner runner, CancellationToken cancellationToken)
+    {
+        var installed = await shell.RunAsync(runner, "sha256sum ~/.deveagentmanager/dam-tools.py 2>/dev/null | cut -c1-64", TimeSpan.FromSeconds(15), cancellationToken);
+        if (installed.Output.Trim() == AgentToolsSha256) return false;
+        await shell.UploadAsync(runner, "~/.deveagentmanager/dam-tools.py.new", AgentTools.Value, "700", cancellationToken);
+        // Renamed into place: an agent may be running dam-tools right now.
+        (await shell.RunAsync(runner, "mv -f ~/.deveagentmanager/dam-tools.py.new ~/.deveagentmanager/dam-tools.py && mkdir -p ~/.local/bin && ln -sf ~/.deveagentmanager/dam-tools.py ~/.local/bin/dam-tools",
+            TimeSpan.FromSeconds(15), cancellationToken)).EnsureSuccess("Updating dam-tools");
+        return true;
+    }
 
     internal static string ReadResource(string name)
     {

@@ -72,7 +72,7 @@ public sealed class SessionImageTests : IDisposable
         }
         var events = new ManagerEvents();
         var store = new SessionImageStore(Options);
-        var sessions = new SessionService(factory, null!, [], [], store, Options, events, NullLogger<SessionService>.Instance);
+        var sessions = new SessionService(factory, null!, [], [], store, new SessionFileStore(Options), Options, events, NullLogger<SessionService>.Instance);
         var images = new SessionImages(factory, null!, sessions, store, new AccessControl(factory), events, NullLogger<SessionImages>.Instance);
         await Assert.ThrowsAsync<ArgumentException>(() => images.SaveSnapshotAsync(TestUsers.Admin, Guid.NewGuid(), sessionId, Png, "", default));
         // Only who can write to the conversation's agent saves into it.

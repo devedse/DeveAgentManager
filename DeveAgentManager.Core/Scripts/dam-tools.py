@@ -2,6 +2,8 @@
 """DeveAgentManager tools for agents running on this runner."""
 import argparse
 import fcntl
+import hashlib
+import stat
 import subprocess
 import signal
 import time
@@ -15,6 +17,10 @@ import uuid
 
 ROOT = Path.home() / ".deveagentmanager/shared-images"
 MAX_BYTES = 10 * 1024 * 1024
+FILES = Path.home() / ".deveagentmanager/shared-files"
+MAX_FILE_BYTES = 1024 * 1024 * 1024
+# A copy interrupted by a crash leaves a staging folder; no real copy takes this long.
+STALE_STAGING_SECONDS = 6 * 60 * 60
 
 
 def image_type(data):
@@ -90,12 +96,98 @@ def pending():
     return records
 
 
-def acknowledge(ident):
-    folder = ROOT / uuid.UUID(ident).hex
+def acknowledge(ident, root=None):
+    folder = (root or ROOT) / uuid.UUID(ident).hex
     if folder.is_symlink():
-        raise ValueError("Invalid image folder.")
+        raise ValueError("Invalid outbox folder.")
     if folder.exists():
         shutil.rmtree(folder)
+
+
+def size_text(count):
+    if count < 1024:
+        return f"{count} bytes"
+    for unit in ("KiB", "MiB", "GiB"):
+        count /= 1024
+        if count < 1024 or unit == "GiB":
+            return f"{count:.1f} {unit}"
+
+
+def publish_file(path, agent, session, caption):
+    agent = uuid.UUID(agent).hex
+    session = uuid.UUID(session).hex
+    path = Path(path).expanduser()
+    if path.is_dir():
+        raise ValueError(f"{path} is a folder. Archive it first, e.g. zip -r {path.name}.zip {path.name}")
+    # Non-blocking, so a FIFO is refused instead of waiting for a writer.
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise ValueError(f"{path} is not a regular file.")
+        ident = uuid.uuid4().hex
+        FILES.mkdir(parents=True, mode=0o700, exist_ok=True)
+        temporary = FILES / (".pending-" + ident)
+        temporary.mkdir(mode=0o700)
+        try:
+            digest = hashlib.sha256()
+            size = 0
+            # Cap what is actually read, rather than trusting a prior stat: the file may still be growing.
+            with os.fdopen(os.open(temporary / "file", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as target:
+                while chunk := source.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_FILE_BYTES:
+                        raise ValueError("Files can be up to 1 GiB.")
+                    digest.update(chunk)
+                    target.write(chunk)
+                target.flush()
+                os.fsync(target.fileno())
+            if size == 0:
+                raise ValueError(f"{path.name} is empty.")
+            record = dict(id=str(uuid.UUID(ident)), agentId=str(uuid.UUID(agent)), sessionId=str(uuid.UUID(session)),
+                          fileName=clean(path.name, 128), caption=clean(caption, 500), bytes=size,
+                          sha256=digest.hexdigest(), createdAt=datetime.now(timezone.utc).isoformat())
+            (temporary / "metadata.json").write_text(json.dumps(record))
+            (temporary / "metadata.json").chmod(0o600)
+            temporary.rename(FILES / ident)
+            return record
+        finally:
+            if temporary.exists():
+                shutil.rmtree(temporary)
+
+
+def is_sha256(value):
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def pending_files():
+    records = []
+    if FILES.exists():
+        for folder in sorted(FILES.iterdir()):
+            try:
+                if folder.name.startswith(".pending-"):
+                    if not folder.is_symlink() and time.time() - folder.stat().st_mtime > STALE_STAGING_SECONDS:
+                        shutil.rmtree(folder)
+                    continue
+                if len(records) >= 20:
+                    continue
+                if folder.is_symlink() or uuid.UUID(folder.name).hex != folder.name:
+                    continue
+                metadata, data = folder / "metadata.json", folder / "file"
+                if metadata.is_symlink() or data.is_symlink() or metadata.stat().st_size > 4096:
+                    continue
+                record = json.loads(metadata.read_text())
+                if not isinstance(record, dict) or uuid.UUID(record.get("id", "")).hex != folder.name:
+                    continue
+                uuid.UUID(record["agentId"])
+                uuid.UUID(record["sessionId"])
+                if (not isinstance(record.get("caption"), str) or not isinstance(record.get("fileName"), str)
+                        or type(record.get("bytes")) is not int or not 0 < record["bytes"] <= MAX_FILE_BYTES
+                        or data.stat().st_size != record["bytes"] or not is_sha256(record.get("sha256"))):
+                    continue
+                records.append(record)
+            except (ValueError, OSError, KeyError, TypeError, AttributeError):
+                continue
+    return records
 
 
 def share_image(args, parser):
@@ -104,6 +196,15 @@ def share_image(args, parser):
     record = publish(args.path, args.agent, args.session, args.caption)
     print("Image shared: " + (record["caption"] or record["fileName"]))
     print("The user sees it under Shared images in this agent's conversation.")
+
+
+def share_file(args, parser):
+    if not args.agent or not args.session:
+        parser.error("Run from an agent, or supply --agent and --session UUIDs.")
+    record = publish_file(args.path, args.agent, args.session, args.caption)
+    print(f"File shared: {record['fileName']} ({size_text(record['bytes'])}, SHA-256 {record['sha256']})")
+    print("The user can download it under Shared files in this agent's conversation once the Manager has copied it, "
+          "usually within seconds.")
 
 
 
@@ -337,6 +438,12 @@ def main():
     if sys.argv[1:2] == ["--ack-image"] and len(sys.argv) == 3:
         acknowledge(sys.argv[2])
         return
+    if sys.argv[1:] == ["--pending-files"]:
+        print(json.dumps(pending_files()))
+        return
+    if sys.argv[1:2] == ["--ack-file"] and len(sys.argv) == 3:
+        acknowledge(sys.argv[2], FILES)
+        return
     parser = argparse.ArgumentParser(prog="dam-tools", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
@@ -348,6 +455,16 @@ def main():
     share.add_argument("--agent", default=os.environ.get("DAM_AGENT_ID", ""), help=argparse.SUPPRESS)
     share.add_argument("--session", default=os.environ.get("DAM_SESSION_ID", ""), help=argparse.SUPPRESS)
     share.set_defaults(run=lambda args: share_image(args, share))
+
+    file = commands.add_parser("share-file", help="Give the user a file to download, such as a built APK or installer",
+                               description="Give the user a file to download from this agent's conversation, such as an "
+                                           "APK, installer, archive or report. It is copied, so the file can be deleted "
+                                           "afterwards. Archive a folder first.")
+    file.add_argument("path", help="Local file, up to 1 GiB")
+    file.add_argument("--caption", default="", help="What the file is")
+    file.add_argument("--agent", default=os.environ.get("DAM_AGENT_ID", ""), help=argparse.SUPPRESS)
+    file.add_argument("--session", default=os.environ.get("DAM_SESSION_ID", ""), help=argparse.SUPPRESS)
+    file.set_defaults(run=lambda args: share_file(args, file))
 
     job = commands.add_parser("run-job", help="Run an owned foreground command externally and notify this conversation on completion")
     job.add_argument("--prepare-json", required=True, help="JSON argv array which allocates and checks an empty output parent on the workload machine")

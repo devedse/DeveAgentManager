@@ -41,7 +41,7 @@ public class AgentMessageTimeTests
             }
             Directory.CreateDirectory(options.SessionsDirectory);
             await File.WriteAllTextAsync(Path.Combine(options.SessionsDirectory, $"{sessionId:N}.json"), new DeveSession { Entries = [Entry(DeveRole.Assistant, 2), Entry(DeveRole.User, 3)] }.ToJson(), Ct);
-            var service = new SessionService(factory, null!, [], [], new SessionImageStore(options), options, new ManagerEvents(), NullLogger<SessionService>.Instance);
+            var service = new SessionService(factory, null!, [], [], new SessionImageStore(options), new SessionFileStore(options), options, new ManagerEvents(), NullLogger<SessionService>.Instance);
             await service.BackfillMessageTimesAsync(Ct);
             await using var read = factory.CreateDbContext();
             Assert.Equal(At.AddMinutes(2), (await read.Agents.SingleAsync(Ct)).LastAssistantMessageAt);

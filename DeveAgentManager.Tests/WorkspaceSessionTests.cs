@@ -203,7 +203,7 @@ public sealed class WorkspaceSessionTests
             Options = new() { DataDirectory = _folder };
             Factory = new(Options.DatabasePath);
             Agent = new() { Id = Guid.NewGuid(), OwnerId = User.BootstrapId, Name = "workspace", Runner = Runner, RunnerId = Runner.Id, HarnessId = "pi", HarnessSessionId = "first", State = AgentState.Stopped, LastAssistantMessageAt = DateTime.UtcNow };
-            Service = new(Factory, null!, [new PiSessionFormat(), new DeveAgentManager.Harnesses.Codex.CodexSessionFormat()], [], new SessionImageStore(Options), Options, new ManagerEvents(), NullLogger<SessionService>.Instance);
+            Service = new(Factory, null!, [new PiSessionFormat(), new DeveAgentManager.Harnesses.Codex.CodexSessionFormat()], [], new SessionImageStore(Options), new SessionFileStore(Options), Options, new ManagerEvents(), NullLogger<SessionService>.Instance);
         }
         public async Task CreateAsync()
         {

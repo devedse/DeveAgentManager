@@ -6,7 +6,7 @@ using DeveAgentManager.Core.Users;
 
 namespace DeveAgentManager.Api;
 
-/// <summary>/api/sessions: stored conversations, their images, exports and shares.</summary>
+/// <summary>/api/sessions: stored conversations, their images and files, exports and shares.</summary>
 internal static class SessionEndpoints
 {
     public const long MaxImportBytes = 200L * 1024 * 1024;
@@ -69,6 +69,20 @@ internal static class SessionEndpoints
             context.Response.Headers.CacheControl = "private, no-store";
             return Results.File(image.Data, image.Image.ContentType, image.Image.FileName);
         }).RequireSession(SessionAccess.Read);
+
+        sessions.MapGet("/{sessionId:guid}/files", (Guid sessionId, SessionFileStore files, CancellationToken ct) => files.ListAsync(sessionId, ct))
+            .RequireSession(SessionAccess.Read);
+        // Always an attachment, resumable (range requests), never sniffed or cached.
+        sessions.MapGet("/{sessionId:guid}/files/{fileId:guid}/download", async (Guid sessionId, Guid fileId, HttpContext context, SessionFileStore files, CancellationToken ct) =>
+        {
+            if (await files.GetAsync(sessionId, fileId, ct) is not { } file) return Results.NotFound();
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+            context.Response.Headers.CacheControl = "private, no-store";
+            return TypedResults.PhysicalFile(files.DataPath(sessionId, fileId), SessionFileStore.DownloadType(file.FileName), file.FileName, enableRangeProcessing: true);
+        }).RequireSession(SessionAccess.Read);
+        sessions.MapDelete("/{sessionId:guid}/files/{fileId:guid}", async (Guid sessionId, Guid fileId, SessionService service, CancellationToken ct) =>
+            await service.DeleteFileAsync(sessionId, fileId, ct) ? Results.NoContent() : Results.NotFound())
+            .RequireSession(SessionAccess.Owner);
 
         sessions.MapGet("/{sessionId:guid}/shares", async (Guid sessionId, Sharing sharing, CancellationToken ct) =>
             (await sharing.ListSessionSharesAsync(sessionId, ct)).Select(s => new SessionShareDto(s.UserId, s.User!.Username, s.User.DisplayName, s.GrantedAt)).ToList())

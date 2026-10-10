@@ -71,6 +71,8 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
     [InlineData("/api/sessions/00000000-0000-0000-0000-000000000001/images")]
     [InlineData("/api/sessions/00000000-0000-0000-0000-000000000001/images/00000000-0000-0000-0000-000000000002")]
     [InlineData("/api/sessions/00000000-0000-0000-0000-000000000001/images/00000000-0000-0000-0000-000000000002/download")]
+    [InlineData("/api/sessions/00000000-0000-0000-0000-000000000001/files")]
+    [InlineData("/api/sessions/00000000-0000-0000-0000-000000000001/files/00000000-0000-0000-0000-000000000002/download")]
     [InlineData("/api/runners/00000000-0000-0000-0000-000000000001/timezone")]
     [InlineData("/api/settings/timezone")]
     [InlineData("/api/settings/timezones")]

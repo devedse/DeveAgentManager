@@ -181,6 +181,31 @@ public sealed class RunnerShell(
         }
     }
 
+    /// <summary>
+    /// Streams a file into <paramref name="destination"/> instead of memory, for large files. False when it doesn't exist
+    /// or is larger than <paramref name="maxBytes"/>.
+    /// </summary>
+    public async Task<bool> DownloadToAsync(Runner runner, string remotePath, Stream destination, long maxBytes, CancellationToken cancellationToken = default)
+    {
+        var sftp = await GetSftpAsync(runner, cancellationToken);
+        var sftpPath = ToSftpPath(sftp, remotePath);
+        try
+        {
+            if (!sftp.Exists(sftpPath) || sftp.GetAttributes(sftpPath) is not { IsRegularFile: true } attributes || attributes.Size > maxBytes)
+            {
+                return false;
+            }
+
+            await sftp.DownloadFileAsync(sftpPath, destination, cancellationToken);
+            return true;
+        }
+        catch (SshConnectionException)
+        {
+            Invalidate(runner.Id);
+            throw;
+        }
+    }
+
     public void Invalidate(Guid runnerId)
     {
         if (_pool.TryRemove(runnerId, out var pooled))
