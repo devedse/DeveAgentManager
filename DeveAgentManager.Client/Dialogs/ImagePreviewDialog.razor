@@ -3,8 +3,8 @@
 
 <MudDialog>
     <DialogContent>
-        <div @ref="_host">
-            <img class="shared-image-preview" src="@($"api/sessions/{CurrentImage.SessionId}/images/{CurrentImage.Id}")" alt="@Title(CurrentImage)" />
+        <div class="shared-image-stage" @ref="_host">
+            <img class="shared-image-preview" src="@($"api/sessions/{CurrentImage.SessionId}/images/{CurrentImage.Id}")" alt="@Title(CurrentImage)" draggable="false" />
         </div>
     </DialogContent>
     <DialogActions>
@@ -37,13 +37,19 @@
         if (!firstRender) return;
         _self = DotNetObjectReference.Create(this);
         _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/shared-image-preview.js");
-        await _module.InvokeVoidAsync("start", _host, _self);
+        await _module.InvokeVoidAsync("start", _host, _self,
+            Images.Select(image => $"api/sessions/{image.SessionId}/images/{image.Id}").ToArray(), _index);
+    }
+
+    private async Task Navigate(int direction)
+    {
+        if (_module is not null) await _module.InvokeVoidAsync("navigate", _host, direction);
     }
 
     [JSInvokable]
-    public Task Navigate(int direction) => InvokeAsync(async () =>
+    public Task SelectImage(int index) => InvokeAsync(async () =>
     {
-        _index = Math.Clamp(_index + Math.Sign(direction), 0, Images.Count - 1);
+        _index = Math.Clamp(index, 0, Images.Count - 1);
         await Dialog.SetTitleAsync(Title(CurrentImage));
         StateHasChanged();
     });
