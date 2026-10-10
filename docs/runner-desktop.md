@@ -112,8 +112,8 @@ deleted), records its size and SHA-256, and the Manager collects it in the backg
 Every runner is collected on its own, so a large transfer doesn't hold up the others. The Manager checks the size and
 checksum before the file appears, and drops a copy that changed after it was shared.
 
-Files appear under **Shared files**: a toolbar button with a count once a file exists (in the ⋮ menu when the
-toolbar has no room) and a
+Files appear under **Shared files**: a toolbar button next to Shared images, with a count once a file exists (in the
+⋮ menu when the toolbar has no room), and a
 panel on the conversation page. Each shows its name, caption, size, age and SHA-256. Downloads are always
 attachments that are never shown in the page, and they can be resumed. An APK downloads as an Android package, so the
 phone offers to install it. Anyone who can read the conversation can download its files; its owner can delete one

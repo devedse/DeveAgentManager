@@ -127,17 +127,21 @@ try {
     await page.screenshot({ path: '/tmp/dam-shared-files-dialog-320.png' });
     await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).last().click();
 
-    // Nothing shared: no toolbar button, and the conversation page says so.
+    // Nothing shared: the button is still there, like Shared images, without a count; the conversation page says so.
     files = [];
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(base + `/agents/${agentId}`);
-    await page.getByRole('button', { name: /^Shared images/ }).waitFor({ timeout: 60000 });
-    assert.equal(await page.getByRole('button', { name: /^Shared files/ }).count(), 0);
+    const empty = page.locator('.terminal-toolbar button[aria-label="Shared files (0)"]');
+    await empty.waitFor({ timeout: 60000 });
+    assert.equal(await page.locator('[data-toolbar="files"] .mud-badge').filter({ hasText: /\d/ }).count(), 0, 'no count without files');
+    await empty.click();
+    await page.getByRole('dialog').getByText('No shared files yet.', { exact: true }).waitFor();
+    await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).last().click();
     await page.goto(base + `/sessions/${sessionId}`);
     await page.getByText('No shared files yet.', { exact: true }).waitFor({ timeout: 60000 });
 
     assert.deepEqual(errors, []);
-    console.log(`Passed (${engine}): shared files list newest first with size, caption and checksum; attachment downloads without navigating; confirmed owner-only delete; toolbar badge only when files exist; phone menu, layout and light/dark themes.`);
+    console.log(`Passed (${engine}): shared files list newest first with size, caption and checksum; attachment downloads without navigating; confirmed owner-only delete; toolbar button always there, counted when files exist; phone menu, layout and light/dark themes.`);
 } finally {
     await browser.close();
 }

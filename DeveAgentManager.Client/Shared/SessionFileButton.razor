@@ -1,27 +1,24 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
-@* Only there once the agent shared a file, so it stands out when one arrives. *@
-@if (_count > 0)
+@* Always there, like Shared images; the count shows once the agent shared a file. *@
+@if (InMenu)
 {
-    @if (InMenu)
-    {
-        <MudMenuItem Icon="@Icons.Material.Rounded.FileDownload" OnClick="() => SharedFilesDialog.OpenAsync(Dialogs, SessionId)">Shared files (@_count)</MudMenuItem>
-    }
-    else
-    {
-        <span @attributes="Attributes">
-            <MudBadge Content="@_count" Color="Color.Primary" Overlap="true">
-                <MudIconButton Icon="@Icons.Material.Rounded.FileDownload" Size="Size.Small" OnClick="() => SharedFilesDialog.OpenAsync(Dialogs, SessionId)"
-                               aria-label="@($"Shared files ({_count})")" title="Shared files" />
-            </MudBadge>
-        </span>
-    }
+    <MudMenuItem Icon="@Icons.Material.Rounded.FileDownload" OnClick="() => SharedFilesDialog.OpenAsync(Dialogs, SessionId)">Shared files@(_count > 0 ? $" ({_count})" : "")</MudMenuItem>
+}
+else
+{
+    <span @attributes="Attributes">
+        <MudBadge Content="@_count" Visible="@(_count > 0)" Color="Color.Primary" Overlap="true">
+            <MudIconButton Icon="@Icons.Material.Rounded.FileDownload" Size="Size.Small" OnClick="() => SharedFilesDialog.OpenAsync(Dialogs, SessionId)"
+                           aria-label="@($"Shared files ({_count})")" title="Shared files" />
+        </MudBadge>
+    </span>
 }
 @code {
     [Parameter] public Guid SessionId { get; set; }
     /// <summary>An entry in the toolbar's ⋮ menu, when the toolbar has no room for the button.</summary>
     [Parameter] public bool InMenu { get; set; }
-    /// <summary>On the button's wrapper, which only exists while there are files.</summary>
+    /// <summary>On the button's wrapper (the toolbar's overflow attributes).</summary>
     [Parameter(CaptureUnmatchedValues = true)] public Dictionary<string, object>? Attributes { get; set; }
     private int _count;
     protected override bool IsRelevant(ManagerEvent e) => e.SessionId == SessionId;
