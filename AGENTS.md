@@ -1,5 +1,14 @@
 # Notes for agents working on DeveAgentManager
 
+## Background verification
+
+Use the supported owned-job helper and completion delivery described in
+[docs/background-jobs.md](docs/background-jobs.md) for long verification work.
+Keep job ownership, strict completion validation and keyed terminal delivery
+separate. Never replay a workload after transport loss or an ambiguous delivery.
+Controller outbox checks do not require recurring agent turns. Record live
+deployment/wake verification separately from host test success.
+
 ## Delivering changes
 
 When the user requests changes, commit and push them to `master` as soon as they are ready. If the user explicitly

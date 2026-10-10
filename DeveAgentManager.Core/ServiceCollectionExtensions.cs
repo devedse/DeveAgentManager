@@ -57,6 +57,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RunnerDesktop>();
         services.AddSingleton<SessionService>();
         services.AddSingleton<SessionImageStore>();
+        services.AddHostedService<AgentJobCompletions>();
         services.AddSingleton<SessionImages>();
         services.AddHostedService(sp => sp.GetRequiredService<SessionImages>());
         services.AddSingleton<Accounts.AccountService>();

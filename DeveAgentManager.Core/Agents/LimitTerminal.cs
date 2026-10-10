@@ -110,7 +110,7 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
     internal static string BuildContinueScript(string session, LimitScreen expected) => BuildSubmitScript(session, expected, "continue");
 
     /// <summary>Prints SENT, CHANGED (nothing typed) or UNCONFIRMED (typed, but Enter was not sent).</summary>
-    internal static string BuildSubmitScript(string session, LimitScreen expected, string command, bool requireUnchangedScreen = true)
+    internal static string BuildSubmitScript(string session, LimitScreen expected, string command, bool requireUnchangedScreen = true, string? deliveryKey = null)
     {
         var expectedJson = JsonSerializer.Serialize(new { expected.Identity, expected.Hash });
         var code = $"""
@@ -123,6 +123,27 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
             except BlockingIOError:
                 print('CHANGED')
                 sys.exit(0)
+            delivery_key={(deliveryKey is null ? "None" : JsonSerializer.Serialize(deliveryKey))}
+            delivery_path=None
+            def persist_delivery(value):
+                if delivery_path is None: return
+                temporary=delivery_path.with_suffix('.tmp')
+                with temporary.open('w') as stream:
+                    os.chmod(temporary,0o600)
+                    stream.write(value)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                temporary.replace(delivery_path)
+                fd=os.open(delivery_path.parent,os.O_RDONLY)
+                try: os.fsync(fd)
+                finally: os.close(fd)
+            if delivery_key is not None:
+                deliveries=pathlib.Path.home()/'.deveagentmanager'/'job-deliveries'
+                deliveries.mkdir(parents=True,exist_ok=True,mode=0o700)
+                delivery_path=deliveries/hashlib.sha256(delivery_key.encode()).hexdigest()
+                if delivery_path.exists():
+                    print('SENT' if delivery_path.read_text()=='SENT' else 'UNCONFIRMED')
+                    sys.exit(0)
             state=snapshot()
             command={JsonSerializer.Serialize(command)}
             expected=json.loads({JsonSerializer.Serialize(expectedJson)})
@@ -130,6 +151,7 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
                 print('CHANGED')
             else:
                 pane=state['Identity'].split(':')[0]
+                persist_delivery('SENDING')
                 tmux('send-keys','-t',pane,'-l',command)
                 # Codex's paste detection can absorb an Enter delivered in the same input burst.
                 # Wait for the text to settle, then confirm nobody edited or replaced the prompt.
@@ -140,6 +162,7 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
                     print('UNCONFIRMED')
                 else:
                     tmux('send-keys','-t',pane,'Enter')
+                    persist_delivery('SENT')
                     print('SENT')
             """;
         return Script(session, code);

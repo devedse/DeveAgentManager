@@ -16,7 +16,9 @@ public sealed class LimitTerminalTests
     [InlineData(false, "/status", true)]
     [InlineData(true, "/status", true)]
     [InlineData(false, "continue", true)]
-    public async Task ContinueSeparatesTextFromEnterAndRechecksTheDraft(bool edited, string command, bool outputChanged = false)
+    [InlineData(false, "continue", false, true)]
+    [InlineData(true, "continue", false, true)]
+    public async Task ContinueSeparatesTextFromEnterAndRechecksTheDraft(bool edited, string command, bool outputChanged = false, bool keyed = false)
     {
         if (OperatingSystem.IsWindows()) return;
         var temp = Directory.CreateTempSubdirectory("dam-submit-").FullName;
@@ -49,7 +51,7 @@ public sealed class LimitTerminalTests
             var guardedScreen = command == "continue";
             // A changed screen types nothing; a prompt edited while typing leaves the text without Enter.
             Assert.Equal(outputChanged && guardedScreen ? "CHANGED" : edited ? "UNCONFIRMED" : "SENT",
-                (await Run(LimitTerminal.BuildSubmitScript("limit", ready, command, guardedScreen))).Trim());
+                (await Run(LimitTerminal.BuildSubmitScript("limit", ready, command, guardedScreen, keyed ? "owned-job-terminal" : null))).Trim());
             if (outputChanged && guardedScreen)
             {
                 Assert.False(File.Exists(Path.Combine(temp, "state.json")));
@@ -63,7 +65,7 @@ public sealed class LimitTerminalTests
 
         async Task<string> Run(string script)
         {
-            var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true, RedirectStandardError = true };
+            var start = new ProcessStartInfo("bash", ["-c", script.Replace("pathlib.Path.home()", "pathlib.Path(" + JsonSerializer.Serialize(temp) + ")")]) { RedirectStandardOutput = true, RedirectStandardError = true };
             start.Environment["PATH"] = temp + ":" + Environment.GetEnvironmentVariable("PATH");
             using var process = Process.Start(start)!;
             var output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
