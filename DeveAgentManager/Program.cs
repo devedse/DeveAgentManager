@@ -36,6 +36,9 @@ builder.Services.AddManagerSignIn();
 builder.Services.AddSingleton<OpenConnections>();
 builder.Services.AddHostedService(provider => provider.GetRequiredService<OpenConnections>());
 builder.Services.AddHealthChecks();
+// Open terminals and VS Code are closed as soon as the Manager stops (OpenConnections); this only bounds anything else
+// still running. Database saves are transactions: a stop part-way rolls them back, it never leaves half a change.
+builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = TimeSpan.FromSeconds(10));
 
 var boundary = new DeploymentBoundary(managerOptions);
 builder.Services.AddSingleton(boundary);

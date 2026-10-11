@@ -34,7 +34,7 @@ public static partial class TerminalSocketEndpoint
 
     public static void MapTerminalSocket(this IEndpointRouteBuilder app) =>
         app.Map(TerminalSocket.Path, async (HttpContext context, TerminalService terminals, AgentService agents, AccountService accounts, RunnerService runners,
-            AccessControl access, OpenConnections connections, ILoggerFactory loggers) =>
+            AccessControl access, OpenConnections connections, IHostApplicationLifetime lifetime, ILoggerFactory loggers) =>
         {
             if (!context.WebSockets.IsWebSocketRequest)
             {
@@ -53,11 +53,14 @@ public static partial class TerminalSocketEndpoint
             var logger = loggers.CreateLogger("DeveAgentManager.Terminal");
 
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
-            var session = new TerminalSession(socket, logger);
-            // Ends the terminal when the user's access ends while it is open.
-            using var revoked = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+            var session = new TerminalSession(socket, logger, context.RequestAborted);
+            // Ends the terminal when the user's access ends while it is open, or the Manager stops.
+            using var revoked = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, lifetime.ApplicationStopping);
             var stamp = SignIn.SecurityStamp(context);
             IDisposable Watch(Func<CurrentUser, CancellationToken, Task<bool>> stillAllowed) => connections.Register(user, stamp, stillAllowed, revoked.Cancel, SignIn.SessionId(context));
+            (string, string) WhyEnding() => lifetime.ApplicationStopping.IsCancellationRequested
+                ? (TerminalSocket.ClosedRestarting, "The Manager is restarting. The terminal connects again once it is back.")
+                : (TerminalSocket.ClosedError, "Your access to this ended.");
             try
             {
                 switch (kind)
@@ -75,7 +78,7 @@ public static partial class TerminalSocketEndpoint
                         using (Watch(async (current, ct) => await access.AgentAsync(current, agentId, ct) >= needed))
                         {
                             await session.RunAsync(await terminals.OpenAgentAsync(agentId, readOnly, columns, rows, context.RequestAborted), agentId, agents, login: null,
-                                readOnly ? null : (name, bytes, ct) => terminals.UploadAsync(agentId, null, name, bytes, ct), readOnly, revoked.Token);
+                                readOnly ? null : (name, bytes, ct) => terminals.UploadAsync(agentId, null, name, bytes, ct), readOnly, revoked.Token, WhyEnding);
                         }
 
                         break;
@@ -89,7 +92,7 @@ public static partial class TerminalSocketEndpoint
                         using (Watch(async (current, ct) => await access.RunnerAsync(current, runnerId, ct) >= RunnerAccess.Use))
                         {
                             await session.RunAsync(await terminals.OpenShellAsync(runnerId, user.Id, columns, rows, context.RequestAborted), null, agents, login: null,
-                                (name, bytes, ct) => terminals.UploadAsync(null, runnerId, name, bytes, ct), readOnly: false, revoked.Token);
+                                (name, bytes, ct) => terminals.UploadAsync(null, runnerId, name, bytes, ct), readOnly: false, revoked.Token, WhyEnding);
                         }
 
                         break;
@@ -107,7 +110,7 @@ public static partial class TerminalSocketEndpoint
                         {
                             // Wide, so a token is printed on one line (the harness's login command also sets it with stty).
                             await session.RunAsync(await terminals.OpenCommandAsync(runnerId, login.Command, 500, rows, context.RequestAborted), null, agents, login,
-                                uploadImage: null, readOnly: false, revoked.Token);
+                                uploadImage: null, readOnly: false, revoked.Token, WhyEnding);
                         }
 
                         break;
@@ -116,9 +119,11 @@ public static partial class TerminalSocketEndpoint
                         break;
                 }
 
+                // Ended before a terminal ran (e.g. while it was opening): say why, if the browser is still there.
                 if (revoked.IsCancellationRequested && !context.RequestAborted.IsCancellationRequested)
                 {
-                    await session.CloseAsync(TerminalSocket.ClosedError, "Your access to this ended.");
+                    var (reason, message) = WhyEnding();
+                    await session.CloseAsync(reason, message);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -131,7 +136,7 @@ public static partial class TerminalSocketEndpoint
         });
 
     /// <summary>One browser terminal: pumps the SSH terminal's output to the socket and the socket's input to the terminal.</summary>
-    private sealed class TerminalSession(WebSocket socket, ILogger logger)
+    private sealed class TerminalSession(WebSocket socket, ILogger logger, CancellationToken socketAborted)
     {
         private static readonly byte[] KickedMarker = Encoding.UTF8.GetBytes(AgentService.KickedMarker);
         private static readonly byte[] DetachedMarker = "[detached (from session"u8.ToArray();
@@ -140,21 +145,27 @@ public static partial class TerminalSocketEndpoint
         private string _closeReason = TerminalSocket.ClosedExited;
 
         /// <param name="readOnly">Drops what the user types or pastes (the terminal is only watched).</param>
+        /// <param name="ending">Ends the terminal from this side (access ended, the Manager stops); <paramref name="whyEnding"/> says why.</param>
         public async Task RunAsync(TerminalConnection connection, Guid? agentId, AgentService agents, LoginWatcher? login, ImageUploader? uploadImage, bool readOnly,
-            CancellationToken cancellationToken)
+            CancellationToken ending, Func<(string Reason, string Message)>? whyEnding = null)
         {
             using (connection)
+            using (var pumps = CancellationTokenSource.CreateLinkedTokenSource(socketAborted))
             {
-                var output = Task.Factory.StartNew(() => PumpOutputAsync(connection, login, cancellationToken), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
-                var input = PumpInputAsync(connection, agentId, agents, login is null, uploadImage, readOnly, cancellationToken);
-                if (await Task.WhenAny(output, input) == output)
+                var output = Task.Factory.StartNew(() => PumpOutputAsync(connection, login, pumps.Token), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
+                var input = PumpInputAsync(connection, agentId, agents, login is null, uploadImage, readOnly, pumps.Token);
+                var ended = Task.Delay(Timeout.Infinite, ending);
+                var first = await Task.WhenAny(output, input, ended);
+                if (first != input)
                 {
-                    // The terminal ended: say why, then close. The browser answers the close, which ends the input side.
-                    // (Cancelling the socket's receive instead would abort it before the reason is sent.)
-                    await CloseAsync(_closeReason, null);
-                    await Task.WhenAny(input, Task.Delay(TimeSpan.FromSeconds(5), CancellationToken.None));
+                    // Say why, then close our side. The browser answers the close, which ends the input side. (Cancelling the
+                    // socket's receive instead would abort it before the reason is sent.)
+                    var (reason, message) = first == output ? (_closeReason, (string?)null) : whyEnding?.Invoke() ?? (TerminalSocket.ClosedError, null);
+                    await CloseAsync(reason, message);
+                    await Task.WhenAny(input, Task.Delay(first == output ? TimeSpan.FromSeconds(5) : TimeSpan.FromSeconds(2), CancellationToken.None));
                 }
 
+                pumps.Cancel();
                 // Leaving disposes the SSH terminal, which also ends the output side when the browser left first.
             }
         }

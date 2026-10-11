@@ -323,6 +323,9 @@ public static class TerminalSocket
     public const string ClosedKicked = "kicked";
     public const string ClosedDetached = "detached";
     public const string ClosedError = "error";
+
+    /// <summary>The Manager is restarting (e.g. an update): the terminal connects again by itself once it is back.</summary>
+    public const string ClosedRestarting = "restarting";
 }
 
 /// <summary>The header every request that changes something must carry (see the Manager's CSRF check).</summary>

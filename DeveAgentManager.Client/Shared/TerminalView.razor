@@ -207,10 +207,10 @@
             _autoReconnects = 0;
         }
 
-        if (AgentId is not null && reason is null or TerminalSocket.ClosedExited && _readyAt != default && _autoReconnects < 3)
+        if (AgentId is not null && reason is null or TerminalSocket.ClosedExited or TerminalSocket.ClosedRestarting && _readyAt != default && _autoReconnects < 3)
         {
             _autoReconnects++;
-            _overlay = "Reconnecting...";
+            _overlay = reason == TerminalSocket.ClosedRestarting ? "The Manager is restarting..." : "Reconnecting...";
             _connecting = true;
             StateHasChanged();
             await Disconnected.InvokeAsync();
@@ -225,6 +225,7 @@
         _overlay = reason switch
         {
             TerminalSocket.ClosedError => message ?? "The terminal could not be opened.",
+            TerminalSocket.ClosedRestarting => message ?? "The Manager is restarting.",
             TerminalSocket.ClosedKicked => "Another screen disconnected this one. The agent keeps running; reconnect to continue here.",
             TerminalSocket.ClosedDetached => "This screen was disconnected from the agent (tmux detached it). Reconnect to continue here.",
             _ when Login is not null => "Finished.",

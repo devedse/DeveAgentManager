@@ -7,9 +7,11 @@ namespace DeveAgentManager.Api;
 /// <summary>
 /// The long-lived connections users have open: terminals, the live hub and VS Code. Their access is checked when they
 /// open; this closes them when it ends while they are open: access to a Runner removed, a share ended, a role taken
-/// away, or the user disabled, deleted or their password changed (a new security stamp).
+/// away, or the user disabled, deleted or their password changed (a new security stamp). And when the Manager stops:
+/// they never end by themselves, so shutting down would otherwise wait for them until it is killed (30 seconds).
 /// </summary>
-public sealed class OpenConnections(ManagerEvents events, UserService users, SignInSessions sessions, ILogger<OpenConnections> logger) : BackgroundService
+public sealed class OpenConnections(ManagerEvents events, UserService users, SignInSessions sessions, IHostApplicationLifetime lifetime,
+    ILogger<OpenConnections> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<Guid, Connection> _open = new();
 
@@ -28,6 +30,8 @@ public sealed class OpenConnections(ManagerEvents events, UserService users, Sig
     {
         events.Changed += OnChanged;
         sessions.Revoked += OnRevoked;
+        // Before the web server waits for open requests to finish.
+        using var stopping = lifetime.ApplicationStopping.Register(CloseAll);
         try
         {
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
@@ -35,6 +39,16 @@ public sealed class OpenConnections(ManagerEvents events, UserService users, Sig
                 foreach (var (id, connection) in _open.ToArray()) await RecheckAsync(id, connection);
         }
         finally { events.Changed -= OnChanged; sessions.Revoked -= OnRevoked; }
+    }
+
+    private void CloseAll()
+    {
+        foreach (var (id, connection) in _open.ToArray())
+        {
+            if (!_open.TryRemove(id, out _)) continue;
+            try { connection.Close(); }
+            catch (Exception ex) { logger.LogDebug(ex, "Could not close a connection of {User} while stopping", connection.UserId); }
+        }
     }
 
     private void OnRevoked(Guid session)
