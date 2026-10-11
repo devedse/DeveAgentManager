@@ -2,10 +2,25 @@
 @layout EmptyLayout
 @attribute [ExcludeFromInteractiveRouting]
 <PageTitle>Sign out · DeveAgentManager</PageTitle>
-<div class="login-page"><form method="post" action="/account/logout" class="login-card">
-    <AntiforgeryToken />
-    <div class="login-title">Sign out</div>
-    <p>This closes your Portal, terminal and VS Code connections on this device. Your agents keep running.</p>
-    <button type="submit" class="login-button">Sign out</button>
-    <a href="/" class="login-link">Cancel</a>
-</form></div>
+<div class="login-page">
+    <div class="login-glow"></div>
+    <form method="post" action="/account/logout" class="login-card">
+        <AntiforgeryToken />
+        <div class="login-brand">
+            <img src="favicon.svg" alt="" width="44" height="44" />
+            <div>
+                <div class="help-heading">
+                    <div class="login-title">Sign out</div>
+                    <StaticHelpTip Label="Sign out">
+                        <p>Ends your sign-in on this device: the Portal, its terminals and VS Code close here. Your other devices stay
+                        signed in.</p>
+                        <p>Your agents keep running on their Runners. Sign in again to get back to them.</p>
+                    </StaticHelpTip>
+                </div>
+                <div class="login-subtitle">Your agents keep running.</div>
+            </div>
+        </div>
+        <button type="submit" class="login-button">Sign out</button>
+        <a href="/" class="login-link">Cancel</a>
+    </form>
+</div>
