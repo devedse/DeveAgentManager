@@ -317,6 +317,17 @@ The terminal’s **Select text** button opens a snapshot with saved history and 
 On the conversation page, each text message has a copy button; **Copy last reply** is in the ⋮ menu. These copy
 the original Markdown, including code blocks, without thinking text or tool output.
 
+## Manager logs
+
+**Manage → Manager logs** shows recent application logs, newest first, with severity and text filters,
+automatic refresh, and a download of the displayed results. Access requires the **Log viewer** role; existing
+admins receive it during upgrade. Grant it under **Users**.
+
+The Manager keeps up to 5,000 entries in memory and two log files of about 5 MiB each in the data folder’s
+`logs` directory, so recent logs survive restarts. Existing logging levels apply. Common credential fields are
+masked; logs can still contain deployment details and user activity, so review downloads before sharing.
+Runner setup logs and the audit log remain on their existing pages.
+
 ## Development
 
 ```bash

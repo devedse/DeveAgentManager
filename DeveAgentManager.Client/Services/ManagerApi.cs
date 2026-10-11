@@ -79,6 +79,9 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task DeleteUserAsync(Guid userId, Guid transferTo) => SendAsync(HttpMethod.Delete, $"api/users/{userId}?transferTo={transferTo}");
 
+    public Task<List<ManagerLogEntry>> ListManagerLogsAsync(string minimum, string search) =>
+        GetAsync<List<ManagerLogEntry>>($"api/logs?minimum={Uri.EscapeDataString(minimum)}&search={Uri.EscapeDataString(search)}");
+
     public Task<List<AuditEventDto>> ListAuditAsync(int skip, int take) => GetAsync<List<AuditEventDto>>($"api/audit?skip={skip}&take={take}");
 
     // Runners

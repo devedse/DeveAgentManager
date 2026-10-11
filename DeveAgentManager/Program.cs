@@ -44,6 +44,9 @@ var boundary = new DeploymentBoundary(managerOptions);
 builder.Services.AddSingleton(boundary);
 builder.Services.Configure<ForwardedHeadersOptions>(boundary.ConfigureForwarding);
 
+builder.Services.AddSingleton(new DeveAgentManager.Logging.ManagerLogStore(managerOptions.LogsDirectory));
+builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider, DeveAgentManager.Logging.ManagerLogProvider>();
+
 var app = builder.Build();
 
 await using (var db = await app.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync())

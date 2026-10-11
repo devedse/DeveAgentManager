@@ -72,6 +72,13 @@ public static class ManagerApi
             return Results.NoContent();
         }).ForAnyUser();
 
+        api.MapGet("/logs", (HttpContext context, string? minimum, string? search, int? take, DeveAgentManager.Logging.ManagerLogStore logs) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var level = Enum.TryParse<Microsoft.Extensions.Logging.LogLevel>(minimum, true, out var parsed) ? parsed : Microsoft.Extensions.Logging.LogLevel.Information;
+            return logs.Read(level, search, take ?? 300);
+        }).RequireRole(UserRoles.LogViewer);
+
         api.MapUserEndpoints();
         api.MapRunnerEndpoints();
         api.MapAgentEndpoints();

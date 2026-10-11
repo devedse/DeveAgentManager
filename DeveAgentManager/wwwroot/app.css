@@ -3144,3 +3144,9 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 
 .terminal-text-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .terminal-text { max-height: 60dvh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--dam-surface-2); color: var(--dam-text); user-select: text; -webkit-user-select: text; touch-action: auto; }
+
+.manager-log-filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+.manager-log-filters > .mud-input-control { flex: 1; min-width: 180px; }
+.manager-log-entry { padding: 12px 0; border-bottom: 1px solid var(--dam-border); }
+.manager-log-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; color: var(--dam-muted); font-size: .8rem; overflow-wrap: anywhere; }
+.manager-log-entry pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; font-size: .85rem; color: var(--dam-text); }

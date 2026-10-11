@@ -1,0 +1,66 @@
+@page "/logs"
+@inherits LiveComponent
+@inject SignedInUser Me
+@inject IJSRuntime JS
+<PageTitle>Manager logs · DeveAgentManager</PageTitle>
+<MudContainer MaxWidth="MaxWidth.Large" Class="page">
+    <PageHeader Title="Manager logs" Help="Application logs, newest first. The latest 5,000 entries are available; two bounded files keep recent logs across restarts. Logs may contain deployment details and user activity. Common credential fields are masked, but review exports before sharing. Existing log levels still apply.">
+        <Actions><MudButton StartIcon="@Icons.Material.Rounded.Refresh" OnClick="RefreshAsync" Disabled="@(_me?.Has(UserRoles.LogViewer) != true)">Refresh</MudButton>
+        <MudButton StartIcon="@Icons.Material.Rounded.Download" OnClick="DownloadAsync" Disabled="@(_entries.Count == 0)">Download</MudButton></Actions>
+    </PageHeader>
+    @if (_me is not null && !_me.Has(UserRoles.LogViewer))
+    {
+        <EmptyState Icon="@Icons.Material.Rounded.Lock" Title="Log viewer role required" Text="Ask a user manager to grant you the Log viewer role." />
+    }
+    else
+    {
+        <div class="panel">
+            <div class="manager-log-filters">
+                <MudSelect T="string" Label="Minimum level" Value="_minimum" ValueChanged="LevelChangedAsync" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    @foreach (var level in Levels) { <MudSelectItem T="string" Value="@level">@level</MudSelectItem> }
+                </MudSelect>
+                <MudTextField T="string" Label="Search message or category" Value="_search" ValueChanged="SearchChangedAsync" DebounceInterval="400" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                <MudSwitch T="bool" @bind-Value="_auto" Color="Color.Primary" Label="Auto refresh" />
+            </div>
+            <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading Manager logs">
+                <Placeholder><SkeletonList Rows="6" /></Placeholder>
+                <ChildContent>
+                    @if (_entries.Count == 0) { <EmptyState Icon="@Icons.Material.Rounded.ReceiptLong" Title="No matching logs" Text="Try a different level or search." /> }
+                    else
+                    {
+                        <div class="manager-logs">
+                            @foreach (var entry in _entries)
+                            {
+                                <article class="manager-log-entry" @key="entry.Id">
+                                    <div class="manager-log-meta"><time datetime="@entry.Timestamp.ToString("O")">@entry.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</time><MudChip T="string" Size="Size.Small" Color="@LevelColor(entry.Level)">@entry.Level</MudChip><span>@entry.Category</span></div>
+                                    <pre>@entry.Message</pre>
+                                </article>
+                            }
+                        </div>
+                    }
+                </ChildContent>
+            </LoadingSection>
+        </div>
+    }
+</MudContainer>
+@code {
+    private static readonly string[] Levels = ["Trace", "Debug", "Information", "Warning", "Error", "Critical"];
+    private CurrentUserDto? _me;
+    private List<ManagerLogEntry> _entries = [];
+    private string _minimum = "Information", _search = "";
+    private bool _auto = true, _force;
+    protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
+    protected override bool IsRelevant(ManagerEvent managerEvent) => false;
+    protected override async Task LoadAsync()
+    {
+        _me = await Me.GetAsync();
+        if (_me.Has(UserRoles.LogViewer) && (_auto || _force || !Loaded)) _entries = await Api.ListManagerLogsAsync(_minimum, _search);
+        _force = false;
+    }
+    private async Task LevelChangedAsync(string value) { _minimum = value; await RefreshFiltersAsync(); }
+    private async Task SearchChangedAsync(string value) { _search = value; await RefreshFiltersAsync(); }
+    private async Task RefreshFiltersAsync() => await RefreshAsync();
+    private async Task RefreshAsync() { _force = true; await RetryAsync(); }
+    private async Task DownloadAsync() => await JS.InvokeVoidAsync("damUi.downloadText", "manager-logs.txt", string.Join("\n\n", _entries.Select(e => $"{e.Timestamp:O} [{e.Level}] {e.Category}\n{e.Message}")));
+    private static Color LevelColor(string level) => level switch { "Error" or "Critical" => Color.Error, "Warning" => Color.Warning, _ => Color.Default };
+}

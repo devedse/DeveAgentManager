@@ -750,7 +750,7 @@ namespace DeveAgentManager.Core.Data.Migrations
                             FailedSignIns = 0,
                             MustChangePassword = false,
                             PasswordHash = "",
-                            Roles = 31,
+                            Roles = 63,
                             SecurityStamp = "bootstrap",
                             UpdatedAt = new DateTime(2026, 10, 6, 0, 0, 0, 0, DateTimeKind.Utc),
                             Username = "admin"

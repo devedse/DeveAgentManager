@@ -68,7 +68,10 @@ public enum UserRoles
     /// <summary>Manage every agent and conversation, including prompting, sharing and deletion.</summary>
     ConversationManager = 16,
 
-    Admin = SettingsManager | UserManager | RunnerCreator | RunnerManager | ConversationManager,
+    /// <summary>Read and download the Manager’s application logs.</summary>
+    LogViewer = 32,
+
+    Admin = LogViewer | SettingsManager | UserManager | RunnerCreator | RunnerManager | ConversationManager,
 }
 
 /// <summary>What a user may do with a Runner. Each level includes the ones before it.</summary>

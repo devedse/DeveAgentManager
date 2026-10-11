@@ -61,6 +61,10 @@
         {
             <MudNavLink Href="manager-settings" Icon="@Icons.Material.Rounded.SettingsApplications">Manager settings</MudNavLink>
         }
+        @if (_user?.Has(UserRoles.LogViewer) == true)
+        {
+            <MudNavLink Href="logs" Icon="@Icons.Material.Rounded.ReceiptLong">Manager logs</MudNavLink>
+        }
         @if (_user?.Has(UserRoles.UserManager) == true)
         {
             <MudNavLink Href="users" Icon="@Icons.Material.Rounded.Group">Users</MudNavLink>

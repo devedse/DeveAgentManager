@@ -344,3 +344,5 @@ public sealed record ConfirmPasswordRequest(string Password, string? Code = null
 
 public sealed record SelectSessionRequest(Guid? SessionId, string? Title = null);
 public sealed record RenameSessionRequest(string Title);
+
+public sealed record ManagerLogEntry(long Id, DateTime Timestamp, string Level, string Category, string Message);

@@ -61,6 +61,7 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
     }
 
     [Theory]
+    [InlineData("/api/logs")]
     [InlineData("/api/info")]
     [InlineData("/api/build")]
     [InlineData("/api/agents/attention")]
