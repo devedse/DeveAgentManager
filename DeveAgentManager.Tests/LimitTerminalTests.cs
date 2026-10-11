@@ -18,22 +18,25 @@ public sealed class LimitTerminalTests
     [InlineData(false, "continue", true)]
     [InlineData(false, "continue", false, true)]
     [InlineData(true, "continue", false, true)]
-    public async Task ContinueSeparatesTextFromEnterAndRechecksTheDraft(bool edited, string command, bool outputChanged = false, bool keyed = false)
+    [InlineData(false, "Background verification completed successfully. Read SUMMARY.md and the detailed results, then report your findings.", false, true, true)]
+    [InlineData(true, "Background verification completed successfully. Read SUMMARY.md and the detailed results, then report your findings.", false, true, true)]
+    public async Task ContinueSeparatesTextFromEnterAndRechecksTheDraft(bool edited, string command, bool outputChanged = false, bool keyed = false, bool wrapped = false)
     {
         if (OperatingSystem.IsWindows()) return;
         var temp = Directory.CreateTempSubdirectory("dam-submit-").FullName;
         var fake = Path.Combine(temp, "tmux");
         await File.WriteAllTextAsync(fake, $$"""
             #!/usr/bin/python3
-            import json,pathlib,sys,time
+            import json,pathlib,sys,time,textwrap
             root=pathlib.Path(__file__).parent
             args=sys.argv[1:]
             path=root/'state.json'
             state=json.loads(path.read_text()) if path.exists() else {'text':''}
+            lines=textwrap.wrap(state['text'],width=50) if {{(wrapped ? "True" : "False")}} and state['text'] else [state['text']]
             if args[0]=='display-message':
-                print('%1|{{Environment.ProcessId}}|0|1|'+str(2+len(state['text'])))
+                print('%1|{{Environment.ProcessId}}|0|'+str(len(lines))+'|'+str(2+len(lines[-1])))
             elif args[0]=='capture-pane':
-                print("■ You've hit your usage limit. Try again at 9:37 PM.\n› "+state['text'])
+                print("■ You've hit your usage limit. Try again at 9:37 PM.\n› "+'\n  '.join(lines))
             elif args[0]=='send-keys':
                 if '-l' in args:
                     state['text']=args[-1] + (' edited' if {{(edited ? "True" : "False")}} else '')

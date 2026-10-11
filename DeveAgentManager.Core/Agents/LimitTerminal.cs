@@ -51,18 +51,33 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
             raw=tmux('capture-pane','-p','-t',target).splitlines()
             screen=tmux('capture-pane','-p','-J','-t',target)
             line=raw[int(cy)] if int(cy)<len(raw) else ''
+            footer=r'^\s*(?:[─━]{4,}|(?:GPT-|gpt-|o[1-9]|codex-).*|\? for shortcuts|.*bypass permissions)'
+            prompt_y=int(cy)
             prompt=re.match(r'^(\s*[›❯] ?)(.*)$',line)
-            # capture-pane trims the trailing space of an empty prompt, although the cursor is still after it.
-            empty=bool(prompt and int(cx)<=len(prompt[1].rstrip())+1 and prompt[2].strip() in ('','Ask Codex to do anything'))
+            # Long composers put the cursor on a continuation row, below the prompt marker.
+            if prompt is None:
+                for y in range(min(int(cy)-1,len(raw)-1),-1,-1):
+                    if re.match(footer,raw[y]): break
+                    candidate=re.match(r'^(\s*[›❯] ?)(.*)$',raw[y])
+                    if candidate:
+                        prompt,prompt_y=candidate,y
+                        break
+            # Only the marker row at its initial column can be empty; continuation rows are always drafts.
+            empty=bool(prompt and prompt_y==int(cy) and int(cx)<=len(prompt[1].rstrip())+1 and prompt[2].strip() in ('','Ask Codex to do anything'))
             input_text=prompt[2] if prompt else None
             if prompt:
-                extra=[]
-                for continuation in raw[int(cy)+1:]:
-                    if re.match(r'^\s*(?:[─━]{4,}|(?:GPT-|gpt-|o[1-9]|codex-).*|\? for shortcuts|.*bypass permissions)',continuation): break
-                    extra.append(continuation.rstrip())
-                if any(x.strip() for x in extra):
-                    input_text=(input_text+'\n'+'\n'.join(extra)).rstrip()
-                    empty=False
+                # tmux -J joins terminal soft wraps. TUI-rendered wraps remain as indented continuation rows.
+                joined=screen.splitlines()
+                starts=[i for i,x in enumerate(joined) if re.match(r'^\s*[›❯] ?',x)]
+                if starts:
+                    start=starts[-1]
+                    first=re.match(r'^(\s*[›❯] ?)(.*)$',joined[start])
+                    extra=[]
+                    for continuation in joined[start+1:]:
+                        if re.match(footer,continuation): break
+                        extra.append(continuation.rstrip())
+                    input_text=(first[2]+'\n'+'\n'.join(extra)).rstrip()
+                    if any(x.strip() for x in extra): empty=False
             # Pi uses an unprefixed editor between horizontal rules. Inspect the entire box,
             # not just its current blank line, so a multiline draft cannot be overwritten.
             if prompt is None and any(re.search(r'^think:|[0-9]+(?:\.[0-9]+)?%/[0-9]',x) for x in raw[-8:]):
@@ -158,7 +173,11 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
                 import time
                 time.sleep(0.35)
                 ready=snapshot()
-                if ready['Identity']!=expected['Identity'] or ready['InputText']!=command:
+                # Single-line prose may be visually wrapped by Codex itself; compare all words,
+                # preserving exact comparisons for multiline commands and short slash commands.
+                typed=ready['InputText']
+                matches=typed==command or (typed is not None and '\n' not in command and '\n' in typed and ' '.join(typed.split())==' '.join(command.split()))
+                if ready['Identity']!=expected['Identity'] or not matches:
                     print('UNCONFIRMED')
                 else:
                     tmux('send-keys','-t',pane,'Enter')
