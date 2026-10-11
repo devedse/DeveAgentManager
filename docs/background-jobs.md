@@ -1,10 +1,8 @@
 # Owned background verification jobs
 
-Prefer the harness’s built-in background tasks for ordinary builds, tests and verification.
-Use `dam-tools run-job` only when the workload must survive a harness restart or requires
-durable ownership and separately validated completion evidence. Availability and wake-up
-behavior of built-in tasks depend on the harness. Durable jobs are an optional fallback,
-not a requirement for every long command.
+Use the harness’s built-in background tasks whenever it supports them. Use `dam-tools run-job`
+only when the harness has no built-in background-job support. Long runtimes, restart survival
+and completion validation are not exceptions to this rule.
 
 On a Linux Runner, `dam-tools run-job` starts an owned foreground command outside
 the agent turn. The controller waits for process exit, runs a separate read-only
@@ -49,7 +47,10 @@ it does not claim a remote workload stopped. Never use it as destructive recover
 Delivery shares the terminal input lock with quick commands and continuations. A
 durable key binds runner/event, agent and conversation, so registering the same
 event as another job does not deliver it twice. `SENDING` is flushed before
-typing, and `SENT` after Enter. A retry after acknowledgement loss returns `SENT`
+typing, and `SENT` after Enter. Once typing begins, the notification is submitted
+with Enter after a short paste-settling delay, without trying to reconstruct its
+text from the visible composer. Long or scrolled input can hide part of the text.
+A retry after acknowledgement loss returns `SENT`
 without typing. An interrupted ambiguous send becomes `UNCERTAIN`, requires
 inspection and is never automatically resubmitted. This gives duplicate-resistant,
 at-most-once automatic submission, **not guaranteed exactly-once analysis** across

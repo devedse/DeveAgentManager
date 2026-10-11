@@ -20,7 +20,7 @@ public sealed class LimitTerminalTests
     [InlineData(true, "continue", false, true)]
     [InlineData(false, "Background verification completed successfully. Read SUMMARY.md and the detailed results, then report your findings.", false, true, true)]
     [InlineData(true, "Background verification completed successfully. Read SUMMARY.md and the detailed results, then report your findings.", false, true, true)]
-    public async Task ContinueSeparatesTextFromEnterAndRechecksTheDraft(bool edited, string command, bool outputChanged = false, bool keyed = false, bool wrapped = false)
+    public async Task SubmissionSeparatesTextFromEnterAndJobsDoNotDependOnRenderedText(bool edited, string command, bool outputChanged = false, bool keyed = false, bool wrapped = false)
     {
         if (OperatingSystem.IsWindows()) return;
         var temp = Directory.CreateTempSubdirectory("dam-submit-").FullName;
@@ -36,6 +36,7 @@ public sealed class LimitTerminalTests
             if args[0]=='display-message':
                 print('%1|{{Environment.ProcessId}}|0|'+str(len(lines))+'|'+str(2+len(lines[-1])))
             elif args[0]=='capture-pane':
+                if {{(keyed ? "True" : "False")}} and state['text']: sys.exit(9) # Composer unavailable after typing.
                 print("■ You've hit your usage limit. Try again at 9:37 PM.\n› "+'\n  '.join(lines))
             elif args[0]=='send-keys':
                 if '-l' in args:
@@ -52,8 +53,8 @@ public sealed class LimitTerminalTests
             // Working output changed since observation; slash commands should still reach the empty prompt.
             if (outputChanged) ready = ready with { Hash = "older-output" };
             var guardedScreen = command == "continue";
-            // A changed screen types nothing; a prompt edited while typing leaves the text without Enter.
-            Assert.Equal(outputChanged && guardedScreen ? "CHANGED" : edited ? "UNCONFIRMED" : "SENT",
+            // A changed screen types nothing. Jobs send Enter even if the composer cannot be read after typing.
+            Assert.Equal(outputChanged && guardedScreen ? "CHANGED" : edited && !keyed ? "UNCONFIRMED" : "SENT",
                 (await Run(LimitTerminal.BuildSubmitScript("limit", ready, command, guardedScreen, keyed ? "owned-job-terminal" : null))).Trim());
             if (outputChanged && guardedScreen)
             {
@@ -61,8 +62,20 @@ public sealed class LimitTerminalTests
                 return;
             }
             using var state = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(temp, "state.json"), TestContext.Current.CancellationToken));
-            if (edited) Assert.False(state.RootElement.TryGetProperty("entered", out _));
+            if (edited && !keyed) Assert.False(state.RootElement.TryGetProperty("entered", out _));
             else Assert.True(state.RootElement.GetProperty("entered").GetDouble() - state.RootElement.GetProperty("typed").GetDouble() >= 0.3);
+            if (keyed)
+            {
+                // A retry after acknowledgement loss must not type or press Enter again.
+                Assert.Equal("SENT", (await Run(LimitTerminal.BuildSubmitScript("limit", ready, command,
+                    deliveryKey: "owned-job-terminal"))).Trim());
+                Assert.Equal(state.RootElement.GetRawText(), await File.ReadAllTextAsync(Path.Combine(temp, "state.json"), TestContext.Current.CancellationToken));
+                await File.WriteAllTextAsync(Directory.GetFiles(Path.Combine(temp, ".deveagentmanager", "job-deliveries")).Single(),
+                    "SENDING", TestContext.Current.CancellationToken);
+                Assert.Equal("UNCONFIRMED", (await Run(LimitTerminal.BuildSubmitScript("limit", ready, command,
+                    deliveryKey: "owned-job-terminal"))).Trim());
+                Assert.Equal(state.RootElement.GetRawText(), await File.ReadAllTextAsync(Path.Combine(temp, "state.json"), TestContext.Current.CancellationToken));
+            }
         }
         finally { Directory.Delete(temp, true); }
 
@@ -82,7 +95,9 @@ public sealed class LimitTerminalTests
     [Theory]
     [InlineData("", "SENT")]
     [InlineData("my draft", "CHANGED")]
-    public async Task Pi_ContinueGoesIntoItsEmptyPromptBox_NeverOverADraft(string draft, string expected)
+    [InlineData("", "SENT", true)]
+    [InlineData("my draft", "CHANGED", true)]
+    public async Task Pi_ContinueGoesIntoItsEmptyPromptBox_NeverOverADraft(string draft, string expected, bool keyed = false)
     {
         // pi's prompt is an unprefixed box between two rules, with the cursor on its (blank) line and a usage footer below.
         if (OperatingSystem.IsWindows()) return;
@@ -109,7 +124,8 @@ public sealed class LimitTerminalTests
         {
             var screen = JsonSerializer.Deserialize<LimitScreen>(await Run(LimitTerminal.BuildReadScript("pi")))!;
             Assert.Equal(draft.Length == 0, screen.InputEmpty);
-            Assert.Equal(expected, (await Run(LimitTerminal.BuildContinueScript("pi", screen))).Trim());
+            Assert.Equal(expected, (await Run(LimitTerminal.BuildSubmitScript("pi", screen, "continue",
+                deliveryKey: keyed ? "test-job" : null))).Trim());
             using var state = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(temp, "state.json"), TestContext.Current.CancellationToken));
             Assert.Equal(draft.Length == 0 ? "continue" : draft, state.RootElement.GetProperty("text").GetString());
             Assert.Equal(draft.Length == 0, state.RootElement.TryGetProperty("entered", out _));
@@ -118,7 +134,7 @@ public sealed class LimitTerminalTests
 
         async Task<string> Run(string script)
         {
-            var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true, RedirectStandardError = true };
+            var start = new ProcessStartInfo("bash", ["-c", script.Replace("pathlib.Path.home()", "pathlib.Path(" + JsonSerializer.Serialize(temp) + ")")]) { RedirectStandardOutput = true, RedirectStandardError = true };
             start.Environment["PATH"] = temp + ":" + Environment.GetEnvironmentVariable("PATH");
             using var process = Process.Start(start)!;
             var output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
@@ -187,7 +203,7 @@ public sealed class LimitTerminalTests
 
         async Task<string> Run(string script)
         {
-            var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true, RedirectStandardError = true };
+            var start = new ProcessStartInfo("bash", ["-c", script.Replace("pathlib.Path.home()", "pathlib.Path(" + JsonSerializer.Serialize(temp) + ")")]) { RedirectStandardOutput = true, RedirectStandardError = true };
             start.Environment["PATH"] = temp + ":" + Environment.GetEnvironmentVariable("PATH");
             using var process = Process.Start(start)!;
             var output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);

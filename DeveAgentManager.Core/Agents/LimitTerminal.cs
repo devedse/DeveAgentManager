@@ -120,7 +120,7 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
                 print(json.dumps(dict(Session=session,Identity=None,Screen=None)))
         """;
 
-    internal static string BuildReadScript(string session) => Script(session, "print(json.dumps(state))");
+    internal static string BuildReadScript(string session) => Script(session, "print(json.dumps(snapshot()))");
 
     internal static string BuildContinueScript(string session, LimitScreen expected) => BuildSubmitScript(session, expected, "continue");
 
@@ -169,9 +169,15 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
                 persist_delivery('SENDING')
                 tmux('send-keys','-t',pane,'-l',command)
                 # Codex's paste detection can absorb an Enter delivered in the same input burst.
-                # Wait for the text to settle, then confirm nobody edited or replaced the prompt.
+                # Let paste detection settle before Enter. Owned job notifications submit directly:
+                # a long/scrolled composer cannot reliably be reconstructed from the visible pane.
                 import time
                 time.sleep(0.35)
+                if delivery_key is not None:
+                    tmux('send-keys','-t',pane,'Enter')
+                    persist_delivery('SENT')
+                    print('SENT')
+                    sys.exit(0)
                 ready=snapshot()
                 # Single-line prose may be visually wrapped by Codex itself; compare all words,
                 # preserving exact comparisons for multiline commands and short slash commands.
@@ -188,5 +194,5 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
     }
 
     private static string Script(string session, string suffix) =>
-        $"python3 - {ShellQuote.Quote("=" + session + ":")} <<'DAM_LIMIT'\n{Probe}\nstate=snapshot()\n{suffix}\nDAM_LIMIT";
+        $"python3 - {ShellQuote.Quote("=" + session + ":")} <<'DAM_LIMIT'\n{Probe}\n{suffix}\nDAM_LIMIT";
 }
