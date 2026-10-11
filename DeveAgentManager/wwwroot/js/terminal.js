@@ -505,6 +505,15 @@
         });
     }
 
+    // Buttons that copy the selected text (class keep-selection) must not clear the selection when pressed.
+    for (const type of ["mousedown", "pointerdown"]) {
+        document.addEventListener(type, event => {
+            if (event.target.closest?.(".keep-selection")) {
+                event.preventDefault();
+            }
+        }, { capture: true });
+    }
+
     // Mouse reporting modes (X10, normal, highlight, button-event and any-event tracking).
     const MOUSE_MODES = [9, 1000, 1001, 1002, 1003];
     const mouseModeFilters = new Map();
@@ -922,6 +931,37 @@
             pendingCopies.delete(id);
         },
 
+        // The terminal's own text, for its text view: shells and logins keep their history here (an agent's is in tmux,
+        // read by the Manager). Wrapped lines are joined.
+        text(id) {
+            const terminal = getTerminal(id);
+            if (!terminal) {
+                return { history: "", screen: "", more: false };
+            }
+
+            const buffer = terminal.buffer.active;
+            const read = (from, to) => {
+                const lines = [];
+                for (let y = from; y < to; y++) {
+                    const line = buffer.getLine(y);
+                    if (!line) {
+                        continue;
+                    }
+
+                    // A line that continues on the next keeps its trailing spaces: they are part of the text.
+                    const text = line.translateToString(!buffer.getLine(y + 1)?.isWrapped);
+                    if (line.isWrapped && lines.length > 0) {
+                        lines[lines.length - 1] += text;
+                    } else {
+                        lines.push(text);
+                    }
+                }
+
+                return lines.join("\n");
+            };
+            return { history: read(0, buffer.baseY), screen: read(buffer.baseY, buffer.baseY + terminal.rows), more: false };
+        },
+
         // The user tapped Copy after the browser didn't let a program copy: copy it now, in the tap. Returns how many
         // characters were copied.
         async copyPending(id) {
@@ -1032,6 +1072,31 @@
         },
 
         copy: writeClipboard,
+
+        // Copies the text selected inside an element (a long-press or drag selection). Returns how many characters, or -1
+        // when nothing in it is selected.
+        async copySelectionIn(element) {
+            const selection = window.getSelection();
+            const text = selection && !selection.isCollapsed && element?.contains(selection.anchorNode) && element.contains(selection.focusNode)
+                ? selection.toString() : "";
+            if (!text) {
+                return -1;
+            }
+
+            await writeClipboard(text);
+            return characters(text);
+        },
+
+        // Keeps what is on screen in place while text is added above it (e.g. earlier lines).
+        distanceFromBottom(element) {
+            return element ? element.scrollHeight - element.scrollTop : 0;
+        },
+
+        scrollFromBottom(element, distance) {
+            if (element) {
+                element.scrollTop = element.scrollHeight - distance;
+            }
+        },
 
         // Downloads a file the Manager serves (e.g. a session export); the login cookie goes along.
         downloadUrl(url) {

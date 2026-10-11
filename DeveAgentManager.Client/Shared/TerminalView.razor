@@ -1,6 +1,7 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 @* A terminal on a Runner. xterm.js talks to the Manager's terminal WebSocket (terminal.js), which connects it to an SSH
    terminal: an agent's tmux session, a shell, or a harness's login. This component shows the overlay and the keys. *@
@@ -33,6 +34,7 @@
 
 @* Font controls are available to everyone. Input keys are only shown on writable phone/tablet terminals. *@
 <div class="terminal-keys">
+    <button type="button" class="terminal-key" aria-label="Select terminal text" title="Select text" @onclick="SelectTextAsync"><MudIcon Icon="@Icons.Material.Rounded.ContentCopy" Size="Size.Small" /></button>
 @if (!ReadOnly)
 {
     <span class="terminal-input-controls">
@@ -276,10 +278,10 @@
         switch (result)
         {
             case "copied":
-                Snackbar.Add(Copied(characters), Severity.Success);
+                Snackbar.Add(CopyText.Copied(characters), Severity.Success);
                 break;
             case "blocked":
-                Snackbar.Add($"The browser didn't allow copying {Characters(characters)} from the terminal.", Severity.Warning, options =>
+                Snackbar.Add($"The browser didn't allow copying {CopyText.Characters(characters)} from the terminal.", Severity.Warning, options =>
                 {
                     options.Action = "Copy";
                     options.ActionColor = Color.Primary;
@@ -303,7 +305,7 @@
             var copied = await JS.InvokeAsync<int>("damTerminal.copyPending", _xterm.Id);
             if (copied > 0)
             {
-                Snackbar.Add(Copied(copied), Severity.Success);
+                Snackbar.Add(CopyText.Copied(copied), Severity.Success);
             }
         }
         catch (JSException exception)
@@ -312,9 +314,9 @@
         }
     }
 
-    private static string Copied(int characters) => $"Copied {Characters(characters)}";
-
-    private static string Characters(int count) => count == 1 ? "1 character" : $"{count:N0} characters";
+    private Task SelectTextAsync() => Dialogs.ShowAsync<TerminalTextDialog>("Select text",
+        new DialogParameters<TerminalTextDialog> { { d => d.AgentId, AgentId }, { d => d.TerminalId, _xterm.Id } },
+        new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Large, CloseButton = true });
 
     private Task OnTitleChange(string title) => TitleChanged.InvokeAsync(title);
 

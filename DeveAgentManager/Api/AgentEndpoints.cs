@@ -76,6 +76,9 @@ internal static class AgentEndpoints
 
         agents.MapGet("/{agentId:guid}/viewers", (Guid agentId, AgentService service, CancellationToken ct) => service.ListViewersAsync(agentId, ct))
             .RequireAgent(AgentAccess.Read);
+        // Everyone who can watch the terminal can copy from it.
+        agents.MapGet("/{agentId:guid}/terminal-text", (Guid agentId, int? lines, AgentService service, CancellationToken ct) =>
+            service.ReadTerminalTextAsync(agentId, lines ?? AgentService.TerminalTextLines, ct)).RequireAgent(AgentAccess.Read);
         agents.MapPost("/{agentId:guid}/viewers/disconnect", async (Guid agentId, DisconnectViewersRequest request, AgentService service, CancellationToken ct) =>
         {
             await service.DisconnectViewersAsync(agentId, request.Tty, request.KeepTty, ct);

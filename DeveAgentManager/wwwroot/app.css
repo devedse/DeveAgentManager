@@ -3141,3 +3141,6 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .nav-skeleton-icon { width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0; }
 .nav-skeleton-avatar { width: 24px; height: 24px; border-radius: 7px; flex-shrink: 0; }
 .nav-skeleton-line { height: 10px; }
+
+.terminal-text-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.terminal-text { max-height: 60dvh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--dam-surface-2); color: var(--dam-text); user-select: text; -webkit-user-select: text; touch-action: auto; }

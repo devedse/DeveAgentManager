@@ -178,6 +178,8 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task<List<AgentViewer>> ListViewersAsync(Guid agentId) => GetAsync<List<AgentViewer>>($"api/agents/{agentId}/viewers");
 
+    public Task<AgentTerminalText> GetTerminalTextAsync(Guid agentId, int lines) => GetAsync<AgentTerminalText>($"api/agents/{agentId}/terminal-text?lines={lines}");
+
     public Task DisconnectViewersAsync(Guid agentId, string? tty, string? keepTty) =>
         SendAsync(HttpMethod.Post, $"api/agents/{agentId}/viewers/disconnect", new DisconnectViewersRequest(tty, keepTty));
 

@@ -312,6 +312,9 @@ file. Keep `/data` on a local disk; SQLite's write-ahead log doesn't work on net
   selects in the browser instead (on a read-only terminal a plain drag does): a **Copy** button appears where the
   selection ends, and Ctrl+C (Cmd+C) copies it too.
 
+The terminal’s **Select text** button opens a snapshot with saved history and native phone selection. **Copy all**,
+**Copy screen**, and **Copy selection** are also available to read-only viewers; **Load earlier** reads more history.
+
 ## Development
 
 ```bash

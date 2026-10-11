@@ -415,6 +415,51 @@ public sealed partial class AgentService(
     /// <summary>What a kicked terminal prints (instead of tmux's own goodbye), so it can say why it was disconnected.</summary>
     public const string KickedMarker = "__DAM_KICKED__";
 
+    /// <summary>History lines the terminal's text view reads at first, and at most (tmux keeps up to 100,000).</summary>
+    public const int TerminalTextLines = 2_000;
+    public const int MaxTerminalTextLines = 50_000;
+
+    /// <summary>
+    /// The agent's terminal as plain text, to select and copy from: what it shows now, and up to <paramref name="lines"/>
+    /// lines of tmux's history above it. The browser's terminal has no history of its own: tmux keeps it.
+    /// </summary>
+    public async Task<AgentTerminalText> ReadTerminalTextAsync(Guid agentId, int lines, CancellationToken cancellationToken = default)
+    {
+        var agent = await GetAsync(agentId, cancellationToken) ?? throw new ArgumentException("Agent not found.");
+        var runner = RequireReady(agent.Runner!);
+        lines = Math.Clamp(lines, 1, MaxTerminalTextLines);
+        var target = ShellQuote.Quote("=" + agent.TmuxSession + ":");
+        // -J joins wrapped lines. -E -1 ends at the last history line; with no history it would read the screen instead.
+        var result = (await shell.RunAsync(runner, $$"""
+            history=$(tmux display-message -p -t {{target}} '#{history_size}') || exit 3
+            printf '%s\0' "$history"
+            if [ "$history" -gt 0 ]; then tmux capture-pane -p -J -S -{{lines}} -E -1 -t {{target}}; fi
+            printf '\0'
+            tmux capture-pane -p -J -t {{target}}
+            """, TimeSpan.FromSeconds(30), cancellationToken)).EnsureSuccess("Reading the terminal");
+        return ParseTerminalText(result.Output, lines);
+    }
+
+    internal static AgentTerminalText ParseTerminalText(string output, int lines)
+    {
+        var parts = output.Split('\0');
+        if (parts.Length != 3 || !int.TryParse(parts[0].Trim(), out var historySize))
+        {
+            throw new InvalidOperationException("The terminal's text could not be read.");
+        }
+
+        return new AgentTerminalText(TerminalLines(parts[1]), TerminalLines(parts[2]), historySize > lines);
+    }
+
+    /// <summary>Without the spaces that fill each line to the terminal's width, and the empty lines before and after.</summary>
+    internal static string TerminalLines(string text)
+    {
+        var lines = text.Replace("\r", "").Split('\n').Select(line => line.TrimEnd()).ToList();
+        while (lines.Count > 0 && lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);
+        while (lines.Count > 0 && lines[0].Length == 0) lines.RemoveAt(0);
+        return string.Join('\n', lines);
+    }
+
     /// <summary>The terminals attached to the agent's tmux session: browser terminals, and SSH sessions that attached by hand.</summary>
     public async Task<IReadOnlyList<AgentViewer>> ListViewersAsync(Guid agentId, CancellationToken cancellationToken = default)
     {

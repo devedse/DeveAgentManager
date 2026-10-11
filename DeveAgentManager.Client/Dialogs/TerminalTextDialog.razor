@@ -1,0 +1,55 @@
+@inject ManagerApi Api
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+<MudDialog>
+    <TitleContent><div class="help-heading"><MudText Typo="Typo.h6">Select text</MudText><HelpTip Label="Selecting terminal text"><p>A snapshot of the terminal and its saved history. Long-press or drag to select text. Refresh to read new output.</p></HelpTip></div></TitleContent>
+    <DialogContent>
+        <LoadingSection Loaded="_loaded" Error="@_error" Retry="LoadAsync" Label="Reading terminal text">
+            <ChildContent>
+                <div class="terminal-text-actions">
+                    <MudButton OnClick="LoadAsync" Disabled="_busy">Refresh</MudButton>
+                    @if (_text?.More == true && _lines < 50000) { <MudButton OnClick="EarlierAsync" Disabled="_busy">Load earlier</MudButton> }
+                    <MudButton OnClick="CopyAllAsync">Copy all</MudButton>
+                    <MudButton OnClick="CopyScreenAsync">Copy screen</MudButton>
+                    <MudButton Class="keep-selection" OnClick="CopySelectedAsync">Copy selection</MudButton>
+                </div>
+                <pre class="terminal-text" @ref="_element">@All</pre>
+            </ChildContent>
+        </LoadingSection>
+    </DialogContent>
+    <DialogActions><MudButton OnClick="() => Dialog.Close()">Close</MudButton></DialogActions>
+</MudDialog>
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Guid? AgentId { get; set; }
+    [Parameter] public string TerminalId { get; set; } = "";
+    private AgentTerminalText? _text;
+    private bool _loaded, _busy, _scroll;
+    private string? _error;
+    private int _lines = 2000;
+    private ElementReference _element;
+    private string All => string.Join("\n", new[] { _text?.History, _text?.Screen }.Where(s => !string.IsNullOrEmpty(s)));
+    protected override Task OnInitializedAsync() => LoadAsync();
+    private async Task LoadAsync()
+    {
+        _busy = true;
+        try {
+            _text = AgentId is { } id ? await Api.GetTerminalTextAsync(id, _lines) : await JS.InvokeAsync<AgentTerminalText>("damTerminal.text", TerminalId);
+            _loaded = true; _error = null; _scroll = true;
+        }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException or JSException) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+    private async Task EarlierAsync() { _lines = Math.Min(50000, _lines * 2); await LoadAsync(); }
+    protected override async Task OnAfterRenderAsync(bool firstRender) { if (_scroll) { _scroll = false; await JS.InvokeVoidAsync("damUi.stickToBottom", _element, true); } }
+    private Task CopyAllAsync() => CopyAsync(All);
+    private Task CopyScreenAsync() => CopyAsync(_text?.Screen ?? "");
+    private async Task CopyAsync(string text) {
+        try { await JS.InvokeVoidAsync("damUi.copy", text); Snackbar.Add(CopyText.Copied(CopyText.Count(text)), Severity.Success); }
+        catch (JSException) { Snackbar.Add("Could not copy. Select the text and use your device's Copy menu.", Severity.Warning); }
+    }
+    private async Task CopySelectedAsync() {
+        try { var count = await JS.InvokeAsync<int>("damUi.copySelectionIn", _element); Snackbar.Add(count < 0 ? "Select some text first." : CopyText.Copied(count), count < 0 ? Severity.Info : Severity.Success); }
+        catch (JSException) { Snackbar.Add("Use your device's Copy menu for the selected text.", Severity.Warning); }
+    }
+}
