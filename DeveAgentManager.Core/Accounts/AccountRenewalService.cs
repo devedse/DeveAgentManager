@@ -1,3 +1,4 @@
+using DeveAgentManager.Core.Runners;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -5,9 +6,10 @@ namespace DeveAgentManager.Core.Accounts;
 
 /// <summary>
 /// The only place logins the Manager renews are renewed in the background (agent starts renew too, through the same
-/// lock): every 10 minutes, then Runners get the current copies. Assumes one Manager per database.
+/// lock): every 10 minutes, then Runners get the current copies and lose those of deleted logins and users. Assumes one
+/// Manager per database.
 /// </summary>
-public sealed class AccountRenewalService(AccountService accounts, ILogger<AccountRenewalService> logger) : BackgroundService
+public sealed class AccountRenewalService(AccountService accounts, RunnerUsers users, ILogger<AccountRenewalService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -24,6 +26,15 @@ public sealed class AccountRenewalService(AccountService accounts, ILogger<Accou
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     logger.LogWarning(ex, "Renewing logins failed");
+                }
+
+                try
+                {
+                    await users.RemoveDeletedUsersAsync(stoppingToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "Removing deleted users' files failed");
                 }
             }
             while (await timer.WaitForNextTickAsync(stoppingToken));

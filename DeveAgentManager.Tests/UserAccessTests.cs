@@ -325,7 +325,8 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
 
         var changed = await Users.DeleteAsync(TestUsers.Admin, leaving.Id, heir.Id);
 
-        Assert.Equal(new[] { theirs.RunnerId, admins.RunnerId }.Order(), changed.Order());
+        Assert.Equal(new[] { theirs.RunnerId, admins.RunnerId }.Order(), changed.Runners.Order());
+        Assert.Equal([theirs.AccountId], changed.Accounts);
         await using var check = await DbAsync();
         Assert.Equal(heir.Id, (await check.Runners.FindAsync(theirs.RunnerId))!.OwnerId);
         Assert.Equal(heir.Id, (await check.Sessions.FindAsync(theirs.SessionId))!.OwnerId);

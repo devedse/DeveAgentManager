@@ -237,9 +237,10 @@ public sealed partial class UserService(
     /// <summary>
     /// Deletes a user. What they own (Runners, agents and conversations) goes to <paramref name="transferToId"/>, with
     /// their access to other people's Runners (where those agents are). Their harness logins, settings and shares are
-    /// removed. Returns the Runners whose access changed, so the files and keys on them can be brought up to date.
+    /// removed. Returns the Runners whose access changed, so the files and keys on them can be brought up to date, and their
+    /// harness logins, whose copies on the Runners have to go too.
     /// </summary>
-    public async Task<IReadOnlyList<Guid>> DeleteAsync(CurrentUser actor, Guid userId, Guid transferToId, CancellationToken cancellationToken = default)
+    public async Task<DeletedUser> DeleteAsync(CurrentUser actor, Guid userId, Guid transferToId, CancellationToken cancellationToken = default)
     {
         if (userId == actor.Id)
         {
@@ -262,6 +263,7 @@ public sealed partial class UserService(
         }
 
         var runners = await db.Runners.Where(r => r.OwnerId == userId || r.Members.Any(m => m.UserId == userId)).Select(r => r.Id).ToListAsync(cancellationToken);
+        var accounts = await db.Accounts.Where(a => a.OwnerId == userId).Select(a => a.Id).ToListAsync(cancellationToken);
         await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
         {
             // The heir owns these Runners now, so a membership of theirs on them would be a second, weaker access.
@@ -296,7 +298,7 @@ public sealed partial class UserService(
         Invalidate(user.Id);
         await audit.RecordAsync(actor, AuditActions.UserDeleted, $"User {user.Username}", $"What they owned went to {heir.Username}", cancellationToken);
         events.Publish(new ManagerEvent(ManagerEventKind.UserRemoved, UserId: user.Id));
-        return runners;
+        return new DeletedUser(runners, accounts);
     }
 
     /// <summary>
@@ -451,3 +453,8 @@ public sealed partial class UserService(
     [GeneratedRegex("^[a-z0-9][a-z0-9._-]{0,31}$")]
     private static partial Regex ValidUsername();
 }
+
+/// <summary>What <see cref="UserService.DeleteAsync"/> leaves to clean up on the Runners.</summary>
+/// <param name="Runners">The Runners they owned or were a member of: whose access changed.</param>
+/// <param name="Accounts">Their harness logins, now deleted.</param>
+public sealed record DeletedUser(IReadOnlyList<Guid> Runners, IReadOnlyList<Guid> Accounts);

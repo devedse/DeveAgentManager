@@ -235,3 +235,7 @@ Phases 1–2 are useful on their own: several people, each on their own Runners.
 
 - 2026-10-07 — Added Conversation manager to Admin: global agent/session management, including imported sessions
   and live updates. Harness credentials remain private.
+- 2026-10-12 — Deleting a user removes their folder and the copies of their harness logins from every ready Runner
+  at once, not only the Runners they owned or were a member of (their agents can run on any Runner, e.g. as an admin).
+  Runners that were offline lose them in the 10-minute login sweep, which now also removes folders of deleted users.
+  Their tokens aren't revoked at the provider.

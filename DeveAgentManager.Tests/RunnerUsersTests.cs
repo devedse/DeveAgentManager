@@ -79,6 +79,46 @@ public sealed class RunnerUsersTests : IDisposable
         Assert.Equal(manager + "\n", RunnerUsers.MergeAuthorizedKeys(manager, [("ketty", ["rm -rf /"])]));
     }
 
+    [Fact]
+    public void DeletedUsers_LoseTheirFolderAndLogins_AndTheSweepRemovesOnlyFoldersOfDeletedUsers()
+    {
+        if (!Which("bash")) return;
+        Guid gone = Guid.NewGuid(), stays = Guid.NewGuid(), login = Guid.NewGuid(), otherLogin = Guid.NewGuid();
+        foreach (var path in new[] { $"users/{gone:N}", $"users/{stays:N}", $"accounts/{login:N}/codex", $"accounts/{otherLogin:N}" })
+        {
+            Directory.CreateDirectory(Path.Combine(_home, ".deveagentmanager", path));
+        }
+        File.WriteAllText(Path.Combine(_home, ".deveagentmanager", "accounts", login.ToString("N"), "codex", "auth.json"), "a token");
+
+        Bash(RunnerUsers.RemoveScript([gone], [login]));
+        Assert.Equal([stays.ToString("N")], Folders("users"));
+        Assert.Equal([otherLogin.ToString("N")], Folders("accounts"));
+
+        // A Runner that was offline when the user was deleted: the sweep finds their folder; other users' and anything else stay.
+        Directory.CreateDirectory(Path.Combine(_home, ".deveagentmanager", "users", gone.ToString("N")));
+        Directory.CreateDirectory(Path.Combine(_home, ".deveagentmanager", "users", "not-a-user"));
+        var listing = Bash(RunnerUsers.ListScript);
+        Assert.Equal([gone], RunnerUsers.Stale(listing, new HashSet<Guid> { stays }));
+        Assert.Empty(RunnerUsers.Stale(listing, new HashSet<Guid> { stays, gone }));
+        Bash(RunnerUsers.RemoveScript(RunnerUsers.Stale(listing, new HashSet<Guid> { stays }), []));
+        Assert.Equal(new[] { "not-a-user", stays.ToString("N") }.Order(), Folders("users"));
+    }
+
+    private string Bash(string script)
+    {
+        var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true, RedirectStandardError = true };
+        start.Environment["HOME"] = _home;
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, error);
+        return output;
+    }
+
+    private IEnumerable<string> Folders(string name) =>
+        Directory.GetDirectories(Path.Combine(_home, ".deveagentmanager", name)).Select(Path.GetFileName).Order()!;
+
     private (string Output, int ExitCode) Git(string folder, string arguments, string? input = null)
     {
         var start = new ProcessStartInfo("git", arguments.Split(' '))

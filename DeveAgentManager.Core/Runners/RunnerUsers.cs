@@ -1,8 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
+using DeveAgentManager.Core.Accounts;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Setup;
 using DeveAgentManager.Core.Ssh;
+using DeveAgentManager.Core.Users;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -141,6 +143,71 @@ public sealed class RunnerUsers(
             logger.LogWarning(ex, "Could not update the user files of {User} on their Runners", userId);
         }
     });
+
+    /// <summary>
+    /// After a user was deleted: removes their folder and the copies of their harness logins from every ready Runner, not
+    /// only the ones they owned or were a member of (an agent puts its owner's files on whichever Runner it runs on), then
+    /// brings the Runners they had access to in line (their SSH keys). Runners that can't be reached lose these in
+    /// <see cref="RemoveDeletedUsersAsync"/> and the login sweep.
+    /// </summary>
+    public async Task RemoveDeletedUserAsync(Guid userId, DeletedUser deleted, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        foreach (var runner in await db.Runners.AsNoTracking().Where(r => r.State == RunnerState.Ready).ToListAsync(cancellationToken))
+        {
+            try
+            {
+                (await shell.RunAsync(runner, RemoveScript([userId], deleted.Accounts), TimeSpan.FromSeconds(20), cancellationToken))
+                    .EnsureSuccess("Removing a deleted user's files");
+                if (deleted.Runners.Contains(runner.Id))
+                {
+                    await SyncAsync(runner, cancellationToken);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Could not remove the deleted user's files from {Runner}", runner.Name);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes the folders of users that no longer exist from every ready Runner: those that couldn't be reached when the
+    /// user was deleted. Runs with the login sweep, which does the same for their harness logins.
+    /// </summary>
+    public async Task RemoveDeletedUsersAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        foreach (var runner in await db.Runners.AsNoTracking().Where(r => r.State == RunnerState.Ready).ToListAsync(cancellationToken))
+        {
+            try
+            {
+                var listing = await shell.RunAsync(runner, ListScript, TimeSpan.FromSeconds(20), cancellationToken);
+                // Read after listing: a folder is only written for a user that exists, so a new user's is never removed.
+                var stale = Stale(listing.Output, (await db.Users.Select(u => u.Id).ToListAsync(cancellationToken)).ToHashSet());
+                if (stale.Count > 0)
+                {
+                    (await shell.RunAsync(runner, RemoveScript(stale, []), TimeSpan.FromSeconds(20), cancellationToken))
+                        .EnsureSuccess("Removing deleted users' files");
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogInformation(ex, "Could not remove deleted users' files from {Runner}", runner.Name);
+            }
+        }
+    }
+
+    internal const string ListScript = "for d in \"$HOME/.deveagentmanager/users/\"*/; do [ -d \"$d\" ] && basename \"$d\"; done; true";
+
+    /// <summary>The user folders in <see cref="ListScript"/>'s output that belong to nobody in <paramref name="existing"/>.</summary>
+    internal static List<Guid> Stale(string listing, IReadOnlySet<Guid> existing) =>
+        listing.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(name => Guid.TryParseExact(name, "N", out var id) ? id : Guid.Empty)
+            .Where(id => id != Guid.Empty && !existing.Contains(id)).ToList();
+
+    internal static string RemoveScript(IEnumerable<Guid> users, IEnumerable<Guid> accounts) =>
+        "rm -rf" + string.Concat(users.Select(u => $" \"{Folder(u)}\"")) + string.Concat(accounts.Select(a => $" \"{AccountService.Folder(a)}\""));
 
     private async Task<List<(Guid Id, string Username)>> UsersWithAccessAsync(Guid runnerId, CancellationToken cancellationToken)
     {

@@ -36,25 +36,12 @@ internal static class UserEndpoints
             return Results.NoContent();
         }).RequireRole(UserRoles.UserManager);
 
-        // What the user owns goes to transferTo; the Runners they had access to lose their files and keys.
-        users.MapDelete("/{userId:guid}", async (Guid userId, Guid transferTo, CurrentUser user, UserService service, RunnerService runners,
-            RunnerUsers runnerUsers, ILoggerFactory loggers, CancellationToken ct) =>
+        // What the user owns goes to transferTo; every Runner loses their files and harness logins, and the ones they had
+        // access to their SSH keys.
+        users.MapDelete("/{userId:guid}", async (Guid userId, Guid transferTo, CurrentUser user, UserService service, RunnerUsers runnerUsers,
+            CancellationToken ct) =>
         {
-            foreach (var runnerId in await service.DeleteAsync(user, userId, transferTo, ct))
-            {
-                if (await runners.GetAsync(runnerId, ct) is { State: RunnerState.Ready } runner)
-                {
-                    try
-                    {
-                        await runnerUsers.SyncAsync(runner, ct);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        loggers.CreateLogger(typeof(UserEndpoints)).LogWarning(ex, "Could not remove the deleted user's files from {Runner}", runner.Name);
-                    }
-                }
-            }
-
+            await runnerUsers.RemoveDeletedUserAsync(userId, await service.DeleteAsync(user, userId, transferTo, ct), ct);
             return Results.NoContent();
         }).RequireRole(UserRoles.UserManager);
 
