@@ -35,7 +35,9 @@ else
                                 }
                             }
                         </div>
-                        <div class="conv-meta">@Time(entry)</div>
+                        <div class="conv-meta">@Time(entry)
+                            @if (ConversationCopy.Markdown(entry) is { Length: > 0 } text) { <CopyMessageButton Text="@text" /> }
+                        </div>
                     </div>
                     break;
 
@@ -91,6 +93,7 @@ else
                             <div class="conv-error">@entry.Error</div>
                         }
                         <div class="conv-meta">
+                            @if (ConversationCopy.Markdown(entry) is { Length: > 0 } replyText) { <CopyMessageButton Text="@replyText" /> }
                             @Time(entry)
                             @if (entry.Model?.Id is { } model)
                             {

@@ -1,0 +1,10 @@
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+<MudIconButton Icon="@Icons.Material.Rounded.ContentCopy" Size="Size.Small" aria-label="Copy message" title="Copy message as Markdown" OnClick="CopyAsync" />
+@code {
+    [Parameter] public string Text { get; set; } = "";
+    private async Task CopyAsync() {
+        try { await JS.InvokeVoidAsync("damUi.copy", Text); Snackbar.Add(CopyText.Copied(CopyText.Count(Text)), Severity.Success); }
+        catch (JSException) { Snackbar.Add("Could not copy. Select the message and use your device's Copy menu.", Severity.Warning); }
+    }
+}

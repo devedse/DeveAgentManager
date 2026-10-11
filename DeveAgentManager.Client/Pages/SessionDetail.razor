@@ -40,6 +40,7 @@
                 }
                 <SessionExportMenu SessionId="_stored.Id" />
                 <MudMenu Icon="@Icons.Material.Rounded.MoreVert" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+                    <MudMenuItem Icon="@Icons.Material.Rounded.ContentCopy" Disabled="@(ConversationCopy.LastReply(_session).Length == 0)" OnClick="CopyLastReplyAsync">Copy last reply</MudMenuItem>
                     <MudMenuItem Icon="@(_stored.Access == SessionAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="ShareAsync">Sharing</MudMenuItem>
                     @if (_stored.Access == SessionAccess.Owner)
                     {
@@ -135,6 +136,14 @@
             _scrolled = true;
             await JS.InvokeVoidAsync("damUi.scrollPageToEnd");
         }
+    }
+
+    private async Task CopyLastReplyAsync()
+    {
+        var text = ConversationCopy.LastReply(_session);
+        if (text.Length == 0) return;
+        try { await JS.InvokeVoidAsync("damUi.copy", text); Snackbar.Add(CopyText.Copied(CopyText.Count(text)), Severity.Success); }
+        catch (JSException) { Snackbar.Add("Could not copy. Select the reply and use your device's Copy menu.", Severity.Warning); }
     }
 
     private async Task ContinueAsync()

@@ -314,6 +314,8 @@ file. Keep `/data` on a local disk; SQLite's write-ahead log doesn't work on net
 
 The terminal’s **Select text** button opens a snapshot with saved history and native phone selection. **Copy all**,
 **Copy screen**, and **Copy selection** are also available to read-only viewers; **Load earlier** reads more history.
+On the conversation page, each text message has a copy button; **Copy last reply** is in the ⋮ menu. These copy
+the original Markdown, including code blocks, without thinking text or tool output.
 
 ## Development
 
