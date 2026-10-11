@@ -444,7 +444,8 @@ def main():
     if sys.argv[1:2] == ["--ack-file"] and len(sys.argv) == 3:
         acknowledge(sys.argv[2], FILES)
         return
-    parser = argparse.ArgumentParser(prog="dam-tools", description=__doc__)
+    parser = argparse.ArgumentParser(prog="dam-tools", description=__doc__, epilog="Prefer your harness built-in background tasks for ordinary builds, tests and verification. "
+                                     "Use run-job only for restart survival or durable ownership with validated completion evidence.")
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     share = commands.add_parser("share-image", help="Show an image to the user in this agent's conversation",
@@ -466,7 +467,11 @@ def main():
     file.add_argument("--session", default=os.environ.get("DAM_SESSION_ID", ""), help=argparse.SUPPRESS)
     file.set_defaults(run=lambda args: share_file(args, file))
 
-    job = commands.add_parser("run-job", help="Run an owned foreground command externally and notify this conversation on completion")
+    job = commands.add_parser("run-job", help="Durable fallback for work that must survive harness restarts",
+                              description="Prefer your harness built-in background tasks for ordinary work. "
+                                          "Use this fallback for restart survival or durable ownership with validated completion evidence. "
+                                          "The Manager attempts to notify the original conversation when it is idle; "
+                                          "inspect job-status if notification has not arrived.")
     job.add_argument("--prepare-json", required=True, help="JSON argv array which allocates and checks an empty output parent on the workload machine")
     job.add_argument("--command-json", required=True, help="JSON argv array; no shell or workload relaunch")
     job.add_argument("--completion-json", required=True, help="JSON argv array for the workload's read-only terminal evidence validator")

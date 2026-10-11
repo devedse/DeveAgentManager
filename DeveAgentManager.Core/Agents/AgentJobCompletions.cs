@@ -29,7 +29,7 @@ public sealed class AgentJobCompletions(IDbContextFactory<ManagerDbContext> fact
                 await Task.WhenAll(runners.Select(async r =>
                 {
                     try { await CollectAsync(r, ct); }
-                    catch (Exception ex) when (!ct.IsCancellationRequested) { logger.LogDebug(ex, "Could not deliver job completions from {Runner}", r.Id); }
+                    catch (Exception ex) when (!ct.IsCancellationRequested) { logger.LogWarning(ex, "Could not deliver job completions from {Runner}", r.Id); }
                 }));
                 // Only the controller scans its durable outbox. It spends no agent turns or tokens.
                 await Task.Delay(TimeSpan.FromSeconds(5), ct);
@@ -44,37 +44,64 @@ public sealed class AgentJobCompletions(IDbContextFactory<ManagerDbContext> fact
         var result = await shell.RunAsync(runner,
             "if [ -x ~/.deveagentmanager/dam-tools.py ] && [ -n \"$(ls -A ~/.deveagentmanager/jobs 2>/dev/null)\" ]; then python3 ~/.deveagentmanager/dam-tools.py --pending-jobs; else printf '[]'; fi",
             TimeSpan.FromSeconds(15), ct);
-        if (!result.Succeeded || result.Output.Length > 100_000) return;
-        var jobs = JsonSerializer.Deserialize<AgentJobPublication[]>(result.Output, ApiJson.Options) ?? [];
-        foreach (var job in jobs.Take(20))
+        if (!result.Succeeded || result.Output.Length > 100_000)
         {
-            if (job.Id == Guid.Empty || job.AgentId == Guid.Empty || job.SessionId == Guid.Empty) continue;
-            var notification = Describe(job); // reject malformed/cross-job terminal evidence before delivery
-            await using var db = await factory.CreateDbContextAsync(ct);
-            var agent = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == job.AgentId && a.RunnerId == runner.Id, ct);
-            var session = await db.Sessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == job.SessionId, ct);
-            if (!Belongs(agent, session, runner.Id))
-            {
-                await Ack(runner, job.Id, "STALE", ct);
-                continue;
-            }
-            if (agent!.State != AgentState.Running) continue;
-            var screen = await terminal.ReadAsync(agent, ct);
-            if (!screen.InputEmpty || AgentScreenDetector.Detect(agent.HarnessId, screen.Screen, DateTime.UtcNow).Status != AgentActivityStatus.Ready) continue;
-            using var lease = await sessions.LockAsync(ct);
-            // Recheck the selected conversation before crossing the terminal boundary.
-            db.ChangeTracker.Clear();
-            agent = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == job.AgentId && a.RunnerId == runner.Id, ct);
-            session = await db.Sessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == job.SessionId, ct);
-            if (!Belongs(agent, session, runner.Id) || agent!.State != AgentState.Running) continue;
-            var key = DeliveryKey(job, runner.Id);
-            var sent = await shell.RunAsync(runner, LimitTerminal.BuildSubmitScript(agent.TmuxSession, screen, notification,
-                deliveryKey: key), TimeSpan.FromSeconds(15), ct);
-            if (!sent.Succeeded) continue; // keyed Runner journal decides whether a retry is safe
-            var outcome = sent.Output.Trim();
-            if (outcome == "SENT") await Ack(runner, job.Id, "SENT", ct);
-            else if (outcome == "UNCONFIRMED") await Ack(runner, job.Id, "UNCERTAIN", ct);
+            logger.LogWarning("Job completion collection rejected for Runner {Runner}: success {Succeeded}, output size {Size}", runner.Id, result.Succeeded, result.Output.Length);
+            return;
         }
+        await ProcessPublicationsAsync(result.Output, job => DeliverAsync(runner, job, ct),
+            ex => logger.LogWarning("A job completion on Runner {Runner} could not be processed ({ErrorType}); inspect its durable job evidence", runner.Id, ex.GetType().Name), ct);
+    }
+
+    // Parse each record separately too: a malformed publication must not block valid jobs on the same Runner.
+    internal static async Task ProcessPublicationsAsync(string output, Func<AgentJobPublication, Task> deliver,
+        Action<Exception> failed, CancellationToken ct)
+    {
+        using var document = JsonDocument.Parse(output);
+        foreach (var item in document.RootElement.EnumerateArray().Take(20))
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var job = item.Deserialize<AgentJobPublication>(ApiJson.Options) ?? throw new InvalidDataException("Empty job publication.");
+                await deliver(job);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested) { failed(ex); }
+        }
+    }
+
+    private async Task DeliverAsync(Runner runner, AgentJobPublication job, CancellationToken ct)
+    {
+        if (job.Id == Guid.Empty || job.AgentId == Guid.Empty || job.SessionId == Guid.Empty) throw new InvalidDataException("Missing job identity.");
+        var notification = Describe(job); // reject malformed/cross-job terminal evidence before delivery
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var agent = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == job.AgentId && a.RunnerId == runner.Id, ct);
+        var session = await db.Sessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == job.SessionId, ct);
+        if (!Belongs(agent, session, runner.Id))
+        {
+            await Ack(runner, job.Id, "STALE", ct);
+            return;
+        }
+        if (agent!.State != AgentState.Running) return;
+        var screen = await terminal.ReadAsync(agent, ct);
+        if (!screen.InputEmpty || AgentScreenDetector.Detect(agent.HarnessId, screen.Screen, DateTime.UtcNow).Status != AgentActivityStatus.Ready) return;
+        using var lease = await sessions.LockAsync(ct);
+        // Recheck the selected conversation before crossing the terminal boundary.
+        db.ChangeTracker.Clear();
+        agent = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == job.AgentId && a.RunnerId == runner.Id, ct);
+        session = await db.Sessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == job.SessionId, ct);
+        if (!Belongs(agent, session, runner.Id) || agent!.State != AgentState.Running) return;
+        var key = DeliveryKey(job, runner.Id);
+        var sent = await shell.RunAsync(runner, LimitTerminal.BuildSubmitScript(agent.TmuxSession, screen, notification,
+            deliveryKey: key), TimeSpan.FromSeconds(15), ct);
+        if (!sent.Succeeded)
+        {
+            logger.LogWarning("Submission failed for job {Job} on Runner {Runner}; keyed journal controls retry", job.Id, runner.Id);
+            return;
+        } // keyed Runner journal decides whether a retry is safe
+        var outcome = sent.Output.Trim();
+        if (outcome == "SENT") await Ack(runner, job.Id, "SENT", ct);
+        else if (outcome == "UNCONFIRMED") await Ack(runner, job.Id, "UNCERTAIN", ct);
     }
 
     internal static bool Belongs(Agent? agent, StoredSession? session, Guid runnerId) =>
@@ -128,6 +155,9 @@ public sealed class AgentJobCompletions(IDbContextFactory<ManagerDbContext> fact
         return path.Equals(parent.TrimEnd(separator) + separator + id, comparison) && !id.Contains('/') && !id.Contains('\\') && id is not "." and not "..";
     }
 
-    private Task<CommandResult> Ack(Runner runner, Guid id, string state, CancellationToken ct) =>
-        shell.RunAsync(runner, $"python3 ~/.deveagentmanager/dam-tools.py --ack-job {id:N} {state}", TimeSpan.FromSeconds(10), ct);
+    private async Task Ack(Runner runner, Guid id, string state, CancellationToken ct)
+    {
+        (await shell.RunAsync(runner, $"python3 ~/.deveagentmanager/dam-tools.py --ack-job {id:N} {state}", TimeSpan.FromSeconds(10), ct))
+            .EnsureSuccess("Acknowledging job completion");
+    }
 }

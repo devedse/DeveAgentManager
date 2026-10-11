@@ -2,8 +2,9 @@
 
 ## Background verification
 
-Use the supported owned-job helper and completion delivery described in
-[docs/background-jobs.md](docs/background-jobs.md) for long verification work.
+Prefer the harness’s built-in background tasks for ordinary builds, tests and verification.
+Use `dam-tools run-job` only when work must survive harness restarts or needs durable ownership and
+validated completion evidence, as described in [docs/background-jobs.md](docs/background-jobs.md).
 Keep job ownership, strict completion validation and keyed terminal delivery
 separate. Never replay a workload after transport loss or an ambiguous delivery.
 Controller outbox checks do not require recurring agent turns. Record live

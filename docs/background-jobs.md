@@ -1,5 +1,11 @@
 # Owned background verification jobs
 
+Prefer the harness’s built-in background tasks for ordinary builds, tests and verification.
+Use `dam-tools run-job` only when the workload must survive a harness restart or requires
+durable ownership and separately validated completion evidence. Availability and wake-up
+behavior of built-in tasks depend on the harness. Durable jobs are an optional fallback,
+not a requirement for every long command.
+
 On a Linux Runner, `dam-tools run-job` starts an owned foreground command outside
 the agent turn. The controller waits for process exit, runs a separate read-only
 completion validator, then publishes a durable outbox entry. It never reruns the

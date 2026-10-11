@@ -9,6 +9,26 @@ namespace DeveAgentManager.Tests;
 public sealed class AgentJobCompletionTests
 {
     [Fact]
+    public async Task MalformedPublicationAndFailedDeliveryDoNotBlockLaterJobs()
+    {
+        var first = new AgentJobPublication(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "test", "lab", "/results", "INSPECTION_REQUIRED", null,
+            DateTimeOffset.UtcNow, null, null, null);
+        var second = first with { Id = Guid.NewGuid() };
+        var output = "[{\"id\":\"invalid-guid\"}," + JsonSerializer.Serialize(first, DeveAgentManager.Contracts.ApiJson.Options) + "," +
+            JsonSerializer.Serialize(second, DeveAgentManager.Contracts.ApiJson.Options) + "]";
+        var delivered = new List<Guid>();
+        var failures = 0;
+        await AgentJobCompletions.ProcessPublicationsAsync(output, job =>
+        {
+            if (job.Id == first.Id) throw new InvalidDataException("Malformed evidence");
+            delivered.Add(job.Id);
+            return Task.CompletedTask;
+        }, _ => failures++, TestContext.Current.CancellationToken);
+        Assert.Equal(2, failures);
+        Assert.Equal([second.Id], delivered);
+    }
+
+    [Fact]
     public async Task DurableHelperOwnsExitValidationReconnectAndOutbox()
     {
         if (OperatingSystem.IsWindows()) return;
