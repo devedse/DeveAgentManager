@@ -4,8 +4,10 @@
 @inject IJSRuntime JS
 <PageTitle>Manager logs · DeveAgentManager</PageTitle>
 <MudContainer MaxWidth="MaxWidth.Large" Class="page">
-    <PageHeader Title="Manager logs" Help="Application logs, newest first. The latest 5,000 entries are available; two bounded files keep recent logs across restarts. Logs may contain deployment details and user activity. Common credential fields are masked, but review exports before sharing. Existing log levels still apply.">
+    <PageHeader Title="Manager logs" Help="Application logs, newest first. The latest 5,000 entries are available; two bounded files keep recent logs across restarts. Logs may contain deployment details and user activity. Common credential fields are masked, but review exports before sharing. Existing log levels still apply. Copy buttons fetch the latest matching entries using the current filters.">
         <Actions><MudButton StartIcon="@Icons.Material.Rounded.Refresh" OnClick="RefreshAsync" Disabled="@(_me?.Has(UserRoles.LogViewer) != true)">Refresh</MudButton>
+        <MudButton StartIcon="@Icons.Material.Rounded.ContentCopy" OnClick="() => CopyLogsAsync(100)" Disabled="@(_copying || !Loaded || _me?.Has(UserRoles.LogViewer) != true)">Copy last 100</MudButton>
+        <MudButton StartIcon="@Icons.Material.Rounded.ContentCopy" OnClick="() => CopyLogsAsync(1000)" Disabled="@(_copying || !Loaded || _me?.Has(UserRoles.LogViewer) != true)">Copy last 1,000</MudButton>
         <MudButton StartIcon="@Icons.Material.Rounded.Download" OnClick="DownloadAsync" Disabled="@(_entries.Count == 0)">Download</MudButton></Actions>
     </PageHeader>
     @if (_me is not null && !_me.Has(UserRoles.LogViewer))
@@ -48,7 +50,7 @@
     private CurrentUserDto? _me;
     private List<ManagerLogEntry> _entries = [];
     private string _minimum = "Information", _search = "";
-    private bool _auto = true, _force;
+    private bool _auto = true, _force, _copying;
     protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
     protected override bool IsRelevant(ManagerEvent managerEvent) => false;
     protected override async Task LoadAsync()
@@ -61,6 +63,36 @@
     private async Task SearchChangedAsync(string value) { _search = value; await RefreshFiltersAsync(); }
     private async Task RefreshFiltersAsync() => await RefreshAsync();
     private async Task RefreshAsync() { _force = true; await RetryAsync(); }
-    private async Task DownloadAsync() => await JS.InvokeVoidAsync("damUi.downloadText", "manager-logs.txt", string.Join("\n\n", _entries.Select(e => $"{e.Timestamp:O} [{e.Level}] {e.Category}\n{e.Message}")));
+    private static string FormatLogs(IEnumerable<ManagerLogEntry> entries) => string.Join("\n\n", entries.Select(e => $"{e.Timestamp:O} [{e.Level}] {e.Category}\n{e.Message}"));
+    private async Task CopyLogsAsync(int count)
+    {
+        _copying = true;
+        try
+        {
+            var entries = await Api.ListManagerLogsAsync(_minimum, _search, count);
+            if (entries.Count == 0) { Snackbar.Add("No matching logs to copy.", Severity.Info); return; }
+            await CopySnapshotAsync(FormatLogs(entries), entries.Count);
+        }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException) { Snackbar.Add(ex.Message, Severity.Error); }
+        finally { _copying = false; }
+    }
+    private async Task CopySnapshotAsync(string text, int count)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("damUi.copy", text);
+            Snackbar.Add($"Copied {count:N0} log {(count == 1 ? "entry" : "entries")}", Severity.Success);
+        }
+        catch (JSException)
+        {
+            Snackbar.Add("The browser blocked clipboard access. Tap Copy to try again.", Severity.Warning, options =>
+            {
+                options.Action = "Copy";
+                options.RequireInteraction = true;
+                options.OnClick = async _ => await CopySnapshotAsync(text, count);
+            });
+        }
+    }
+    private async Task DownloadAsync() => await JS.InvokeVoidAsync("damUi.downloadText", "manager-logs.txt", FormatLogs(_entries));
     private static Color LevelColor(string level) => level switch { "Error" or "Critical" => Color.Error, "Warning" => Color.Warning, _ => Color.Default };
 }

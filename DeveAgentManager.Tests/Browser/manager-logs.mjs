@@ -1,9 +1,7 @@
 const playwright = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 import assert from 'node:assert/strict';
 
-// Text selected in xterm.js gets a Copy button where the selection ended: Shift+drag where tmux has the mouse (a plain
-// drag still goes to tmux), a plain drag on a read-only terminal. The button and Ctrl+C copy, say so, and keep the
-// terminal focused.
+// Manager log filtering, phone layout, export and clipboard copies beyond the displayed 300 entries.
 const engine = process.env.DAM_TEST_BROWSER ?? 'chromium';
 const browser = await playwright[engine].launch(engine === 'firefox' ? { firefoxUserPrefs: { 'dom.events.testing.asyncClipboard': true } } : {});
 const base = process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
@@ -30,7 +28,24 @@ try {
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Download', exact: true }).click();
     assert.equal((await download).suggestedFilename(), 'manager-logs.txt');
+    const requests = [];
+    await context.route('**/api/logs?*', route => {
+        const url = new URL(route.request().url());
+        requests.push(url.searchParams);
+        const count = Number(url.searchParams.get('take'));
+        return route.fulfill({ json: Array.from({ length: count }, (_, i) => ({ id: 1200 - i, timestamp: '2026-10-11T12:00:00Z', level: 'Information', category: 'Test', message: `Application started ${1200 - i}` })) });
+    });
+    for (const count of [100, 1000]) {
+        await page.getByRole('button', { name: count === 100 ? 'Copy last 100' : 'Copy last 1,000', exact: true }).click();
+        await page.getByText(`Copied ${count.toLocaleString('en-US')} log entries`, { exact: true }).waitFor();
+        const copied = await page.evaluate(() => navigator.clipboard.readText());
+        assert.equal((copied.match(/\[Information\]/g) ?? []).length, count);
+        assert.match(copied, /Application started 1200/);
+        assert.ok(copied.endsWith(`Application started ${1201 - count}`));
+        assert.equal(requests.at(-1).get('search'), 'Application started');
+        assert.equal(requests.at(-1).get('minimum'), 'Information');
+    }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
     assert.deepEqual(errors, []);
-    console.log(`Passed (${engine}): phone logs page searches, refreshes while paused and exports without overflow.`);
+    console.log(`Passed (${engine}): phone logs page filters, exports and copies the latest 100/1,000 matching entries without overflow.`);
 } finally { await browser.close(); }
