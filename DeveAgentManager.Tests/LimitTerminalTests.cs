@@ -213,4 +213,54 @@ public sealed class LimitTerminalTests
             return await output;
         }
     }
+
+    [Theory]
+    [InlineData("\u001b[2mTry \"fix typecheck errors\"\u001b[0m", true)]
+    [InlineData("Try \"fix typecheck errors\"", false)]
+    [InlineData("fix\u001b[2m typecheck errors\u001b[0m", false)]
+    [InlineData("\u001b[38;5;2mgreen draft\u001b[0m", false)]
+    public async Task RealTmuxProbeTreatsADimHintAsEmpty_ButNeverTypedText(string rendered, bool empty)
+    {
+        if (OperatingSystem.IsWindows() || !File.Exists("/usr/bin/tmux")) return;
+        var temp = Directory.CreateTempSubdirectory("dam-hint-terminal-").FullName;
+        var socket = "dam-hint-test-" + Guid.NewGuid().ToString("N");
+        var harness = Path.Combine(temp, "harness.py");
+        await File.WriteAllTextAsync(Path.Combine(temp, "tmux"), $"#!/bin/sh\nexec /usr/bin/tmux -L {socket} \"$@\"\n", TestContext.Current.CancellationToken);
+        File.SetUnixFileMode(Path.Combine(temp, "tmux"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        // Claude's composer: the prompt marker, the rendered text, and the cursor back right after the marker.
+        await File.WriteAllTextAsync(harness, $"""
+            import json,sys,time
+            sys.stdout.write('\u276f\u00a0'+json.loads({JsonSerializer.Serialize(JsonSerializer.Serialize(rendered))})+'\r\x1b[2C')
+            sys.stdout.flush()
+            time.sleep(600)
+            """, TestContext.Current.CancellationToken);
+        try
+        {
+            await Run("tmux new-session -d -s hint -x 120 -y 10 " + ShellQuote.Quote($"exec python3 {ShellQuote.Quote(harness)}"));
+            LimitScreen? state = null;
+            for (var i = 0; i < 40 && state?.Screen.Contains('\u276f') != true; i++)
+            {
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+                state = JsonSerializer.Deserialize<LimitScreen>(await Run(LimitTerminal.BuildReadScript("hint")));
+            }
+            Assert.Equal(empty, state!.InputEmpty);
+        }
+        finally
+        {
+            await Run("tmux kill-server || true");
+            Directory.Delete(temp, true);
+        }
+
+        async Task<string> Run(string script)
+        {
+            var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true, RedirectStandardError = true };
+            start.Environment["PATH"] = temp + ":" + Environment.GetEnvironmentVariable("PATH");
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+            var error = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+            await process.WaitForExitAsync(TestContext.Current.CancellationToken);
+            Assert.True(process.ExitCode == 0, await error);
+            return await output;
+        }
+    }
 }

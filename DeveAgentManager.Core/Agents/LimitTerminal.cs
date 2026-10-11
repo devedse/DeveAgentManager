@@ -33,6 +33,27 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
         target=sys.argv[1] if len(sys.argv)>1 else ''
         def tmux(*args):
             return subprocess.check_output(['tmux',*args],text=True,stderr=subprocess.DEVNULL)
+        def hint_only(y):
+            # Hints in an empty composer (Claude's 'Try "…"', Codex's suggestions) are drawn dim; typed text is not.
+            styled=tmux('capture-pane','-p','-e','-t',target,'-S',str(y),'-E',str(y)).split('\n')[0]
+            dim=after=seen=False
+            for part in re.split(r'(\x1b\[[0-9;]*m)',styled):
+                if part.startswith('\x1b['):
+                    codes=part[2:-1].split(';');i=0
+                    while i<len(codes):
+                        if codes[i] in ('38','48','58'):
+                            i+=3 if i+1<len(codes) and codes[i+1]=='5' else 5
+                            continue
+                        if codes[i] in ('','0','22'): dim=False
+                        elif codes[i]=='2': dim=True
+                        i+=1
+                    continue
+                for ch in part:
+                    if not after: after=ch in '›❯'
+                    elif ch.strip():
+                        if not dim: return False
+                        seen=True
+            return seen
         def snapshot():
             pane,pid,dead,cy,cx=tmux('display-message','-p','-t',target,'#{pane_id}|#{pane_pid}|#{pane_dead}|#{cursor_y}|#{cursor_x}').strip().split('|')
             if not pane or not pid.isdecimal() or int(pid)<=0 or dead!='0': raise RuntimeError('Harness is not running')
@@ -63,7 +84,8 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
                         prompt,prompt_y=candidate,y
                         break
             # Only the marker row at its initial column can be empty; continuation rows are always drafts.
-            empty=bool(prompt and prompt_y==int(cy) and int(cx)<=len(prompt[1].rstrip())+1 and prompt[2].strip() in ('','Ask Codex to do anything'))
+            empty=bool(prompt and prompt_y==int(cy) and int(cx)<=len(prompt[1].rstrip())+1
+                and (prompt[2].strip() in ('','Ask Codex to do anything') or hint_only(prompt_y)))
             input_text=prompt[2] if prompt else None
             if prompt:
                 # tmux -J joins terminal soft wraps. TUI-rendered wraps remain as indented continuation rows.
