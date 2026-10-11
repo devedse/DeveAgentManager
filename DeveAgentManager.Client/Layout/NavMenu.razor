@@ -104,7 +104,7 @@
         _readyRunners = runners.Count(r => r.State == RunnerState.Ready);
         _liveAgents = runners.SelectMany(r => r.Agents)
             .Where(a => a.State is AgentState.Running or AgentState.Starting)
-            .OrderBy(a => a.Name)
+            .ByLastReply()
             .ToList();
         _runningAgents = _liveAgents.Count;
     }

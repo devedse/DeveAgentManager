@@ -188,7 +188,7 @@
         _user = await Me.GetAsync();
         _info ??= await Api.InfoAsync();
         _runners = await runners;
-        _agents = (await agents).OrderByDescending(a => a.State == AgentState.Running).ThenByDescending(a => a.CreatedAt).ToList();
+        _agents = (await agents).ByLastReply().ToList();
     }
 
     private Task NewRunnerAsync() => Dialogs.ShowAsync<NewRunnerDialog>();

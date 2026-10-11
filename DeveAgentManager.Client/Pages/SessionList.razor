@@ -45,7 +45,9 @@
         else
         {
             <div class="agent-table">
-                @foreach (var group in Filtered.GroupBy(s => s.WorkspaceAgentId?.ToString() ?? s.RepositoryUrl ?? "Imported"))
+                @* Agents' workspaces like agents everywhere: the one that replied last first (AgentOrder). *@
+                @foreach (var group in Filtered.GroupBy(s => s.WorkspaceAgentId?.ToString() ?? s.RepositoryUrl ?? "Imported")
+                    .OrderByDescending(g => g.Max(s => s.Agent?.LastAssistantMessageAt ?? s.UpdatedAt)))
                 {
                     var first = group.First();
                     <div class="session-group-heading">

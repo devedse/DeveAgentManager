@@ -56,6 +56,13 @@ GitHub Primer's loading guidance.)
 
 `DeveAgentManager.Tests/Browser/loading-states.mjs` checks this with a slow and a failing API.
 
+## UI: agent order
+
+Every list of agents puts the one that replied last first: sort with `AgentOrder.ByLastReply()`
+(`DeveAgentManager.Client/Shared/AgentOrder.cs`), including lists cut short such as the dashboard's. Agents that never
+replied come after, newest first. Lists grouped by agent, such as sessions, order the groups the same way.
+`DeveAgentManager.Tests/Browser/agent-order.mjs` checks the pages that list agents.
+
 ## Documentation privacy
 
 Use reserved example domains (`example.com`, `example.org`, `.test`), placeholder credentials, and generic paths in

@@ -12,7 +12,7 @@
 else
 {
     <div class="agent-table">
-        @foreach (var agent in Agents)
+        @foreach (var agent in Agents.ByLastReply())
         {
             var busy = _busy.Contains(agent.Id);
             var write = agent.Access >= AgentAccess.Write;

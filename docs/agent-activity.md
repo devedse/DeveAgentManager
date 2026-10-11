@@ -58,7 +58,7 @@ The Runner monitor captures one observation per pane: joined screen text, proces
 
 Click an agent status, then **Recent diagnostic history**, to see activity transitions, connection failures and continuation/command outcomes. **Copy diagnostics** includes the current detection and history. History survives Manager restarts, is capped at 100 entries per agent, and shows only the last seven days. Repeated identical events are collapsed. The history does not store full screens, prompts or credentials. Files are in `logs/agents/` under the Manager data directory.
 
-The activity page sorts agents needing attention first, provides status filters and a **Next needing attention** link, and shows a bounded preview of the latest assistant text from the active saved conversation branch. Opening this overview does not acknowledge completions. Previews are cached until the saved conversation changes; they update after session synchronization rather than streaming every token.
+The activity page lists agents by last reply like every agent list, provides status filters (including **Needs input**) and a **Next needing attention** link, and shows a bounded preview of the latest assistant text from the active saved conversation branch. Opening this overview does not acknowledge completions. Previews are cached until the saved conversation changes; they update after session synchronization rather than streaming every token.
 
 ## Harness quick commands
 

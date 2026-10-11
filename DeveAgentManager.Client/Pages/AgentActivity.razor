@@ -80,7 +80,5 @@
     private IEnumerable<AgentDto> Filtered => _agents
         .Where(a => Matches(a, _filter))
         .Where(a => string.IsNullOrWhiteSpace(_search) || a.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) || a.RunnerName.Contains(_search, StringComparison.OrdinalIgnoreCase))
-        .OrderBy(a => _attention.FindIndex(i => i.AgentId == a.Id) is var index && index >= 0 ? index : int.MaxValue)
-        .ThenByDescending(a => a.State == AgentState.Running)
-        .ThenBy(a => a.RunnerName).ThenBy(a => a.Name);
+        .ByLastReply();
 }

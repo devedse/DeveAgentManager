@@ -78,6 +78,7 @@
                     || (a.RepositoryUrl?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
                     || a.RunnerName.Contains(_search, StringComparison.OrdinalIgnoreCase)
                     || a.OwnerName.Contains(_search, StringComparison.OrdinalIgnoreCase))
+        .ByLastReply()
         .ToList();
 
     protected override async Task LoadAsync() => _agents = await Api.ListAgentsAsync();
