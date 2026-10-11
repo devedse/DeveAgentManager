@@ -50,7 +50,7 @@ public sealed class AgentJobCompletions(IDbContextFactory<ManagerDbContext> fact
             return;
         }
         await ProcessPublicationsAsync(result.Output, job => DeliverAsync(runner, job, ct),
-            ex => logger.LogWarning("A job completion on Runner {Runner} could not be processed ({ErrorType}); inspect its durable job evidence", runner.Id, ex.GetType().Name), ct);
+            ex => logger.LogWarning("A job completion on Runner {Runner} could not be processed ({ErrorType}); inspect its durable job evidence. Stack: {Stack}", runner.Id, ex.GetType().Name, ex.StackTrace), ct);
     }
 
     // Parse each record separately too: a malformed publication must not block valid jobs on the same Runner.
@@ -70,12 +70,12 @@ public sealed class AgentJobCompletions(IDbContextFactory<ManagerDbContext> fact
         }
     }
 
-    private async Task DeliverAsync(Runner runner, AgentJobPublication job, CancellationToken ct)
+    internal async Task DeliverAsync(Runner runner, AgentJobPublication job, CancellationToken ct)
     {
         if (job.Id == Guid.Empty || job.AgentId == Guid.Empty || job.SessionId == Guid.Empty) throw new InvalidDataException("Missing job identity.");
         var notification = Describe(job); // reject malformed/cross-job terminal evidence before delivery
         await using var db = await factory.CreateDbContextAsync(ct);
-        var agent = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == job.AgentId && a.RunnerId == runner.Id, ct);
+        var agent = await db.Agents.AsNoTracking().Include(a => a.Runner).SingleOrDefaultAsync(a => a.Id == job.AgentId && a.RunnerId == runner.Id, ct);
         var session = await db.Sessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == job.SessionId, ct);
         if (!Belongs(agent, session, runner.Id))
         {
@@ -88,7 +88,7 @@ public sealed class AgentJobCompletions(IDbContextFactory<ManagerDbContext> fact
         using var lease = await sessions.LockAsync(ct);
         // Recheck the selected conversation before crossing the terminal boundary.
         db.ChangeTracker.Clear();
-        agent = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == job.AgentId && a.RunnerId == runner.Id, ct);
+        agent = await db.Agents.AsNoTracking().Include(a => a.Runner).SingleOrDefaultAsync(a => a.Id == job.AgentId && a.RunnerId == runner.Id, ct);
         session = await db.Sessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == job.SessionId, ct);
         if (!Belongs(agent, session, runner.Id) || agent!.State != AgentState.Running) return;
         var key = DeliveryKey(job, runner.Id);
