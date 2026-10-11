@@ -1657,6 +1657,8 @@ html:has(.terminal-layout) body {
 .terminal-overlay {
     position: absolute;
     inset: 0;
+    /* Above the selection's Copy button. */
+    z-index: 11;
     display: grid;
     place-items: center;
     background: rgba(10, 13, 19, 0.72);
@@ -1675,6 +1677,42 @@ html:has(.terminal-layout) body {
     background: var(--dam-surface);
     border: 1px solid var(--dam-border-strong);
 }
+
+/* Copies the text selected in the terminal (terminal.js), next to where the selection ended. */
+.terminal-copy {
+    position: absolute;
+    z-index: 10;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--dam-border-strong);
+    border-radius: 999px;
+    background: var(--dam-surface-3);
+    color: var(--dam-text);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+}
+
+    .terminal-copy[hidden] {
+        display: none;
+    }
+
+    .terminal-copy:hover,
+    .terminal-copy:focus-visible {
+        border-color: var(--dam-primary);
+        color: var(--dam-primary-text);
+    }
+
+    .terminal-copy svg {
+        width: 16px;
+        height: 16px;
+        fill: currentColor;
+    }
 
 .terminal-stopped {
     flex: 1;

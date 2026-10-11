@@ -267,8 +267,8 @@
     }
 
     /// <summary>
-    /// A program in the terminal copied text (OSC 52, terminal.js): "copied" (the number of characters), "blocked" (the
-    /// browser didn't allow it; Copy copies it in the tap) or "large".
+    /// Text was copied from the terminal (terminal.js): "copied" (the number of characters). A program's copy (OSC 52) can
+    /// also be "blocked" (the browser didn't allow it; Copy copies it in the tap) or "large"; the selection's, "failed".
     /// </summary>
     [JSInvokable]
     public void OnCopy(string result, int characters)
@@ -289,6 +289,9 @@
                 break;
             case "large":
                 Snackbar.Add("Not copied: the terminal copies up to 1 MB.", Severity.Warning);
+                break;
+            case "failed":
+                Snackbar.Add("Could not copy: the browser didn't allow it.", Severity.Error);
                 break;
         }
     }

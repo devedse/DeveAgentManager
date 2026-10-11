@@ -308,7 +308,9 @@ file. Keep `/data` on a local disk; SQLite's write-ahead log doesn't work on net
   let go), or use the harness's own copy, such as Claude Code's `/copy`. Programs copy with OSC 52, which the browser
   accepts only within 5 seconds of a key, tap or click in that terminal, so a program can't fill your clipboard by
   itself. Every copy shows a message. Requests to read your clipboard are never answered. Someone watching read-only
-  doesn't get what others copy. When the browser refuses, the message has a **Copy** button. Up to 1 MB.
+  doesn't get what others copy. When the browser refuses, the message has a **Copy** button. Up to 1 MB. Shift+drag
+  selects in the browser instead (on a read-only terminal a plain drag does): a **Copy** button appears where the
+  selection ends, and Ctrl+C (Cmd+C) copies it too.
 
 ## Development
 

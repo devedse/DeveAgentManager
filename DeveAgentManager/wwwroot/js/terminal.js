@@ -405,6 +405,110 @@
         return true;
     }
 
+    // Text selected in xterm.js itself: Shift+drag (a plain drag goes to tmux, which copies when the mouse is let go), or a
+    // plain drag on a terminal that is only watched. A Copy button appears where the selection ended; Ctrl+C copies too.
+    const selectionButtons = new Map();
+    const COPY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+
+    async function copySelection(terminal, id) {
+        const text = terminal.getSelection();
+        if (!text) {
+            return;
+        }
+
+        const dotnet = dotnets.get(id);
+        try {
+            await writeClipboard(text);
+            terminal.clearSelection();
+            dotnet?.invokeMethodAsync("OnCopy", "copied", characters(text));
+        } catch {
+            dotnet?.invokeMethodAsync("OnCopy", "failed", 0);
+        }
+    }
+
+    function enableSelectionCopy(terminal, id, frame) {
+        if (!frame || selectionButtons.has(id)) {
+            return;
+        }
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "terminal-copy";
+        button.hidden = true;
+        button.title = "Copy the selected text";
+        button.innerHTML = `${COPY_ICON}<span>Copy</span>`;
+        frame.appendChild(button);
+
+        // Next to where the selection ended (the top right corner when it wasn't made with the mouse), inside the terminal.
+        const place = (x, y) => {
+            if (!terminal.hasSelection() || !terminal.getSelection().trim()) {
+                button.hidden = true;
+                return;
+            }
+
+            button.hidden = false;
+            const box = frame.getBoundingClientRect();
+            const left = x === undefined ? box.width - button.offsetWidth - 12 : x - box.left + 8;
+            const below = y === undefined ? 12 : y - box.top + 14;
+            const top = below + button.offsetHeight + 8 <= box.height ? below : y - box.top - button.offsetHeight - 14;
+            button.style.left = `${Math.max(8, Math.min(left, box.width - button.offsetWidth - 8))}px`;
+            button.style.top = `${Math.max(8, Math.min(top, box.height - button.offsetHeight - 8))}px`;
+        };
+
+        // While the mouse is down the selection is still changing; xterm.js finishes it on the release, also outside.
+        let pressed = false;
+        const down = event => {
+            if (!button.contains(event.target)) {
+                pressed = true;
+                button.hidden = true;
+            }
+        };
+        const up = event => {
+            if (pressed) {
+                pressed = false;
+                setTimeout(() => place(event.clientX, event.clientY));
+            }
+        };
+        frame.addEventListener("pointerdown", down, { capture: true, passive: true });
+        document.addEventListener("pointerup", up, { capture: true, passive: true });
+        const changes = terminal.onSelectionChange(() => {
+            if (!pressed) {
+                place();
+            }
+        });
+
+        // Clicking it must not take the focus from the terminal or start a new selection.
+        button.addEventListener("mousedown", event => {
+            event.preventDefault();
+            event.stopPropagation();
+        });
+        button.addEventListener("click", () => copySelection(terminal, id));
+
+        // The browser's own copy (Ctrl+C or Cmd+C with a selection, its Copy menu): no permission needed.
+        const copied = event => {
+            const text = terminal.hasSelection() ? terminal.getSelection() : "";
+            if (!text || !event.clipboardData) {
+                return;
+            }
+
+            event.clipboardData.setData("text/plain", text);
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            setTimeout(() => terminal.clearSelection());
+            dotnets.get(id)?.invokeMethodAsync("OnCopy", "copied", characters(text));
+        };
+        frame.addEventListener("copy", copied, { capture: true });
+        selectionButtons.set(id, () => {
+            document.removeEventListener("pointerup", up, { capture: true });
+            changes.dispose();
+            button.remove();
+        });
+    }
+
+    // Mouse reporting modes (X10, normal, highlight, button-event and any-event tracking).
+    const MOUSE_MODES = [9, 1000, 1001, 1002, 1003];
+    const mouseModeFilters = new Map();
+
     // Files into the terminal: images and any other file (a log, …), pasted (Ctrl+V, also a file copied in the file
     // manager), dropped, or (images) picked with the "📎 Image" key (phones: gallery, camera, screenshots). The Manager
     // stores them on the Runner and returns the path, which is pasted into the terminal as text, like pi's own Ctrl+V
@@ -593,9 +697,8 @@
                 }
 
                 // Ctrl+C copies when text is selected (select with Shift+drag); otherwise it interrupts as usual.
-                if (event.type === "keydown" && event.ctrlKey && !event.shiftKey && event.key === "c" && terminal.hasSelection()) {
-                    navigator.clipboard?.writeText(terminal.getSelection());
-                    terminal.clearSelection();
+                // Returning false leaves the key to the browser, whose copy is always allowed (copied in enableSelectionCopy).
+                if (event.ctrlKey && !event.shiftKey && !event.altKey && key === "c" && terminal.hasSelection()) {
                     return false;
                 }
 
@@ -653,6 +756,14 @@
             if (!copyHandlers.has(id)) {
                 copyHandlers.set(id, terminal.parser.registerOscHandler(52, data => readOnly || copyRequested(id, data)));
             }
+
+            // Their mouse goes nowhere either, so tmux's mouse mode isn't turned on there: a plain drag selects text.
+            if (readOnly && !mouseModeFilters.has(id)) {
+                mouseModeFilters.set(id, terminal.parser.registerCsiHandler({ prefix: "?", final: "h" },
+                    params => params.length > 0 && params.every(param => MOUSE_MODES.includes(Array.isArray(param) ? param[0] : param))));
+            }
+
+            enableSelectionCopy(terminal, id, element?.closest(".terminal-frame"));
 
             if (keys && !keys.dataset.keepFocus) {
                 keys.dataset.keepFocus = "true";
@@ -802,6 +913,10 @@
             dotnets.delete(id);
             copyHandlers.get(id)?.dispose();
             copyHandlers.delete(id);
+            mouseModeFilters.get(id)?.dispose();
+            mouseModeFilters.delete(id);
+            selectionButtons.get(id)?.();
+            selectionButtons.delete(id);
             inputTimes.delete(id);
             lastCopies.delete(id);
             pendingCopies.delete(id);
