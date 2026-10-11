@@ -239,7 +239,9 @@ security tests and validation limitations.
 
 Back up the `/data` volume. It holds the SQLite database, the SSH key the Manager uses to log in to Runners, and the
 keys that decrypt stored secrets (harness logins, GitHub tokens, Runner passwords, the Setup Profile). Losing the keys
-means re-entering those secrets.
+means re-entering those secrets. The database uses write-ahead logging: recent changes can be in
+`deveagentmanager.db-wal` next to it, so copy the whole folder (best with the container stopped), not only the `.db`
+file. Keep `/data` on a local disk; SQLite's write-ahead log doesn't work on network shares.
 
 ## How it works
 

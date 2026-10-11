@@ -49,6 +49,9 @@ var app = builder.Build();
 await using (var db = await app.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync())
 {
     await db.Database.MigrateAsync();
+    // Write-ahead logging: reads and writes don't block each other, so background work no longer runs into "database is
+    // locked". Stored in the database file; needs the data folder on a local disk (not a network share).
+    await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
 }
 
 await app.Services.GetRequiredService<UserService>().EnsureAdminAsync();
