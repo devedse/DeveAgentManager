@@ -622,6 +622,14 @@
             address.protocol = address.protocol === "https:" ? "wss:" : "ws:";
             const socket = new WebSocket(address.href);
             socket.binaryType = "arraybuffer";
+            // A connection that doesn't open (e.g. a proxy waiting on a Manager that is restarting) is given up, so the
+            // terminal tries again instead of waiting for the proxy's own timeout.
+            const opening = setTimeout(() => {
+                if (socket.readyState === WebSocket.CONNECTING) {
+                    socket.close();
+                }
+            }, 10000);
+            socket.addEventListener("open", () => clearTimeout(opening));
             const encoder = new TextEncoder();
             const connection = { socket, subscriptions: [], closed: null, images: new Map() };
             const send = data => {
@@ -651,6 +659,7 @@
                 }
             };
             socket.onclose = () => {
+                clearTimeout(opening);
                 connection.subscriptions.forEach(s => s.dispose());
                 connection.images.forEach(waiting => waiting.reject(Object.assign(new Error("The connection dropped before the image was stored. Paste it again."), { dropped: true })));
                 connection.images.clear();

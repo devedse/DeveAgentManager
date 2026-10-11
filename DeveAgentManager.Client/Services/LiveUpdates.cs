@@ -115,15 +115,16 @@ public sealed class LiveUpdates : IAsyncDisposable
 
     public ValueTask DisposeAsync() => _connection.DisposeAsync();
 
-    /// <summary>Retries forever: quickly at first, then every 10 seconds.</summary>
+    /// <summary>Retries forever: quickly at first (an update restarts the Manager in seconds), then every 5 seconds.</summary>
     private sealed class ForeverRetry : IRetryPolicy
     {
         public TimeSpan? NextRetryDelay(RetryContext retryContext) => retryContext.PreviousRetryCount switch
         {
             0 => TimeSpan.Zero,
             1 => TimeSpan.FromSeconds(1),
-            2 => TimeSpan.FromSeconds(3),
-            _ => TimeSpan.FromSeconds(10),
+            2 => TimeSpan.FromSeconds(2),
+            3 => TimeSpan.FromSeconds(3),
+            _ => TimeSpan.FromSeconds(5),
         };
     }
 }

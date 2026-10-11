@@ -97,6 +97,8 @@
     private Snackbar? _uploading;
     private int _autoReconnects;
     private DateTime _readyAt;
+    // The Manager said it is restarting: keep saying so while connecting again, until it is back.
+    private bool _restarting;
     private DotNetObjectReference<TerminalView>? _self;
     private string? _overlay = "Connecting...";
     private bool _connecting = true;
@@ -169,7 +171,7 @@
 
     private async Task ConnectAsync()
     {
-        _overlay = "Connecting...";
+        _overlay = _restarting ? "The Manager is restarting. Connecting again..." : "Connecting...";
         _connecting = true;
         _error = false;
         Tty = null;
@@ -189,6 +191,7 @@
     public async Task OnSocketReady(string tty)
     {
         _readyAt = DateTime.UtcNow;
+        _restarting = false;
         Tty = string.IsNullOrEmpty(tty) ? null : tty;
         _overlay = null;
         _connecting = false;
@@ -210,7 +213,8 @@
         if (AgentId is not null && reason is null or TerminalSocket.ClosedExited or TerminalSocket.ClosedRestarting && _readyAt != default && _autoReconnects < 3)
         {
             _autoReconnects++;
-            _overlay = reason == TerminalSocket.ClosedRestarting ? "The Manager is restarting..." : "Reconnecting...";
+            _restarting |= reason == TerminalSocket.ClosedRestarting;
+            _overlay = _restarting ? "The Manager is restarting. Connecting again..." : "Reconnecting...";
             _connecting = true;
             StateHasChanged();
             await Disconnected.InvokeAsync();
