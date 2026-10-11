@@ -266,6 +266,53 @@
         }
     }
 
+    /// <summary>
+    /// A program in the terminal copied text (OSC 52, terminal.js): "copied" (the number of characters), "blocked" (the
+    /// browser didn't allow it; Copy copies it in the tap) or "large".
+    /// </summary>
+    [JSInvokable]
+    public void OnCopy(string result, int characters)
+    {
+        switch (result)
+        {
+            case "copied":
+                Snackbar.Add(Copied(characters), Severity.Success);
+                break;
+            case "blocked":
+                Snackbar.Add($"The browser didn't allow copying {Characters(characters)} from the terminal.", Severity.Warning, options =>
+                {
+                    options.Action = "Copy";
+                    options.ActionColor = Color.Primary;
+                    options.VisibleStateDuration = 15_000;
+                    options.OnClick = _ => CopyPendingAsync();
+                });
+                break;
+            case "large":
+                Snackbar.Add("Not copied: the terminal copies up to 1 MB.", Severity.Warning);
+                break;
+        }
+    }
+
+    private async Task CopyPendingAsync()
+    {
+        try
+        {
+            var copied = await JS.InvokeAsync<int>("damTerminal.copyPending", _xterm.Id);
+            if (copied > 0)
+            {
+                Snackbar.Add(Copied(copied), Severity.Success);
+            }
+        }
+        catch (JSException exception)
+        {
+            Snackbar.Add($"Could not copy: {exception.Message}", Severity.Error);
+        }
+    }
+
+    private static string Copied(int characters) => $"Copied {Characters(characters)}";
+
+    private static string Characters(int count) => count == 1 ? "1 character" : $"{count:N0} characters";
+
     private Task OnTitleChange(string title) => TitleChanged.InvokeAsync(title);
 
     public async ValueTask DisposeAsync()

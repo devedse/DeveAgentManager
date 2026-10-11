@@ -147,7 +147,7 @@ public static partial class TerminalSocketEndpoint
         /// <param name="readOnly">Drops what the user types or pastes (the terminal is only watched).</param>
         /// <param name="ending">Ends the terminal from this side (access ended, the Manager stops); <paramref name="whyEnding"/> says why.</param>
         public async Task RunAsync(TerminalConnection connection, Guid? agentId, AgentService agents, LoginWatcher? login, ImageUploader? uploadImage, bool readOnly,
-            CancellationToken ending, Func<(string Reason, string Message)>? whyEnding = null)
+            CancellationToken ending, Func<(string Reason, string? Message)>? whyEnding = null)
         {
             using (connection)
             using (var pumps = CancellationTokenSource.CreateLinkedTokenSource(socketAborted))

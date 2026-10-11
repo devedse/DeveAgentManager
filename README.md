@@ -304,6 +304,11 @@ file. Keep `/data` on a local disk; SQLite's write-ahead log doesn't work on net
   terminal too, and images picked with the **📎 Image** key (on phones: gallery, camera, screenshots). They are stored
   on the Runner in `~/.deveagentmanager/uploads`, and their path is pasted into the terminal, like pi's own Ctrl+V does
   locally. The harness sends a PNG, JPEG, WebP or GIF image to the model; the agent reads other files. Up to 25 MB.
+- **Copying** out of a terminal goes to your device's clipboard: select text with the mouse (tmux copies it when you
+  let go), or use the harness's own copy, such as Claude Code's `/copy`. Programs copy with OSC 52, which the browser
+  accepts only within 5 seconds of a key, tap or click in that terminal, so a program can't fill your clipboard by
+  itself. Every copy shows a message. Requests to read your clipboard are never answered. Someone watching read-only
+  doesn't get what others copy. When the browser refuses, the message has a **Copy** button. Up to 1 MB.
 
 ## Development
 

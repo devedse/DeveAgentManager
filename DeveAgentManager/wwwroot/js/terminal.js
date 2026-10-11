@@ -304,6 +304,107 @@
         }, { capture: true, passive: true });
     }
 
+    // Puts text on this device's clipboard. Without the Clipboard API (a Manager on plain http) it copies through a
+    // hidden text box and gives the focus back, so the terminal keeps it.
+    async function writeClipboard(text) {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return;
+        }
+
+        const focused = document.activeElement;
+        const input = document.createElement("textarea");
+        input.value = text;
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.appendChild(input);
+        try {
+            input.select();
+            if (!document.execCommand("copy")) {
+                throw new Error("Clipboard unavailable");
+            }
+        } finally {
+            input.remove();
+            focused?.focus?.({ preventScroll: true });
+        }
+    }
+
+    // Copying out of the terminal: programs on the Runner copy with OSC 52, which this puts on this device's clipboard.
+    // tmux sends it when text is selected with the mouse, and passes on what Claude Code's /copy copies. Only right after
+    // a key, tap or click in this terminal: a program can't fill the clipboard by itself, and people watching the same
+    // agent don't get what someone else copied. Every copy says so. A program asking to read the clipboard (OSC 52 "?")
+    // is never answered.
+    const COPY_AFTER_INPUT_MS = 5000;
+    const MAX_COPY_BYTES = 1024 * 1024;
+    const inputTimes = new Map();
+    const lastCopies = new Map();
+    // Text the browser didn't let a program copy, until the user taps Copy in the message (copyPending).
+    const pendingCopies = new Map();
+    const copyHandlers = new Map();
+
+    function trackInput(id, elements) {
+        const mark = () => inputTimes.set(id, performance.now());
+        for (const element of elements) {
+            if (!element || element.dataset.copyInput) {
+                continue;
+            }
+
+            element.dataset.copyInput = "true";
+            for (const type of ["keydown", "input", "paste", "pointerdown", "pointerup", "touchend"]) {
+                element.addEventListener(type, mark, { capture: true, passive: true });
+            }
+        }
+    }
+
+    function characters(text) {
+        let count = 0;
+        for (const _ of text) {
+            count++;
+        }
+
+        return count;
+    }
+
+    // OSC 52 is "<selection>;<base64 text>"; tmux leaves the selection empty.
+    function copyRequested(id, data) {
+        const separator = data.indexOf(";");
+        const payload = separator < 0 ? "" : data.slice(separator + 1);
+        if (payload === "" || payload === "?" || performance.now() - (inputTimes.get(id) ?? -Infinity) > COPY_AFTER_INPUT_MS) {
+            return true;
+        }
+
+        const dotnet = dotnets.get(id);
+        if (payload.length > Math.ceil(MAX_COPY_BYTES / 3) * 4) {
+            dotnet?.invokeMethodAsync("OnCopy", "large", 0);
+            return true;
+        }
+
+        let text;
+        try {
+            text = new TextDecoder().decode(Uint8Array.from(atob(payload), c => c.charCodeAt(0)));
+        } catch {
+            return true;
+        }
+
+        // tmux passes one copy on twice to the terminal that copied (load-buffer -w, then the program's own OSC 52).
+        const now = performance.now();
+        const last = lastCopies.get(id);
+        lastCopies.set(id, { text, at: now });
+        if (last?.text === text && now - last.at < 2000) {
+            return true;
+        }
+
+        const count = characters(text);
+        writeClipboard(text).then(() => {
+            pendingCopies.delete(id);
+            dotnet?.invokeMethodAsync("OnCopy", "copied", count);
+        }, () => {
+            pendingCopies.set(id, text);
+            dotnet?.invokeMethodAsync("OnCopy", "blocked", count);
+        });
+        return true;
+    }
+
     // Files into the terminal: images and any other file (a log, …), pasted (Ctrl+V, also a file copied in the file
     // manager), dropped, or (images) picked with the "📎 Image" key (phones: gallery, camera, screenshots). The Manager
     // stores them on the Runner and returns the path, which is pasted into the terminal as text, like pi's own Ctrl+V
@@ -547,6 +648,12 @@
 
             // The on-screen keys must not take the focus: that would close the phone keyboard after every key.
             const keys = element?.closest(".terminal-frame")?.parentElement?.querySelector(".terminal-keys");
+            trackInput(id, [element?.closest(".terminal-frame"), keys]);
+            // Someone only watching can't make anything copy: what arrives there was copied by someone else.
+            if (!copyHandlers.has(id)) {
+                copyHandlers.set(id, terminal.parser.registerOscHandler(52, data => readOnly || copyRequested(id, data)));
+            }
+
             if (keys && !keys.dataset.keepFocus) {
                 keys.dataset.keepFocus = "true";
                 keys.addEventListener("pointerdown", event => {
@@ -693,6 +800,24 @@
             touchInputs.delete(id);
             layouts.delete(id);
             dotnets.delete(id);
+            copyHandlers.get(id)?.dispose();
+            copyHandlers.delete(id);
+            inputTimes.delete(id);
+            lastCopies.delete(id);
+            pendingCopies.delete(id);
+        },
+
+        // The user tapped Copy after the browser didn't let a program copy: copy it now, in the tap. Returns how many
+        // characters were copied.
+        async copyPending(id) {
+            const text = pendingCopies.get(id);
+            if (text === undefined) {
+                return 0;
+            }
+
+            await writeClipboard(text);
+            pendingCopies.delete(id);
+            return characters(text);
         },
     };
 
@@ -791,16 +916,7 @@
             }
         },
 
-        async copy(text) {
-            if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return; }
-            const input = document.createElement("textarea");
-            input.value = text;
-            input.style.position = "fixed";
-            input.style.opacity = "0";
-            document.body.appendChild(input);
-            try { input.select(); if (!document.execCommand("copy")) throw new Error("Clipboard unavailable"); }
-            finally { input.remove(); }
-        },
+        copy: writeClipboard,
 
         // Downloads a file the Manager serves (e.g. a session export); the login cookie goes along.
         downloadUrl(url) {
