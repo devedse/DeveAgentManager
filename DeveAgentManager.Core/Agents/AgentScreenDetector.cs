@@ -4,7 +4,7 @@ using DeveAgentManager.Contracts;
 namespace DeveAgentManager.Core.Agents;
 
 public sealed record AgentScreenDetection(AgentActivityStatus Status, string Reason, string Rule,
-    string? Evidence = null, bool QuestionWaiting = false, string? CompletionEvidence = null);
+    string? Evidence = null, bool QuestionWaiting = false, string? CompletionEvidence = null, int? BackgroundTaskCount = null);
 
 /// <summary>Named rules examine live controls near the current prompt, rather than arbitrary conversation text.</summary>
 public static class AgentScreenDetector
@@ -56,8 +56,32 @@ public static class AgentScreenDetector
         var tail = string.Join('\n', lines.Where(l => !string.IsNullOrWhiteSpace(l)).TakeLast(15));
         var c = new Context(harness, lines, prompt, before, after, tail, now);
         foreach (var rule in Rules.OrderByDescending(r => r.Priority))
-            if (rule.Match(c) is { } match) return match with { Rule = $"{harness}/{rule.Id} · {rule.Region}" };
+            if (rule.Match(c) is { } match) return match with { Rule = $"{harness}/{rule.Id} · {rule.Region}", BackgroundTaskCount = BackgroundCount(c) };
         return new(AgentActivityStatus.Unknown, "The current screen has no recognized live status. No completion is inferred.", $"{harness}/unrecognized-screen");
+    }
+
+    // Only the live controls below the composer establish background activity. Historical
+    // "shell still running" completion text and commands typed into the composer are not evidence.
+    private static int? BackgroundCount(Context c)
+    {
+        if (c.Prompt < 0) return null;
+        var controls = c.After;
+        if (c.Harness == "claude")
+        {
+            var border = Array.FindIndex(c.Lines, c.Prompt + 1, l => Has(l, @"^\s*[─━]{3}"));
+            if (border < 0) return null;
+            controls = string.Join('\n', c.Lines.Skip(border + 1));
+        }
+        var pattern = c.Harness switch
+        {
+            "claude" => @"(?:^|[·])\s*([1-9][0-9]*)\s+shells?\b",
+            "codex" => @"^\s*([1-9][0-9]*)\s+background terminals? running\b",
+            _ => null,
+        };
+        if (pattern is null) return null;
+        var match = Regex.Match(controls, pattern, RegexOptions.Multiline | RegexOptions.CultureInvariant,
+            TimeSpan.FromMilliseconds(100));
+        return match.Success && int.TryParse(match.Groups[1].Value, out var count) ? count : null;
     }
 
     private static AgentScreenDetection? Blocked(Context c)

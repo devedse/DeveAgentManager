@@ -30,7 +30,7 @@ public static class AgentActivityTracker
         if (agent.State == AgentState.Running && ((runnerState ?? agent.Runner?.State) is { } state && state != RunnerState.Ready || snapshot.ObservedAt is { } observed && now - observed > TimeSpan.FromSeconds(30)))
             return snapshot with { Status = AgentActivityStatus.Unknown, Rule = "observation-stale",
                 Reason = "A fresh terminal observation is unavailable. The previous status may be out of date.",
-                Since = snapshot.ObservedAt?.AddSeconds(30) ?? snapshot.Since, QuestionWaiting = false };
+                Since = snapshot.ObservedAt?.AddSeconds(30) ?? snapshot.Since, QuestionWaiting = false, BackgroundTaskCount = null };
         return snapshot;
     }
 
@@ -63,12 +63,13 @@ public static class AgentActivityTracker
             && fingerprint is not null && fingerprint != observation.LastCompletion
             && observation.PendingSince is { } stableSince && now - stableSince >= TimeSpan.FromSeconds(5);
         var meaningfulChange = changedProcess || status != previous.Status || detection.QuestionWaiting != previous.QuestionWaiting
+            || detection.BackgroundTaskCount != previous.BackgroundTaskCount
             || reason != previous.Reason || detection.Rule != previous.Rule || completed;
         var sequence = previous.Sequence + (meaningfulChange ? 1 : 0);
         var snapshot = new AgentActivityDto(status, reason, detection.Rule, detection.Evidence, now,
             changedProcess || status != previous.Status ? now : previous.Since, sequence,
             status == AgentActivityStatus.Working && detection.QuestionWaiting,
-            completed ? now : previous.CompletedAt, completed ? sequence : previous.CompletionSequence, agent.SeenCompletionSequence);
+            completed ? now : previous.CompletedAt, completed ? sequence : previous.CompletionSequence, agent.SeenCompletionSequence, detection.BackgroundTaskCount);
         if (status == AgentActivityStatus.Ready && fingerprint is not null && (completed || !observation.TurnObserved))
             observation = observation with { LastCompletion = fingerprint, TurnObserved = false, Pending = null, PendingSince = null };
         observation = observation with { Snapshot = snapshot };

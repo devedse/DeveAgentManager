@@ -9,6 +9,10 @@
         @if (Agent.Activity is { } activity)
         {
             <MudText Typo="Typo.body2">Last observed: @(activity.ObservedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "Not yet")</MudText>
+            @if (Agent.State == AgentState.Running && activity.BackgroundTaskCount is > 0)
+            {
+                <MudText Class="mt-3">@activity.BackgroundTaskCount background task(s) reported by the harness. The prompt can be ready while commands continue. This may include persistent servers or watchers; it does not establish progress or success.</MudText>
+            }
             @if (activity.QuestionWaiting)
             {
                 <MudAlert Severity="Severity.Info" Class="mt-3">A question is queued while the agent works. Open the terminal and use Shift+Left to answer.</MudAlert>
@@ -19,7 +23,7 @@
             }
             <MudExpansionPanels Class="mt-3">
                 <MudExpansionPanel Text="Detection details">
-                    <div class="help-heading"><MudText Typo="Typo.body2">Rule: @activity.Rule</MudText><HelpTip Label="Detection details" Text="Activity is inferred from the current terminal screen. Unrecognized or stale screens are shown as unclear; they do not establish completion." /></div>
+                    <div class="help-heading"><MudText Typo="Typo.body2">Rule: @activity.Rule</MudText><HelpTip Label="Detection details" Text="Activity is inferred from the current terminal screen. Unrecognized or stale screens are shown as unclear; they do not establish completion. Background counts come from recognized live footer indicators, not conversation history. When that indicator is absent, no count is shown; this does not prove that all background work has stopped." /></div>
                     @if (activity.Evidence is { } evidence)
                     {
                         <pre class="status-evidence">@evidence</pre>

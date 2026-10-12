@@ -4,7 +4,7 @@ public enum AgentActivityStatus { Unknown, Working, Ready, NeedsInput, UsageLimi
 
 public sealed record AgentActivityDto(AgentActivityStatus Status, string Reason, string Rule, string? Evidence,
     DateTime? ObservedAt, DateTime Since, long Sequence, bool QuestionWaiting,
-    DateTime? CompletedAt, long CompletionSequence, long SeenCompletionSequence)
+    DateTime? CompletedAt, long CompletionSequence, long SeenCompletionSequence, int? BackgroundTaskCount = null)
 {
     public bool UnseenCompletion => CompletedAt is not null && CompletionSequence > SeenCompletionSequence;
 }

@@ -51,6 +51,7 @@ public static class StateStyles
         AgentState.Running when agent.Activity is { } activity => activity.Status switch
         {
             AgentActivityStatus.Working => new("Working", Tone.Info, true),
+            AgentActivityStatus.Ready when activity.BackgroundTaskCount is > 0 => new($"Background · {activity.BackgroundTaskCount}", Tone.Info, true),
             AgentActivityStatus.Ready => new("Ready", Tone.Success),
             AgentActivityStatus.NeedsInput => new("Needs input", Tone.Warning),
             AgentActivityStatus.UsageLimited => new("Usage limit", Tone.Warning),
