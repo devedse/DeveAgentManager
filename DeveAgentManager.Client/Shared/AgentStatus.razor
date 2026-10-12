@@ -9,10 +9,6 @@
     {
         <span class="agent-status-extra">Question</span>
     }
-    @if (Agent.Activity?.UnseenCompletion == true)
-    {
-        <span class="agent-status-extra" title="Finished since you last viewed it">Finished</span>
-    }
 </button>
 @code {
     [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;

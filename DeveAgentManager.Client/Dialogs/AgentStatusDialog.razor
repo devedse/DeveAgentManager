@@ -17,7 +17,7 @@
             {
                 <MudAlert Severity="Severity.Info" Class="mt-3">A question is queued while the agent works. Open the terminal and use Shift+Left to answer.</MudAlert>
             }
-            @if (activity.UnseenCompletion)
+            @if (StateStyles.ShowsFinished(Agent))
             {
                 <MudText Class="mt-3">Finished since you last viewed this agent. Opening its terminal marks this completion seen across your devices.</MudText>
             }

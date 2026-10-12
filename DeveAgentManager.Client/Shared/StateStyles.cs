@@ -52,6 +52,7 @@ public static class StateStyles
         {
             AgentActivityStatus.Working => new("Working", Tone.Info, true),
             AgentActivityStatus.Ready when activity.BackgroundTaskCount is > 0 => new($"Background · {activity.BackgroundTaskCount}", Tone.Info, true),
+            AgentActivityStatus.Ready when ShowsFinished(agent) => new("Finished", Tone.Success),
             AgentActivityStatus.Ready => new("Ready", Tone.Success),
             AgentActivityStatus.NeedsInput => new("Needs input", Tone.Warning),
             AgentActivityStatus.UsageLimited => new("Usage limit", Tone.Warning),
@@ -61,6 +62,11 @@ public static class StateStyles
         AgentState.Running => new("Idle", Tone.Success),
         _ => For(agent.State),
     };
+
+    public static bool ShowsFinished(AgentDto agent) =>
+        agent.State == AgentState.Running && agent.Activity is
+            { Status: AgentActivityStatus.Ready, UnseenCompletion: true } activity
+        && activity.BackgroundTaskCount is not > 0;
 
     public static string CssClass(this Tone tone) => tone.ToString().ToLowerInvariant();
 
