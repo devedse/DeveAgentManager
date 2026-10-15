@@ -11,6 +11,69 @@ public sealed class AgentContinuationTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    [Theory]
+    [InlineData(false, "Detected")]
+    [InlineData(false, "Scheduled")]
+    [InlineData(false, "Uncertain")]
+    [InlineData(true, "Detected")]
+    [InlineData(true, "Scheduled")]
+    [InlineData(true, "Uncertain")]
+    public async Task ParsingFailurePreservesLimitsOverridesPoliciesAndDeliveryEvidence(bool stored, string status)
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await rig.Service.SetAutomaticAsync(rig.Id, true, 2, Ct);
+        var chosen = rig.Clock.Utc.AddHours(1).UtcDateTime;
+        var scheduled = rig.Clock.Utc.AddMinutes(3).UtcDateTime;
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            var row = (await db.AgentLimits.FindAsync([rig.Id], Ct))!;
+            row.Status = status;
+            row.ResetAt = chosen;
+            row.ContinueAt = scheduled;
+            row.Detail = "Keep this delivery evidence";
+            await db.SaveChangesAsync(Ct);
+        }
+        var reader = new FaultingLimitReader { FailScreen = !stored, FailStored = stored };
+        rig.Reader = reader;
+        rig.Service.Dispose();
+        rig.Service = rig.NewService();
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(4);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var limit = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.NotNull(limit);
+        Assert.NotNull(limit.DetectionProblem);
+        Assert.Equal(status, limit.Status);
+        Assert.Equal(chosen, limit.ResetAt);
+        Assert.Equal(scheduled, limit.ContinueAt);
+        Assert.Equal("Keep this delivery evidence", limit.Detail);
+        Assert.Equal(0, rig.Terminal.Sends);
+        var automatic = await rig.Service.GetAutomaticAsync(rig.Id, Ct);
+        Assert.True(automatic.Enabled);
+        Assert.Equal(2, automatic.Remaining);
+        Assert.Equal(0, automatic.Sent);
+        reader.FailScreen = reader.FailStored = false;
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        if (status == "Scheduled") Assert.Equal(1, rig.Terminal.Sends);
+        else if (status == "Uncertain") Assert.Equal("Uncertain", await rig.StatusAsync());
+        var recovered = await rig.Service.GetAsync(rig.Id, Ct);
+        Assert.Null(recovered?.DetectionProblem);
+    }
+
+    [Fact]
+    public async Task ExplicitScheduleCanUseHealthyReadinessWhenOnlyOldResetParsingFails()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.ScheduleAsync(rig.Id, rig.Clock.Utc.AddMinutes(2).UtcDateTime, Ct);
+        rig.Reader = new FaultingLimitReader { FailStored = true };
+        rig.Service.Dispose();
+        rig.Service = rig.NewService();
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        Assert.Equal("Sent", await rig.StatusAsync());
+    }
+
     [Fact]
     public async Task SendsOnceOnlyAtResetPlusMinute_AndSurvivesServiceRestart()
     {
@@ -879,12 +942,13 @@ public sealed class AgentContinuationTests
         public FakeClock Clock = new();
         public FakeTerminal Terminal = new();
         public AgentContinuations Service = null!;
+        public UsageLimitReader? Reader;
         public async Task<string?> StatusAsync()
         {
             await using var db = Factory.CreateDbContext();
             return (await db.AgentLimits.FindAsync([Id], Ct))?.Status;
         }
-        public AgentContinuations NewService() => new(Factory, Terminal, new ManagerEvents(), Clock, NullLogger<AgentContinuations>.Instance);
+        public AgentContinuations NewService() => new(Factory, Terminal, new ManagerEvents(), Clock, NullLogger<AgentContinuations>.Instance, limitReader: Reader);
         public static async Task<Rig> Create()
         {
             var rig = new Rig();

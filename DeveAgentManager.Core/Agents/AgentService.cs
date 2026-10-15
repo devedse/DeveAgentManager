@@ -30,7 +30,7 @@ public sealed partial class AgentService(
     AccessControl access,
     ManagerEvents events,
     ILogger<AgentService> logger,
-    AgentContinuations? continuations = null, AgentDiagnostics? diagnostics = null)
+    AgentContinuations? continuations = null, AgentDiagnostics? diagnostics = null, UsageLimitReader? limitReader = null)
 {
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
 
@@ -558,7 +558,7 @@ public sealed partial class AgentService(
                     var detection = screen?.Screen is { } text ? AgentScreenDetector.Detect(agent.HarnessId, text, observedAt)
                         : new AgentScreenDetection(AgentActivityStatus.Unknown, "The terminal snapshot could not be read.", "snapshot-unavailable");
                     if (screen?.Screen is { } currentScreen)
-                        detection = UsageLimitState.ApplyExpiry(agent, knownLimits.GetValueOrDefault(agent.Id), currentScreen, screen.Identity, detection, DateTime.UtcNow);
+                        detection = UsageLimitState.ApplyExpiry(agent, knownLimits.GetValueOrDefault(agent.Id), currentScreen, screen.Identity, detection, DateTime.UtcNow, limitReader);
                     activityChanged = AgentActivityTracker.Apply(agent, detection,
                         screen?.Identity ?? AgentActivityTracker.Read(agent).Identity, observedAt);
                     working = agent.Working;

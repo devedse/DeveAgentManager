@@ -13,8 +13,10 @@ namespace DeveAgentManager.Core.Agents;
 /// (<see cref="UsageLimitState.Session"/>): after a switch it no longer applies, unless you scheduled it yourself.
 /// </summary>
 public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> factory, ILimitTerminal terminal,
-    ManagerEvents events, TimeProvider clock, ILogger<AgentContinuations> logger, AgentDiagnostics? diagnostics = null) : IDisposable
+    ManagerEvents events, TimeProvider clock, ILogger<AgentContinuations> logger, AgentDiagnostics? diagnostics = null,
+    UsageLimitReader? limitReader = null) : IDisposable
 {
+    private readonly UsageLimitReader _reader = limitReader ?? UsageLimitReader.Default;
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _gates = new();
     private SemaphoreSlim Gate(Guid id) => _gates.GetOrAdd(id, _ => new(1, 1));
     private DateTime Now => clock.GetUtcNow().UtcDateTime;
@@ -106,16 +108,18 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         await using var db = await factory.CreateDbContextAsync(ct);
         var row = await db.AgentLimits.AsNoTracking().FirstOrDefaultAsync(l => l.AgentId == id, ct);
         var agent = await db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, ct);
-        return row is null || agent is null || row.Status == "Cleared" || IsStale(row, agent) ||
-            (row.Status is not ("Scheduled" or "Sending" or "Uncertain") && UsageLimitState.HasExpired(row, Now)) ? null : Dto(row);
+        if (row is null || agent is null || row.Status == "Cleared" || IsStale(row, agent)) return null;
+        var read = _reader.Stored(id, row);
+        if (read.Available && _reader.Problem(id) is null && row.Status is not ("Scheduled" or "Sending" or "Uncertain") && read.Limit?.ResetAt <= Now) return null;
+        return Dto(row, read, _reader.Problem(id));
     }
 
-    private static AgentLimitDto Dto(AgentLimit l)
+    private static AgentLimitDto Dto(AgentLimit l, UsageLimitRead read, string? problem)
     {
         // Re-read the original message at its original observation time. ResetAt is the user's
         // selected reset and may have been overridden; it must never masquerade as detection.
-        var detected = l.Manual ? null : UsageLimitState.DetectedReset(l);
-        return new(l.Manual ? "Manual continuation — no usage limit is required." : l.Message, l.TimeZoneId, l.DetectedAt, l.ResetAt, l.ContinueAt, l.Status, l.Detail, l.NativeAutoContinue, l.Manual, detected);
+        var detected = l.Manual ? null : read.Limit?.ResetAt;
+        return new(l.Manual ? "Manual continuation — no usage limit is required." : l.Message, l.TimeZoneId, l.DetectedAt, l.ResetAt, l.ContinueAt, l.Status, l.Detail, l.NativeAutoContinue, l.Manual, detected, read.Problem ?? problem);
     }
 
     public async Task ScheduleAsync(Guid id, DateTime? resetOverride, CancellationToken ct, DateTime? expectedDetectedAt = null, double? continueAfterMinutes = null, bool manual = false)
@@ -238,15 +242,21 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         if (agent.State == AgentState.Running && !agent.LoginBlocked && !agent.LoginStopPending && agent.Runner?.State == RunnerState.Ready)
         {
             screen = observed ?? await terminal.ReadAsync(agent, ct);
-            parsed = UsageLimitParser.Parse(agent.HarnessId, screen.Screen, screen.TimeZone, screen.ObservedAt ?? Now);
+            var read = _reader.Screen(agent, screen, Now);
+            if (!read.Available) { events.AgentChanged(agent.RunnerId, id); return; }
+            parsed = read.Limit;
         }
+
+        var stored = row is { Manual: false } ? _reader.Stored(id, row) : new UsageLimitRead(null);
+        if (!stored.Available && row is not { Automatic: false, Status: "Scheduled" }) { events.AgentChanged(agent.RunnerId, id); return; }
+        var detectedReset = stored.Limit?.ResetAt;
 
         // Repair stored messages after parser improvements without moving their observation
         // date or overwriting a manually selected reset / existing schedule.
         if (row is { Manual: false } && parsed is not null && row.SessionId == Session(agent)
             && row.PaneIdentity == screen?.Identity)
         {
-            var original = UsageLimitParser.Parse(agent.HarnessId, row.Message + "\n❯ ", row.TimeZoneId, row.DetectedAt);
+            var original = stored.Limit;
             if (original?.Message == parsed.Message)
             {
                 row.Message = original.Message;
@@ -263,7 +273,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         if (policy is { Enabled: true } && parsed is not null && !parsed.NativeAutoContinue
             && row is not null && row.Status is not ("Scheduled" or "Sending" or "Uncertain" or "Sent")
             && row.Message == parsed.Message && row.SessionId == Session(agent) && !row.Manual
-            && UsageLimitState.DetectedReset(row) is { } reset)
+            && detectedReset is { } reset)
         {
             var key = Session(agent) + "|" + reset.ToString("O");
             if (policy.LastLimitKey != key)
@@ -351,7 +361,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                 }
             }
         }
-        else if (row is not null && row.Status is not ("Uncertain" or "Cleared") && UsageLimitState.HasExpired(row, Now)
+        else if (row is not null && row.Status is not ("Uncertain" or "Cleared") && detectedReset <= Now
             && (parsed is null || (parsed.Message == row.Message && Session(agent) == row.SessionId && screen?.Identity == row.PaneIdentity)))
         {
             row.Status = "Expired";
@@ -410,7 +420,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         if (policy is { Enabled: true })
         {
             if (parsed?.NativeAutoContinue == true) policy.Detail = "Waiting while Claude continues automatically.";
-            else if (parsed is not null && row?.Status == "Detected" && UsageLimitState.DetectedReset(row) is null)
+            else if (parsed is not null && row?.Status == "Detected" && detectedReset is null)
                 policy.Detail = "The reset time is uncertain. Switch to a one-time schedule to choose it manually.";
             else if (row is { Automatic: true, Status: "Scheduled", Detail: not null }) policy.Detail = row.Detail;
         }

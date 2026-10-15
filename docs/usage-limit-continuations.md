@@ -40,3 +40,9 @@ Reviewed on 2026-09-30:
 - Codex: the supplied screenshot and the read-only capture of the running QueueCache terminal (its process timezone was `Etc/UTC`).
 
 Regression tests cover these formats, timezone precedence, midnight/year rollover, DST uncertainty, stale conversation text, native auto-continue, limits left from before a switch of harness, login or conversation, pi schedules, persistence, cancellation, one-shot delivery, and a real isolated tmux session that verifies a draft is preserved and exactly `continue` plus Enter is sent.
+
+## Unavailable detection
+
+A parser timeout or input budget failure is different from finding no limit. Saved limits, selected reset times, armed schedules and uncertain-delivery evidence remain intact. The existing limit API returns a short `detectionProblem` alongside the original state. Retry in the dialog reloads the status; automatic background observation also retries. The automatic-policy request is independent, so a failed limit read does not display an enabled policy as off.
+
+Automatic continuation waits while detection is unavailable and does not consume a send count. A one-time schedule remains armed. When only its historical reset cannot be interpreted, it still follows the normal live readiness, empty-input and session checks. Failed interpretation of the current screen cannot authorize a send. Parser diagnostics, including a bounded sanitized excerpt of the failing subject and the expression, are available to the Log viewer role in Manager Logs.

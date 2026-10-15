@@ -4,9 +4,11 @@ public enum AgentActivityStatus { Unknown, Working, Ready, NeedsInput, UsageLimi
 
 public sealed record AgentActivityDto(AgentActivityStatus Status, string Reason, string Rule, string? Evidence,
     DateTime? ObservedAt, DateTime Since, long Sequence, bool QuestionWaiting,
-    DateTime? CompletedAt, long CompletionSequence, long SeenCompletionSequence, int? BackgroundTaskCount = null)
+    DateTime? CompletedAt, long CompletionSequence, long SeenCompletionSequence, int? BackgroundTaskCount = null,
+    bool CurrentTurnCompleted = false)
 {
     public bool UnseenCompletion => CompletedAt is not null && CompletionSequence > SeenCompletionSequence;
+    public bool IsFinished => Status == AgentActivityStatus.Ready && CurrentTurnCompleted && BackgroundTaskCount is not > 0;
 }
 
 public enum AgentAttentionKind { NeedsInput, QuestionWaiting, UsageLimit, UnexpectedExit, Finished, Unclear }

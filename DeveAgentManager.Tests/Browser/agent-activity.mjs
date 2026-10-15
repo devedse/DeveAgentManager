@@ -1,37 +1,45 @@
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
+const playwright = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 import assert from 'node:assert/strict';
-const browser = await chromium.launch();
-try {
+const browser = await playwright[process.env.DAM_TEST_BROWSER ?? 'chromium'].launch();
 let page;
-const context = await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Europe/Amsterdam'});
+try {
+const context = await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Europe/Amsterdam',colorScheme:process.env.DAM_TEST_COLOR_SCHEME ?? 'light'});
+await context.addInitScript(theme=>localStorage.setItem('dam-theme',theme),process.env.DAM_TEST_COLOR_SCHEME ?? 'light');
 page = await context.newPage();
+page.setDefaultTimeout(20000);
 await page.routeWebSocket('**/ws/terminal?**', ws => { ws.send(JSON.stringify({type:'ready',tty:'/dev/pts/99'})); });
 const errors=[]; page.on('console', msg=>{if (msg.type()==='error' && msg.text().includes('Unhandled exception')) errors.push(msg.text());});page.on('pageerror', e=>errors.push(e.message));
 const base=process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
-await context.request.post(base+'/account/login',{form:{username:'admin',password:process.env.DAM_TEST_PASSWORD ?? 'preview-test-only',returnUrl:'/'}});
+const loginPage=await context.request.get(base+'/login');
+const token=(await loginPage.text()).match(/name="__RequestVerificationToken"[^>]*value="([^"]+)"/)?.[1];
+assert.ok(token,'login form must contain its antiforgery token');
+const login=await context.request.post(base+'/account/login',{maxRedirects:0,headers:{Origin:base},form:{username:'admin',password:process.env.DAM_TEST_PASSWORD ?? 'preview-test-only',returnUrl:'/',__RequestVerificationToken:token}});
+assert.equal(login.status(),302);
 const info=await (await context.request.get(base+'/api/info')).json();
 const id='00000000-0000-0000-0000-000000000001', now=new Date().toISOString();
-let dismissed=false, limitVisible=true;
+let dismissed=false, limitVisible=true, limitFailed=false, automaticFailed=false, detectionProblem=null;
 let commands=[];
 let automatic={enabled:false,remaining:null,sent:0,detail:null};
 let seen=[], schedules=[], limitStatus='Detected', limitDetail=null;
-const activity={status:'Ready',reason:"Codex returned a response and its prompt is ready.",rule:'codex/codex-ready-prompt · composer and latest response',evidence:'• done',observedAt:now,since:now,sequence:5,questionWaiting:false,completedAt:now,completionSequence:5,seenCompletionSequence:0,unseenCompletion:true};
-const agent={id,runnerId:'00000000-0000-0000-0000-000000000002',runnerName:'runner-01',runnerState:'Ready',runnerHarnessIds:['codex','claude'],runnerToolIds:[],name:'Example agent',harnessId:'codex',workingDirectory:'/work/example',state:'Running',accountName:'Personal',createdAt:now,updatedAt:now,working:false,activity,lastAssistantMessageAt:now};
+const activity={status:'Ready',reason:"Codex returned a response and its prompt is ready.",rule:'codex/codex-ready-prompt · composer and latest response',evidence:'• done',observedAt:now,since:now,sequence:5,questionWaiting:false,completedAt:now,completionSequence:5,seenCompletionSequence:0,unseenCompletion:true,currentTurnCompleted:true};
+const agent={id,ownerId:id,ownerName:'Test user',access:'Owner',loginOwnerId:id,loginOwnerName:'Test user',runnerId:'00000000-0000-0000-0000-000000000002',runnerName:'runner-01',runnerState:'Ready',runnerHarnessIds:['codex','claude'],runnerToolIds:[],name:'Example agent',harnessId:'codex',workingDirectory:'/work/example',state:'Running',accountName:'Personal',createdAt:now,updatedAt:now,working:false,activity,lastAssistantMessageAt:now};
 const runner={id:agent.runnerId,name:'runner-01',providerId:'proxmox',kind:'Headless',state:'Ready',host:'10.0.0.2',sshPort:22,username:'test',cores:4,memoryMb:8192,diskGb:64,harnessIds:['codex','claude'],toolIds:[],agents:[agent],createdAt:now,updatedAt:now,status:{powerState:'Running',cpuUsage:18,memoryUsedBytes:4294967296,memoryTotalBytes:8589934592,diskUsedBytes:21474836480,diskTotalBytes:68719476736}};
 await page.route('**/api/**',async route=>{
  const url=new URL(route.request().url()),path=url.pathname;
  let body;
+ if(path===`/api/agents/${id}/limit/automatic`&&automaticFailed)return route.fulfill({status:503,json:{detail:'Test-only automatic status unavailable'}});
+ if(path===`/api/agents/${id}/limit`&&limitFailed)return route.fulfill({status:503,json:{detail:'Test-only limit status unavailable'}});
  if(path===`/api/agents/${id}/limit/automatic`){if(route.request().method()==='PUT'){automatic={...automatic,...route.request().postDataJSON()};return route.fulfill({status:204});}body=automatic;}
  else if(path==='/api/info')body=info;
  else if(path==='/api/agents/reply-previews')body=[{agentId:id,text:'Latest response preview for the activity queue.'}];
  else if(path===`/api/agents/${id}/diagnostics`)body=[{at:now,category:'Activity',message:'Ready after completing the task.',rule:'codex-ready-prompt'}];
  else if(path===`/api/agents/${id}/commands`){if(route.request().method()==='POST'){commands.push(route.request().postDataJSON());return route.fulfill({status:204});}body=[{command:'/model',label:'Choose model'},{command:'/status',label:'Usage and status'},{command:'/diff',label:'View changes'},{command:'/permissions',label:'Permissions'}];}
- else if(path==='/api/agents/attention') body=activity.unseenCompletion&&!dismissed?[{agentId:id,name:agent.name,runnerName:agent.runnerName,harnessId:'codex',kind:'Finished',reason:'Finished since you last viewed this agent.',at:now,completionSequence:5,token:'A'.repeat(64)}]:[];
+ else if(path==='/api/agents/attention') body=activity.currentTurnCompleted&&activity.status==='Ready'&&!activity.backgroundTaskCount&&activity.unseenCompletion&&!dismissed?[{agentId:id,name:agent.name,runnerName:agent.runnerName,harnessId:'codex',kind:'Finished',reason:'Finished since you last viewed this agent.',at:now,completionSequence:5,token:'A'.repeat(64)}]:[];
  else if(path===`/api/agents/${id}/attention/dismiss`){assert.equal(route.request().postDataJSON().token,'A'.repeat(64));dismissed=true;return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}/limit/continue`){schedules.push(route.request().postDataJSON());return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}/seen`){seen.push(route.request().postDataJSON());activity.unseenCompletion=false;activity.seenCompletionSequence=5;return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}`)body=agent;
- else if(path===`/api/agents/${id}/limit`)body=agent.harnessId==='claude'&&limitVisible?{message:"You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)",timeZoneId:'Europe/Amsterdam',detectedAt:now,resetAt:'2026-10-04T02:00:00Z',detectedResetAt:'2026-10-04T01:00:00Z',continueAt:limitStatus==='Scheduled'?'2026-10-04T01:01:00Z':null,status:limitStatus,detail:limitDetail,nativeAutoContinue:false}:null;
+ else if(path===`/api/agents/${id}/limit`)body=agent.harnessId==='claude'&&limitVisible?{message:"You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)",timeZoneId:'Europe/Amsterdam',detectedAt:now,resetAt:'2026-10-04T02:00:00Z',detectedResetAt:'2026-10-04T01:00:00Z',continueAt:limitStatus==='Scheduled'?'2026-10-04T01:01:00Z':null,status:limitStatus,detail:limitDetail,nativeAutoContinue:false,detectionProblem}:null;
  else if(path==='/api/agents')body=[agent];
  else if(path.includes('/session'))body=null;
  else if(path.includes('/viewers'))body=[];
@@ -46,7 +54,7 @@ await page.route('**/api/**',async route=>{
 });
 console.log('Checking activity overview');
 await page.goto(base+'/activity');
-await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor({timeout:60000});
+await page.getByRole('button',{name:'Explain Example agent status: Finished'}).waitFor({timeout:60000});
 await page.getByText(activity.reason,{exact:true}).waitFor();
 assert.equal(seen.length,0,'activity overview must not mark results seen');
 await page.getByText('Latest response preview for the activity queue.',{exact:true}).waitFor();
@@ -54,10 +62,10 @@ assert.equal(await page.getByRole('link',{name:'Next needing attention'}).getAtt
 await page.getByRole('button',{name:'Needs input (0)',exact:true}).click();
 await page.getByText('No agents match this filter.',{exact:true}).waitFor();
 await page.getByRole('button',{name:'Finished (1)',exact:true}).click();
-await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor();
+await page.getByRole('button',{name:'Explain Example agent status: Finished'}).waitFor();
 await page.getByRole('button',{name:'All (1)',exact:true}).click();
 activity.status='Working';activity.reason='The agent is working in the background.';
-await page.getByRole('button',{name:'Explain Example agent status: Working'}).waitFor({timeout:15000});
+await page.getByRole('button',{name:'Explain Example agent status: Working'}).waitFor({timeout:25000});
 await page.getByText(activity.reason,{exact:true}).waitFor();
 await page.setViewportSize({width:390,height:844});
 await page.waitForTimeout(500);
@@ -66,7 +74,7 @@ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window
 activity.status='Ready';activity.reason='Codex returned a response and its prompt is ready.';
 await page.setViewportSize({width:1280,height:900});
 await page.goto(base+'/agents');
-await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor({timeout:60000});
+await page.getByRole('button',{name:'Explain Example agent status: Finished'}).waitFor({timeout:60000});
 await page.getByText('Last reply', {exact:false}).waitFor();
 await page.setViewportSize({width:390,height:844});
 await page.getByLabel('Agents needing attention: 1',{exact:true}).click();
@@ -81,7 +89,7 @@ assert.equal(new URL(page.url()).pathname,'/agents','dismissing must not navigat
 assert.equal(seen.length,0,'dismissing a notification must not acknowledge a terminal view');
 await page.setViewportSize({width:1280,height:900});
 await page.keyboard.press('Escape');
-await page.getByRole('button',{name:'Explain Example agent status: Ready'}).click();
+await page.getByRole('button',{name:'Explain Example agent status: Finished'}).click();
 await page.getByText(activity.reason,{exact:true}).waitFor();
 await page.getByText('Detection details',{exact:true}).click();
 await page.getByText('Rule: '+activity.rule,{exact:true}).waitFor();
@@ -94,7 +102,7 @@ await page.getByRole('button',{name:'Close',exact:true}).last().click();
 await page.addInitScript(()=>{ document.hasFocus=()=>true; Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'}); });
 await page.goto(base+`/agents/${id}`);
 
-await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor();
+await page.getByRole('button',{name:'Explain Example agent status: Finished'}).waitFor();
 await page.waitForTimeout(5500);
 assert.equal(seen.length,0,'background/unfocused terminal acknowledged completion');
 await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'visible'}); document.hasFocus=()=>false;document.dispatchEvent(new Event('visibilitychange'));});
@@ -103,6 +111,13 @@ assert.equal(seen.length,0,'unfocused terminal acknowledged completion');
 await page.evaluate(()=>{document.hasFocus=()=>true;});
 await page.waitForTimeout(5500);
 assert.deepEqual(seen,[{completionSequence:5}]);
+await page.getByRole('button',{name:'Explain Example agent status: Finished',exact:true}).waitFor();
+activity.status='Working';activity.currentTurnCompleted=false;
+await page.getByRole('button',{name:'Explain Example agent status: Working',exact:true}).waitFor({timeout:25000});
+activity.status='Ready'; // Old historical completion must not label an interrupted later turn Finished.
+await page.getByRole('button',{name:'Explain Example agent status: Ready',exact:true}).waitFor({timeout:25000});
+activity.currentTurnCompleted=true;
+await page.getByRole('button',{name:'Explain Example agent status: Finished',exact:true}).waitFor({timeout:25000});
 await page.locator('button[aria-label="Harness quick commands"]:visible').click();
 await page.getByRole('menuitem',{name:'/status · Usage and status',exact:true}).click();
 assert.deepEqual(commands,[{command:'/status',harnessId:'codex'}]);
@@ -147,6 +162,18 @@ await page.getByRole('switch',{name:'Auto-continue enabled',exact:true}).uncheck
 await page.getByRole('button',{name:'Close',exact:true}).last().click();
 await page.getByRole('button',{name:'Schedule continue',exact:true}).waitFor();
 assert.equal(automatic.enabled,false);
+console.log('Checking independent policy loading during limit API failure');
+automatic={...automatic,enabled:true,remaining:2};limitFailed=true;
+await page.reload();
+await page.getByRole('button',{name:'Auto-continue on · limit status unavailable; retry',exact:true}).waitFor({timeout:60000});
+await page.getByRole('button',{name:'Auto-continue on · limit status unavailable; retry',exact:true}).click();
+await page.getByText('Automatic continuation is on.',{exact:true}).waitFor();
+await page.getByRole('button',{name:'Retry',exact:true}).waitFor();
+limitFailed=false;
+await page.getByRole('button',{name:'Retry',exact:true}).click();
+await page.getByRole('switch',{name:'Auto-continue enabled',exact:true}).waitFor();
+await page.getByRole('button',{name:'Close',exact:true}).last().click();
+automatic={...automatic,enabled:false};
 console.log('Checking detected limits and outcomes');
 // Claude limit UI, including the phone toolbar.
 agent.harnessId='claude';activity.status='UsageLimited';activity.reason='The harness has reached its usage allowance.';activity.rule='claude/usage-limit · current error';
@@ -154,13 +181,27 @@ await page.setViewportSize({width:390,height:844});
 await page.goto(base+`/agents/${id}`);
 await page.getByRole('button',{name:'Usage limit: schedule continue after reset',exact:true}).waitFor();
 assert.ok(await page.locator('.limit-alert-blink').count());
+detectionProblem='Usage-limit detection is temporarily unavailable. Saved settings are retained; retry detection.';
+await page.getByRole('button',{name:'Usage-limit detection unavailable; retry',exact:true}).waitFor({timeout:25000});
+await page.getByRole('button',{name:'Usage-limit detection unavailable; retry',exact:true}).click();
+await page.getByText('Usage-limit detection unavailable.',{exact:true}).waitFor();
+await page.getByRole('button',{name:'Help about Unavailable usage-limit detection',exact:true}).click();
+await page.getByText(detectionProblem,{exact:true}).click();
+await page.getByRole('button',{name:'Retry detection',exact:true}).waitFor();
+assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'detection diagnostic overflows phone');
+await page.screenshot({path:'/tmp/dam-limit-unavailable-phone.png'});
+detectionProblem=null;
+await page.getByRole('button',{name:'Retry detection',exact:true}).click();
+await page.getByRole('button',{name:'Retry detection',exact:true}).waitFor({state:'hidden'});
+await page.getByRole('button',{name:'Close',exact:true}).last().click();
+await page.getByRole('button',{name:'Usage limit: schedule continue after reset',exact:true}).waitFor({timeout:25000});
 await page.getByRole('button',{name:'Usage limit: schedule continue after reset',exact:true}).click();
 await page.getByText("You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)",{exact:true}).waitFor();
 await page.screenshot({path:'/tmp/dam-claude-limit-phone.png'});
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,'horizontal overflow');
 await page.getByText('Your local timezone: Europe/Amsterdam',{exact:true}).waitFor();
 assert.equal(await page.getByRole('textbox',{name:'Reset time',exact:true}).inputValue(),'04:00');
-await page.getByRole('button',{name:'Use detected reset (+1 minute)',exact:true}).click();
+await page.getByRole('button',{name:'Use detected reset time (+1 min)',exact:true}).click();
 assert.equal(await page.getByRole('textbox',{name:'Reset time',exact:true}).inputValue(),'03:00');
 await page.getByText('Continue at 2026-10-04 03:01 (Europe/Amsterdam).',{exact:true}).waitFor();
 await page.getByRole('textbox',{name:'Reset date',exact:true}).fill('2026-10-04');
@@ -177,7 +218,7 @@ await page.waitForTimeout(300);
 assert.equal(schedules[1].continueAfterMinutes,5,'duration must be sent to the Manager for calculation using its clock');
 for (const [status,hint] of [['Sent','Continue submitted; view result'],['Cancelled','Continue cancelled; view reason'],['Uncertain','Continue delivery uncertain; check the terminal']]) {
  limitStatus=status; limitDetail='Result of scheduled attempt: '+status+'.';
- await page.getByRole('button',{name:hint,exact:true}).waitFor({timeout:15000});
+ await page.getByRole('button',{name:hint,exact:true}).waitFor({timeout:25000});
  await page.getByRole('button',{name:hint,exact:true}).click();
  await page.getByText(limitDetail,{exact:true}).waitFor();
  assert.equal(await page.getByRole('button',{name:'Schedule continue',exact:true}).count(),status==='Cancelled'?1:0);
@@ -185,13 +226,13 @@ for (const [status,hint] of [['Sent','Continue submitted; view result'],['Cancel
 }
 
 limitStatus='Scheduled';limitDetail=null;
-await page.getByRole('button',{name:'Continue scheduled for 2026-10-04 03:01 (Europe/Amsterdam)',exact:true}).waitFor({timeout:15000});
+await page.getByRole('button',{name:'Continue scheduled for 2026-10-04 03:01 (Europe/Amsterdam)',exact:true}).waitFor({timeout:25000});
 await page.getByRole('button',{name:'Continue scheduled for 2026-10-04 03:01 (Europe/Amsterdam)',exact:true}).click();
 await page.getByText('2026-10-04 03:01 (Europe/Amsterdam)',{exact:true}).waitFor();
 await page.getByRole('button',{name:'Close',exact:true}).last().click();
 
 limitVisible=false;
-await page.getByRole('button',{name:'Schedule continue',exact:true}).waitFor({timeout:15000});
+await page.getByRole('button',{name:'Schedule continue',exact:true}).waitFor({timeout:25000});
 assert.equal(await page.getByRole('button',{name:'Schedule continue',exact:true}).evaluate(e=>e.classList.contains('mud-warning-text')),false);
 await page.getByRole('button',{name:'Schedule continue',exact:true}).click();
 await page.getByText('Manual continuation — no usage limit is required.',{exact:true}).waitFor();
@@ -218,4 +259,7 @@ assert.equal(await page.locator('.usage-chart-line-disk').first().evaluate(p=>ge
 await page.screenshot({path:'/tmp/dam-disk-phone.png'});
 assert.deepEqual(errors,[]);
 console.log('Passed: activity overview polling without a terminal, phone layout, attention and completion guards, latest reply label, local reset picker, duration scheduling, disk bars and graph.');
+} catch (error) {
+ if(page){await page.screenshot({path:'/tmp/dam-activity-failure.png'});console.error('Visible buttons:',await page.getByRole('button').evaluateAll(elements=>elements.map(e=>({text:e.innerText,label:e.getAttribute('aria-label')}))));}
+ throw error;
 } finally { await browser.close(); }

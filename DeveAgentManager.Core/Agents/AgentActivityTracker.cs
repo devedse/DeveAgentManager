@@ -10,7 +10,8 @@ namespace DeveAgentManager.Core.Agents;
 public static class AgentActivityTracker
 {
     public sealed record Observation(AgentActivityDto Snapshot, string Identity, bool TurnObserved,
-        AgentActivityStatus? Pending, DateTime? PendingSince, string? LastCompletion, string? PendingCompletion = null);
+        AgentActivityStatus? Pending, DateTime? PendingSince, string? LastCompletion, string? PendingCompletion = null,
+        string? SessionIdentity = null);
 
     public static Observation Read(Agent agent)
     {
@@ -23,7 +24,9 @@ public static class AgentActivityTracker
 
     public static AgentActivityDto GetDto(Agent agent, DateTime? at = null, RunnerState? runnerState = null)
     {
-        var snapshot = Read(agent).Snapshot with { SeenCompletionSequence = agent.SeenCompletionSequence };
+        var saved = Read(agent);
+        var snapshot = saved.Snapshot with { SeenCompletionSequence = agent.SeenCompletionSequence,
+            CurrentTurnCompleted = saved.Snapshot.CurrentTurnCompleted && saved.SessionIdentity == UsageLimitState.Session(agent) };
         var now = at ?? DateTime.UtcNow;
         if (agent.State == AgentState.Running && snapshot.Rule == "not-observed" && now - snapshot.Since > TimeSpan.FromSeconds(30))
             snapshot = snapshot with { Reason = "The Manager has not saved a terminal observation for this running agent. Check the Runner connection and Manager monitor logs." };
@@ -38,10 +41,11 @@ public static class AgentActivityTracker
     {
         var old = Read(agent);
         var previous = old.Snapshot;
-        var changedProcess = old.Identity != identity;
+        var session = UsageLimitState.Session(agent);
+        var changedProcess = old.Identity != identity || old.SessionIdentity is not null && old.SessionIdentity != session;
         var fingerprint = detection.CompletionEvidence is { } evidence ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(evidence))) : null;
         var observation = changedProcess ? old with { Identity = identity, TurnObserved = false, Pending = null, PendingSince = null,
-            LastCompletion = fingerprint, Snapshot = previous with { CompletedAt = null } } : old;
+            LastCompletion = fingerprint, Snapshot = previous with { CompletedAt = null, CurrentTurnCompleted = false } } : old;
         previous = observation.Snapshot;
         var status = detection.Status;
         var reason = detection.Reason;
@@ -62,17 +66,19 @@ public static class AgentActivityTracker
         var completed = !changedProcess && status == AgentActivityStatus.Ready && observation.TurnObserved
             && fingerprint is not null && fingerprint != observation.LastCompletion
             && observation.PendingSince is { } stableSince && now - stableSince >= TimeSpan.FromSeconds(5);
-        var meaningfulChange = changedProcess || status != previous.Status || detection.QuestionWaiting != previous.QuestionWaiting
+        var turnCompleted = completed || previous.CurrentTurnCompleted && detection.Status is not
+            (AgentActivityStatus.Working or AgentActivityStatus.NeedsInput or AgentActivityStatus.UsageLimited);
+        var meaningfulChange = changedProcess || status != previous.Status || turnCompleted != previous.CurrentTurnCompleted || detection.QuestionWaiting != previous.QuestionWaiting
             || detection.BackgroundTaskCount != previous.BackgroundTaskCount
             || reason != previous.Reason || detection.Rule != previous.Rule || completed;
         var sequence = previous.Sequence + (meaningfulChange ? 1 : 0);
         var snapshot = new AgentActivityDto(status, reason, detection.Rule, detection.Evidence, now,
             changedProcess || status != previous.Status ? now : previous.Since, sequence,
             status == AgentActivityStatus.Working && detection.QuestionWaiting,
-            completed ? now : previous.CompletedAt, completed ? sequence : previous.CompletionSequence, agent.SeenCompletionSequence, detection.BackgroundTaskCount);
+            completed ? now : previous.CompletedAt, completed ? sequence : previous.CompletionSequence, agent.SeenCompletionSequence, detection.BackgroundTaskCount, turnCompleted);
         if (status == AgentActivityStatus.Ready && fingerprint is not null && (completed || !observation.TurnObserved))
             observation = observation with { LastCompletion = fingerprint, TurnObserved = false, Pending = null, PendingSince = null };
-        observation = observation with { Snapshot = snapshot };
+        observation = observation with { Snapshot = snapshot, SessionIdentity = session };
         agent.ActivityJson = JsonSerializer.Serialize(observation);
         agent.Working = status == AgentActivityStatus.Working;
         return meaningfulChange;

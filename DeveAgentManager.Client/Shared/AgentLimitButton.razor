@@ -19,10 +19,11 @@ else
     [Parameter] public Guid AgentId { get; set; }
     /// <summary>An entry in the toolbar's ⋮ menu, when the toolbar has no room for the button.</summary>
     [Parameter] public bool InMenu { get; set; }
-    private Color StatusColor => _automatic.Enabled ? Color.Success : _limit is null ? Color.Default : Color.Warning;
+    private Color StatusColor => _limit?.DetectionProblem is not null || _limitError is not null || _automaticError is not null ? Color.Warning : _automatic.Enabled ? Color.Success : _limit is null ? Color.Default : Color.Warning;
     private AgentLimitDto? _limit;
     private AutoContinueDto _automatic = new();
-    private string? _scheduledLocal;
+    private string? _scheduledLocal, _limitError, _automaticError;
+    private bool _limitLoaded, _automaticLoaded;
     protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
     private string StatusIcon => _automatic.Enabled ? Icons.Material.Rounded.Autorenew : _limit?.Status switch
     {
@@ -33,7 +34,11 @@ else
         "Uncertain" => Icons.Material.Rounded.ErrorOutline,
         _ => Icons.Material.Rounded.HourglassBottom
     };
-    private string Hint => _automatic.Enabled ? $"Auto-continue on · {(_automatic.Remaining is { } count ? $"{count} remaining" : "unlimited")}" : _limit is null ? "Schedule continue" : _limit?.NativeAutoContinue == true ? "Usage limit: Claude will continue automatically"
+    private string Hint => !_automaticLoaded && _automaticError is null || !_limitLoaded && _limitError is null ? "Loading continuation status…"
+        : _automaticError is not null ? "Automatic continuation status unavailable; retry"
+        : _limitError is not null ? (_automatic.Enabled ? "Auto-continue on · limit status unavailable; retry" : "Continuation status unavailable; retry")
+        : _limit?.DetectionProblem is not null ? (_automatic.Enabled ? "Auto-continue on · detection unavailable" : "Usage-limit detection unavailable; retry")
+        : _automatic.Enabled ? $"Auto-continue on · {(_automatic.Remaining is { } count ? $"{count} remaining" : "unlimited")}" : _limit is null ? "Schedule continue" : _limit?.NativeAutoContinue == true ? "Usage limit: Claude will continue automatically"
         : _limit?.Status == "Scheduled" ? $"Continue scheduled for {_scheduledLocal ?? "your chosen time"}"
         : _limit?.Status == "Sending" ? "Sending scheduled continue"
         : _limit?.Status == "Sent" ? "Continue submitted; view result"
@@ -42,16 +47,31 @@ else
         : _limit?.Manual == true ? "Schedule continue"
         : _limit?.ResetAt is null ? "Usage limit" : "Usage limit: schedule continue after reset";
     protected override bool IsRelevant(ManagerEvent change) => change.AgentId == AgentId;
-    protected override async Task LoadAsync()
+    protected override Task LoadAsync() => Task.WhenAll(LoadLimitAsync(), LoadAutomaticAsync());
+    private async Task LoadLimitAsync()
     {
-        _limit = await Api.GetAgentLimitAsync(AgentId);
-        _automatic = await Api.GetAutoContinueAsync(AgentId);
-        _scheduledLocal = _limit?.ContinueAt is { } at ? await Js.InvokeAsync<string>("damSchedule.describe", at) : null;
+        try
+        {
+            _limit = await Api.GetAgentLimitAsync(AgentId);
+            _limitLoaded = true;
+            _limitError = null;
+            _scheduledLocal = _limit?.ContinueAt is { } at ? await Js.InvokeAsync<string>("damSchedule.describe", at) : null;
+        }
+        catch (ApiException ex) { _limitError = ex.Message; }
+        catch (HttpRequestException) { _limitError = LoadingSection.Unreachable; }
+    }
+    private async Task LoadAutomaticAsync()
+    {
+        try { _automatic = await Api.GetAutoContinueAsync(AgentId); _automaticLoaded = true; _automaticError = null; }
+        catch (ApiException ex) { _automaticError = ex.Message; }
+        catch (HttpRequestException) { _automaticError = LoadingSection.Unreachable; }
     }
     private async Task OpenAsync()
     {
         var dialog = await Dialogs.ShowAsync<ContinueAfterLimitDialog>(_limit is null || _limit.Manual ? "Schedule continue" : "Continue after usage limit", new DialogParameters
-        { [nameof(ContinueAfterLimitDialog.Automatic)] = _automatic, [nameof(ContinueAfterLimitDialog.AgentId)] = AgentId, [nameof(ContinueAfterLimitDialog.Limit)] = _limit ?? new AgentLimitDto("Manual continuation — no usage limit is required.", null, DateTime.UtcNow, null, null, "Detected", null, false, true) },
+        { [nameof(ContinueAfterLimitDialog.LimitLoaded)] = _limitLoaded, [nameof(ContinueAfterLimitDialog.AutomaticLoaded)] = _automaticLoaded,
+            [nameof(ContinueAfterLimitDialog.LimitLoadError)] = _limitError, [nameof(ContinueAfterLimitDialog.AutomaticLoadError)] = _automaticError,
+            [nameof(ContinueAfterLimitDialog.Automatic)] = _automatic, [nameof(ContinueAfterLimitDialog.AgentId)] = AgentId, [nameof(ContinueAfterLimitDialog.Limit)] = _limit ?? new AgentLimitDto("Manual continuation — no usage limit is required.", null, DateTime.UtcNow, null, null, "Detected", null, false, true) },
             new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
         await dialog.Result;
         await ReloadAsync();

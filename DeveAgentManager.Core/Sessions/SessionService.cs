@@ -332,8 +332,8 @@ public sealed class SessionService(
         }
     }
 
-    /// <summary>A last sync before an agent or its Runner goes away. Never throws.</summary>
-    public async Task TrySyncRunnerAsync(Runner runner, CancellationToken cancellationToken = default)
+    /// <summary>Best-effort synchronization, with explicit context for lifecycle operations. Never throws.</summary>
+    public async Task TrySyncRunnerAsync(Runner runner, CancellationToken cancellationToken = default, string? finalOperation = null)
     {
         try
         {
@@ -341,7 +341,8 @@ public sealed class SessionService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "Final session sync from {Runner} failed", runner.Name);
+            if (finalOperation is null) logger.LogWarning(ex, "Session sync from {Runner} failed; periodic synchronization will retry", runner.Name);
+            else logger.LogWarning(ex, "Final session sync from {Runner} before {Operation} failed", runner.Name, finalOperation);
         }
     }
 

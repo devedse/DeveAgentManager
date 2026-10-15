@@ -135,6 +135,15 @@ public class AgentAttentionTests
                 db.AgentLimits.Add(new AgentLimit { AgentId = current.Id, Status = "Scheduled" });
                 await db.SaveChangesAsync(Ct);
             }
+            // A newly managed limit takes precedence over the older unread completion.
+            Assert.Empty(await service.ListAsync(TestUsers.Admin, Ct));
+            await using (var db = factory.CreateDbContext())
+            {
+                var current = await db.Agents.SingleAsync(Ct);
+                Complete(current, DateTime.UtcNow.AddSeconds(-10), "next finished reply");
+                (await db.AgentLimits.SingleAsync(Ct)).Status = "Cleared";
+                await db.SaveChangesAsync(Ct);
+            }
             var finished = Assert.Single(await service.ListAsync(TestUsers.Admin, Ct));
             Assert.Equal(AgentAttentionKind.Finished, finished.Kind);
             await service.DismissAsync(agent.Id, finished.Token, Ct);

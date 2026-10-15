@@ -7,6 +7,22 @@ namespace DeveAgentManager.Tests;
 
 public class UsageLimitStateTests
 {
+    [Fact]
+    public void FailedStoredInterpretationCannotExpireLimitOrAbortAnotherObservation()
+    {
+        var now = DateTime.UtcNow;
+        var agent = new Agent { Id = Guid.NewGuid(), HarnessId = "codex", State = AgentState.Running };
+        var limit = new AgentLimit { SessionId = UsageLimitState.Session(agent), PaneIdentity = "pane:pid:start:boot",
+            Message = "■ You've hit your usage limit. Try again at 3:00 PM.", TimeZoneId = "UTC", DetectedAt = now };
+        var detection = new AgentScreenDetection(AgentActivityStatus.UsageLimited, "limited", "limit");
+        var failed = UsageLimitState.ApplyExpiry(agent, limit, "screen", "pane|pid|start|boot", detection, now,
+            new FaultingLimitReader { FailStored = true });
+        Assert.Equal(AgentActivityStatus.Unknown, failed.Status);
+        var other = new Agent { Id = Guid.NewGuid(), HarnessId = "codex", State = AgentState.Running };
+        Assert.Equal(detection, UsageLimitState.ApplyExpiry(other, null, "screen", "another-pane", detection, now));
+        Assert.Equal("■ You've hit your usage limit. Try again at 3:00 PM.", limit.Message);
+    }
+
     [Theory]
     [InlineData("codex", "Europe/Amsterdam", "■ You've hit your usage limit. Try again at 3:00 PM.")]
     [InlineData("claude", "UTC", "└ You've hit your weekly limit · resets Oct 2, 3pm (Europe/Amsterdam)")]

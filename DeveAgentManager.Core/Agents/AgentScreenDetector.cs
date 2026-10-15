@@ -24,9 +24,7 @@ public static class AgentScreenDetector
         new("codex-transcript-viewer", 110, "viewer controls", c => c.Harness == "codex"
             && Has(c.After, "↑/↓ to scroll") && Has(c.After, "q to quit") && Has(c.After, "pgup/pgdn|home/end")
             ? new(AgentActivityStatus.Unknown, "Codex is showing conversation history; this view does not establish live activity.", "") : null),
-        new("usage-limit", 100, "current error", c =>
-            UsageLimitParser.Parse(c.Harness, string.Join('\n', c.Lines), "UTC", c.Now) is { } limit
-                ? new(AgentActivityStatus.UsageLimited, "The harness has reached its usage allowance.", "", Evidence(limit.Message)) : null),
+        new("usage-limit", 100, "current error", c => Limit(c)),
         new("live-input-controls", 90, "below current prompt / modal controls", Blocked),
         new("codex-live-activity", 80, "last activity above current prompt", CodexWorking),
         new("claude-live-activity", 80, "live footer", ClaudeWorking),
@@ -36,6 +34,13 @@ public static class AgentScreenDetector
         new("claude-ready-prompt", 50, "prompt box and completion footer", ClaudeReady),
         new("pi-ready-prompt", 50, "empty prompt box and usage footer", PiReady),
     ];
+
+    private static AgentScreenDetection? Limit(Context context)
+    {
+        var read = UsageLimitParser.Inspect(context.Harness, string.Join('\n', context.Lines), "UTC", context.Now);
+        return !read.Available ? new(AgentActivityStatus.Unknown, read.Problem!, "usage-limit-unavailable")
+            : read.Limit is { } limit ? new(AgentActivityStatus.UsageLimited, "The harness has reached its usage allowance.", "", Evidence(limit.Message)) : null;
+    }
 
     public static AgentScreenDetection Detect(string harness, string screen, DateTime now)
     {

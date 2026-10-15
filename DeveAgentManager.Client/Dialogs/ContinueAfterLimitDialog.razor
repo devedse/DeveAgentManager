@@ -4,6 +4,28 @@
 
 <MudDialog>
     <DialogContent>
+        <LoadingSection Loaded="LimitLoaded" Error="@LimitLoadError" Retry="ReloadLimitAsync" Label="Loading usage-limit status">
+            <Placeholder><SkeletonForm Fields="1" /></Placeholder>
+            <ChildContent>
+                @if (Limit.DetectionProblem is not null)
+                {
+                    <MudAlert Severity="Severity.Warning"><div class="help-heading"><span>Usage-limit detection unavailable.</span>
+                        <HelpTip Label="Unavailable usage-limit detection"><p>@Limit.DetectionProblem</p><p>Saved limits and schedules are retained. Retry reloads detection status; background observation also retries.</p></HelpTip></div></MudAlert>
+                    <MudButton OnClick="ReloadLimitAsync" Disabled="_busy" Class="mt-2 mb-3">Retry detection</MudButton>
+                }
+                @if (LimitLoadError is not null) { <MudAlert Severity="Severity.Warning">@LimitLoadError</MudAlert><MudButton OnClick="ReloadLimitAsync">Retry limit status</MudButton> }
+                @if (!AutomaticLoaded) { <MudText Class="mt-3">@Limit.Message</MudText> }
+            </ChildContent>
+        </LoadingSection>
+        <LoadingSection Loaded="AutomaticLoaded" Error="@AutomaticLoadError" Retry="ReloadAutomaticAsync" Label="Loading automatic continuation">
+            <Placeholder><SkeletonForm Fields="1" /></Placeholder>
+            <ChildContent>
+                @if (AutomaticLoadError is not null) { <MudAlert Severity="Severity.Warning">@AutomaticLoadError</MudAlert><MudButton OnClick="ReloadAutomaticAsync">Retry automatic status</MudButton> }
+                @if (!LimitLoaded && Automatic.Enabled) { <MudText>Automatic continuation is on.</MudText> }
+            </ChildContent>
+        </LoadingSection>
+        @if (LimitLoaded && AutomaticLoaded)
+        {
         <div class="help-heading mb-3">
         <MudSelect T="bool" @bind-Value="_autoMode" Label="Continuation mode" Variant="Variant.Outlined" Class="flex-grow-1">
             <MudSelectItem T="bool" Value="false">One-time schedule</MudSelectItem>
@@ -13,7 +35,7 @@
         </div>
         @if (_autoMode)
         {
-            <div class="help-heading"><MudSwitch T="bool" Value="_enabled" ValueChanged="ToggleAutomaticAsync" Disabled="_busy" Color="Color.Success" Label="Auto-continue enabled" />
+            <div class="help-heading"><MudSwitch T="bool" Value="_enabled" ValueChanged="ToggleAutomaticAsync" Disabled="_busy || AutomaticLoadError is not null" Color="Color.Success" Label="Auto-continue enabled" />
                 <HelpTip Label="Automatic continuation">
                     <p>Send <b>continue</b> one minute after each detected usage-limit reset in this chat. Stays on until you switch it off, even with this page closed.</p>
                     <p>Drafts and busy agents wait. Unknown reset times need your attention; no time is guessed. Changing the conversation or uncertain delivery stops automatic mode. Claude's own automatic continuation takes priority.</p>
@@ -91,19 +113,20 @@
             }
         }
         }
+        }
         @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert> }
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="() => MudDialog.Cancel()">Close</MudButton>
-        @if (_autoMode)
+        @if (LimitLoaded && AutomaticLoaded && AutomaticLoadError is null && _autoMode)
         {
             <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="SaveAutomaticAsync">Save automatic settings</MudButton>
         }
-        else if (!_enabled && !Limit.NativeAutoContinue && Limit.Status == "Scheduled")
+        else if (LimitLoaded && AutomaticLoaded && AutomaticLoadError is null && !_enabled && !Limit.NativeAutoContinue && Limit.Status == "Scheduled")
         {
             <MudButton Color="Color.Warning" Disabled="_busy" OnClick="CancelAsync">Cancel scheduled continue</MudButton>
         }
-        else if (!_enabled && !Limit.NativeAutoContinue && (Limit.Status is "Detected" or "Cancelled" || (Limit.Manual && Limit.Status == "Sent")))
+        else if (LimitLoaded && AutomaticLoaded && AutomaticLoadError is null && !_enabled && !Limit.NativeAutoContinue && (Limit.Status is "Detected" or "Cancelled" || (Limit.Manual && Limit.Status == "Sent")))
         {
             <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || !_loaded" OnClick="ScheduleAsync">Schedule continue</MudButton>
         }
@@ -115,6 +138,10 @@
     [Parameter] public Guid AgentId { get; set; }
     [Parameter, EditorRequired] public AgentLimitDto Limit { get; set; } = default!;
     [Parameter] public AutoContinueDto Automatic { get; set; } = new();
+    [Parameter] public bool LimitLoaded { get; set; } = true;
+    [Parameter] public bool AutomaticLoaded { get; set; } = true;
+    [Parameter] public string? LimitLoadError { get; set; }
+    [Parameter] public string? AutomaticLoadError { get; set; }
     private bool _autoMode, _enabled, _limited;
     private int _remaining = 1;
     private DateTime? _date;
@@ -149,6 +176,33 @@
             _loaded = true;
         }
         catch (JSException) { _error = "Could not read your local timezone. Reopen this dialog to try again."; }
+    }
+
+    private async Task ReloadLimitAsync()
+    {
+        try
+        {
+            Limit = await Api.GetAgentLimitAsync(AgentId) ?? new("Manual continuation — no usage limit is required.", null, DateTime.UtcNow, null, null, "Detected", null, false, true);
+            LimitLoaded = true;
+            LimitLoadError = null;
+            await DescribeAsync();
+        }
+        catch (ApiException ex) { LimitLoadError = ex.Message; }
+        catch (HttpRequestException) { LimitLoadError = LoadingSection.Unreachable; }
+    }
+    private async Task ReloadAutomaticAsync()
+    {
+        try
+        {
+            Automatic = await Api.GetAutoContinueAsync(AgentId);
+            AutomaticLoaded = true;
+            AutomaticLoadError = null;
+            _autoMode = _enabled = Automatic.Enabled;
+            _limited = Automatic.Remaining is not null;
+            _remaining = Math.Max(1, Automatic.Remaining ?? 1);
+        }
+        catch (ApiException ex) { AutomaticLoadError = ex.Message; }
+        catch (HttpRequestException) { AutomaticLoadError = LoadingSection.Unreachable; }
     }
 
     /// <summary>The detected reset and the next continue in local time; again whenever the limit was reloaded.</summary>

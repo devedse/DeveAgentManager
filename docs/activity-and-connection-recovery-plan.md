@@ -1,6 +1,6 @@
 # Activity fixes and connection investigation plan
 
-Status: **plan only; implementation pending**. Updated 2026-10-16.
+Status: **items 1, 3, 4 and 5 implemented and verified locally; SSH remains investigation only**. Updated 2026-10-16. Live deployment verification is separate and pending.
 
 ## Scope and delivery
 
@@ -8,10 +8,20 @@ Plan fixes directly on `master` for usage-limit parsing failures, Proxmox sampli
 session-sync messages and the previously discussed Finished/Ready behavior. The SSH item is investigation only:
 establish the cause before proposing a transport change. No feature branch or pull request is required.
 
-This document authorizes no runtime changes by itself. Once implementation is requested, complete the changes
-and verification locally, then commit and push the complete, tested change to `master`. Avoid publishing partial
-changes to the parser, because a push starts the release pipeline. Do not implement the previous speculative
-SSH connection retirement, concurrency cap or reconnect backoff proposal.
+The user authorized implementation of the non-SSH items after reviewing this plan. The sections below retain
+the design and verification requirements. Deliver the complete tested implementation on `master`; a push starts
+the release pipeline. SSH connection retirement, a concurrency cap and reconnect backoff remain unimplemented
+pending evidence and review.
+
+## Local verification record
+
+- Release build succeeds with the repository's .NET 10 SDK.
+- All 635 host tests pass, including parser/API failure preservation, diagnostics redaction, continuation delivery,
+  current-turn completion, Proxmox request classification/budgets and sampler backoff/recovery.
+- Chromium in light mode and Firefox in dark mode pass the activity/continuation browser checks at desktop and
+  phone sizes, including acknowledgement, later work, independent policy loading, unavailable detection and retry.
+- The disposable development Manager, test user and keys were removed after verification.
+- SSH transport behavior is unchanged. CI/artifact publication and live deployment verification remain separate results.
 
 ## Evidence and limits of the diagnosis
 

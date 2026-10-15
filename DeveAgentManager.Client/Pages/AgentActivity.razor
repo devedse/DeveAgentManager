@@ -71,10 +71,12 @@
     private bool Matches(AgentDto agent, string filter) => filter switch
     {
         "Needs input" => agent.State == AgentState.Running && (agent.Activity?.Status == AgentActivityStatus.NeedsInput || agent.Activity?.QuestionWaiting == true),
-        "Finished" => agent.Activity?.UnseenCompletion == true,
+        "Finished" => StateStyles.ShowsFinished(agent),
         "Usage limited" => agent.State == AgentState.Running && agent.Activity?.Status == AgentActivityStatus.UsageLimited,
-        "Working" => agent.State == AgentState.Running && agent.Activity?.Status == AgentActivityStatus.Working,
-        "Ready" => agent.State == AgentState.Running && agent.Activity?.Status == AgentActivityStatus.Ready,
+        "Working" => agent.State == AgentState.Running && (agent.Activity?.Status == AgentActivityStatus.Working
+            || agent.Activity is { Status: AgentActivityStatus.Ready, BackgroundTaskCount: > 0 }),
+        "Ready" => agent.State == AgentState.Running && agent.Activity is { Status: AgentActivityStatus.Ready, BackgroundTaskCount: not > 0 }
+            && !StateStyles.ShowsFinished(agent),
         _ => true
     };
     private IEnumerable<AgentDto> Filtered => _agents

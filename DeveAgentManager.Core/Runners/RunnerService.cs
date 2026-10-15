@@ -281,7 +281,7 @@ public sealed partial class RunnerService(
 
         if (op.Runner.State == RunnerState.Ready)
         {
-            await sessions.TrySyncRunnerAsync(op.Runner, cancellation);
+            await sessions.TrySyncRunnerAsync(op.Runner, cancellation, finalOperation: "stopping the Runner");
         }
 
         await op.SetStateAsync(RunnerState.Stopping, "Shutting down");
@@ -300,7 +300,7 @@ public sealed partial class RunnerService(
         {
             // The conversations outlive the Runner: take the latest copy first.
             op.Log.Info("Saving the agents' conversations");
-            await sessions.TrySyncRunnerAsync(op.Runner, cancellation);
+            await sessions.TrySyncRunnerAsync(op.Runner, cancellation, finalOperation: "removing the Runner");
         }
 
         await op.SetStateAsync(RunnerState.Deleting, "Deleting");

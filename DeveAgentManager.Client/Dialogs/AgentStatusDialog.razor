@@ -19,7 +19,8 @@
             }
             @if (StateStyles.ShowsFinished(Agent))
             {
-                <MudText Class="mt-3">Finished since you last viewed this agent. Opening its terminal marks this completion seen across your devices.</MudText>
+                <div class="help-heading mt-3"><MudText>The current turn has finished.</MudText>
+                    <HelpTip Label="Finished status"><p>Viewing the reply clears its unread notification across your devices. Finished remains until new work starts; active background work takes priority.</p></HelpTip></div>
             }
             <MudExpansionPanels Class="mt-3">
                 <MudExpansionPanel Text="Detection details">

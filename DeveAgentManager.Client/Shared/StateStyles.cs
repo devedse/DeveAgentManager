@@ -64,9 +64,7 @@ public static class StateStyles
     };
 
     public static bool ShowsFinished(AgentDto agent) =>
-        agent.State == AgentState.Running && agent.Activity is
-            { Status: AgentActivityStatus.Ready, UnseenCompletion: true } activity
-        && activity.BackgroundTaskCount is not > 0;
+        agent.State == AgentState.Running && agent.Activity?.IsFinished == true;
 
     public static string CssClass(this Tone tone) => tone.ToString().ToLowerInvariant();
 

@@ -42,6 +42,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(_ => ManagerSshKey.LoadOrCreate(options.SshDirectory));
         services.AddSingleton<SshConnector>();
         services.AddSingleton<RunnerShell>();
+        services.AddSingleton<UsageLimitReader>();
         services.AddSingleton<SettingsStore>();
         services.AddSingleton<UserSettingsStore>();
         services.AddSingleton<RunnerUsers>();

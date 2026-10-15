@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using DeveAgentManager.Core.Security;
 using DeveAgentManager.Contracts;
 using Microsoft.Extensions.Logging;
 namespace DeveAgentManager.Logging;
@@ -50,9 +51,7 @@ public sealed class ManagerLogStore
     }
     internal static string Redact(string text)
     {
-        text = Regex.Replace(text, @"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*", "$1[redacted]", RegexOptions.None, TimeSpan.FromMilliseconds(100));
-        text = Regex.Replace(text, "(?i)([\\\"']?(?:password|token|secret|authorization|cookie|api[_-]?key)[\\\"']?\\s*[:=]\\s*)(?:\\\"[^\\\"]*\\\"|'[^']*'|[^\\s,;]+)", "$1[redacted]", RegexOptions.None, TimeSpan.FromMilliseconds(100));
-        return text.Length > 8192 ? text[..8192] + "…" : text;
+        return DiagnosticText.Excerpt(DiagnosticText.Redact(text), 8192);
     }
 }
 

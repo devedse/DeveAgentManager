@@ -41,7 +41,7 @@ public sealed class AgentAttentionService(IDbContextFactory<ManagerDbContext> fa
             if (activity.Status == AgentActivityStatus.NeedsInput) kind = AgentAttentionKind.NeedsInput;
             else if (activity.QuestionWaiting) { kind = AgentAttentionKind.QuestionWaiting; reason = "A queued question can be answered while the agent continues working."; }
             else if ((activity.Status == AgentActivityStatus.UsageLimited && !limitManaged) || activity.Rule == "usage-limit-expired") kind = AgentAttentionKind.UsageLimit;
-            else if (activity.UnseenCompletion) { kind = AgentAttentionKind.Finished; reason = "Finished since you last viewed this agent."; at = activity.CompletedAt!.Value; }
+            else if (activity.IsFinished && activity.UnseenCompletion) { kind = AgentAttentionKind.Finished; reason = "Finished since you last viewed this agent."; at = activity.CompletedAt!.Value; }
             else if (activity.Status == AgentActivityStatus.Unknown && now - activity.Since >= TimeSpan.FromSeconds(30)) kind = AgentAttentionKind.Unclear;
         }
         if (kind is null) return null;

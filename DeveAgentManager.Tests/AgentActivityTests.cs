@@ -28,6 +28,48 @@ public class AgentActivityTests
     }
 
     [Fact]
+    public void ViewingCompletionDoesNotChangeFinishedAndAnInterruptedLaterTurnDoesNotReuseIt()
+    {
+        var agent = NewAgent();
+        AgentActivityTracker.Apply(agent, Working, "process", Now);
+        AgentActivityTracker.Apply(agent, Ready("reply"), "process", Now.AddSeconds(5));
+        AgentActivityTracker.Apply(agent, Ready("reply"), "process", Now.AddSeconds(10));
+        var done = AgentActivityTracker.GetDto(agent, Now.AddSeconds(10));
+        Assert.True(done.IsFinished);
+        agent.SeenCompletionSequence = done.CompletionSequence;
+        var seen = AgentActivityTracker.GetDto(agent, Now.AddSeconds(10));
+        Assert.False(seen.UnseenCompletion);
+        Assert.True(seen.IsFinished);
+        // The durable JSON is sufficient across a Manager restart.
+        var restored = new Agent { HarnessId = agent.HarnessId, HarnessSessionId = agent.HarnessSessionId,
+            State = agent.State, ActivityJson = agent.ActivityJson, SeenCompletionSequence = agent.SeenCompletionSequence };
+        Assert.True(AgentActivityTracker.GetDto(restored, Now.AddSeconds(10)).IsFinished);
+        Assert.False(AgentActivityTracker.GetDto(restored, Now.AddSeconds(60)).IsFinished);
+        AgentActivityTracker.Apply(agent, Working, "process", Now.AddSeconds(15));
+        Assert.False(AgentActivityTracker.GetDto(agent, Now.AddSeconds(15)).IsFinished);
+        Assert.Null(AgentAttentionService.Attention(agent, false, Now.AddSeconds(15)));
+        AgentActivityTracker.Apply(agent, Ready("reply"), "process", Now.AddSeconds(20));
+        AgentActivityTracker.Apply(agent, Ready("reply"), "process", Now.AddSeconds(25));
+        Assert.False(AgentActivityTracker.GetDto(agent, Now.AddSeconds(25)).IsFinished);
+    }
+
+    [Fact]
+    public void CompletionIsBoundToSessionAndOldSerializedStateDoesNotManufactureFinished()
+    {
+        var agent = NewAgent();
+        AgentActivityTracker.Apply(agent, Working, "process", Now);
+        AgentActivityTracker.Apply(agent, Ready("reply"), "process", Now.AddSeconds(5));
+        AgentActivityTracker.Apply(agent, Ready("reply"), "process", Now.AddSeconds(10));
+        Assert.True(AgentActivityTracker.GetDto(agent, Now.AddSeconds(10)).IsFinished);
+        agent.HarnessSessionId = "another-conversation";
+        Assert.False(AgentActivityTracker.GetDto(agent, Now.AddSeconds(10)).IsFinished);
+        AgentActivityTracker.Apply(agent, Ready("reply"), "process", Now.AddSeconds(15));
+        Assert.False(AgentActivityTracker.GetDto(agent, Now.AddSeconds(15)).IsFinished);
+        agent.ActivityJson = agent.ActivityJson!.Replace("\"CurrentTurnCompleted\":false", "\"LegacyCompletion\":true");
+        Assert.False(AgentActivityTracker.GetDto(agent, Now.AddSeconds(15)).IsFinished);
+    }
+
+    [Fact]
     public void OverdueInitialObservationExplainsBackgroundMonitorProblem()
     {
         var agent = NewAgent();

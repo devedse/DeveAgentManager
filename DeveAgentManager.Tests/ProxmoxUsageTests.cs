@@ -1,4 +1,6 @@
 using System.Net;
+using System.Diagnostics;
+using Corsinvest.ProxmoxVE.Api;
 using System.Text;
 using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Abstractions;
@@ -43,7 +45,8 @@ public sealed class ProxmoxUsageTests
     {
         using var http = new Responses(path => path.Contains("/old-node/")
             ? (HttpStatusCode.InternalServerError, "{\"data\":null}")
-            : path.Contains("/cluster/resources") ? (HttpStatusCode.OK, Resources) : (HttpStatusCode.OK, Current));
+            : path.Contains("/cluster/resources") ? (HttpStatusCode.OK, Resources) : (HttpStatusCode.OK, Current))
+            { ErrorReason = "Configuration file 'nodes/old-node/qemu-server/30000.conf' does not exist" };
         var provider = Provider(http);
         var first = await provider.GetUsageAsync(Machine, TestContext.Current.CancellationToken);
         var second = await provider.GetUsageAsync(Machine, TestContext.Current.CancellationToken);
@@ -51,6 +54,74 @@ public sealed class ProxmoxUsageTests
         Assert.Equal(25d, second?.CpuUsage);
         Assert.Equal(4, http.Paths.Count);
         Assert.EndsWith("/nodes/current-node/qemu/30000/status/current", http.Paths[^1]);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    public async Task UnrelatedFailuresDoNotRediscoverVm(HttpStatusCode code)
+    {
+        using var http = new Responses(_ => (code, "{\"data\":null}"));
+        await Assert.ThrowsAnyAsync<Exception>(() => Provider(http).GetUsageAsync(Machine, TestContext.Current.CancellationToken));
+        Assert.Single(http.Paths);
+    }
+
+    [Fact]
+    public async Task NetworkFailureDoesNotRediscoverVm()
+    {
+        using var http = new Responses(_ => throw new HttpRequestException("Test-only unreachable provider"));
+        await Assert.ThrowsAnyAsync<Exception>(() => Provider(http).GetUsageAsync(Machine, TestContext.Current.CancellationToken));
+        Assert.Single(http.Paths);
+    }
+
+    [Fact]
+    public async Task CancellationReachesHttpRequestWithoutRediscovery()
+    {
+        using var http = new Responses(_ => (HttpStatusCode.OK, Current)) { Delay = TimeSpan.FromSeconds(10) };
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cancel.CancelAfter(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Provider(http).GetUsageAsync(Machine, cancel.Token));
+        Assert.Single(http.Paths);
+    }
+
+    [Fact]
+    public async Task MissingVmOnSameNodeRetainsOriginalFailure()
+    {
+        using var http = new Responses(path => path.Contains("/cluster/resources")
+            ? (HttpStatusCode.OK, Resources.Replace("current-node", "old-node")) : (HttpStatusCode.InternalServerError, "{\"data\":null}"))
+            { ErrorReason = "Configuration file 'nodes/old-node/qemu-server/30000.conf' does not exist" };
+        var error = await Assert.ThrowsAsync<PveResultException>(() => Provider(http).GetUsageAsync(Machine, TestContext.Current.CancellationToken));
+        Assert.Contains("nodes/old-node", error.Result.RequestResource);
+        Assert.Equal(2, http.Paths.Count);
+    }
+
+    [Fact]
+    public async Task FailedRediscoveryRetainsInitiatingMissingConfiguration()
+    {
+        using var http = new Responses(path => path.Contains("/cluster/resources")
+            ? (HttpStatusCode.BadGateway, "{\"data\":null}") : (HttpStatusCode.InternalServerError, "{\"data\":null}"))
+            { ErrorReason = "Configuration file 'nodes/old-node/qemu-server/30000.conf' does not exist" };
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => Provider(http).GetUsageAsync(Machine, TestContext.Current.CancellationToken));
+        var failures = Assert.IsType<AggregateException>(error.InnerException);
+        Assert.Equal(2, failures.InnerExceptions.Count);
+        Assert.Contains("nodes/old-node", Assert.IsType<PveResultException>(failures.InnerExceptions[0]).Result.RequestResource);
+        Assert.Equal(2, http.Paths.Count);
+    }
+
+    [Fact]
+    public async Task MigrationRequestsShareOneFiveSecondBudget()
+    {
+        using var http = new Responses(path => path.Contains("/old-node/") ? (HttpStatusCode.InternalServerError, "{\"data\":null}")
+            : path.Contains("/cluster/resources") ? (HttpStatusCode.OK, Resources) : (HttpStatusCode.OK, Current))
+            { ErrorReason = "Configuration file 'nodes/old-node/qemu-server/30000.conf' does not exist", Delay = TimeSpan.FromSeconds(2) };
+        var clock = Stopwatch.StartNew();
+        await Assert.ThrowsAsync<TimeoutException>(() => Provider(http).GetUsageAsync(Machine, TestContext.Current.CancellationToken));
+        Assert.InRange(clock.Elapsed.TotalSeconds, 4, 6.5);
+        Assert.Equal(3, http.Paths.Count);
     }
 
     [Fact]
@@ -110,10 +181,48 @@ public sealed class ProxmoxUsageTests
         finally { await monitor.StopAsync(CancellationToken.None); }
     }
 
+    [Fact]
+    public async Task FailedSampleLeavesGapBacksOffAndReportsRecoveryOnce()
+    {
+        await using var manager = new SamplingManager { FailFirst = true };
+        var ct = TestContext.Current.CancellationToken;
+        await using (var db = await manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync(ct))
+        {
+            db.Runners.Add(new Runner { OwnerId = User.BootstrapId, Id = Machine.RunnerId, Name = "usage-runner", ProviderId = "proxmox",
+                State = RunnerState.Ready, MachineId = Machine.MachineId, ProviderData = Machine.ProviderData, Host = Machine.Host, Username = "test" });
+            await db.SaveChangesAsync(ct);
+        }
+        var logger = new CapturedLogger<RunnerUsageMonitor>();
+        var cache = manager.Services.GetRequiredService<RunnerStatusCache>();
+        using var monitor = ActivatorUtilities.CreateInstance<RunnerUsageMonitor>(manager.Services, logger);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(17));
+        var started = DateTime.UtcNow;
+        await monitor.StartAsync(ct);
+        try
+        {
+            while (!logger.Entries.Any(entry => entry.Level == Microsoft.Extensions.Logging.LogLevel.Warning)) await Task.Delay(50, deadline.Token);
+            Assert.Empty(cache.History(Machine.RunnerId, 1));
+            await Task.Delay(500, deadline.Token);
+            Assert.Equal(1, manager.Requests);
+            while (cache.History(Machine.RunnerId, 1).Count < 2) await Task.Delay(100, deadline.Token);
+            var samples = cache.History(Machine.RunnerId, 1);
+            Assert.True(samples[0].At - started >= TimeSpan.FromSeconds(9));
+            Assert.All(samples, sample => Assert.True(sample.CpuPercent > 0));
+            Assert.Single(logger.Entries, entry => entry.Level == Microsoft.Extensions.Logging.LogLevel.Warning);
+            Assert.Single(logger.Entries, entry => entry.Message.Contains("sampling resumed"));
+            await using var db = await manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync(ct);
+            Assert.Equal(RunnerState.Ready, (await db.Runners.FindAsync([Machine.RunnerId], ct))!.State);
+        }
+        finally { await monitor.StopAsync(CancellationToken.None); }
+    }
+
     private sealed class SamplingManager : WebApplicationFactory<DeveAgentManager.Api.DtoMapper>
     {
         private readonly string _data = Directory.CreateTempSubdirectory("dam-usage-test-").FullName;
         private int _reading;
+        public int Requests => Volatile.Read(ref _reading);
+        public bool FailFirst { get; init; }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -126,10 +235,17 @@ public sealed class ProxmoxUsageTests
             {
                 // Start the real usage monitor after inserting a ready runner; exclude the slow status monitor.
                 foreach (var service in services.Where(s => s.ServiceType == typeof(IHostedService) &&
-                    (s.ImplementationType == typeof(RunnerMonitor) || s.ImplementationType == typeof(RunnerUsageMonitor))).ToArray())
+                    (s.ImplementationType == typeof(RunnerMonitor) || s.ImplementationType == typeof(RunnerUsageMonitor)
+                    || s.ImplementationType == typeof(DeveAgentManager.Core.Agents.AgentJobCompletions)
+                    || s.ImplementationType == typeof(AgentToolsSync))).ToArray())
                     services.Remove(service);
                 services.AddHttpClient(ProxmoxProvider.HttpClientName).ConfigurePrimaryHttpMessageHandler(() =>
-                    new Responses(_ => (HttpStatusCode.OK, Current.Replace("0.25", $"0.{Interlocked.Increment(ref _reading):D2}"))));
+                    new Responses(_ =>
+                    {
+                        var reading = Interlocked.Increment(ref _reading);
+                        return FailFirst && reading == 1 ? (HttpStatusCode.ServiceUnavailable, "{\"data\":null}")
+                            : (HttpStatusCode.OK, Current.Replace("0.25", $"0.{reading:D2}"));
+                    }));
             });
         }
 
@@ -148,12 +264,17 @@ public sealed class ProxmoxUsageTests
     {
         public List<string> Paths { get; } = [];
         public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public string? ErrorReason { get; init; }
+        public TimeSpan Delay { get; init; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
             Paths.Add(path);
+            if (Delay > TimeSpan.Zero) await Task.Delay(Delay, cancellationToken);
             var (status, json) = respond(path);
-            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") });
+            var response = new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+            if (status != HttpStatusCode.OK && ErrorReason is not null) response.ReasonPhrase = ErrorReason;
+            return response;
         }
     }
 }
