@@ -1,0 +1,57 @@
+@inherits LiveComponent
+@inject IDialogService Dialogs
+<MudDialog>
+    <DialogContent>
+        <div class="help-heading"><MudText Typo="Typo.subtitle1">Logins needing another manager</MudText>
+            <HelpTip Label="Removing a login manager"><p>Before disabling or deleting this user, give each login another enabled manager, or explicitly remove the login. Removing a login interrupts agents using it. Shared logins are independent of the user who connected them.</p></HelpTip>
+        </div>
+        <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading login dependencies">
+            <Placeholder><SkeletonList Rows="2" /></Placeholder>
+            <ChildContent>
+                @if (_items.Count == 0) { <MudText Class="mt-3">All login dependencies are resolved.</MudText> }
+                @foreach (var item in _items)
+                {
+                    <div class="list-row"><div class="list-main"><div class="list-title">@item.Name</div><div class="list-subtitle">@item.HarnessId</div></div>
+                        @if (item.CanManage)
+                        {
+                            <MudButton OnClick="() => ManageAsync(item)">Manage access</MudButton>
+                            <MudIconButton Icon="@Icons.Material.Rounded.Delete" OnClick="() => RemoveAsync(item)" aria-label="@($"Remove login {item.Name}")" />
+                        }
+                        else { <MudText Typo="Typo.caption">A harness login manager must resolve this.</MudText> }
+                    </div>
+                }
+            </ChildContent>
+        </LoadingSection>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        <MudButton Disabled="!Loaded || _items.Count > 0" OnClick="() => Dialog.Close(DialogResult.Ok(true))">Continue</MudButton>
+    </DialogActions>
+</MudDialog>
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public UserDto User { get; set; } = default!;
+    private List<LoginDependencyDto> _items = [];
+    protected override async Task LoadAsync() => _items = await Api.LoginDependenciesAsync(User.Id);
+    private static AccountDto Account(LoginDependencyDto d) => new(d.Id, d.HarnessId, d.Name, AccountKind.Subscription, false, 0, 0, default, default, CanManage: d.CanManage);
+    private async Task ManageAsync(LoginDependencyDto item)
+    {
+        var modal = await Dialogs.ShowAsync<AccountAccessDialog>("Manage login access", new DialogParameters<AccountAccessDialog> { { d => d.Account, Account(item) } });
+        await modal.Result;
+        await ReloadAsync();
+    }
+    private async Task RemoveAsync(LoginDependencyDto item)
+    {
+        if (!await AccountImpactDialog.ConfirmAsync(Dialogs, Account(item), null, "Remove login", "Remove")) return;
+        try { await Api.DeleteAccountAsync(item.Id); await ReloadAsync(); }
+        catch (ApiException e) { Snackbar.Add(e.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+    }
+    public static async Task<bool> ResolveAsync(IDialogService dialogs, ManagerApi api, UserDto user)
+    {
+        if ((await api.LoginDependenciesAsync(user.Id)).Count == 0) return true;
+        var modal = await dialogs.ShowAsync<UserLoginDependenciesDialog>($"Review {user.Username}'s logins",
+            new DialogParameters<UserLoginDependenciesDialog> { { d => d.User, user } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        return await modal.Result is { Canceled: false, Data: true };
+    }
+}

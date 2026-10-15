@@ -51,7 +51,7 @@ public sealed partial class AgentService(
 
     private static IQueryable<Agent> WithAccess(IQueryable<Agent> agents) => agents.AsNoTracking().AsSplitQuery()
         .Include(a => a.Runner).ThenInclude(r => r!.Members)
-        .Include(a => a.Account).ThenInclude(a => a!.Owner).Include(a => a.Owner).Include(a => a.Shares).ThenInclude(s => s.User);
+        .Include(a => a.Account).ThenInclude(a => a!.CreatedBy).Include(a => a.Owner).Include(a => a.Shares).ThenInclude(s => s.User);
 
     /// <summary>
     /// Creates an agent owned by <paramref name="actor"/>, who needs Use access to the Runner. Its harness login is one of
@@ -148,7 +148,7 @@ public sealed partial class AgentService(
 
         try
         {
-            await LaunchAsync(runner, agent, restart: false, cancellationToken, useDefaultModel: importingConversation);
+            await LaunchAsync(runner, agent, restart: false, cancellationToken, useDefaultModel: importingConversation, loginActor: actor);
             agent.State = AgentState.Running;
         }
         catch (Exception ex)
@@ -210,7 +210,7 @@ public sealed partial class AgentService(
         }
 
         var changesHarness = harnessId != agent.HarnessId;
-        if (!changesHarness && accountId == agent.AccountId)
+        if (!changesHarness && accountId == agent.AccountId && !agent.LoginBlocked)
         {
             return;
         }
@@ -230,13 +230,16 @@ public sealed partial class AgentService(
         }
 
         agent.AccountId = accountId;
+        agent.LoginBlocked = false;
+        agent.LoginStopPending = false;
+        db.AgentLoginGrants.RemoveRange(await db.AgentLoginGrants.Where(g => g.AgentId == agent.Id).ToListAsync(cancellationToken));
         AgentActivityTracker.Reset(agent);
         agent.State = AgentState.Starting;
         agent.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
         events.AgentChanged(runner.Id, agent.Id);
 
-        await LaunchAsync(runner, agent, restart: true, cancellationToken, useDefaultModel: changesHarness);
+        await LaunchAsync(runner, agent, restart: true, cancellationToken, useDefaultModel: changesHarness, loginActor: actor);
         agent.State = AgentState.Running;
         agent.StateMessage = null;
         agent.ExitCode = null;
@@ -245,29 +248,25 @@ public sealed partial class AgentService(
         events.AgentChanged(runner.Id, agent.Id);
     }
 
-    /// <summary>A login to switch to: one of the actor's own for that harness, or (null) the default, which is the owner's.</summary>
     private async Task RequireOwnLoginAsync(CurrentUser actor, Guid agentId, IHarness harness, Guid? accountId, CancellationToken cancellationToken)
     {
-        if (accountId is { } id)
-        {
-            await RequireOwnLoginAsync(actor, harness, id, cancellationToken);
-            return;
-        }
-
+        if (harness.AccountSupport is null) return;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        if (harness.AccountSupport is not null && !await db.Agents.AnyAsync(a => a.Id == agentId && a.OwnerId == actor.Id, cancellationToken))
-        {
-            throw new ArgumentException("Choose one of your own harness logins: the default is the owner's.");
-        }
+        var owner = await db.Agents.Where(a => a.Id == agentId).Select(a => a.OwnerId).SingleAsync(cancellationToken);
+        var id = accountId ?? await db.UserHarnessDefaults.Where(p => p.UserId == owner && p.HarnessId == harness.Id)
+            .Select(p => (Guid?)p.AccountId).FirstOrDefaultAsync(cancellationToken);
+        if (id is null) throw new ArgumentException("Choose a permitted harness login or set a default.");
+        await RequireOwnLoginAsync(actor, harness, id.Value, cancellationToken);
+        if (!await db.AccountGrants.AnyAsync(g => g.AccountId == id && g.UserId == owner && g.Access >= AccountAccess.Use, cancellationToken))
+            throw new ArgumentException("Share this login with the agent's owner before selecting it.");
     }
 
     private async Task RequireOwnLoginAsync(CurrentUser actor, IHarness harness, Guid accountId, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        if (!await db.Accounts.AnyAsync(a => a.Id == accountId && a.OwnerId == actor.Id && a.HarnessId == harness.Id, cancellationToken))
-        {
-            throw new ArgumentException($"Choose one of your own {harness.DisplayName} logins.");
-        }
+        if (!await db.AccountGrants.AnyAsync(g => g.AccountId == accountId && g.UserId == actor.Id && !g.User.Disabled
+            && g.Access >= AccountAccess.Use && g.Account.Enabled && g.Account.HarnessId == harness.Id, cancellationToken))
+            throw new ArgumentException($"Choose a {harness.DisplayName} login you have Use access to.");
     }
 
     /// <summary>Selects a saved chat or starts an empty chat in the same workspace and harness.</summary>
@@ -792,9 +791,29 @@ public sealed partial class AgentService(
         + "Use `dam-tools run-job` only when your harness has no built-in background-job support. Long runtimes, restart survival and validation needs are not exceptions. "
         + "Run `dam-tools --help` for other tools.";
 
-    private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool useDefaultModel = false)
+    private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool useDefaultModel = false, CurrentUser? loginActor = null)
     {
+        using var loginLease = await Accounts.AccountCoordination.LockAsync(cancellationToken);
+        await using var loginDb = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var savedLoginState = await loginDb.Agents.AsNoTracking().SingleAsync(a => a.Id == agent.Id, cancellationToken);
+        agent.LoginBlocked = savedLoginState.LoginBlocked;
+        agent.LoginStopPending = savedLoginState.LoginStopPending;
+        if (agent.LoginStopPending || agent.LoginBlocked) throw new InvalidOperationException("Choose a permitted login after pending enforcement completes.");
         var harness = GetHarness(agent.HarnessId);
+        if (!restart)
+        {
+            // A no-op Start must not switch a running agent's effective default or rewrite its auth symlink.
+            var alive = await shell.RunAsync(runner, $"tmux display-message -p -t {ShellQuote.Quote("=" + agent.TmuxSession + ":")} '#{{pane_dead}}' 2>/dev/null || true", cancellationToken: cancellationToken);
+            if (alive.Output.Trim() == "0")
+            {
+                if (savedLoginState.RunningAccountId is { } active &&
+                    (!await loginDb.Accounts.AnyAsync(a => a.Id == active && a.Enabled, cancellationToken)
+                    || !await Accounts.AccountService.CanUseForAgentAsync(loginDb, agent, active, cancellationToken)))
+                    throw new InvalidOperationException("The running agent's login access ended.");
+                agent.RunningAccountId = savedLoginState.RunningAccountId;
+                return;
+            }
+        }
         // Claude restores a model from resumed transcripts before settings.json. Converted messages contain a
         // compatibility model, not the user's choice, so use the Manager default explicitly on transfer.
         var model = useDefaultModel && agent.HarnessId == "claude"
@@ -811,10 +830,13 @@ public sealed partial class AgentService(
         var accountEnvironment = "";
         if (account is not null)
         {
+            if (loginActor is not null) await RequireOwnLoginAsync(loginActor, harness, account.Id, cancellationToken);
             await accounts.EnsureOnRunnerAsync(runner, account, cancellationToken);
-            accountEnvironment = $". \"{Accounts.AccountService.EnvironmentFile(account.Id)}\"; ";
+            accountEnvironment = $". \"{Accounts.AccountService.EnvironmentFile(account.Id)}\"; " + await accounts.PrepareRuntimeAsync(runner, agent, account, cancellationToken);
         }
 
+        agent.RunningAccountId = account?.Id;
+        await loginDb.Agents.Where(a => a.Id == agent.Id).ExecuteUpdateAsync(s => s.SetProperty(a => a.RunningAccountId, account == null ? (Guid?)null : account.Id), cancellationToken);
         // The browser terminal (xterm.js) and tmux support 24-bit color, but programs inside tmux only use it when told.
         var zone = Runners.RunnerTimeZones.Validate(runner.TimeZoneId ?? await settings.GetDefaultTimeZoneAsync(cancellationToken));
         var stored = await sessions.GetForAgentAsync(agent.Id, cancellationToken);

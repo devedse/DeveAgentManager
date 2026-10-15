@@ -111,7 +111,7 @@ public sealed class SessionService(
         .Include(s => s.Agent).ThenInclude(a => a!.Runner).ThenInclude(r => r!.Members)
         .Include(s => s.Agent).ThenInclude(a => a!.Shares)
         .Include(s => s.Agent).ThenInclude(a => a!.Owner)
-        .Include(s => s.Agent).ThenInclude(a => a!.Account).ThenInclude(a => a!.Owner)
+        .Include(s => s.Agent).ThenInclude(a => a!.Account).ThenInclude(a => a!.CreatedBy)
         .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Shares)
         .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Runner).ThenInclude(r => r!.Members);
 

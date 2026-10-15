@@ -13,7 +13,7 @@ namespace DeveAgentManager.Core.Users;
 /// manages its Runner sees it is there (<see cref="AgentAccess.Listed"/>). Writing needs Use access to the Runner as
 /// well: without it, an agent can only be read.</item>
 /// <item>A conversation: its owner, users it is shared with, and users its workspace's agent is shared with (read-only).</item>
-/// <item>A harness login: only its owner.</item>
+/// <item>A harness login: an explicit Use/Manage grant; login managers may administer all logins.</item>
 /// </list>
 /// Conversation managers may manage all agents and conversations; other roles do not grant this access.
 /// </summary>
@@ -101,10 +101,20 @@ public sealed class AccessControl(IDbContextFactory<ManagerDbContext> dbFactory)
         return ForSession(user, session.OwnerId, session.Shares, workspace);
     }
 
-    public async Task<bool> OwnsAccountAsync(CurrentUser user, Guid accountId, CancellationToken cancellationToken = default)
+    public async Task<bool> CanPromptAgentAsync(Guid id, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        return await db.Agents.AnyAsync(a => a.Id == id && !a.LoginBlocked && !a.LoginStopPending, ct);
+    }
+
+    public async Task<AccountAccess> AccountAsync(CurrentUser user, Guid id, bool management = false, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.Accounts.AnyAsync(a => a.Id == accountId && a.OwnerId == user.Id, cancellationToken);
+        var current = await db.Users.AsNoTracking().SingleOrDefaultAsync(u => u.Id == user.Id && !u.Disabled, cancellationToken);
+        if (current is null || !await db.Accounts.AnyAsync(a => a.Id == id, cancellationToken)) return AccountAccess.None;
+        if (management && (current.Roles & UserRoles.HarnessLoginManager) != 0) return AccountAccess.Manage;
+        return await db.AccountGrants.Where(g => g.AccountId == id && g.UserId == user.Id)
+            .Select(g => g.Access).FirstOrDefaultAsync(cancellationToken);
     }
 
     /// <summary>

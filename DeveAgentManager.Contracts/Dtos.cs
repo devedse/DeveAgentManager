@@ -177,7 +177,8 @@ public sealed record AgentDto(
     bool Working = false,
     AgentActivityDto? Activity = null,
     DateTime? LastAssistantMessageAt = null,
-    RunnerKind? RunnerKind = null);
+    RunnerKind? RunnerKind = null,
+    Guid? RunningAccountId = null);
 
 /// <summary>An image in an agent's folder, for the icon picker. <paramref name="Path"/> is relative to the folder.</summary>
 /// <param name="Automatic">What the Manager would pick by itself.</param>
@@ -228,7 +229,21 @@ public sealed record AccountDto(
     int AgentCount,
     DateTime CreatedAt,
     DateTime UpdatedAt,
-    string? RenewalNote = null);
+    string? RenewalNote = null,
+    AccountAccess Access = AccountAccess.None,
+    bool CanManage = false,
+    bool Enabled = true,
+    int PendingCleanup = 0,
+    IReadOnlyList<string>? Managers = null,
+    int PeopleCount = 0);
+
+public sealed record AccountGrantDto(Guid UserId, string Username, string DisplayName, AccountAccess Access, bool Disabled, Guid? AgentId = null);
+public sealed record AccountGrantRequest(AccountAccess Access);
+public sealed record AccountEnabledRequest(bool Enabled);
+public sealed record AccountUsageDto(Guid? AgentId, string? AgentName, string User, string Runner, bool Running, bool PendingStop);
+public sealed record AccountImpactDto(List<AccountUsageDto> Agents, int PendingCleanup);
+public sealed record LoginCleanupDto(string Login, string Runner, string Action);
+public sealed record LoginDependencyDto(Guid Id, string Name, string HarnessId, bool CanManage);
 
 // Requests.
 

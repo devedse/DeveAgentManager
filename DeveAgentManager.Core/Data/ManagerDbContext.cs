@@ -14,6 +14,11 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
 
     public DbSet<StoredSession> Sessions => Set<StoredSession>();
 
+    public DbSet<AccountGrant> AccountGrants => Set<AccountGrant>();
+    public DbSet<UserHarnessDefault> UserHarnessDefaults => Set<UserHarnessDefault>();
+    public DbSet<AgentLoginGrant> AgentLoginGrants => Set<AgentLoginGrant>();
+    public DbSet<AccountCleanup> AccountCleanups => Set<AccountCleanup>();
+
     public DbSet<Account> Accounts => Set<Account>();
 
     public DbSet<RunnerActivity> RunnerActivities => Set<RunnerActivity>();
@@ -134,9 +139,33 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
         modelBuilder.Entity<Account>(account =>
         {
             account.HasKey(a => a.Id);
-            account.HasIndex(a => new { a.OwnerId, a.HarnessId });
+            account.HasIndex(a => a.HarnessId);
             account.Property(a => a.Kind).HasConversion<string>().HasMaxLength(32);
-            account.HasOne(a => a.Owner).WithMany().HasForeignKey(a => a.OwnerId).OnDelete(DeleteBehavior.Cascade);
+            account.HasOne(a => a.CreatedBy).WithMany().HasForeignKey(a => a.CreatedById).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AccountGrant>(grant =>
+        {
+            grant.HasKey(g => new { g.AccountId, g.UserId });
+            grant.HasOne(g => g.Account).WithMany(a => a.Grants).HasForeignKey(g => g.AccountId).OnDelete(DeleteBehavior.Cascade);
+            grant.HasOne(g => g.User).WithMany().HasForeignKey(g => g.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<UserHarnessDefault>(pref =>
+        {
+            pref.HasKey(p => new { p.UserId, p.HarnessId });
+            pref.HasOne<User>().WithMany().HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
+            pref.HasOne<Account>().WithMany().HasForeignKey(p => p.AccountId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<AgentLoginGrant>(grant =>
+        {
+            grant.HasKey(g => g.AgentId);
+            grant.HasOne<Agent>().WithMany().HasForeignKey(g => g.AgentId).OnDelete(DeleteBehavior.Cascade);
+            grant.HasOne<Account>().WithMany().HasForeignKey(g => g.AccountId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<AccountCleanup>(cleanup =>
+        {
+            cleanup.HasKey(c => new { c.AccountId, c.RunnerId });
+            cleanup.HasOne<Runner>().WithMany().HasForeignKey(c => c.RunnerId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<StoredSession>(session =>

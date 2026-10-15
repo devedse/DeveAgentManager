@@ -175,10 +175,16 @@ public class Agent
     public string HarnessSessionId { get; set; } = "";
 
     /// <summary>
-    /// The harness login the agent runs with: one of its owner's, or of a user it is shared with who switched it to theirs.
-    /// Null uses the owner's default login for the harness (or the Runner's own login when there is none).
+    /// Selected harness login. Null uses the owner's personal default on the next start.
+    /// Launch requires permission; a missing or revoked login never falls back to ambient Runner credentials.
     /// </summary>
     public Guid? AccountId { get; set; }
+    /// <summary>The login actually used by the current harness, including default selections.</summary>
+    public Guid? RunningAccountId { get; set; }
+    /// <summary>Persisted before remote enforcement. Blocks launch until an explicit permitted selection.</summary>
+    public bool LoginBlocked { get; set; }
+    public bool LoginStopPending { get; set; }
+
 
     public Account? Account { get; set; }
 
@@ -302,10 +308,11 @@ public class Account
 {
     public Guid Id { get; set; }
 
-    /// <summary>Only its owner sees and uses it; agents shared with others keep running with it.</summary>
-    public Guid OwnerId { get; set; }
-
-    public User? Owner { get; set; }
+    public Guid? CreatedById { get; set; }
+    public User? CreatedBy { get; set; }
+    public bool Enabled { get; set; } = true;
+    public int AccessVersion { get; set; } = 1;
+    public List<AccountGrant> Grants { get; set; } = [];
 
     public string HarnessId { get; set; } = "";
 
@@ -316,8 +323,12 @@ public class Account
     /// <summary>The credential (a token, an API key or a harness's login file), encrypted.</summary>
     public string ProtectedSecret { get; set; } = "";
 
-    /// <summary>Used by its owner's agents that don't pick a login. One per owner and harness.</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public bool IsDefault { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public AccountAccess Access { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public bool CanManage { get; set; }
 
     /// <summary>Goes up when the credential is replaced (a new login), so Runners take the new one.</summary>
     public int Version { get; set; } = 1;
@@ -335,6 +346,39 @@ public class Account
     public DateTime CreatedAt { get; set; }
 
     public DateTime UpdatedAt { get; set; }
+}
+
+public class AccountGrant
+{
+    public Guid AccountId { get; set; }
+    public Account Account { get; set; } = null!;
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    public AccountAccess Access { get; set; }
+    public Guid GrantedById { get; set; }
+    public DateTime GrantedAt { get; set; }
+}
+
+public class UserHarnessDefault
+{
+    public Guid UserId { get; set; }
+    public string HarnessId { get; set; } = "";
+    public Guid AccountId { get; set; }
+}
+
+/// <summary>Legacy selection delegated only to this agent and its original owner.</summary>
+public class AgentLoginGrant
+{
+    public Guid AgentId { get; set; }
+    public Guid AccountId { get; set; }
+    public Guid OwnerId { get; set; }
+}
+
+/// <summary>Durable cleanup, including offline Runners; not deleted with the login.</summary>
+public class AccountCleanup
+{
+    public Guid AccountId { get; set; }
+    public Guid RunnerId { get; set; }
 }
 
 /// <summary>Someone who signs in to the Portal.</summary>

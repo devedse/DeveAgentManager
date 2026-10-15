@@ -23,15 +23,21 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("AccessVersion")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("CreatedById")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("HarnessId")
                         .IsRequired()
                         .HasColumnType("TEXT");
-
-                    b.Property<bool>("IsDefault")
-                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Kind")
                         .IsRequired()
@@ -43,9 +49,6 @@ namespace DeveAgentManager.Core.Data.Migrations
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("OwnerId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ProtectedSecret")
@@ -63,9 +66,50 @@ namespace DeveAgentManager.Core.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("OwnerId", "HarnessId");
+                    b.HasIndex("CreatedById");
+
+                    b.HasIndex("HarnessId");
 
                     b.ToTable("Accounts");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AccountCleanup", b =>
+                {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RunnerId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("AccountId", "RunnerId");
+
+                    b.HasIndex("RunnerId");
+
+                    b.ToTable("AccountCleanups");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AccountGrant", b =>
+                {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Access")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("GrantedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("GrantedById")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("AccountId", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("AccountGrants");
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.Agent", b =>
@@ -103,6 +147,12 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<DateTime?>("LastAssistantMessageAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("LoginBlocked")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("LoginStopPending")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -117,6 +167,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("RunnerId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("RunningAccountId")
                         .HasColumnType("TEXT");
 
                     b.Property<long>("SeenCompletionSequence")
@@ -260,6 +313,24 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.HasKey("AgentId");
 
                     b.ToTable("AgentLimits");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentLoginGrant", b =>
+                {
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("AgentId");
+
+                    b.HasIndex("AccountId");
+
+                    b.ToTable("AgentLoginGrants");
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.AgentShare", b =>
@@ -750,11 +821,29 @@ namespace DeveAgentManager.Core.Data.Migrations
                             FailedSignIns = 0,
                             MustChangePassword = false,
                             PasswordHash = "",
-                            Roles = 63,
+                            Roles = 127,
                             SecurityStamp = "bootstrap",
                             UpdatedAt = new DateTime(2026, 10, 6, 0, 0, 0, 0, DateTimeKind.Utc),
                             Username = "admin"
                         });
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.UserHarnessDefault", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("HarnessId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("UserId", "HarnessId");
+
+                    b.HasIndex("AccountId");
+
+                    b.ToTable("UserHarnessDefaults");
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.UserSecondFactor", b =>
@@ -802,13 +891,40 @@ namespace DeveAgentManager.Core.Data.Migrations
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.Account", b =>
                 {
-                    b.HasOne("DeveAgentManager.Core.Data.User", "Owner")
+                    b.HasOne("DeveAgentManager.Core.Data.User", "CreatedBy")
                         .WithMany()
-                        .HasForeignKey("OwnerId")
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("CreatedBy");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AccountCleanup", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.Runner", null)
+                        .WithMany()
+                        .HasForeignKey("RunnerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AccountGrant", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.Account", "Account")
+                        .WithMany("Grants")
+                        .HasForeignKey("AccountId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("Owner");
+                    b.HasOne("DeveAgentManager.Core.Data.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Account");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.Agent", b =>
@@ -860,6 +976,21 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.HasOne("DeveAgentManager.Core.Data.Agent", null)
                         .WithOne()
                         .HasForeignKey("DeveAgentManager.Core.Data.AgentLimit", "AgentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentLoginGrant", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.Account", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("DeveAgentManager.Core.Data.Agent", null)
+                        .WithMany()
+                        .HasForeignKey("AgentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
@@ -978,6 +1109,21 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Navigation("WorkspaceAgent");
                 });
 
+            modelBuilder.Entity("DeveAgentManager.Core.Data.UserHarnessDefault", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.Account", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("DeveAgentManager.Core.Data.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("DeveAgentManager.Core.Data.UserSecondFactor", b =>
                 {
                     b.HasOne("DeveAgentManager.Core.Data.User", null)
@@ -994,6 +1140,11 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.Account", b =>
+                {
+                    b.Navigation("Grants");
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.Agent", b =>

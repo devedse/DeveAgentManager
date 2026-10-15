@@ -82,15 +82,16 @@ public sealed class AgentJobCompletions(IDbContextFactory<ManagerDbContext> fact
             await Ack(runner, job.Id, "STALE", ct);
             return;
         }
-        if (agent!.State != AgentState.Running) return;
+        if (agent!.State != AgentState.Running || agent.LoginBlocked || agent.LoginStopPending) return;
         var screen = await terminal.ReadAsync(agent, ct);
         if (!screen.InputEmpty || AgentScreenDetector.Detect(agent.HarnessId, screen.Screen, DateTime.UtcNow).Status != AgentActivityStatus.Ready) return;
         using var lease = await sessions.LockAsync(ct);
+        using var loginLease = await Accounts.AccountCoordination.LockAsync(ct);
         // Recheck the selected conversation before crossing the terminal boundary.
         db.ChangeTracker.Clear();
         agent = await db.Agents.AsNoTracking().Include(a => a.Runner).SingleOrDefaultAsync(a => a.Id == job.AgentId && a.RunnerId == runner.Id, ct);
         session = await db.Sessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == job.SessionId, ct);
-        if (!Belongs(agent, session, runner.Id) || agent!.State != AgentState.Running) return;
+        if (!Belongs(agent, session, runner.Id) || agent!.State != AgentState.Running || agent.LoginBlocked || agent.LoginStopPending) return;
         var key = DeliveryKey(job, runner.Id);
         var sent = await shell.RunAsync(runner, LimitTerminal.BuildSubmitScript(agent.TmuxSession, screen, notification,
             deliveryKey: key), TimeSpan.FromSeconds(15), ct);

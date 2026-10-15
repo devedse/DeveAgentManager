@@ -71,7 +71,10 @@ public enum UserRoles
     /// <summary>Read and download the Manager’s application logs.</summary>
     LogViewer = 32,
 
-    Admin = LogViewer | SettingsManager | UserManager | RunnerCreator | RunnerManager | ConversationManager,
+    /// <summary>Manage every harness login and its access list; usage requires an explicit grant.</summary>
+    HarnessLoginManager = 64,
+
+    Admin = HarnessLoginManager | LogViewer | SettingsManager | UserManager | RunnerCreator | RunnerManager | ConversationManager,
 }
 
 /// <summary>What a user may do with a Runner. Each level includes the ones before it.</summary>
@@ -118,3 +121,6 @@ public enum SessionAccess
     /// <summary>Also rename, share and delete it.</summary>
     Owner,
 }
+
+/// <summary>A login grant. Manage includes Use; global administration does not implicitly grant Use.</summary>
+public enum AccountAccess { None, Use, Manage }

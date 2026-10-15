@@ -134,10 +134,13 @@
 
     private async Task DeleteAsync(UserDto user)
     {
+        try { if (!await UserLoginDependenciesDialog.ResolveAsync(Dialogs, Api, user)) return; }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); return; }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); return; }
         var dialog = await Dialogs.ShowAsync<ChooseUserDialog>($"Delete {user.Username}", new DialogParameters<ChooseUserDialog>
         {
             { d => d.Intro, $"Who gets what {user.DisplayName} owns: their Runners, agents and conversations, and their access to other people's Runners?" },
-            { d => d.Warning, $"{user.DisplayName}'s harness logins, settings and shares are deleted. This can't be undone; disabling them keeps everything." },
+            { d => d.Warning, $"{user.DisplayName}'s settings and shares are deleted; independent harness logins remain. This can't be undone; disabling them keeps everything." },
             { d => d.Exclude, new[] { user.Id } },
             { d => d.Confirm, "Delete" },
         });

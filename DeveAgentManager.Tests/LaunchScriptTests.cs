@@ -28,6 +28,7 @@ public sealed class LaunchScriptTests : IDisposable
         var launch = $"sh -c 'echo x >> {marker}; trap \"exit 0\" TERM; while :; do sleep 0.2; done'";
 
         Run(Script(launch, restart: false));
+        WaitFor(() => Starts(marker) == 1);
         var firstPid = PanePid();
         Assert.Equal(1, Starts(marker));
 

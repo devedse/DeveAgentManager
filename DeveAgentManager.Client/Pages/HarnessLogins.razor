@@ -1,0 +1,27 @@
+@page "/harness-logins"
+@implements IDisposable
+@inject SignedInUser Me
+<PageTitle>Harness logins · DeveAgentManager</PageTitle>
+<MudContainer MaxWidth="MaxWidth.Large" Class="page">
+    <PageHeader Title="Harness logins" Help="Manage saved subscriptions and API keys, who can use them, and pending cleanup. This role does not grant access to conversations or Runners." />
+    <LoadingSection Loaded="_loaded" Error="@_error" Retry="LoadAsync" Label="Loading permissions">
+        <Placeholder><SkeletonList Rows="3" /></Placeholder>
+        <ChildContent>
+            @if (_allowed) { <AccountsPanel Administration="true" /> }
+            else { <MudAlert Severity="Severity.Warning">Harness login manager role required.</MudAlert> }
+        </ChildContent>
+    </LoadingSection>
+</MudContainer>
+@code {
+    private bool _loaded, _allowed;
+    private string? _error;
+    protected override async Task OnInitializedAsync() { Me.Changed += PermissionsChanged; await LoadAsync(); }
+    private void PermissionsChanged() => _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    public void Dispose() => Me.Changed -= PermissionsChanged;
+    private async Task LoadAsync()
+    {
+        try { _allowed = (await Me.GetAsync()).Has(UserRoles.HarnessLoginManager); _loaded = true; _error = null; }
+        catch (ApiException e) { _error = e.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
+    }
+}

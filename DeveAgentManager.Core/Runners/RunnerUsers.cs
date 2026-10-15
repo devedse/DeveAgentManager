@@ -198,7 +198,7 @@ public sealed class RunnerUsers(
         }
     }
 
-    internal const string ListScript = "for d in \"$HOME/.deveagentmanager/users/\"*/; do [ -d \"$d\" ] && basename \"$d\"; done; true";
+    internal const string ListScript = "for base in \"$HOME/.deveagentmanager/users\" \"$HOME/.deveagentmanager/agent-runtime\"; do for d in \"$base/\"*/; do [ -d \"$d\" ] && basename \"$d\"; done; done; true";
 
     /// <summary>The user folders in <see cref="ListScript"/>'s output that belong to nobody in <paramref name="existing"/>.</summary>
     internal static List<Guid> Stale(string listing, IReadOnlySet<Guid> existing) =>
@@ -207,7 +207,7 @@ public sealed class RunnerUsers(
             .Where(id => id != Guid.Empty && !existing.Contains(id)).ToList();
 
     internal static string RemoveScript(IEnumerable<Guid> users, IEnumerable<Guid> accounts) =>
-        "rm -rf" + string.Concat(users.Select(u => $" \"{Folder(u)}\"")) + string.Concat(accounts.Select(a => $" \"{AccountService.Folder(a)}\""));
+        "rm -rf" + string.Concat(users.Select(u => $" \"{Folder(u)}\" \"$HOME/.deveagentmanager/agent-runtime/{u:N}\"")) + string.Concat(accounts.Select(a => $" \"{AccountService.Folder(a)}\""));
 
     private async Task<List<(Guid Id, string Username)>> UsersWithAccessAsync(Guid runnerId, CancellationToken cancellationToken)
     {

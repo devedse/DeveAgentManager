@@ -131,15 +131,15 @@ public sealed class DtoMapper(
         agent.ExitCode,
         agent.AccountId,
         agent.Account?.Name,
-        agent.Account?.OwnerId ?? agent.OwnerId,
-        (agent.Account is { } account ? account.Owner : agent.Owner)?.DisplayName ?? "",
+        Guid.Empty,
+        "",
         agent.CreatedAt,
         agent.UpdatedAt,
         agent.IconVersion,
         agent.State == AgentState.Running && agent.Working,
         AgentActivityTracker.GetDto(agent, runnerState: runner.State),
         agent.LastAssistantMessageAt,
-        runner.Kind);
+        runner.Kind, agent.RunningAccountId);
 
     /// <summary>A conversation loaded with its owner, shares, agent and workspace agent (see SessionService).</summary>
     public static SessionDto Session(StoredSession session, CurrentUser user)
@@ -186,7 +186,7 @@ public sealed class DtoMapper(
         account.CreatedAt,
         account.UpdatedAt,
         account.RenewalProblem ?? (renewable && account.Kind == AccountKind.Subscription && !account.ManagedRenewal
-            ? "Connect it again so the Manager keeps it signed in" : null));
+            ? "Connect it again so the Manager keeps it signed in" : null), account.Access, account.CanManage, account.Enabled);
 
     public static UserDto User(User user) => new(
         user.Id,

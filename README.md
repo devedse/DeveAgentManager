@@ -8,18 +8,21 @@ when you close the tab.
 - **Runner**: a machine that hosts agents. Proxmox Runners are full clones of a template VM.
 - **Agent**: a harness ([pi](https://pi.dev), [Claude Code](https://code.claude.com) or
   [Codex](https://github.com/openai/codex)) running in its own tmux session and working folder on a Runner.
-- **Users**: everyone signs in with a username and password of their own and has their own harness logins, GitHub
+- **Users**: everyone signs in with a username and password of their own and has personal or shared harness logins, a GitHub
   token, git identity, environment variables and SSH keys (**My settings**). Roles: *settings manager*, *user
-  manager*, *runner creator*, *runner manager* and *conversation manager*; *Admin* is all of them. A Runner has an owner and people with *Use*
+  manager*, *runner creator*, *runner manager*, *conversation manager*, *log viewer* and *harness login manager*; *Admin* is all of them. A Runner has an owner and people with *Use*
   or *Manage* access, who share its Linux account (so they trust each other with what is on it). Agents can be shared
   read-only or read-write, conversations read-only. Conversation managers (including admins) can open, prompt and manage every agent
   and read, export, rename, share or delete every conversation. Existing admins receive
   this role on upgrade and must sign in again. See [docs/users-plan.md](docs/users-plan.md).
 - **Account** (**My settings → Harness logins**): a Claude or ChatGPT subscription, or an API key, connected once in the
-  Manager and used on every Runner. Each person's own. Claude logs in with `claude setup-token` (a token valid for a year). Codex logs in
+  Manager and used on the Runners where authorized agents run. Logins have **Use** and **Manage** grants rather than a permanent owner. Use **Manage access** on a login row to share it; each person chooses their own default. **Manage → Harness logins** administers all logins with the *Harness login manager* role. Claude logs in with `claude setup-token` (a token valid for a year). Codex logs in
   with `codex login --device-auth` (a code you enter on any device); the Manager renews that login itself and Runners
   only get its access token, so agents on several Runners can share it ([details](docs/codex-central-auth-plan.md)).
-  A harness can have several accounts.
+  A harness can have several logins. Sharing one does not share agents or conversations. Removing access stops affected
+  harnesses; offline stops and credential cleanup are retried and shown as pending. Affected agents need a permitted
+  login selected explicitly. Before deleting a user, give their logins another manager or explicitly remove them.
+  See [the login sharing design](docs/harness-login-sharing-plan.md) for migration and Runner trust details.
 - **Continue with…**: the switch button in an agent's terminal continues the conversation with another account or in
   another harness, in the same folder, e.g. when a subscription ran out. Another harness gets the conversation as
   text: messages, answers and what the tools did carry over, and the model's hidden thinking stays behind.

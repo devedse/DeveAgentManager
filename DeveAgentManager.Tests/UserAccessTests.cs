@@ -195,12 +195,12 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         Assert.Equal(AgentAccess.Read, (await AgentAsync(ketty, admins.AgentId)).Access);
         await manager.Services.GetRequiredService<RunnerMembers>().SetAsync(TestUsers.Admin, admins.RunnerId, kettyId, RunnerAccess.Use);
         var shared = await AgentAsync(ketty, admins.AgentId);
-        Assert.Equal((AgentAccess.Write, User.BootstrapId), (shared.Access, shared.LoginOwnerId));
+        Assert.Equal(AgentAccess.Write, shared.Access);
         var start = await ketty.PostAsync($"/api/agents/{admins.AgentId}/start", null);
         Assert.Equal(HttpStatusCode.Conflict, start.StatusCode); // The Runner is stopped: past the access check.
         var switching = await ketty.PostAsJsonAsync($"/api/agents/{admins.AgentId}/switch", new SwitchAgentRequest("claude", admins.AccountId), ApiJson.Options);
         Assert.Equal(HttpStatusCode.BadRequest, switching.StatusCode);
-        Assert.Contains("your own", await switching.Content.ReadAsStringAsync());
+        Assert.Contains("Use access", await switching.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.Forbidden, (await ketty.DeleteAsync($"/api/agents/{admins.AgentId}")).StatusCode);
 
         // Leaving: it is gone for her, also from the Runner she can still use (only its managers see other people's agents).
@@ -323,16 +323,22 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
             await db.SaveChangesAsync();
         }
 
+        await using (var sharing = await DbAsync())
+        {
+            sharing.AccountGrants.Add(new() { AccountId = theirs.AccountId, UserId = heir.Id, Access = AccountAccess.Manage, GrantedById = leaving.Id, GrantedAt = DateTime.UtcNow });
+            await sharing.SaveChangesAsync();
+        }
         var changed = await Users.DeleteAsync(TestUsers.Admin, leaving.Id, heir.Id);
 
         Assert.Equal(new[] { theirs.RunnerId, admins.RunnerId }.Order(), changed.Runners.Order());
-        Assert.Equal([theirs.AccountId], changed.Accounts);
+        Assert.Empty(changed.Accounts);
         await using var check = await DbAsync();
         Assert.Equal(heir.Id, (await check.Runners.FindAsync(theirs.RunnerId))!.OwnerId);
         Assert.Equal(heir.Id, (await check.Sessions.FindAsync(theirs.SessionId))!.OwnerId);
         Assert.False(await check.Agents.AnyAsync(a => a.OwnerId == leaving.Id));
         Assert.Equal(RunnerAccess.Use, (await check.RunnerMembers.SingleAsync(m => m.RunnerId == admins.RunnerId && m.UserId == heir.Id)).Access);
-        Assert.False(await check.Accounts.AnyAsync(a => a.OwnerId == leaving.Id));
+        Assert.NotNull(await check.Accounts.FindAsync(theirs.AccountId));
+        Assert.False(await check.AccountGrants.AnyAsync(g => g.UserId == leaving.Id));
         Assert.Null(await check.Users.FindAsync(leaving.Id));
     }
 
@@ -409,7 +415,7 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         db.Agents.Add(new Agent { Id = things.AgentId, RunnerId = things.RunnerId, OwnerId = ownerId, Name = name, HarnessId = "claude", State = AgentState.Stopped });
         db.Sessions.Add(new StoredSession { Id = things.SessionId, OwnerId = ownerId, Title = name, HarnessId = "claude", AgentId = things.AgentId, WorkspaceAgentId = things.AgentId });
         db.Sessions.Add(new StoredSession { Id = things.ImportedSessionId, OwnerId = ownerId, Title = name + " imported", HarnessId = "pi" });
-        db.Accounts.Add(new Account { Id = things.AccountId, OwnerId = ownerId, HarnessId = "claude", Name = name, Kind = AccountKind.ApiKey });
+        db.Accounts.Add(new Account { Id = things.AccountId, CreatedById = ownerId, HarnessId = "claude", Name = name, Kind = AccountKind.ApiKey, Grants = [new() { UserId = ownerId, Access = AccountAccess.Manage, GrantedById = ownerId, GrantedAt = DateTime.UtcNow }] });
         await db.SaveChangesAsync();
         return things;
     }

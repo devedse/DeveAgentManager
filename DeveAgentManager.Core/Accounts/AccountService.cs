@@ -6,24 +6,23 @@ using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Security;
 using DeveAgentManager.Core.Ssh;
+using DeveAgentManager.Core.Users;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace DeveAgentManager.Core.Accounts;
 
 /// <summary>
-/// Harness logins ("accounts": subscriptions and API keys), each owned by one user. They are stored encrypted in the
-/// Manager and put on a Runner when an agent starts with one, in ~/.deveagentmanager/accounts/&lt;id&gt;: an environment
-/// file the agent's harness starts with, and the harness's own files (Codex: its auth.json). Every user has their own
-/// default login per harness.
+/// Shared harness credentials with per-user grants and personal defaults. One encrypted credential and one
+/// renewal operation exist per login. Runner copies are distributed only for authorized agent launches.
 /// </summary>
-public sealed class AccountService(
+public sealed partial class AccountService(
     IDbContextFactory<ManagerDbContext> dbFactory,
     SecretProtector protector,
     RunnerShell shell,
     IEnumerable<IHarness> harnesses,
     ManagerEvents events,
-    ILogger<AccountService> logger)
+    ILogger<AccountService> logger, AuditLog? audit = null)
 {
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _renewing = new();
@@ -40,24 +39,25 @@ public sealed class AccountService(
     /// <summary>Sourced before an agent's harness starts.</summary>
     public static string EnvironmentFile(Guid accountId) => $"{Folder(accountId)}/env";
 
-    public async Task<List<Account>> ListAsync(Guid ownerId, CancellationToken cancellationToken = default)
+    public async Task<List<Account>> ListAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.Accounts.AsNoTracking().Where(a => a.OwnerId == ownerId)
-            .OrderBy(a => a.HarnessId).ThenByDescending(a => a.IsDefault).ThenBy(a => a.Name).ToListAsync(cancellationToken);
-    }
-
-    /// <summary>How many agents use each account (by choice, not through the default).</summary>
-    public async Task<Dictionary<Guid, int>> CountAgentsAsync(CancellationToken cancellationToken = default)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.Agents.Where(a => a.AccountId != null).GroupBy(a => a.AccountId!.Value)
-            .Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(g => g.Key, g => g.Count, cancellationToken);
+        var defaults = await db.UserHarnessDefaults.Where(p => p.UserId == userId).Select(p => p.AccountId).ToListAsync(cancellationToken);
+        var rows = await db.Accounts.AsNoTracking().Include(a => a.Grants).Where(a => a.Grants.Any(g => g.UserId == userId))
+            .OrderBy(a => a.HarnessId).ThenBy(a => a.Name).ToListAsync(cancellationToken);
+        foreach (var row in rows)
+        {
+            row.IsDefault = defaults.Contains(row.Id);
+            row.Access = row.Grants.First(g => g.UserId == userId).Access;
+            row.CanManage = row.Access == AccountAccess.Manage;
+        }
+        return rows;
     }
 
     /// <summary>Adds a login for <paramref name="ownerId"/>. Their first one of a harness becomes their default for it.</summary>
     public async Task<Account> AddAsync(Guid ownerId, string harnessId, string name, AccountKind kind, string secret, CancellationToken cancellationToken = default)
     {
+        using var lease = await AccountCoordination.LockAsync(cancellationToken);
         var harness = GetHarness(harnessId);
         var clean = RequireSecret(secret);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
@@ -65,24 +65,28 @@ public sealed class AccountService(
         var account = new Account
         {
             Id = Guid.NewGuid(),
-            OwnerId = ownerId,
+            CreatedById = ownerId,
             HarnessId = harnessId,
             Name = string.IsNullOrWhiteSpace(name) ? await NextNameAsync(db, ownerId, harnessId, kind, cancellationToken) : name.Trim(),
             Kind = kind,
             ProtectedSecret = protector.Protect(clean)!,
             ManagedRenewal = kind == AccountKind.Subscription && harness.RenewsAccounts,
-            IsDefault = !await db.Accounts.AnyAsync(a => a.OwnerId == ownerId && a.HarnessId == harnessId, cancellationToken),
+            IsDefault = !await db.UserHarnessDefaults.AnyAsync(p => p.UserId == ownerId && p.HarnessId == harnessId, cancellationToken),
+            Access = AccountAccess.Manage, CanManage = true,
             CreatedAt = now,
             UpdatedAt = now,
         };
+        if (!await db.Users.AnyAsync(u => u.Id == ownerId && !u.Disabled, cancellationToken)) throw new UnauthorizedAccessException("User is disabled or removed.");
+        account.Grants.Add(new AccountGrant { UserId = ownerId, Access = AccountAccess.Manage, GrantedById = ownerId, GrantedAt = now });
         db.Accounts.Add(account);
+        if (account.IsDefault) db.UserHarnessDefaults.Add(new() { UserId = ownerId, HarnessId = harnessId, AccountId = account.Id });
         await db.SaveChangesAsync(cancellationToken);
-        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: ownerId));
+        await ChangedAsync(await GetActorAsync(ownerId, cancellationToken), account.Id, "LoginConnected", null, cancellationToken);
         return account;
     }
 
     /// <summary>A new login for an existing account (e.g. after it was logged out). Runners take it on the next start; a login the Manager renews, within minutes.</summary>
-    public async Task ReplaceSecretAsync(Guid accountId, AccountKind kind, string secret, CancellationToken cancellationToken = default)
+    internal async Task ReplaceSecretAsync(Guid accountId, AccountKind kind, string secret, CancellationToken cancellationToken = default)
     {
         var clean = RequireSecret(secret);
         await UpdateAsync(accountId, account =>
@@ -95,67 +99,19 @@ public sealed class AccountService(
         }, cancellationToken);
     }
 
-    public Task RenameAsync(Guid accountId, string name, CancellationToken cancellationToken = default) =>
-        UpdateAsync(accountId, account => account.Name = string.IsNullOrWhiteSpace(name) ? account.Name : name.Trim(), cancellationToken);
-
-    public async Task SetDefaultAsync(Guid accountId, CancellationToken cancellationToken = default)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var account = await db.Accounts.FirstAsync(a => a.Id == accountId, cancellationToken);
-        foreach (var other in await db.Accounts.Where(a => a.OwnerId == account.OwnerId && a.HarnessId == account.HarnessId).ToListAsync(cancellationToken))
-        {
-            other.IsDefault = other.Id == accountId;
-        }
-
-        await db.SaveChangesAsync(cancellationToken);
-        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: account.OwnerId));
-    }
-
-    /// <summary>Removes the login; agents that used it fall back to their owner's default. Its files are removed from ready Runners.</summary>
-    public async Task DeleteAsync(Guid accountId, CancellationToken cancellationToken = default)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var account = await db.Accounts.FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken);
-        if (account is null)
-        {
-            return;
-        }
-
-        await db.Agents.Where(a => a.AccountId == accountId).ExecuteUpdateAsync(s => s.SetProperty(a => a.AccountId, (Guid?)null), cancellationToken);
-        db.Accounts.Remove(account);
-        if (account.IsDefault && await db.Accounts.Where(a => a.OwnerId == account.OwnerId && a.HarnessId == account.HarnessId && a.Id != accountId)
-                .OrderBy(a => a.CreatedAt).FirstOrDefaultAsync(cancellationToken) is { } next)
-        {
-            next.IsDefault = true;
-        }
-
-        await db.SaveChangesAsync(cancellationToken);
-        foreach (var runner in await db.Runners.AsNoTracking().Where(r => r.State == RunnerState.Ready).ToListAsync(cancellationToken))
-        {
-            try
-            {
-                await shell.RunAsync(runner, $"rm -rf \"{Folder(accountId)}\"", TimeSpan.FromSeconds(20), cancellationToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogInformation(ex, "Could not remove account {Account} from {Runner}", accountId, runner.Name);
-            }
-        }
-
-        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: account.OwnerId));
-    }
-
-    /// <summary>The login an agent runs with: the one it was switched to, else its owner's default, else none (the Runner's own login).</summary>
+    /// <summary>Resolve an authorized login; never fall back to an ambient Runner credential.</summary>
     public async Task<Account?> ResolveAsync(Agent agent, CancellationToken cancellationToken = default)
     {
-        if (_harnesses.GetValueOrDefault(agent.HarnessId)?.AccountSupport is null)
-        {
-            return null;
-        }
-
+        if (_harnesses.GetValueOrDefault(agent.HarnessId)?.AccountSupport is null) return null;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return (agent.AccountId is { } id ? await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, cancellationToken) : null)
-            ?? await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.OwnerId == agent.OwnerId && a.HarnessId == agent.HarnessId && a.IsDefault, cancellationToken);
+        if (agent.LoginBlocked) throw new InvalidOperationException("Choose a permitted harness login before starting this agent.");
+        var id = agent.AccountId ?? await db.UserHarnessDefaults.Where(p => p.UserId == agent.OwnerId && p.HarnessId == agent.HarnessId)
+            .Select(p => (Guid?)p.AccountId).FirstOrDefaultAsync(cancellationToken);
+        if (id is null) throw new InvalidOperationException("Choose a harness login or set your default in My settings.");
+        var account = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id && a.HarnessId == agent.HarnessId && a.Enabled, cancellationToken);
+        if (account is null || !await CanUseForAgentAsync(db, agent, account.Id, cancellationToken))
+            throw new InvalidOperationException("This agent no longer has access to its harness login. Choose a permitted login.");
+        return account;
     }
 
     /// <summary>
@@ -164,6 +120,9 @@ public sealed class AccountService(
     /// </summary>
     public async Task EnsureOnRunnerAsync(Runner runner, Account account, CancellationToken cancellationToken = default)
     {
+        await using (var check = await dbFactory.CreateDbContextAsync(cancellationToken))
+            account = await check.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == account.Id && a.Enabled, cancellationToken)
+                ?? throw new InvalidOperationException("The harness login is disabled or removed.");
         if (account.ManagedRenewal)
         {
             account = await RenewIfDueAsync(account, cancellationToken) ?? throw new InvalidOperationException($"The login '{account.Name}' was removed.");
@@ -222,7 +181,7 @@ public sealed class AccountService(
         {
             await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
             var current = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == account.Id, CancellationToken.None);
-            if (current is not { ManagedRenewal: true })
+            if (current is not { ManagedRenewal: true, Enabled: true })
             {
                 return current;
             }
@@ -260,7 +219,7 @@ public sealed class AccountService(
             else
             {
                 logger.LogInformation("Account {Account} renewed", current.Name);
-                events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: current.OwnerId));
+                events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: null));
             }
 
             return await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == account.Id, CancellationToken.None);
@@ -284,7 +243,7 @@ public sealed class AccountService(
     public async Task SyncRunnersAsync(CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        foreach (var account in await db.Accounts.AsNoTracking().Where(a => a.ManagedRenewal).ToListAsync(cancellationToken))
+        foreach (var account in await db.Accounts.AsNoTracking().Where(a => a.ManagedRenewal && a.Enabled).ToListAsync(cancellationToken))
         {
             try
             {
@@ -296,7 +255,8 @@ public sealed class AccountService(
             }
         }
 
-        var accounts = await db.Accounts.AsNoTracking().ToDictionaryAsync(a => a.Id, cancellationToken);
+        using var lease = await AccountCoordination.LockAsync(cancellationToken);
+        var accounts = await db.Accounts.AsNoTracking().Where(a => a.Enabled).ToDictionaryAsync(a => a.Id, cancellationToken);
         foreach (var runner in await db.Runners.AsNoTracking().Where(r => r.State == RunnerState.Ready).ToListAsync(cancellationToken))
         {
             try
@@ -355,12 +315,12 @@ public sealed class AccountService(
         change(account);
         account.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
-        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: account.OwnerId));
+        events.Publish(new ManagerEvent(ManagerEventKind.SettingsChanged, UserId: null));
     }
 
     private async Task<string> NextNameAsync(ManagerDbContext db, Guid ownerId, string harnessId, AccountKind kind, CancellationToken cancellationToken)
     {
-        var count = await db.Accounts.CountAsync(a => a.OwnerId == ownerId && a.HarnessId == harnessId, cancellationToken);
+        var count = await db.Accounts.CountAsync(a => a.CreatedById == ownerId && a.HarnessId == harnessId, cancellationToken);
         var baseName = kind == AccountKind.Subscription ? "Subscription" : "API key";
         return count == 0 ? baseName : $"{baseName} {count + 1}";
     }

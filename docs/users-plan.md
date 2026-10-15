@@ -37,6 +37,8 @@ Global roles. A user can have any combination.
 | **Runner creator** | Create Runners (a Proxmox VM or an existing machine) and become their owner |
 | **Runner manager** | Every Runner: see it, give people access, change its owner, view and set its password, delete it |
 | **Conversation manager** | Manage every agent and conversation, including prompting, sharing and deletion |
+| **Log viewer** | Read and download Manager application logs |
+| **Harness login manager** | Administer every login and its grants; usage still needs an explicit grant |
 | **Admin** | All of the above. Admin is only the collection; nothing is admin-only. |
 | *(no role)* | Use the Runners they have access to; their own agents, conversations and settings |
 
@@ -102,7 +104,7 @@ user's My settings; the rest stays shared. My settings are only set in the Porta
   - an environment file: their environment variables and `GH_TOKEN` for `gh`;
   - their own git settings (used through `GIT_CONFIG_GLOBAL`): they include the shared `~/.gitconfig` and add the
     user's name, email and a credentials file with their token, so commits carry their name and pushes use their token.
-- Harness logins already have a folder each (Codex gets its own `CODEX_HOME` per login).
+- Harness credentials have one folder per login. Agents use separate runtime profiles for session lists and local mutable state; only the selected authorized session is bootstrapped from legacy files.
 - **Agent launch** loads the base environment, then the owner's environment file, then the harness login's. The
   default model and effort stay shared (Manager settings).
 - **Work folders**: new agents default to `~/work/<username>/…`, so two users cloning the same repository don't collide.
@@ -206,7 +208,7 @@ Phases 1–2 are useful on their own: several people, each on their own Runners.
 
 ## 13. Open questions
 
-1. **Shared harness logins**, such as a team API key managed by a settings manager: needed?
+1. **Shared harness logins**: implemented through Use/Manage grants and the Harness login manager role; see [the design](harness-login-sharing-plan.md).
 2. **Single sign-on**: OIDC instead of passwords, or alongside them?
 3. **Quotas**: a limit on Runners or cores per runner creator?
 
@@ -239,3 +241,8 @@ Phases 1–2 are useful on their own: several people, each on their own Runners.
   at once, not only the Runners they owned or were a member of (their agents can run on any Runner, e.g. as an admin).
   Runners that were offline lose them in the 10-minute login sweep, which now also removes folders of deleted users.
   Their tokens aren't revoked at the provider.
+
+- 2026-10-15 — Harness logins are independent resources with Use/Manage grants. Existing owners migrate to Manage;
+  defaults move to per-user preferences. Login managers administer all logins without implicit usage or conversation
+  access. Removing usage durably blocks affected agents and queues offline enforcement. User deletion preserves shared
+  logins and requires resolving last-manager dependencies. This supersedes the earlier ownership/deletion behavior.

@@ -248,7 +248,16 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     // Accounts
 
-    public Task<List<AccountDto>> ListAccountsAsync() => GetAsync<List<AccountDto>>("api/accounts");
+    public Task<List<AccountDto>> ListAccountsAsync(bool all = false) => GetAsync<List<AccountDto>>(all ? "api/accounts/all" : "api/accounts");
+    public Task<List<LoginCleanupDto>> PendingLoginCleanupAsync() => GetAsync<List<LoginCleanupDto>>("api/accounts/pending");
+    public Task<List<AccountGrantDto>> ListAccountGrantsAsync(Guid id) => GetAsync<List<AccountGrantDto>>($"api/accounts/{id}/grants");
+    public Task SetAccountGrantAsync(Guid id, Guid userId, AccountAccess access) => SendAsync(HttpMethod.Put, $"api/accounts/{id}/grants/{userId}", new AccountGrantRequest(access));
+    public Task RemoveAccountGrantAsync(Guid id, Guid userId) => SendAsync(HttpMethod.Delete, $"api/accounts/{id}/grants/{userId}");
+    public Task RemoveLegacyLoginGrantAsync(Guid id, Guid agentId) => SendAsync(HttpMethod.Delete, $"api/accounts/{id}/agent-grants/{agentId}");
+    public Task SetAccountEnabledAsync(Guid id, bool enabled) => SendAsync(HttpMethod.Put, $"api/accounts/{id}/enabled", new AccountEnabledRequest(enabled));
+    public Task<AccountImpactDto> AccountImpactAsync(Guid id, Guid? userId = null) => GetAsync<AccountImpactDto>($"api/accounts/{id}/impact" + (userId is null ? "" : $"?userId={userId}"));
+    public Task<List<LoginDependencyDto>> LoginDependenciesAsync(Guid userId) => GetAsync<List<LoginDependencyDto>>($"api/users/{userId}/login-dependencies");
+
 
     public Task<AccountDto> AddAccountAsync(AddAccountRequest request) => SendAsync<AccountDto>(HttpMethod.Post, "api/accounts", request);
 

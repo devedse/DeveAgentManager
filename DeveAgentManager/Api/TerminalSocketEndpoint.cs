@@ -73,9 +73,9 @@ public static partial class TerminalSocketEndpoint
                             break;
                         }
 
-                        var readOnly = level < AgentAccess.Write;
+                        var readOnly = level < AgentAccess.Write || !await access.CanPromptAgentAsync(agentId, context.RequestAborted);
                         var needed = readOnly ? AgentAccess.Read : AgentAccess.Write;
-                        using (Watch(async (current, ct) => await access.AgentAsync(current, agentId, ct) >= needed))
+                        using (Watch(async (current, ct) => await access.AgentAsync(current, agentId, ct) >= needed && (readOnly || await access.CanPromptAgentAsync(agentId, ct))))
                         {
                             await session.RunAsync(await terminals.OpenAgentAsync(agentId, readOnly, columns, rows, context.RequestAborted), agentId, agents, login: null,
                                 readOnly ? null : (name, bytes, ct) => terminals.UploadAsync(agentId, null, name, bytes, ct), readOnly, revoked.Token, WhyEnding);
@@ -99,14 +99,16 @@ public static partial class TerminalSocketEndpoint
                     case "login" when Guid.TryParse(query["runner"], out var runnerId):
                         var replacing = Guid.TryParse(query["account"], out var accountId) ? accountId : (Guid?)null;
                         if (await access.RunnerAsync(user, runnerId, context.RequestAborted) < RunnerAccess.Use
-                            || replacing is { } own && !await access.OwnsAccountAsync(user, own, context.RequestAborted))
+                            || replacing is { } own && await access.AccountAsync(user, own, management: true, cancellationToken: context.RequestAborted) < AccountAccess.Manage)
                         {
                             await session.CloseAsync(TerminalSocket.ClosedError, "Runner or login not found.");
                             break;
                         }
 
                         var login = await LoginWatcher.CreateAsync(runnerId, query["harness"].ToString(), user.Id, replacing, query["name"].ToString(), accounts, runners, context.RequestAborted);
-                        using (Watch(async (current, ct) => await access.RunnerAsync(current, runnerId, ct) >= RunnerAccess.Use))
+                        using (Watch(async (current, ct) => await access.RunnerAsync(current, runnerId, ct) >= RunnerAccess.Use
+                            && (replacing is null || await access.AccountAsync(current, replacing.Value, management: true, cancellationToken: ct) >= AccountAccess.Manage)))
+                        await using (var cleanup = login)
                         {
                             // Wide, so a token is printed on one line (the harness's login command also sets it with stty).
                             await session.RunAsync(await terminals.OpenCommandAsync(runnerId, login.Command, 500, rows, context.RequestAborted), null, agents, login,
@@ -381,7 +383,7 @@ public static partial class TerminalSocketEndpoint
     }
 
     /// <summary>A subscription login in a terminal: watches its output for the credential and saves it as an account.</summary>
-    private sealed partial class LoginWatcher
+    private sealed partial class LoginWatcher : IAsyncDisposable
     {
         private readonly StringBuilder _output = new();
         private readonly AccountService _accounts;
@@ -417,6 +419,7 @@ public static partial class TerminalSocketEndpoint
         public static async Task<LoginWatcher> CreateAsync(Guid runnerId, string harnessId, Guid ownerId, Guid? accountId, string name, AccountService accounts, RunnerService runners,
             CancellationToken cancellationToken)
         {
+            if (accountId is { } existing) await accounts.RequireLoginHarnessAsync(await accounts.GetActorAsync(ownerId, cancellationToken), existing, harnessId, cancellationToken);
             var support = accounts.GetHarness(harnessId).AccountSupport!;
             var runner = await runners.GetAsync(runnerId, cancellationToken) ?? throw new KeyNotFoundException("Runner not found.");
             if (!runner.HarnessIds.Contains(harnessId))
@@ -470,7 +473,9 @@ public static partial class TerminalSocketEndpoint
                 _done = true;
                 if (_accountId is { } existing)
                 {
-                    await _accounts.ReplaceSecretAsync(existing, AccountKind.Subscription, secret, cancellationToken);
+                    var actor = await _accounts.GetActorAsync(_ownerId, cancellationToken);
+                    await _accounts.RequireLoginHarnessAsync(actor, existing, _harnessId, cancellationToken);
+                    await _accounts.ReplaceSecretAsync(actor, existing, AccountKind.Subscription, secret, cancellationToken);
                     return (true, "Connected again. Agents use the new login from their next start.");
                 }
 
@@ -483,6 +488,9 @@ public static partial class TerminalSocketEndpoint
                 return (false, $"Could not save the login: {ex.Message}");
             }
         }
+
+        public async ValueTask DisposeAsync() =>
+            await _accounts.RemoveLoginFolderAsync(_runner, _loginFolder);
 
         // Escape sequences (colors, cursor moves, OSC) come between the characters of what the login prints.
         [GeneratedRegex(@"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>]")]

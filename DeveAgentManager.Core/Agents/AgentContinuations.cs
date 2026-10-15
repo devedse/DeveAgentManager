@@ -235,7 +235,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         LimitScreen? screen = null;
         ParsedUsageLimit? parsed = null;
         // Every harness: a one-time schedule waits for an empty, ready prompt. Pi's quota errors have no reset time.
-        if (agent.State == AgentState.Running && agent.Runner?.State == RunnerState.Ready)
+        if (agent.State == AgentState.Running && !agent.LoginBlocked && !agent.LoginStopPending && agent.Runner?.State == RunnerState.Ready)
         {
             screen = observed ?? await terminal.ReadAsync(agent, ct);
             parsed = UsageLimitParser.Parse(agent.HarnessId, screen.Screen, screen.TimeZone, screen.ObservedAt ?? Now);
@@ -322,7 +322,10 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                     if (claimed == 0) return;
                     try
                     {
-                        var delivery = await terminal.SendContinueAsync(agent, screen!, ct);
+                        using var loginLease = await Accounts.AccountCoordination.LockAsync(ct);
+                        var allowed = await db.Agents.AsNoTracking().AnyAsync(a => a.Id == id && !a.LoginBlocked && !a.LoginStopPending
+                            && a.State == AgentState.Running && a.HarnessSessionId == agent.HarnessSessionId && a.HarnessId == agent.HarnessId, ct);
+                        var delivery = allowed ? await terminal.SendContinueAsync(agent, screen!, ct) : ContinueDelivery.NotTyped;
                         var sent = delivery == ContinueDelivery.Sent;
                         row.Status = sent ? "Sent" : "Scheduled";
                         if (sent && row.Automatic && policy is not null)

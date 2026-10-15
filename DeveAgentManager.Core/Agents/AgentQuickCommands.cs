@@ -23,12 +23,13 @@ public sealed class AgentQuickCommands(IDbContextFactory<ManagerDbContext> facto
         if (!await gate.WaitAsync(0, ct)) throw new InvalidOperationException("Another command is being sent. Wait for it to finish.");
         try
         {
+            using var loginLease = await Accounts.AccountCoordination.LockAsync(ct);
             await using var db = await factory.CreateDbContextAsync(ct);
             var agent = await db.Agents.Include(a => a.Runner).SingleOrDefaultAsync(a => a.Id == id, ct)
                 ?? throw new KeyNotFoundException("Agent not found.");
             if (agent.HarnessId != request.HarnessId || !For(agent.HarnessId).Any(c => c.Command == request.Command))
                 throw new ArgumentException("The command is not available for this harness. Reopen the menu.");
-            if (agent.State != AgentState.Running || agent.Runner?.State != RunnerState.Ready)
+            if (agent.LoginBlocked || agent.LoginStopPending || agent.State != AgentState.Running || agent.Runner?.State != RunnerState.Ready)
                 throw new InvalidOperationException("Start the agent on a ready Runner first.");
             var screen = await terminal.ReadAsync(agent, ct);
             if (!screen.InputEmpty) throw new InvalidOperationException("The terminal has a draft or an open menu. Clear it before sending a quick command.");

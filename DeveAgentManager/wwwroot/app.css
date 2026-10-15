@@ -3150,3 +3150,9 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .manager-log-entry { padding: 12px 0; border-bottom: 1px solid var(--dam-border); }
 .manager-log-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; color: var(--dam-muted); font-size: .8rem; overflow-wrap: anywhere; }
 .manager-log-entry pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; font-size: .85rem; color: var(--dam-text); }
+
+.account-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+@media (max-width: 600px) {
+    .account-row { flex-wrap: wrap; }
+    .account-actions { flex-basis: 100%; justify-content: flex-end; }
+}

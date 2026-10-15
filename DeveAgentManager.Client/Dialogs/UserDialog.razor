@@ -1,4 +1,7 @@
 @using System.Security.Cryptography
+@inject IDialogService Dialogs
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
 
 @* Adds a user, or changes one (name, roles, disabled). Only roles the signed-in user has can be given or taken. Returns a UserDialog.Result. *@
 <MudDialog>
@@ -38,7 +41,7 @@
 
         @if (User is not null)
         {
-            <MudSwitch T="bool" @bind-Value="_disabled" Color="Color.Error" Label="Disabled: can't sign in (their agents keep running)" Class="mt-3" Disabled="User.Id == ActorId" />
+            <MudSwitch T="bool" @bind-Value="_disabled" Color="Color.Error" Label="Disabled: can't sign in" Class="mt-3" Disabled="User.Id == ActorId" />
         }
     </DialogContent>
     <DialogActions>
@@ -85,7 +88,16 @@
         _showPassword = true;
     }
 
-    private void Save() => MudDialog.Close(DialogResult.Ok(new Result(_username.Trim(), string.IsNullOrWhiteSpace(_displayName) ? null : _displayName.Trim(), _password, _roles, _disabled)));
+    private async Task Save()
+    {
+        try
+        {
+            if (User is not null && _disabled && !User.Disabled && !await UserLoginDependenciesDialog.ResolveAsync(Dialogs, Api, User)) return;
+        }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); return; }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); return; }
+        MudDialog.Close(DialogResult.Ok(new Result(_username.Trim(), string.IsNullOrWhiteSpace(_displayName) ? null : _displayName.Trim(), _password, _roles, _disabled)));
+    }
 
     public sealed record Result(string Username, string? DisplayName, string Password, UserRoles Roles, bool Disabled);
 }

@@ -4,7 +4,7 @@ namespace DeveAgentManager.Core.Data;
 public static class Roles
 {
     /// <summary>Every role, in the order the Portal lists them (Admin is all of them).</summary>
-    public static readonly IReadOnlyList<UserRoles> All = [UserRoles.SettingsManager, UserRoles.UserManager, UserRoles.RunnerCreator, UserRoles.RunnerManager, UserRoles.ConversationManager, UserRoles.LogViewer];
+    public static readonly IReadOnlyList<UserRoles> All = [UserRoles.SettingsManager, UserRoles.UserManager, UserRoles.RunnerCreator, UserRoles.RunnerManager, UserRoles.ConversationManager, UserRoles.LogViewer, UserRoles.HarnessLoginManager];
 
     public static string Name(UserRoles role) => role switch
     {
@@ -14,6 +14,7 @@ public static class Roles
         UserRoles.RunnerManager => "Runner manager",
         UserRoles.ConversationManager => "Conversation manager",
         UserRoles.LogViewer => "Log viewer",
+        UserRoles.HarnessLoginManager => "Harness login manager",
         UserRoles.Admin => "Admin",
         _ => role.ToString(),
     };
@@ -26,6 +27,7 @@ public static class Roles
         UserRoles.RunnerManager => "Every Runner: see it, give people access, change its owner, view and set its password, delete it.",
         UserRoles.ConversationManager => "Open, prompt, restart, share and delete every agent; read, export, rename, share and delete every conversation.",
         UserRoles.LogViewer => "Read and download Manager application logs, which may include deployment details and user activity.",
+        UserRoles.HarnessLoginManager => "Manage every harness login: reconnect, disable, delete and give people access. Does not grant Runner or conversation access.",
         _ => "",
     };
 

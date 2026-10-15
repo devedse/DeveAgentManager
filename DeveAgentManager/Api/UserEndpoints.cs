@@ -1,5 +1,6 @@
 using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Data;
+using DeveAgentManager.Core.Accounts;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Users;
 
@@ -26,9 +27,12 @@ internal static class UserEndpoints
             DtoMapper.User(await service.CreateAsync(user, request.Username, request.DisplayName, request.Password, request.Roles, ct)))
             .RequireRole(UserRoles.UserManager);
 
-        users.MapPut("/{userId:guid}", async (Guid userId, UpdateUserRequest request, CurrentUser user, UserService service, CancellationToken ct) =>
-            DtoMapper.User(await service.UpdateAsync(user, userId, request.DisplayName, request.Roles, request.Disabled, ct)))
-            .RequireRole(UserRoles.UserManager);
+        users.MapPut("/{userId:guid}", async (Guid userId, UpdateUserRequest request, CurrentUser user, UserService service, AccountService accounts, CancellationToken ct) =>
+        {
+            var changed = await service.UpdateAsync(user, userId, request.DisplayName, request.Roles, request.Disabled, ct);
+            if (request.Disabled) await accounts.EnforceAsync(ct);
+            return DtoMapper.User(changed);
+        }).RequireRole(UserRoles.UserManager);
 
         users.MapPut("/{userId:guid}/password", async (Guid userId, SetPasswordRequest request, CurrentUser user, UserService service, CancellationToken ct) =>
         {
@@ -36,12 +40,17 @@ internal static class UserEndpoints
             return Results.NoContent();
         }).RequireRole(UserRoles.UserManager);
 
-        // What the user owns goes to transferTo; every Runner loses their files and harness logins, and the ones they had
+        users.MapGet("/{userId:guid}/login-dependencies", (Guid userId, CurrentUser user, UserService service, CancellationToken ct) =>
+            service.LoginDependenciesAsync(user, userId, ct)).RequireRole(UserRoles.UserManager);
+
+        // What the user owns goes to transferTo; every Runner loses their personal files, and the ones they had
         // access to their SSH keys.
-        users.MapDelete("/{userId:guid}", async (Guid userId, Guid transferTo, CurrentUser user, UserService service, RunnerUsers runnerUsers,
+        users.MapDelete("/{userId:guid}", async (Guid userId, Guid transferTo, CurrentUser user, UserService service, RunnerUsers runnerUsers, AccountService accounts,
             CancellationToken ct) =>
         {
-            await runnerUsers.RemoveDeletedUserAsync(userId, await service.DeleteAsync(user, userId, transferTo, ct), ct);
+            var deleted = await service.DeleteAsync(user, userId, transferTo, ct);
+            await accounts.EnforceAsync(ct);
+            await runnerUsers.RemoveDeletedUserAsync(userId, deleted, ct);
             return Results.NoContent();
         }).RequireRole(UserRoles.UserManager);
 

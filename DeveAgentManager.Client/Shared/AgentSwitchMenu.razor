@@ -16,10 +16,6 @@
         <div class="switch-menu">
             <div class="viewers-title help-heading">Continue with
                 <HelpTip Label="Switching harness or account" Text="Same folder, same conversation. Another harness gets the conversation as text." /></div>
-            @if (_me is { } me && Agent.LoginOwnerId != me.Id)
-            {
-                <div class="switch-login-note">Runs with @(Agent.LoginOwnerName)'s login. You can continue with one of your own.</div>
-            }
             @if (!_loaded)
             {
                 @if (_loadError is not null)
@@ -40,10 +36,10 @@
                 }
                 else
                 {
-                    var accounts = _accounts.Where(a => a.HarnessId == harness.Id).ToList();
+                    var accounts = _accounts.Where(a => a.HarnessId == harness.Id && a.Enabled && a.Access >= AccountAccess.Use).ToList();
                     @foreach (var account in accounts)
                     {
-                        @Option(harness, account, account.Name + (account.IsDefault && IsOwner ? " (default)" : ""))
+                        @Option(harness, account, account.Name + " · " + account.Id.ToString("N")[..6] + (account.IsDefault ? " (your default)" : ""))
                     }
 
                     @if (accounts.Count == 0)
@@ -83,13 +79,13 @@
                 return name;
             }
 
-            var login = Agent.AccountName ?? CurrentAccount?.Name ?? "default";
-            return _me is { } me && Agent.LoginOwnerId != me.Id ? $"{name} · {Agent.LoginOwnerName}'s {login}" : $"{name} · {login}";
+            var login = CurrentAccount?.Name ?? Agent.AccountName ?? (Agent.RunningAccountId is not null ? "configured login" : "default");
+            return $"{name} · {login}";
         }
     }
 
     /// <summary>The user's own login the agent runs with: the one it was switched to, or (for its owner) their default.</summary>
-    private AccountDto? CurrentAccount => Agent.AccountId is { } id
+    private AccountDto? CurrentAccount => (Agent.State == AgentState.Running ? Agent.RunningAccountId ?? Agent.AccountId : Agent.AccountId) is { } id
         ? _accounts.FirstOrDefault(a => a.Id == id)
         : IsOwner ? _accounts.FirstOrDefault(a => a.HarnessId == Agent.HarnessId && a.IsDefault) : null;
 
@@ -128,7 +124,7 @@
 
     private RenderFragment Option(HarnessDto harness, AccountDto? account, string label) => __builder =>
     {
-        var current = harness.Id == Agent.HarnessId && (account is null || account.Id == CurrentAccount?.Id);
+        var current = Agent.State == AgentState.Running && harness.Id == Agent.HarnessId && (account is null || account.Id == CurrentAccount?.Id);
         <button type="button" class="switch-option @(current ? "switch-current" : "")" disabled="@current" @onclick="() => SwitchAsync(harness, account)">
             <MudIcon Icon="@(current ? Icons.Material.Rounded.CheckCircle : Icons.Material.Rounded.ArrowForward)" Size="Size.Small" />
             <span>@label</span>
@@ -150,7 +146,7 @@
             : $"{harness.DisplayName} restarts with the account '{account?.Name}' and resumes the conversation.";
         if (!IsOwner && account is not null)
         {
-            message += $" It then runs with your login, also when {Agent.OwnerName} or others prompt it.";
+            message += $" {Agent.OwnerName} must also have Use access to this login.";
         }
         var confirmed = await Dialogs.ShowMessageBoxAsync($"Continue '{Agent.Name}' with {target}?", message, yesText: "Continue", cancelText: "Cancel");
         if (confirmed != true)

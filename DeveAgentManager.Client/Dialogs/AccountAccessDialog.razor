@@ -1,0 +1,83 @@
+@inherits LiveComponent
+@inject IDialogService Dialogs
+@inject SignedInUser Me
+
+<MudDialog>
+    <DialogContent>
+        <div class="help-heading">
+            <MudText Typo="Typo.subtitle1">People with access</MudText>
+            <HelpTip Label="Login access">
+                <p>Use permits choosing this login and making it a personal default. Manage also permits reconnecting, granting access and removing the login. At least one enabled manager must remain.</p>
+                <p>Removing Use stops affected agents. Separate permission to prompt another person's shared agent is unchanged; remove that agent share separately if needed.</p>
+            </HelpTip>
+        </div>
+        <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading login access">
+            <Placeholder><SkeletonList Rows="3" /></Placeholder>
+            <ChildContent>
+                @if (_grants.Count == 0) { <MudText Class="mt-3">No grants. Add a manager to recover this login.</MudText> }
+                @foreach (var grant in _grants)
+                {
+                    <div class="list-row">
+                        <div class="list-main">
+                            <div class="list-title">@grant.DisplayName (@grant.Username)</div>
+                            <div class="list-subtitle">@(grant.AgentId is null ? grant.Access.ToString() : "Use · existing agent only") @(grant.Disabled ? "· disabled" : "")</div>
+                        </div>
+                        <MudMenu Dense="true">
+                            <ActivatorContent><MudIconButton Icon="@Icons.Material.Rounded.MoreVert" OnClick="@context.ToggleAsync" aria-label="@($"Access for {grant.Username}")" /></ActivatorContent>
+                            <ChildContent>
+                            @if (grant.AgentId is null)
+                            {
+                            <MudMenuItem OnClick="() => SetAsync(grant.UserId, grant.Access == AccountAccess.Use ? AccountAccess.Manage : AccountAccess.Use)">Change to @(grant.Access == AccountAccess.Use ? "Manage" : "Use")</MudMenuItem>
+                            }
+                            <MudMenuItem IconColor="Color.Error" OnClick="() => RemoveAsync(grant)">Remove access…</MudMenuItem>
+                            </ChildContent>
+                        </MudMenu>
+                    </div>
+                }
+            </ChildContent>
+        </LoadingSection>
+    </DialogContent>
+    <DialogActions>
+        <MudButton StartIcon="@Icons.Material.Rounded.PersonAdd" Disabled="!Loaded" OnClick="AddAsync">Add user</MudButton>
+        <MudButton OnClick="() => Dialog.Close()">Done</MudButton>
+    </DialogActions>
+</MudDialog>
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AccountDto Account { get; set; } = default!;
+    private List<AccountGrantDto> _grants = [];
+    protected override async Task LoadAsync() => _grants = await Api.ListAccountGrantsAsync(Account.Id);
+    private async Task SetAsync(Guid userId, AccountAccess level)
+    {
+        try { await Api.SetAccountGrantAsync(Account.Id, userId, level); await ReloadAsync(); }
+        catch (ApiException e) { Snackbar.Add(e.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+    }
+    private async Task RemoveAsync(AccountGrantDto grant)
+    {
+        if (!await AccountImpactDialog.ConfirmAsync(Dialogs, Account, grant.UserId, $"Remove {grant.DisplayName}'s access", "Remove")) return;
+        try
+        {
+            if (grant.AgentId is { } agentId) await Api.RemoveLegacyLoginGrantAsync(Account.Id, agentId);
+            else await Api.RemoveAccountGrantAsync(Account.Id, grant.UserId);
+            if (grant.UserId == (await Me.GetAsync()).Id) Dialog.Close();
+            else await ReloadAsync();
+        }
+        catch (ApiException e) { Snackbar.Add(e.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+    }
+    private async Task AddAsync()
+    {
+        var dialog = await Dialogs.ShowAsync<ChooseUserDialog>("Give login access", new DialogParameters<ChooseUserDialog>
+        {
+            { d => d.Exclude, _grants.Where(g => g.AgentId is null).Select(g => g.UserId).ToList() },
+            { d => d.Confirm, "Add" },
+            { d => d.Level, (int)AccountAccess.Use },
+            { d => d.Levels, new List<(int, string, string)> {
+                ((int)AccountAccess.Use, "Use", "Run agents with this login."),
+                ((int)AccountAccess.Manage, "Manage", "Also reconnect, share, disable and remove it.") } }
+        });
+        if (await dialog.Result is { Canceled: false, Data: ChooseUserDialog.ChosenUser choice })
+            await SetAsync(choice.UserId, (AccountAccess)choice.Level);
+    }
+}

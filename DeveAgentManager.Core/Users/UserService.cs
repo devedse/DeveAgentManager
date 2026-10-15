@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using DeveAgentManager.Core.Configuration;
+using DeveAgentManager.Core.Accounts;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using Microsoft.AspNetCore.Identity;
@@ -141,9 +142,20 @@ public sealed partial class UserService(
         return user;
     }
 
+    public async Task<List<DeveAgentManager.Contracts.LoginDependencyDto>> LoginDependenciesAsync(CurrentUser actor, Guid userId, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        RequireCanManage(actor, await RequireUserAsync(db, userId, ct));
+        return await db.Accounts.Where(a => a.Grants.Any(g => g.UserId == userId && g.Access == AccountAccess.Manage)
+            && !a.Grants.Any(g => g.UserId != userId && g.Access == AccountAccess.Manage && !g.User.Disabled))
+            .Select(a => new DeveAgentManager.Contracts.LoginDependencyDto(a.Id, a.Name, a.HarnessId,
+                (actor.Roles & UserRoles.HarnessLoginManager) != 0 || a.Grants.Any(g => g.UserId == actor.Id && g.Access == AccountAccess.Manage))).ToListAsync(ct);
+    }
+
     /// <summary>Changes a user's name, roles or whether they can sign in. Disabling signs them out everywhere.</summary>
     public async Task<User> UpdateAsync(CurrentUser actor, Guid userId, string? displayName, UserRoles roles, bool disabled, CancellationToken cancellationToken = default)
     {
+        using var loginLease = await AccountCoordination.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var user = await RequireUserAsync(db, userId, cancellationToken);
         RequireCanManage(actor, user);
@@ -158,6 +170,8 @@ public sealed partial class UserService(
         {
             await RequireAnotherUserManagerAsync(db, user.Id, cancellationToken);
         }
+
+        if (disabled && !user.Disabled) await AccountService.RequireManagersRemainAsync(db, userId, cancellationToken);
 
         var changes = new List<string>();
         var name = ValidateDisplayName(displayName, user.Username);
@@ -177,6 +191,13 @@ public sealed partial class UserService(
         {
             changes.Add(disabled ? "disabled" : "enabled");
             user.Disabled = disabled;
+            if (disabled)
+                foreach (var agent in await db.Agents.Where(a => a.OwnerId == userId && a.RunningAccountId != null).ToListAsync(cancellationToken))
+                {
+                    agent.LoginBlocked = true;
+                    agent.LoginStopPending = agent.State is AgentState.Running or AgentState.Starting;
+                    agent.StateMessage = "The user running this harness login was disabled. Choose a permitted login.";
+                }
             user.SecurityStamp = NewStamp();
         }
 
@@ -252,6 +273,7 @@ public sealed partial class UserService(
             throw new ArgumentException("Choose someone else to get what this user owns.");
         }
 
+        using var loginLease = await AccountCoordination.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var user = await RequireUserAsync(db, userId, cancellationToken);
         RequireCanManage(actor, user);
@@ -263,7 +285,8 @@ public sealed partial class UserService(
         }
 
         var runners = await db.Runners.Where(r => r.OwnerId == userId || r.Members.Any(m => m.UserId == userId)).Select(r => r.Id).ToListAsync(cancellationToken);
-        var accounts = await db.Accounts.Where(a => a.OwnerId == userId).Select(a => a.Id).ToListAsync(cancellationToken);
+        await AccountService.RequireManagersRemainAsync(db, userId, cancellationToken);
+        var accounts = new List<Guid>();
         await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
         {
             // The heir owns these Runners now, so a membership of theirs on them would be a second, weaker access.
@@ -285,11 +308,21 @@ public sealed partial class UserService(
 
             await db.SaveChangesAsync(cancellationToken);
             await db.AgentShares.Where(s => s.UserId == heir.Id && db.Agents.Any(a => a.Id == s.AgentId && a.OwnerId == userId)).ExecuteDeleteAsync(cancellationToken);
-            await db.Agents.Where(a => a.OwnerId == userId).ExecuteUpdateAsync(s => s.SetProperty(a => a.OwnerId, heir.Id), cancellationToken);
+            foreach (var agent in await db.Agents.Where(a => a.OwnerId == userId).ToListAsync(cancellationToken))
+            {
+                agent.OwnerId = heir.Id;
+                if (agent.RunningAccountId is not null || agent.AccountId is not null)
+                {
+                    agent.LoginBlocked = true;
+                    agent.LoginStopPending = agent.State is AgentState.Running or AgentState.Starting;
+                    agent.StateMessage = "Agent ownership changed. Choose a login permitted for the new owner.";
+                }
+            }
             await db.SessionShares.Where(s => s.UserId == heir.Id && db.Sessions.Any(x => x.Id == s.SessionId && x.OwnerId == userId)).ExecuteDeleteAsync(cancellationToken);
             await db.Sessions.Where(s => s.OwnerId == userId).ExecuteUpdateAsync(s => s.SetProperty(x => x.OwnerId, heir.Id), cancellationToken);
-            // Their harness logins, settings, memberships and shares go with them (cascade); agents that ran with one of
-            // their logins fall back to their owner's default.
+            db.AgentLoginGrants.RemoveRange(await db.AgentLoginGrants.Where(g => g.OwnerId == userId).ToListAsync(cancellationToken));
+            // Logins are independent resources. Only this user's grants and personal defaults cascade.
+            // The enforcement pass rechecks transferred agents against their new owner.
             db.Users.Remove(user);
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);

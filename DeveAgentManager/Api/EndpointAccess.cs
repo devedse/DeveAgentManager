@@ -37,9 +37,9 @@ public static class EndpointAccess
     public static TBuilder RequireSession<TBuilder>(this TBuilder builder, SessionAccess level) where TBuilder : IEndpointConventionBuilder =>
         builder.WithMetadata(new Requirement(Kind.Session, Level: (int)level));
 
-    /// <summary>The route's harness login (<c>accountId</c>) is the user's own.</summary>
-    public static TBuilder RequireAccount<TBuilder>(this TBuilder builder) where TBuilder : IEndpointConventionBuilder =>
-        builder.WithMetadata(new Requirement(Kind.Account));
+    /// <summary>The minimum access to the route's harness login.</summary>
+    public static TBuilder RequireAccount<TBuilder>(this TBuilder builder, AccountAccess level = AccountAccess.Manage) where TBuilder : IEndpointConventionBuilder =>
+        builder.WithMetadata(new Requirement(Kind.Account, Level: (int)level));
 
     public static TBuilder AllowBeforePasswordChange<TBuilder>(this TBuilder builder) where TBuilder : IEndpointConventionBuilder =>
         builder.WithMetadata(new BeforePasswordChange());
@@ -126,7 +126,7 @@ public static class EndpointAccess
                 return Check((int)session, requirement.Level, "Session", (SessionAccess)requirement.Level == SessionAccess.Owner
                     ? "being the owner of this conversation" : "access to this conversation");
             case Kind.Account:
-                return await access.OwnsAccountAsync(user, RouteId(http, "accountId"), ct) ? null : NotFound("Account");
+                return Check((int)await access.AccountAsync(user, RouteId(http, "accountId"), requirement.Level >= (int)AccountAccess.Manage, ct), requirement.Level, "Harness login", $"{(AccountAccess)requirement.Level} access to this login");
             default:
                 throw new InvalidOperationException($"Unknown requirement {requirement.Kind}.");
         }

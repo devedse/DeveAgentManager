@@ -1,0 +1,46 @@
+@inherits LiveComponent
+<MudDialog>
+    <DialogContent>
+        <div class="help-heading">
+            <MudText Typo="Typo.subtitle1">@Account.Name</MudText>
+            <HelpTip Label="Effect on agents">
+                <p>This blocks new use and stops affected harnesses on reachable Runners. Active turns may be interrupted. Other permitted users continue using the login when only one person's access is removed.</p>
+                <p>Agents need a permitted login explicitly selected before restarting; they will not silently switch to another credential. Offline stops and cleanup are retried when the Runner returns.</p>
+                <p>This does not revoke provider tokens, erase backups, or prove detached and remote workloads have stopped. Existing agent shares are separate permissions.</p>
+            </HelpTip>
+        </div>
+        <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading affected agents">
+            <Placeholder><SkeletonList Rows="2" /></Placeholder>
+            <ChildContent>
+                <MudText Class="mt-3">@(_impact.Agents.Count) affected agents; @_impact.Agents.Count(a => a.Running) currently running.</MudText>
+                @foreach (var agent in _impact.Agents)
+                {
+                    <div class="list-row"><div class="list-main">
+                        <div class="list-title">@(agent.AgentName ?? "Agent you cannot open")</div>
+                        <div class="list-subtitle">@agent.User · @agent.Runner @(agent.PendingStop ? "· stop pending" : "")</div>
+                    </div></div>
+                }
+                @if (_impact.PendingCleanup > 0) { <MudText Color="Color.Warning">@_impact.PendingCleanup Runner cleanups pending.</MudText> }
+            </ChildContent>
+        </LoadingSection>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        <MudButton Color="Color.Error" Disabled="!Loaded || LoadError != null" OnClick="() => Dialog.Close(DialogResult.Ok(true))">@ConfirmText</MudButton>
+    </DialogActions>
+</MudDialog>
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AccountDto Account { get; set; } = default!;
+    [Parameter] public Guid? UserId { get; set; }
+    [Parameter] public string ConfirmText { get; set; } = "Remove";
+    private AccountImpactDto _impact = new([], 0);
+    protected override async Task LoadAsync() => _impact = await Api.AccountImpactAsync(Account.Id, UserId);
+    public static async Task<bool> ConfirmAsync(IDialogService dialogs, AccountDto account, Guid? userId, string title, string confirm)
+    {
+        var dialog = await dialogs.ShowAsync<AccountImpactDialog>(title, new DialogParameters<AccountImpactDialog>
+        { { d => d.Account, account }, { d => d.UserId, userId }, { d => d.ConfirmText, confirm } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        return await dialog.Result is { Canceled: false, Data: true };
+    }
+}

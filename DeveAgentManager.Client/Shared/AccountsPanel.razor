@@ -1,70 +1,94 @@
-@inject ManagerApi Api
+@inherits LiveComponent
 @inject IDialogService Dialogs
-@inject ISnackbar Snackbar
+@inject SignedInUser Me
 
-@* My settings → Harness logins: the user's own subscriptions and API keys their agents run with. *@
-<div class="help-heading mb-3"><MudText Typo="Typo.subtitle1">Harness logins</MudText><HelpTip Label="Harness logins">Yours only. Log in once here and your agents use the login on every
-    Runner you use; nothing to set up per Runner. You can have several per harness: when one runs out, switch the agent to another one (or to another harness) from its terminal.
-    People you share an agent with read-write prompt it with the login it runs with.</HelpTip></div>
-
-<LoadingSection Loaded="_loaded" Error="@_loadError" Retry="InitializeAsync" Label="Loading your harness logins">
-<Placeholder><SkeletonList Rows="2" /></Placeholder>
+@if (!Administration)
+{
+<div class="help-heading mb-3">
+    <MudText Typo="Typo.subtitle1">Harness logins</MudText>
+    <HelpTip Label="Harness logins">
+        <p>Connect a subscription or API key, then give people Use or Manage access. Use lets their agents run with it; Manage also permits reconnecting, changing access and removing it. Your default is personal.</p>
+        <p>Sharing a login shares its allowance or billing. It does not share conversations or grant Runner access. People with a shell on a Runner share its Unix account and can inspect its files; login permissions do not provide filesystem isolation.</p>
+    </HelpTip>
+</div>
+}
+@if (Administration)
+{
+    <MudTextField @bind-Value="_search" Label="Search logins, harnesses or managers" Immediate="true" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+}
+<LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading harness logins">
+<Placeholder><SkeletonList Rows="3" /></Placeholder>
 <ChildContent>
+@if (Administration && _pending.Count > 0)
+{
+    <MudExpansionPanels Class="mb-3"><MudExpansionPanel Text="@($"Pending enforcement · {_pending.Count}")">
+        @foreach (var task in _pending) { <div class="list-row"><div class="list-main"><div class="list-title">@task.Login</div><div class="list-subtitle">@task.Runner · @task.Action</div></div></div> }
+        <MudButton OnClick="RetryAsync" StartIcon="@Icons.Material.Rounded.Refresh">Refresh</MudButton>
+    </MudExpansionPanel></MudExpansionPanels>
+}
 @foreach (var harness in _harnesses)
 {
-    var accounts = _accounts.Where(a => a.HarnessId == harness.Id).ToList();
+    var accounts = _accounts.Where(a => a.HarnessId == harness.Id && Matches(a, harness)).ToList();
     <div class="settings-section">
         <div class="section-title-row">
             <MudText Typo="Typo.subtitle1" Class="section-title harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</MudText>
-            <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => ConnectAsync(harness, null)">Connect account</MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => ConnectAsync(harness, null)">Connect login</MudButton>
         </div>
-
         @if (accounts.Count == 0)
         {
-            <MudText Typo="Typo.body2" Class="mud-text-secondary">No account yet. Connect your @harness.AccountSupport!.SubscriptionName, or an API key.</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">@(string.IsNullOrWhiteSpace(_search) ? "No logins available." : "No matching logins.")</MudText>
         }
-
         @foreach (var account in accounts)
         {
-            <div class="account-row">
+            <div class="account-row" @key="account.Id">
                 <MudIcon Icon="@(account.Kind == AccountKind.Subscription ? Icons.Material.Rounded.WorkspacePremium : Icons.Material.Rounded.Key)" Class="account-icon" />
                 <div class="account-text">
-                    <div class="account-name">
-                        @account.Name
-                        @if (account.IsDefault)
-                        {
-                            <span class="account-badge">default</span>
-                        }
+                    <div class="account-name">@account.Name
+                        @if (account.IsDefault) { <span class="account-badge">your default</span> }
+                        @if (!account.Enabled) { <span class="account-badge">disabled</span> }
                     </div>
                     <div class="account-meta">
-                        @(account.Kind == AccountKind.Subscription ? "Subscription" : "API key") · connected @account.UpdatedAt.Humanize()
-                        @if (account.AgentCount is > 0 and var count)
-                        {
-                            <span> · @count @(count == 1 ? "agent" : "agents")</span>
-                        }
+                        @(account.Kind == AccountKind.Subscription ? "Subscription" : "API key") · @(account.Access == AccountAccess.None ? "Administration only" : account.Access + " access") · @account.AgentCount agents · @(account.Id.ToString("N")[..6])
                     </div>
+                    @if (Administration && account.CanManage)
+                    {
+                        <div class="account-meta">Managers: @(account.Managers?.Count > 0 ? string.Join(", ", account.Managers) : "Recovery needed") · @account.PeopleCount @(account.PeopleCount == 1 ? "person" : "people")</div>
+                    }
                     @if (account.RenewalNote is { } note)
                     {
-                        <div class="account-note">
-                            <span>@note</span>
-                            <HelpTip Label="Staying signed in">
-                                <p>ChatGPT logins last about ten days. The Manager renews them itself, a few days early, and gives Runners only the renewed access. Codex on a Runner then never renews on its own, so agents on several Runners can't use up each other's login.</p>
-                                <p>Logins connected before this still renew on each Runner. Connect them again (⋮ → Reconnect) to switch. When ChatGPT ended a login, connect it again; running agents keep working until their access runs out.</p>
-                            </HelpTip>
-                        </div>
+                        <div class="account-note"><span>@note</span><HelpTip Label="Staying signed in"><p>The Manager renews supported subscriptions once for everyone using this login. Reconnecting preserves access and defaults; running processes may require a restart to use a replaced credential.</p></HelpTip></div>
+                    }
+                    @if (account.PendingCleanup > 0)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Warning">@account.PendingCleanup stops or Runner cleanups pending</MudText>
                     }
                 </div>
-                @if (!account.IsDefault)
-                {
-                    <MudTooltip Text="Your agents that don't pick a login use your default">
-                        <MudIconButton Icon="@Icons.Material.Rounded.StarOutline" Size="Size.Small" OnClick="() => SetDefaultAsync(account)" aria-label="Make default" />
-                    </MudTooltip>
-                }
-                <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
-                    <MudMenuItem Icon="@Icons.Material.Rounded.Login" OnClick="() => ConnectAsync(harness, account)">Reconnect (log in again)</MudMenuItem>
-                    <MudMenuItem Icon="@Icons.Material.Rounded.Edit" OnClick="() => RenameAsync(account)">Rename</MudMenuItem>
-                    <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" OnClick="() => DeleteAsync(account)">Remove</MudMenuItem>
-                </MudMenu>
+                <div class="account-actions">
+                    @if (account.Enabled && account.Access >= AccountAccess.Use && !account.IsDefault)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Rounded.StarOutline" Size="Size.Small" OnClick="() => CallAsync(() => Api.SetDefaultAccountAsync(account.Id))" aria-label="@($"Make {account.Name} my default")" title="Make my default" />
+                    }
+                    @if (account.CanManage)
+                    {
+                        <MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.Group" OnClick="() => AccessAsync(account)">Manage access</MudButton>
+                    }
+                    <MudMenu Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                        <ActivatorContent><MudIconButton Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" OnClick="@context.ToggleAsync" aria-label="@($"Actions for {account.Name}")" /></ActivatorContent>
+                        <ChildContent>
+                        @if (account.CanManage)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Login" OnClick="() => ConnectAsync(harness, account)">Reconnect</MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Edit" OnClick="() => RenameAsync(account)">Rename</MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Rounded.PauseCircle" OnClick="() => ToggleAsync(account)">@(account.Enabled ? "Disable…" : "Enable")</MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" OnClick="() => DeleteAsync(account)">Remove…</MudMenuItem>
+                        }
+                        @if (account.Access != AccountAccess.None)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Logout" OnClick="() => LeaveAsync(account)">Leave access…</MudMenuItem>
+                        }
+                        </ChildContent>
+                    </MudMenu>
+                </div>
             </div>
         }
     </div>
@@ -73,80 +97,63 @@
 </LoadingSection>
 
 @code {
+    [Parameter] public bool Administration { get; set; }
     private List<HarnessDto> _harnesses = [];
     private List<AccountDto> _accounts = [];
-
-    private bool _loaded;
-    private string? _loadError;
-
-    protected override Task OnInitializedAsync() => InitializeAsync();
-
-    private async Task InitializeAsync()
+    private CurrentUserDto? _me;
+    private List<LoginCleanupDto> _pending = [];
+    protected override TimeSpan? RefreshInterval => Administration ? TimeSpan.FromSeconds(10) : null;
+    private string _search = "";
+    protected override async Task LoadAsync()
     {
-        _loadError = null;
-        try
-        {
-            _harnesses = (await Api.InfoAsync()).Harnesses.Where(h => h.AccountSupport is not null).ToList();
-            await LoadAsync();
-            _loaded = true;
-        }
-        catch (ApiException ex)
-        {
-            _loadError = ex.Message;
-        }
-        catch (HttpRequestException)
-        {
-            _loadError = LoadingSection.Unreachable;
-        }
+        _harnesses = (await Api.InfoAsync()).Harnesses.Where(h => h.AccountSupport is not null).ToList();
+        _me = await Me.GetAsync();
+        _accounts = await Api.ListAccountsAsync(Administration);
+        if (Administration) _pending = await Api.PendingLoginCleanupAsync();
     }
-
-    private async Task LoadAsync() => _accounts = await Api.ListAccountsAsync();
-
+    private bool Matches(AccountDto a, HarnessDto h) => string.IsNullOrWhiteSpace(_search)
+        || (a.Name + " " + a.Id.ToString("N") + " " + h.DisplayName + " " + string.Join(" ", a.Managers ?? [])).Contains(_search, StringComparison.OrdinalIgnoreCase);
     private async Task CallAsync(Func<Task> action)
     {
-        try
-        {
-            await action();
-        }
-        catch (ApiException ex)
-        {
-            Snackbar.Add(ex.Message, Severity.Error);
-        }
-
-        await LoadAsync();
+        try { await action(); }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        await ReloadAsync();
     }
-
     private async Task ConnectAsync(HarnessDto harness, AccountDto? existing)
     {
         var dialog = await Dialogs.ShowAsync<AccountLoginDialog>(existing is null ? $"Connect {harness.DisplayName}" : "Reconnect",
             new DialogParameters<AccountLoginDialog> { { d => d.HarnessId, harness.Id }, { d => d.Existing, existing } },
             new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
         await dialog.Result;
-        await LoadAsync();
+        await ReloadAsync();
     }
-
-    private Task SetDefaultAsync(AccountDto account) => CallAsync(() => Api.SetDefaultAccountAsync(account.Id));
-
+    private async Task AccessAsync(AccountDto account)
+    {
+        var dialog = await Dialogs.ShowAsync<AccountAccessDialog>($"Access to {account.Name}",
+            new DialogParameters<AccountAccessDialog> { { d => d.Account, account } },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        await dialog.Result;
+        await ReloadAsync();
+    }
     private async Task RenameAsync(AccountDto account)
     {
-        var parameters = new DialogParameters<TextPromptDialog> { { d => d.Label, "Name" }, { d => d.Value, account.Name } };
-        var result = await (await Dialogs.ShowAsync<TextPromptDialog>("Rename account", parameters)).Result;
-        if (result is { Canceled: false, Data: string name })
-        {
-            await CallAsync(() => Api.RenameAccountAsync(account.Id, name));
-        }
+        var result = await (await Dialogs.ShowAsync<TextPromptDialog>("Rename login", new DialogParameters<TextPromptDialog> { { d => d.Label, "Name" }, { d => d.Value, account.Name } })).Result;
+        if (result is { Canceled: false, Data: string name }) await CallAsync(() => Api.RenameAccountAsync(account.Id, name));
     }
-
+    private async Task ToggleAsync(AccountDto account)
+    {
+        if (account.Enabled && !await AccountImpactDialog.ConfirmAsync(Dialogs, account, null, "Disable login", "Disable")) return;
+        await CallAsync(() => Api.SetAccountEnabledAsync(account.Id, !account.Enabled));
+    }
     private async Task DeleteAsync(AccountDto account)
     {
-        var count = account.AgentCount;
-        var confirmed = await Dialogs.ShowMessageBoxAsync($"Remove '{account.Name}'?",
-            "The login is deleted from the Manager and from the Runners." + (count > 0 ? $" {count} {(count == 1 ? "agent uses" : "agents use")} it and will use the default account from their next start." : ""),
-            yesText: "Remove", cancelText: "Cancel");
-        if (confirmed == true)
-        {
+        if (await AccountImpactDialog.ConfirmAsync(Dialogs, account, null, "Remove login", "Remove"))
             await CallAsync(() => Api.DeleteAccountAsync(account.Id));
-            Snackbar.Add($"Removed '{account.Name}'.", Severity.Info);
-        }
+    }
+    private async Task LeaveAsync(AccountDto account)
+    {
+        if (_me is not null && await AccountImpactDialog.ConfirmAsync(Dialogs, account, _me.Id, "Leave login access", "Leave"))
+            await CallAsync(() => Api.RemoveAccountGrantAsync(account.Id, _me.Id));
     }
 }

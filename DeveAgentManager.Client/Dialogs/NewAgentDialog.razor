@@ -55,7 +55,7 @@
                                    HelperText="You can switch the account later, from the agent's terminal.">
                             @foreach (var account in _harnessAccounts)
                             {
-                                <MudSelectItem T="Guid?" Value="account.Id">@account.Name@(account.IsDefault ? " (default)" : "")</MudSelectItem>
+                                <MudSelectItem T="Guid?" Value="account.Id">@account.Name · @(account.Id.ToString("N")[..6])@(account.IsDefault ? " (default)" : "")</MudSelectItem>
                             }
                         </MudSelect>
                     }
@@ -213,7 +213,7 @@
     private void SelectHarness(string? harnessId)
     {
         _harnessId = harnessId;
-        _harnessAccounts = _allAccounts.Where(a => a.HarnessId == harnessId).ToList();
+        _harnessAccounts = _allAccounts.Where(a => a.HarnessId == harnessId && a.Enabled && a.Access >= AccountAccess.Use).ToList();
         _accountId = (_harnessAccounts.FirstOrDefault(a => a.IsDefault) ?? _harnessAccounts.FirstOrDefault())?.Id;
     }
 

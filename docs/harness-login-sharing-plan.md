@@ -1,13 +1,13 @@
 # Harness login sharing and administration
 
-Status: **proposal for review, not implemented**. Updated 2026-10-15.
+Status: **implemented; deployed verification pending**. Updated 2026-10-15.
 
-## Goal and current behavior
+## Goal and previous behavior
 
 Let people share a saved harness subscription login or API key, manage access from its row in My settings,
 and administer logins through a dedicated page and role. Sharing a credential does not share conversations.
 
-Today an `Account` is a harness login, owned by one Portal `User`. `Account.OwnerId` gates listing, management
+Before this change an `Account` was a harness login, owned by one Portal `User`. `Account.OwnerId` gates listing, management
 and selection. `Account.IsDefault` applies to its owner. Deleting that user cascades to their logins and
 cleans their Runner copies. A person with write access to a shared agent can already prompt it with the
 login it runs with. They cannot select that login for another agent merely because that agent was shared.
@@ -192,7 +192,7 @@ confirmation impact, mobile widths and light/dark themes. Live checks use dispos
 on two Runners where available, and are reported separately from host tests. Do not reconnect, revoke or
 transfer real users' subscriptions just to test this feature.
 
-## Decisions proposed for review
+## Accepted decisions
 
 1. No permanent owner; per-login Use/Manage grants, with the creator initially granted Manage.
 2. A global Harness login manager role for administration and recovery; use requires an explicit grant.
@@ -200,5 +200,12 @@ transfer real users' subscriptions just to test this feature.
 4. Removal blocks new use and stops affected harnesses, with impact confirmation and honest offline status.
 5. User removal explicitly resolves last-manager logins instead of cascading away shared credentials.
 
-Decision record, 2026-10-15: these are recommendations for review. No runtime, permission, database or UI
-implementation is authorized by this document alone.
+Decision record, 2026-10-15: the proposal was approved for implementation. The implementation uses durable
+blocked-agent flags and a persistent Runner cleanup queue, with a ten-second enforcement retry. Private runtime
+profiles are scoped by user, agent and harness, so switching logins preserves the agent's own conversation.
+Existing full admins migrate to the new role. Migration rollback requires restoring a compatible database backup.
+
+Verification: automated migration, permission/default, concurrent last-manager, offline enforcement and real-shell
+runtime tests; browser checks use disposable local test users and placeholder credentials. Actual provider renewal
+behavior remains covered by the existing fake-provider renewal tests. Live deployment and provider-account checks
+must be reported separately; no real subscription is reconnected or revoked by these tests.
