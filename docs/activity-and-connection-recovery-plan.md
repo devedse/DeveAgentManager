@@ -1,23 +1,24 @@
-# Activity and connection recovery plan
+# Activity fixes and connection investigation plan
 
 Status: **plan only; implementation pending**. Updated 2026-10-16.
 
 ## Scope and delivery
 
-Implement the four investigated log issues directly on `master`: usage-limit parsing failures, SSH connection
-recovery, Proxmox sampling failures, and misleading session-sync messages. Include the previously discussed
-Finished/Ready correction in the same delivery. No feature branch or pull request is required.
+Plan fixes directly on `master` for usage-limit parsing failures, Proxmox sampling failures, misleading
+session-sync messages and the previously discussed Finished/Ready behavior. The SSH item is investigation only:
+establish the cause before proposing a transport change. No feature branch or pull request is required.
 
 This document authorizes no runtime changes by itself. Once implementation is requested, complete the changes
 and verification locally, then commit and push the complete, tested change to `master`. Avoid publishing partial
-changes to the parser or connection lifecycle, because a push starts the release pipeline.
+changes to the parser, because a push starts the release pipeline. Do not implement the previous speculative
+SSH connection retirement, concurrency cap or reconnect backoff proposal.
 
 ## Evidence and limits of the diagnosis
 
 | Finding | Established from logs and code | Still unconfirmed |
 |---|---|---|
 | Usage-limit parsing | A regex timeout escapes through `UsageLimitState.DetectedReset` into `GET /agents/{id}/limit`. A separate timeout occurred during background limit observation. | The precise input or machine condition that exhausted the timeout. Ordinary and long synthetic inputs did not reproduce it locally. |
-| SSH | Terminal observation, job-completion collection and session sync share pooled SSH connections. Operation timeouts and exhausted channel-open attempts are not covered by the existing connection-invalidation catch. | What initially caused the Runner to stop answering or refuse channels. The available Runner journal did not establish the cause. |
+| SSH | Terminal observation, job-completion collection and session sync share pooled command connections. The pinned library throws the ten-attempt message after explicit channel-open refusals. An isolated experiment reproduced that message while the same connection remained usable afterward. | Why the production server refused channels or why earlier requests timed out. The available Runner journal did not establish the cause; neither network loss nor session exhaustion is confirmed. |
 | Proxmox | Both Runners briefly lost fast sampling and resumed it. A network-unreachable incident and an HTTP timeout incident are recorded. Any `PveResultException` currently triggers VM-location rediscovery. | Why the shared Proxmox path was unavailable. The logs do not establish a VM migration or a Manager defect as the original trigger. |
 | Session-sync wording | Periodic monitoring calls the method that logs `Final session sync ... failed`. | These entries alone establish neither an agent exit nor lost conversation data. |
 | Finished/Ready | The badge requires an unread completion. A visible, focused terminal marks it read and therefore changes the badge to Ready. | No further cause is needed to explain this behavior. |
@@ -34,10 +35,12 @@ to distinguish those causes if they recur.
   current-session, empty-prompt, permission and readiness checks.
 - Reconnecting transport never automatically replays a command whose execution or delivery could have started.
   Preserve existing durable claims and uncertain-delivery states for jobs and continuations.
-- An error from an older SSH connection cannot invalidate a replacement connection created afterward.
+- Do not change SSH connection lifetime, concurrency, retries, keepalive or server settings without evidence
+  identifying the failure and a reviewed proposal for addressing it.
 - Reading a reply acknowledges its notification; it does not change whether the current turn has completed.
-- Logs retain actionable failure and recovery evidence without recording credentials, full terminal screens,
-  command bodies or raw parser input.
+- Regex failure logs include the failing expression and a bounded, escaped excerpt of its actual input, sanitized
+  before any logger receives it. Preserve whitespace and diagnostic structure while redacting credentials.
+  Do not log entire unrelated terminal histories or shell command bodies.
 
 ## 1. Make usage-limit parsing bounded and failure-aware
 
@@ -79,9 +82,19 @@ and the observation loop in `AgentService.cs`, all under `DeveAgentManager.Core/
 5. Update `AgentLimitButton` and `ContinueAfterLimitDialog` to show loading, unavailable detection and retry in
    place. Keep existing data during refresh failures. Load automatic-policy state independently where needed so a
    limit-read problem does not make an enabled policy appear off. Longer explanations belong in HelpTip.
-6. Log a bounded diagnostic containing the parser stage/rule identifier, input length, harness and failure kind.
-   Collapse repeated identical failures and record recovery. Never log `RegexMatchTimeoutException.Input` or the
-   raw terminal text. Keep diagnostics useful even if redaction itself cannot process an oversized value.
+6. Capture the expression and actual subject text at the failing regex boundary, including failures in replacement
+   and normalization operations. Record the parser stage/rule, options, configured timeout, harness, source kind
+   (live screen or saved message), original input length and line index where available. Use the exception's
+   input/pattern when available; do not substitute an unrelated whole-screen dump for the failed subject.
+7. Sanitize the captured text before passing it to any logger, including console sinks. Preserve spaces, tabs,
+   line breaks and relevant Unicode characters through escaped serialization; whitespace normalization would erase
+   the evidence needed to reproduce some failures. Keep the full sanitized subject when short; for longer subjects,
+   cap the excerpt (initially 4,096 characters), include head/tail context, a fingerprint and omitted-character count,
+   and explicitly mark truncation/redaction. Do not claim an edited excerpt is an exact reproducer.
+8. Show that diagnostic in the existing role-protected Logs page and its copy actions. Rate-limit repeated identical
+   failures, retain a count and record recovery. Bound and harden the diagnostic sanitizer itself: if sanitization
+   fails, omit the payload but retain pattern/stage/length/error metadata. The existing log store redacts with regexes
+   before truncating, so its fallback alone is not enough for safely capturing a failed parser input.
 
 No database migration is expected for this approach. If implementation reveals a need for persistent detection
 metadata, explicitly document and test the migration before including it; do not repurpose `ResetAt`.
@@ -96,55 +109,72 @@ metadata, explicitly document and test the migration before including it; do not
 - Exercise recovery on the next successful observation and a service restart with an existing schedule.
 - Keep current timezone, midnight, daylight-saving, wrapped-message, native-auto-continue and stale-session tests.
 - Add malformed, oversized and long-whitespace inputs with a generous overall deadline to catch hangs.
+- Verify that a timeout records the expression and relevant input text, preserves diagnostic whitespace, indicates
+  truncation/redaction, redacts test-only secrets before every sink, and retains metadata if sanitization fails.
 - Browser-check loading, detection failure, retry and retained policy/schedule state.
 
-## 2. Recover SSH connections without replaying commands
+## 2. Investigate SSH failures before choosing a fix
 
 Primary files: `DeveAgentManager.Core/Ssh/RunnerShell.cs`, `SshConnector.cs`, and the polling callers in
 `RunnerMonitor`, `AgentJobCompletions`, `SessionService` and file collection.
 
-### Connection ownership and failure handling
+### What the errors mean
 
-1. Introduce a small testable transport boundary and a connection lease that identifies the specific pooled
-   connection generation being used. Keep host-key verification and credential selection in `SshConnector`.
-2. Distinguish caller cancellation, a command exceeding its execution budget, connection/channel establishment
-   failures, and ordinary remote nonzero exits. Do not treat a remote command error as broken transport.
-3. Retire a connection after an observed channel-establishment failure, SSH transport timeout/reset, or failed
-   health assessment. Stop new leases using that generation; create a replacement for later operations.
-   Do not invalidate by Runner ID alone when handling an error from an older lease.
-4. Dispose retired generations safely. Allow healthy in-flight leases to finish when possible; if a hard deadline
-   requires closing a stuck connection, affected submitted operations become uncertain. Never replay them as part
-   of reconnection. Do not tear down a healthy SFTP connection merely because an independent exec connection failed.
-5. Add a bounded queue per Runner exec connection, initially allowing four concurrent commands. Include queue wait
-   in the request deadline, release permits on every exit path, and keep unrelated Runners independently usable.
-   Record queue wait and active-channel counts so future concurrency changes have evidence.
-6. Bound channel-open attempts and enforce the complete deadline, including opening a channel. SSH.NET currently
-   opens the channel synchronously before registering command cancellation; applying `WaitAsync` to its returned
-   task alone does not cover that phase. Verify the chosen adapter/connection-abort mechanism with a real blocked
-   channel-open test. Avoid unbounded detached tasks around synchronous work.
-7. Add a short capped backoff for repeated establishment failures, shared by users of that Runner's pool, with one
-   reconnect attempt at a time. Reset it after success. Ordinary read-only polling may try again on its next pass.
-   `RunAsync` itself must not silently retry arbitrary commands.
-8. Emit one clear outage warning and a recovery entry, with rate-limited detail for prolonged failures. Include
-   operation category and phase, not shell command contents. Retain stale/unknown observation behavior while offline.
+- `Failed to open a channel after 10 attempts` counts refused channel-open requests. It does not mean ten TCP
+  connections dropped, ten commands executed, or even that the underlying connection disconnected. The library's
+  failure handler discards the server's reason code and description before throwing the aggregate exception.
+- `Session operation has timed out` from channel opening means no usable response arrived within the operation
+  budget. It does not identify whether the delay was in the server, client message processing or network path.
+- The Manager's command deadline is a third failure category. Do not combine it with refused channel opens or
+  an actual socket reset when diagnosing a timeline.
 
-The implementation should be tested against the pinned SSH.NET version. Its current behavior is documented in
-[channel opening](https://github.com/sshnet/SSH.NET/blob/2026.0.0/src/Renci.SshNet/Channels/ChannelSession.cs)
-and [command execution](https://github.com/sshnet/SSH.NET/blob/2026.0.0/src/Renci.SshNet/SshCommand.cs).
+SSH command channels are multiplexed over one authenticated connection. Server rules can refuse a channel even
+on a fast, low-latency host. That is an explanation of the protocol, not evidence that a particular rule caused
+the reported incident. See the pinned library's
+[channel opening](https://github.com/sshnet/SSH.NET/blob/2026.0.0/src/Renci.SshNet/Channels/ChannelSession.cs),
+[connection defaults](https://github.com/sshnet/SSH.NET/blob/2026.0.0/src/Renci.SshNet/ConnectionInfo.cs) and
+[OpenSSH session limits](https://man.openbsd.org/sshd_config#MaxSessions).
 
-### Regression coverage
+### Investigation completed so far
 
-- Timeout/refusal retires a connection; a subsequent read uses a new connection and succeeds.
-- A delayed failure from generation A cannot retire healthy generation B.
-- Concurrent failures produce one replacement attempt; permits/leases are released after cancellation and errors.
-- Ordinary command failure and caller cancellation do not cause unnecessary pool churn.
-- Simulate a server accepting a command and dropping the response: the command is issued exactly once and its
-  outcome stays uncertain. Cover continuation/job submission through their real claim-handling paths.
-- Test deadline expiry while queued, opening a channel and running a command. The bounded adapter must terminate
-  outstanding local work and must not allow a late command submission after the caller has timed out.
-- Verify a failing Runner does not prevent commands to a second Runner.
-- Use an isolated local SSH server or controlled transport fixture to refuse channels, stall a channel-open
-  response and drop a connection. Never fault-inject into an active user's Runner.
+- A disposable loopback SSH server with `MaxSessions 1` and the pinned SSH.NET 2026.0.0 client reproduced the exact
+  ten-attempt error in about one millisecond while another command occupied the slot. `IsConnected` remained true.
+  After that command finished, a new command succeeded on the same connection without reconnecting. The isolated
+  server log confirmed ten session-limit refusals. The server, disposable keys and test data were removed afterward.
+- This demonstrates a possible mechanism and why blanket reconnecting is unjustified; it does not reproduce the
+  production configuration or establish the incident's cause.
+- The checked Runner's current base server configuration allows ten sessions, and the library defaults to ten.
+  A per-user/source `Match` override and the configuration at incident time are not established by that base check.
+  There is no evidence supporting the previously proposed four-command cap.
+- Available service/kernel journals for the reported window show no recorded SSH service restart, session-limit
+  refusal, out-of-memory kill or matching resource failure. Absence from those journals does not rule them out.
+- The normal monitor awaits each poll; its disk and synchronization steps are sequential. Job collection is a
+  separate loop which also awaits its pass. There is no demonstrated unbounded overlap from those timers alone.
+  Other API/lifecycle callers and timed-out commands still require correlation.
+
+### Next evidence to collect
+
+1. Confirm the deployed Manager revision and SSH.NET build before comparing its control flow with current source.
+   Correlate the first failure, repeated failures and first successful operation on one UTC timeline.
+2. Obtain the server's effective settings for the actual Manager account and source, including `Match` overrides,
+   session/channel limits and timeouts. Check historical configuration changes and service lifecycle evidence.
+3. Correlate Manager command start/end/cancellation with server channel open/close, child-process exit and
+   refusal reason. Count active channels per connection and determine whether cancelled or stalled commands left
+   server-side sessions occupied. Keep terminal connections and SFTP separate from pooled exec connections.
+4. Inspect client connection/disconnect/error events, connection age and the exact failing phase. Distinguish a
+   server refusal from a client listener stall, pool invalidation by another caller and actual transport loss.
+   The missing reason code may require a targeted library trace or server diagnostic capture.
+5. Check for relevant process/file-descriptor limits, stalls and kernel/network events only where timestamps or
+   refusal reasons support them. Do not infer a slow host or unreliable network from these exceptions alone.
+6. If historical evidence cannot identify the cause, propose narrowly scoped, temporary diagnostics for the next
+   occurrence, with operation categories and correlation identifiers instead of command bodies. No runtime
+   instrumentation or server log-level/configuration change is implemented as part of this plan update.
+7. Reproduce the supported hypothesis on an isolated fixture using representative configuration. Present the
+   evidence, remaining uncertainty and smallest proposed correction for review before changing SSH behavior.
+
+The investigation can conclude that evidence is insufficient. Do not replace that conclusion with speculative
+connection retirement, changed concurrency limits, retries, keepalive tuning or server-limit increases. Any later
+fix must preserve the existing prohibition on replaying ambiguously submitted commands.
 
 ## 3. Keep Proxmox sampling failures cheap and recoverable
 
@@ -218,7 +248,7 @@ expectations encode the old Ready-after-viewing behavior.
 | Stage | Deliverable | Gate before proceeding |
 |---|---|---|
 | 1 | Parser outcome, bounded matching, service/API handling and affected UI | Parser, continuation, API and per-agent failure-isolation regressions pass. |
-| 2 | SSH leases, failure classification, deadlines and backoff | Deterministic pool tests and isolated transport-failure tests prove recovery and no command replay. |
+| 2 | SSH investigation report; no transport change | Establish a supported cause and review a targeted fix, or explicitly record insufficient evidence and the diagnostic next step. |
 | 3 | Proxmox fallback classification and accurate sync context | Sampling/migration tests and sync-log assertions pass. |
 | 4 | Current-turn completion independent of acknowledgement | Tracker, badge/filter/attention and browser transition tests pass. |
 | 5 | Integrated build, documentation and delivery | Release build, full existing suite and affected browser checks pass; reviewed diff and privacy scan are clean. |
@@ -231,7 +261,7 @@ Run affected browser flows in Chromium and Firefox, including phone width and li
 apply. Exercise the real local Manager API with disposable test-only data for error/recovery behavior. Mocks are
 appropriate for deterministic screen states but must not replace API and transport integration checks.
 
-Review the final diff for command replay, swallowed failures, changed schedule semantics and cross-connection races.
+Review the final diff for command replay, swallowed failures, changed schedule semantics and unexpected SSH changes.
 Update `docs/agent-activity.md` and relevant operational documentation. Scan all tracked documentation for private
 deployment details and secrets. Keep temporary logs and test credentials outside the repository.
 
@@ -250,8 +280,8 @@ deployed and authenticated access is available:
    show Working. Verify background-work precedence separately.
 3. Confirm fresh terminal observations, conversation synchronization and resource readings. Inspect recovery logs
    and observation timestamps, not just the absence of errors.
-4. Perform disruptive recovery checks only against an isolated test Runner/provider. Verify one failed connection
-   does not duplicate a submitted command, and a recovered connection resumes subsequent reads.
+4. Collect the SSH evidence described above without changing active Runner transport behavior. Any reproduction
+   involving refused channels, stalls or disconnected sockets belongs on an isolated test Runner/provider.
 5. Check the ordinary sync-failure wording and diagnostic detail. Remove disposable agents, test users and temporary
    credentials created for validation.
 
@@ -259,6 +289,8 @@ Do not claim that the original infrastructure trigger was fixed merely because r
 test passes. If live access is unavailable, report deployed verification as pending. Keep the prior build available
 for rollback; if a schema change becomes necessary, document database compatibility and backup/restore requirements.
 
-The work is complete when all five behavior groups are implemented, the tests above pass, the change is pushed to
-master and CI passes. Live verification has its own recorded outcome. No unresolved parser failure may silently
-clear state, no reconnect may replay an ambiguous command, and reading a finished reply must leave it Finished.
+The planned fixes are complete when parsing/diagnostics, sampling, synchronization wording and current-turn
+completion are implemented, their tests pass, the change is pushed to master and CI passes. The SSH investigation
+has its own evidence report and review gate; it does not require a speculative transport fix for completion.
+Live verification has its own recorded outcome. No unresolved parser failure may silently clear state, no transport
+change may replay an ambiguous command, and reading a finished reply must leave it Finished.
