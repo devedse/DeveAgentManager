@@ -103,7 +103,7 @@ public static class UsageLimitParser
             @"^\s*●\s*Usage limit reached(?: again)?\s*·\s*continuing (?:automatically|shortly)\b").Success;
         if (following.Any(line => !CompletedFooter(line) && !LimitNotice(line) && Match(line, @"^\s*[›❯•●◦■⎿└✻✢✽✶✳*]").Success)) return null;
         bool StatusFooter(string line) => harness == "codex" && Match(line,
-            @"^\s*(?:⚠(?:️)?\s*)?(?:[0-9]+ background terminals? running\b|(?:5h|weekly)\s+(?:limit:\s*)?[0-9]+%\s+left\b)").Success;
+            @"^\s*(?:⚠\uFE0F?|[0-9]+ background terminals? running\b|(?:5h|weekly)\s+(?:limit:\s*)?[0-9]+%\s+left\b)").Success;
         var message = CollapseWhitespace(start < 0 ? nativeFooter! : string.Join(" ", new[] { lines[start] }
             .Concat(following.TakeWhile(line => !CompletedFooter(line) && !StatusFooter(line) && !LimitNotice(line)))));
         var native = footerContinues || following.Any(LimitNotice) || message.Contains("continuing automatically", StringComparison.OrdinalIgnoreCase);
@@ -126,9 +126,10 @@ public static class UsageLimitParser
         // its prefix requires it when a stored message is parsed again.)
         message = Replace(message, @"^[⎿└]\s*", "", RegexOptions.None);
         if (harness == "codex")
-            // A recap is context below the error, not part of its reset timestamp. Normalize here
-            // so already-stored messages are repaired using their original observation date too.
-            message = Replace(message, @"\s+(?:↳\s*Recap:|\d+ background terminals? running\b|⚠(?:️)?\s*(?:5h|weekly)\s+(?:limit:\s*)?\d+%\s+left\b).*$", "",
+            // Recaps, background counters and warning panels are separate from the rejection.
+            // Use the warning marker as the boundary, not its changeable English wording.
+            // Normalize stored messages too, preserving the original observation date.
+            message = Replace(message, @"\s+(?:↳\s*Recap:|\d+ background terminals? running\b|⚠\uFE0F?).*$", "",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Trim();
         Bound(message, 1800, "message-length");
         var marker = Match(message, @"(?:try again at|will reset at|\bresets|continuing automatically at)\s+(?<reset>.+)$");

@@ -12,6 +12,9 @@ usage to purchase more credits or try again at Oct 22nd, 2026 8:41 AM.
 ■ You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/
 usage to purchase more credits or try again at 6:26 PM.
 
+⚠ Heads up, you have less than 25% of your weekly limit left. Run /status for a breakdown.
+  ⚠ weekly limit: 24% left · /status
+
 › Ask Codex to do anything
 
   GPT-6.1-Sol xhigh · /work/example · Go

@@ -23,6 +23,25 @@ public sealed class UsageLimitParserTests
     }
 
     [Theory]
+    [InlineData("⚠ Heads up, you have less than 25% of your weekly limit left. Run /status for a breakdown.")]
+    [InlineData("⚠ Heads up, you have less than 25% of your\nweekly limit left. Run /status for a breakdown.")]
+    [InlineData("⚠️\nHeads up, you have less than 25% of your weekly limit left.")]
+    [InlineData("⚠ Usage warning: an earlier window resets at Oct 22nd, 2026 8:41 AM.")]
+    public void CodexWarningPanelCannotBecomePartOfLiveOrStoredReset(string warning)
+    {
+        var at = new DateTime(2026, 10, 16, 17, 34, 0, DateTimeKind.Utc);
+        var clean = UsageLimitParser.Parse("codex", Codex("6:26 PM"), "Europe/Amsterdam", at)!;
+        var screen = Codex("6:26 PM").Replace("\n\n›", "\n\n" + warning + "\n\n›");
+        Assert.Equal(clean, UsageLimitParser.Parse("codex", screen, "Europe/Amsterdam", at));
+        var stored = UsageLimitParser.InspectStored("codex", clean.Message + " " + warning, "Europe/Amsterdam", at);
+        Assert.True(stored.Available);
+        Assert.Equal(clean, stored.Limit);
+        Assert.Null(UsageLimitParser.Parse("codex", screen.Replace("\n\n›", "\n• Working (1s • esc to interrupt)\n\n›"), "Europe/Amsterdam", at));
+        var unknown = UsageLimitParser.Parse("codex", screen.Replace("6:26 PM", "an unknown time"), "Europe/Amsterdam", at)!;
+        Assert.Null(unknown.ResetAt);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void PiQuotaErrorHasNoResetTime(bool wrapped)

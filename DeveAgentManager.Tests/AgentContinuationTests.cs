@@ -41,6 +41,37 @@ public sealed class AgentContinuationTests
     }
 
     [Fact]
+    public async Task AutoContinueRepairsStoredWarningWithoutMovingResetOrSendingTwice()
+    {
+        await using var rig = await Rig.Create();
+        rig.Clock.Utc = new(2026, 10, 16, 16, 5, 0, TimeSpan.Zero);
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.ChangedCodexReset, TimeZone = "Europe/Amsterdam" };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var firstObserved = rig.Clock.Utc.UtcDateTime;
+        var withoutWarning = rig.Terminal.Screen.Screen[..rig.Terminal.Screen.Screen.IndexOf("\n⚠", StringComparison.Ordinal)] + "\n› Ask Codex to do anything";
+        var cleanMessage = UsageLimitParser.Parse("codex", withoutWarning, "Europe/Amsterdam", firstObserved)!.Message;
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            var row = (await db.AgentLimits.FindAsync([rig.Id], Ct))!;
+            row.Message = cleanMessage + " ⚠ Heads up, you have less than 25% of your weekly limit left. Run /status for a breakdown.";
+            row.ResetAt = null;
+            row.Detail = "Previously unparsed";
+            await db.SaveChangesAsync(Ct);
+        }
+        rig.Clock.Utc = rig.Clock.Utc.AddDays(1);
+        await rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct);
+        for (var i = 0; i < 3; i++) await rig.Service.RefreshAsync(rig.Id, Ct);
+        var repaired = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal(firstObserved, repaired.DetectedAt);
+        Assert.Equal(new DateTime(2026, 10, 16, 16, 26, 0, DateTimeKind.Utc), repaired.DetectedResetAt);
+        Assert.DoesNotContain("Heads up", repaired.Message);
+        Assert.Equal(1, rig.Terminal.Sends);
+        rig.Service.Dispose(); rig.Service = rig.NewService();
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+    }
+
+    [Fact]
     public async Task CurrentLimitOutweighsReplyTimestampAfterItsReset()
     {
         await using var rig = await Rig.Create();
