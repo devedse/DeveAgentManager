@@ -49,14 +49,15 @@ public static class AgentActivityTracker
             || nativeTurn.State is not ("Started" or "Completed" or "Aborted")) nativeTurn = null;
         // A native lifecycle event identifies a turn independently of polling cadence and footer formatting.
         // Live approval/limit/working controls keep precedence over an older completion in the session file.
-        if (nativeTurn is { State: "Started" } && detection.Status is AgentActivityStatus.Ready or AgentActivityStatus.Unknown)
+        var nativeReady = detection.Status == AgentActivityStatus.Ready && detection.Rule != "usage-limit-expired";
+        if (nativeTurn is { State: "Started" } && nativeReady)
             detection = detection with { Status = AgentActivityStatus.Working, Rule = "codex/native-turn-started",
                 Reason = "Codex is working on its current turn.", Evidence = "Native session recorded task_started.", CompletionEvidence = null };
-        var nativeComplete = nativeTurn is { State: "Completed" } && detection.Status == AgentActivityStatus.Ready;
+        var nativeComplete = nativeTurn is { State: "Completed" } && nativeReady;
         if (nativeComplete)
             detection = detection with { Reason = "Codex completed its turn and its prompt is ready for input.",
                 Rule = "codex/native-turn-completed", Evidence = "Native session recorded task_complete." };
-        else if (nativeTurn is { State: "Aborted" } && detection.Status == AgentActivityStatus.Ready)
+        else if (nativeTurn is { State: "Aborted" } && nativeReady)
             detection = detection with { Reason = "Codex's last turn was interrupted; its prompt is ready for input.",
                 Rule = "codex/native-turn-aborted", Evidence = "Native session recorded turn_aborted." };
         var changedProcess = old.Identity != identity || old.SessionIdentity is not null && old.SessionIdentity != session;
@@ -95,7 +96,7 @@ public static class AgentActivityTracker
             && observation.PendingSince is { } stableSince && now - stableSince >= TimeSpan.FromSeconds(5);
         var turnCompleted = completed || previous.CurrentTurnCompleted && detection.Status is not
             (AgentActivityStatus.Working or AgentActivityStatus.NeedsInput or AgentActivityStatus.UsageLimited)
-            && nativeTurn is not { State: "Aborted" };
+            && nativeTurn is not { State: "Aborted" or "Started" } && detection.Rule != "usage-limit-expired";
         var meaningfulChange = changedProcess || status != previous.Status || turnCompleted != previous.CurrentTurnCompleted || detection.QuestionWaiting != previous.QuestionWaiting
             || detection.BackgroundTaskCount != previous.BackgroundTaskCount
             || reason != previous.Reason || detection.Rule != previous.Rule || completed;

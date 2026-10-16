@@ -121,6 +121,28 @@ public class NativeActivityTests
     }
 
     [Theory]
+    [InlineData(AgentActivityStatus.Unknown, "usage-limit-unavailable")]
+    [InlineData(AgentActivityStatus.Unknown, "codex/matching-timeout")]
+    [InlineData(AgentActivityStatus.Unknown, "snapshot-unavailable")]
+    [InlineData(AgentActivityStatus.Ready, "usage-limit-expired")]
+    public void NativeEventsPreserveUnavailableAndExpiredLimitObservations(AgentActivityStatus status, string rule)
+    {
+        foreach (var nativeState in new[] { "Started", "Completed", "Aborted" })
+        {
+            var agent = Agent();
+            Observe(agent, Turn("previous"));
+            var detection = new AgentScreenDetection(status, "keep this explanation", rule);
+            AgentActivityTracker.Apply(agent, detection, "pane", Now.AddSeconds(10), Turn("next", nativeState, 10));
+            AgentActivityTracker.Apply(agent, detection, "pane", Now.AddSeconds(15), Turn("next", nativeState, 10));
+            var current = AgentActivityTracker.GetDto(agent, Now.AddSeconds(15));
+            Assert.Equal(status, current.Status);
+            Assert.Equal(rule, current.Rule);
+            Assert.Equal("keep this explanation", current.Reason);
+            Assert.False(current.IsFinished);
+        }
+    }
+
+    [Theory]
     [InlineData("· 06:00")]
     [InlineData("• 06:00")]
     [InlineData("· Oct 16 at 06:00")]

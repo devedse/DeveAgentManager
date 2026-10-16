@@ -12,7 +12,7 @@ Transport failures log Runner ID, connection ID/age, the known execution phase, 
 
 The isolated OpenSSH regression uses loopback, temporary keys/data and the normal MaxSessions=10. It verifies sequential reuse, a twenty-command burst on the bounded pool, simultaneous commands on distinct transports, deadline recovery, a running command surviving pool retirement, no duplicated side effect, cancellation during a paused channel open, no late exec request, streaming output and SFTP. It resumes and removes only its disposable server processes. CI installs openssh-server for this test. Unit tests cover capacity, canceled waiters, late old failures and retirement during connection setup. Live deployment behavior must still be recorded separately from these tests.
 
-Local validation: all 655 tests pass, the Release solution builds, and activity/scheduling browser checks pass in Chromium/light and Firefox/dark at desktop and phone sizes. The read-only native probe was also checked against running sessions: a completed idle session returned its recorded completion, while long active sessions without a lifecycle event in the bounded tail fell back to screen evidence. No production SSH service or agent was restarted for verification.
+Local validation: all 659 tests pass, the Release solution builds, and activity/scheduling browser checks pass in Chromium/light and Firefox/dark at desktop and phone sizes. The read-only native probe was also checked against running sessions: a completed idle session returned its recorded completion, while long active sessions without a lifecycle event in the bounded tail fell back to screen evidence. No production SSH service or agent was restarted for verification.
 
 ## Historical investigation
 
