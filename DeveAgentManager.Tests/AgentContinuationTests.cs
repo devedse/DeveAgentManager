@@ -741,6 +741,66 @@ public sealed class AgentContinuationTests
         Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
     }
 
+    [Fact]
+    public async Task AutoContinueRepairsStoredRecapWithoutMovingObservationOrSendingTwice()
+    {
+        await using var rig = await Rig.Create();
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = rig.Terminal.Screen.Screen
+            .Replace("\n\n›", "\n\n  ↳ Recap: Tests passed. Next: Update the report.\n\n›") };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var observedAt = rig.Clock.Utc.UtcDateTime;
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            var row = (await db.AgentLimits.FindAsync([rig.Id], Ct))!;
+            row.Message += " ↳ Recap: Tests passed. Next: Update the report.";
+            row.ResetAt = null;
+            row.Detail = "Previously unparsed";
+            await db.SaveChangesAsync(Ct);
+        }
+        // A deployment on a later day must not reinterpret yesterday's paused error as a new limit.
+        rig.Clock.Utc = rig.Clock.Utc.AddDays(1);
+        await rig.Service.SetAutomaticAsync(rig.Id, true, 2, Ct);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            var row = (await db.AgentLimits.FindAsync([rig.Id], Ct))!;
+            Assert.Equal(observedAt, row.DetectedAt);
+            Assert.Equal(observedAt.AddMinutes(2), row.ResetAt);
+            Assert.Equal(observedAt.AddMinutes(3), row.ContinueAt);
+            Assert.DoesNotContain("Recap:", row.Message);
+        }
+        for (var i = 0; i < 4; i++) await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        var automatic = await rig.Service.GetAutomaticAsync(rig.Id, Ct);
+        Assert.True(automatic.Enabled);
+        Assert.Equal(1, automatic.Sent);
+        Assert.Equal(1, automatic.Remaining);
+    }
+
+    [Fact]
+    public async Task RecapRepairKeepsChosenResetAndArmedSchedule()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var chosen = rig.Clock.Utc.AddHours(1).UtcDateTime;
+        await rig.Service.ScheduleAsync(rig.Id, chosen, Ct);
+        var before = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            var row = (await db.AgentLimits.FindAsync([rig.Id], Ct))!;
+            row.Message += " ↳ Recap: Tests passed. Next: Update the report.";
+            await db.SaveChangesAsync(Ct);
+        }
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var after = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal(before.DetectedAt, after.DetectedAt);
+        Assert.Equal(before.DetectedResetAt, after.DetectedResetAt);
+        Assert.Equal(chosen, after.ResetAt);
+        Assert.Equal(before.ContinueAt, after.ContinueAt);
+        Assert.Equal("Scheduled", after.Status);
+        Assert.Equal(0, rig.Terminal.Sends);
+        Assert.DoesNotContain("Recap:", after.Message);
+    }
+
     private static string PiScreen => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", "pi-idle-cursor-line.txt"));
 
     [Fact]

@@ -126,7 +126,9 @@ public static class UsageLimitParser
         // its prefix requires it when a stored message is parsed again.)
         message = Replace(message, @"^[⎿└]\s*", "", RegexOptions.None);
         if (harness == "codex")
-            message = Replace(message, @"\s+(?:\d+ background terminals? running\b|⚠(?:️)?\s*(?:5h|weekly)\s+(?:limit:\s*)?\d+%\s+left\b).*$", "",
+            // A recap is context below the error, not part of its reset timestamp. Normalize here
+            // so already-stored messages are repaired using their original observation date too.
+            message = Replace(message, @"\s+(?:↳\s*Recap:|\d+ background terminals? running\b|⚠(?:️)?\s*(?:5h|weekly)\s+(?:limit:\s*)?\d+%\s+left\b).*$", "",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Trim();
         Bound(message, 1800, "message-length");
         var marker = Match(message, @"(?:try again at|will reset at|\bresets|continuing automatically at)\s+(?<reset>.+)$");

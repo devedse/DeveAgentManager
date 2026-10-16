@@ -586,8 +586,9 @@
         dotnet?.invokeMethodAsync("OnImageStatus", "done", "");
         if (paths.length > 0) {
             afterPaste();
-            // A space after each, so text typed next doesn't run into the path.
-            terminal.paste(paths.join(" ") + " ");
+            // Codex recognizes one image path per paste. Keep each file in its own bracketed
+            // paste, with a space so ordinary file paths don't run into text typed next.
+            for (const path of paths) terminal.paste(path + " ");
             terminal.focus();
         }
     }

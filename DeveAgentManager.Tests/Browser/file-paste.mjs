@@ -2,7 +2,8 @@ const playwright = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 import assert from 'node:assert/strict';
 
 // Files into the terminal (Ctrl+V, also a file copied in the file manager, or dropped): any file goes to the Runner over
-// the terminal's socket, with its name, and its path is typed into the terminal. Text copied with a picture stays text.
+// the terminal's socket, with its name, and each path gets its own paste so Codex recognizes image attachments.
+// Text copied with a picture stays text.
 const engine = process.env.DAM_TEST_BROWSER ?? 'chromium';
 const browser = await playwright[engine].launch();
 const base = process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
@@ -31,6 +32,8 @@ try {
     await context.routeWebSocket('**/ws/terminal?**', ws => {
         let receiving = null;
         ws.send(JSON.stringify({ type: 'ready', tty: '/dev/pts/9' }));
+        // Codex and the other interactive harnesses enable bracketed paste.
+        ws.send(Buffer.from('\x1b[?2004h'));
         ws.onMessage(message => {
             if (typeof message === 'string') {
                 const control = JSON.parse(message);
@@ -107,7 +110,38 @@ try {
     await waitFor(() => uploads.length === before + 1 && typed.includes('/notes.md '), 'a dropped file is uploaded');
     assert.deepEqual(uploads.at(-1), { name: 'notes.md', content: '# Notes' });
 
-    console.log(`Passed (${engine}): ${scriptedPaste ? 'pasted and ' : ''}dropped files of any type upload with their name and type their path${scriptedPaste ? '; text copied with a picture stays text' : ' (this browser ignores scripted paste data)'}.`);
+    const images = [
+        { name: 'first.png', type: 'image/png', content: 'first image' },
+        { name: 'second.jpg', type: 'image/jpeg', content: 'second image' },
+    ];
+    const pastes = () => [...typed.matchAll(/\x1b\[200~([\s\S]*?)\x1b\[201~/g)].map(match => match[1]);
+    const expected = files => files.map(file => `/home/runner/.deveagentmanager/uploads/20261011-010203-abcd1234/${file.name} `);
+    for (const kind of scriptedPaste ? ['paste', 'drop'] : ['drop']) {
+        typed = '';
+        const count = uploads.length;
+        assert.equal(await deliver(kind, images), true);
+        await waitFor(() => uploads.length === count + images.length && pastes().length === images.length, 'each image gets its own bracketed paste');
+        assert.deepEqual(pastes(), expected(images));
+        assert.equal(typed, expected(images).map(path => `\x1b[200~${path}\x1b[201~`).join(''), 'no Enter or extra terminal input');
+    }
+
+    // A mixed batch retains ordinary file names and original order.
+    typed = '';
+    const mixed = [images[0], { name: 'results.log', type: 'text/plain', content: 'passed' }, images[1]];
+    await deliver('drop', mixed);
+    await waitFor(() => pastes().length === mixed.length, 'mixed batch completed');
+    assert.deepEqual(pastes(), expected(mixed));
+
+    // The phone's attachment button uses the same path, including multiple selected images.
+    await page.setViewportSize({ width: 390, height: 850 });
+    typed = '';
+    const chooser = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: 'Send an image', exact: true }).click();
+    await (await chooser).setFiles(images.map(file => ({ name: file.name, mimeType: file.type, buffer: Buffer.from(file.content) })));
+    await waitFor(() => pastes().length === images.length, 'phone image picker completed');
+    assert.deepEqual(pastes(), expected(images));
+
+    console.log(`Passed (${engine}): file upload names/content, separate image paste events, mixed batch order, phone multi-image picker, no automatic submission${scriptedPaste ? ', text/image clipboard precedence' : ' (scripted clipboard unavailable; drops and picker checked)'}.`);
 } finally {
     await browser.close();
 }

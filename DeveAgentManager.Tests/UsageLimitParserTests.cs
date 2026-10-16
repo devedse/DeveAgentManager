@@ -77,6 +77,36 @@ public sealed class UsageLimitParserTests
         Assert.DoesNotContain("48%", parsed.Message);
     }
 
+    [Theory]
+    [InlineData("\n\n  ↳ Recap: Tests passed. Next: Update the report; integrate and")]
+    [InlineData("\n\n  ↳ Recap: Tests passed.\n    Next: Update the report; integrate and")]
+    [InlineData("\n\n  ↳\n    Recap: The previous login resets at 3:10 PM.")]
+    public void CodexLatestResetExcludesRecapAndOlderLoginError(string recap)
+    {
+        var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
+        var latest = Codex("1:25 PM");
+        var screen = "■ You've hit your usage limit. Try again at 3:10 PM.\n\n› Go\n\n"
+            + latest.Replace("\n\n›", recap + "\n\n›");
+        var parsed = UsageLimitParser.Parse("codex", screen, "UTC", now)!;
+        Assert.Equal(new DateTime(2026, 10, 16, 13, 25, 0, DateTimeKind.Utc), parsed.ResetAt);
+        Assert.Equal(UsageLimitParser.Parse("codex", latest, "UTC", now)!.Message, parsed.Message);
+        Assert.Null(parsed.Detail);
+
+        var stored = UsageLimitParser.InspectStored("codex", parsed.Message + recap, "UTC", now);
+        Assert.True(stored.Available);
+        Assert.Equal(parsed, stored.Limit);
+    }
+
+    [Fact]
+    public void CodexRecapCannotSupplyAMissingResetOrHideLaterWork()
+    {
+        var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
+        var screen = Codex("an unknown time").Replace("\n\n›", "\n  ↳ Recap: Try again at 1:25 PM.\n\n›");
+        Assert.Null(UsageLimitParser.Parse("codex", screen, "UTC", now)!.ResetAt);
+        var resumed = screen.Replace("\n\n›", "\n• Working (1s • esc to interrupt)\n\n›");
+        Assert.Null(UsageLimitParser.Parse("codex", resumed, "UTC", now));
+    }
+
     [Fact]
     public void DetectsRemoteCompactionUsageErrorAndItsReset()
     {
