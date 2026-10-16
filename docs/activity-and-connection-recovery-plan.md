@@ -22,20 +22,23 @@ pending evidence and review.
   phone sizes, including acknowledgement, later work, independent policy loading, unavailable detection and retry.
 - The disposable development Manager, test user and keys were removed after verification.
 - SSH transport behavior is unchanged. CI/artifact publication and live deployment verification remain separate results.
+- The first CI run was blocked at restore by newly published high-severity advisories affecting the existing
+  Microsoft 10.0.12 packages. References were updated to 10.0.13; a fresh audited restore, all 635 host tests and
+  the Chromium/Firefox browser checks pass with that update.
 
 ## Evidence and limits of the diagnosis
 
 | Finding | Established from logs and code | Still unconfirmed |
 |---|---|---|
 | Usage-limit parsing | A regex timeout escapes through `UsageLimitState.DetectedReset` into `GET /agents/{id}/limit`. A separate timeout occurred during background limit observation. | The precise input or machine condition that exhausted the timeout. Ordinary and long synthetic inputs did not reproduce it locally. |
-| SSH | Terminal observation, job-completion collection and session sync share pooled command connections. The pinned library throws the ten-attempt message after explicit channel-open refusals. An isolated experiment reproduced that message while the same connection remained usable afterward. | Why the production server refused channels or why earlier requests timed out. The available Runner journal did not establish the cause; neither network loss nor session exhaustion is confirmed. |
+| SSH | A broader journal query found 54 `no more sessions` refusals from the affected Manager connection. A second isolated experiment with the normal ten-session limit reproduced persistent exhaustion after channel-open timeouts; a fresh connection worked. | What caused the initial delay, and whether the production slots were all abandoned opens. Memory-pressure events coincide with the refusal burst, but historical channel and resource traces are unavailable. |
 | Proxmox | Both Runners briefly lost fast sampling and resumed it. A network-unreachable incident and an HTTP timeout incident are recorded. Any `PveResultException` currently triggers VM-location rediscovery. | Why the shared Proxmox path was unavailable. The logs do not establish a VM migration or a Manager defect as the original trigger. |
 | Session-sync wording | Periodic monitoring calls the method that logs `Final session sync ... failed`. | These entries alone establish neither an agent exit nor lost conversation data. |
 | Finished/Ready | The badge requires an unread completion. A visible, focused terminal marks it read and therefore changes the badge to Ready. | No further cause is needed to explain this behavior. |
 
-Treat the timeout and channel-refusal messages as evidence of failure, not proof of catastrophic regex
-backtracking, a server session limit, or a particular network fault. Capture enough non-sensitive diagnostics
-to distinguish those causes if they recur.
+The server journal establishes session exhaustion for this SSH incident. A timeout alone does not establish
+catastrophic regex backtracking or a network fault. Keep the confirmed refusal separate from the inferred
+timeout/abandoned-channel mechanism and the still-unconfirmed initial trigger.
 
 ## Behavior required across all changes
 
@@ -147,27 +150,30 @@ the reported incident. See the pinned library's
 
 ### Investigation completed so far
 
-- A disposable loopback SSH server with `MaxSessions 1` and the pinned SSH.NET 2026.0.0 client reproduced the exact
-  ten-attempt error in about one millisecond while another command occupied the slot. `IsConnected` remained true.
-  After that command finished, a new command succeeded on the same connection without reconnecting. The isolated
-  server log confirmed ten session-limit refusals. The server, disposable keys and test data were removed afterward.
-- This demonstrates a possible mechanism and why blanket reconnecting is unjustified; it does not reproduce the
-  production configuration or establish the incident's cause.
-- The checked Runner's current base server configuration allows ten sessions, and the library defaults to ten.
-  A per-user/source `Match` override and the configuration at incident time are not established by that base check.
-  There is no evidence supporting the previously proposed four-command cap.
-- Available service/kernel journals for the reported window show no recorded SSH service restart, session-limit
-  refusal, out-of-memory kill or matching resource failure. Absence from those journals does not rule them out.
-- The normal monitor awaits each poll; its disk and synchronization steps are sequential. Job collection is a
-  separate loop which also awaits its pass. There is no demonstrated unbounded overlap from those timers alone.
-  Other API/lifecycle callers and timed-out commands still require correlation.
+- Querying the `sshd` and `sshd-session` identifiers, including session scopes outside `ssh.service`, found
+  54 `no more sessions` refusals on the affected Manager connection in the reported window. Earlier service-only
+  inspection missed these records. The authenticated connection remained established when inspected afterward.
+- Effective current settings for the actual account and source, including `Match` rules, allow ten sessions.
+  The pinned client's default is also ten. No arbitrary four-command cap is justified by these findings.
+- A disposable `MaxSessions 1` fixture showed ordinary saturation: the exact ten-attempt exception occurs while
+  the connection remains established, and the same connection recovers after the occupying command finishes.
+- A second fixture used `MaxSessions 10` and SSH.NET 2026.0.0. Pausing only its authenticated server process while
+  ten channel opens timed out reproduced persistent exhaustion after resumption. Two subsequent probes each
+  failed after ten refusals while `IsConnected` stayed true; an independent connection succeeded immediately.
+  Fixture processes, disposable keys and data were removed. No production process was paused or reconfigured.
+- The Runner recorded two memory-pressure cache-flush events at the refusal burst. There is no recorded SSH
+  restart or OOM kill in the checked window. These events support investigating a resource stall but do not
+  establish the initial cause; cumulative pressure counters cannot be attributed to this incident.
+- The Manager reuses a client reporting `IsConnected` and only invalidates it for `SshConnectionException` in
+  command execution. Channel-open timeout/refusal exceptions therefore leave the same pooled connection eligible.
+- The full evidence, user impact and proposed correction are in
+  [SSH session exhaustion investigation](ssh-session-exhaustion-investigation.md). SSH implementation is unchanged.
 
-### Next evidence to collect
+### Remaining evidence and proposed correction
 
 1. Confirm the deployed Manager revision and SSH.NET build before comparing its control flow with current source.
    Correlate the first failure, repeated failures and first successful operation on one UTC timeline.
-2. Obtain the server's effective settings for the actual Manager account and source, including `Match` overrides,
-   session/channel limits and timeouts. Check historical configuration changes and service lifecycle evidence.
+2. Retain the confirmed current effective settings and check historical configuration changes if available.
 3. Correlate Manager command start/end/cancellation with server channel open/close, child-process exit and
    refusal reason. Count active channels per connection and determine whether cancelled or stalled commands left
    server-side sessions occupied. Keep terminal connections and SFTP separate from pooled exec connections.
@@ -176,15 +182,18 @@ the reported incident. See the pinned library's
    The missing reason code may require a targeted library trace or server diagnostic capture.
 5. Check for relevant process/file-descriptor limits, stalls and kernel/network events only where timestamps or
    refusal reasons support them. Do not infer a slow host or unreliable network from these exceptions alone.
-6. If historical evidence cannot identify the cause, propose narrowly scoped, temporary diagnostics for the next
-   occurrence, with operation categories and correlation identifiers instead of command bodies. No runtime
-   instrumentation or server log-level/configuration change is implemented as part of this plan update.
-7. Reproduce the supported hypothesis on an isolated fixture using representative configuration. Present the
-   evidence, remaining uncertainty and smallest proposed correction for review before changing SSH behavior.
+6. Add narrowly scoped diagnostics only in a separately reviewed SSH change: connection generation/age,
+   operation category and channel establishment/close/failure evidence, without command bodies or credentials.
+   Pair them with guest/cgroup memory and pressure measurements around recurrence.
+7. The representative fixture now supports a targeted proposal: retire the affected pooled connection after a
+   channel-establishment timeout, using connection-specific identity so an old failure cannot discard a newer
+   connection. Later independent operations may connect afresh; never replay the failed command. Distinguish
+   establishment from post-submission timeouts and ordinary temporary saturation. Verify concurrent callers,
+   cancellation and delivery uncertainty before implementation.
 
-The investigation can conclude that evidence is insufficient. Do not replace that conclusion with speculative
-connection retirement, changed concurrency limits, retries, keepalive tuning or server-limit increases. Any later
-fix must preserve the existing prohibition on replaying ambiguously submitted commands.
+The initial trigger remains uncertain. The reproduced abandoned-open failure supports reviewing a narrow
+connection-lifecycle correction; it does not justify changing keepalives, increasing server limits or retrying
+workloads. Any later fix must preserve the prohibition on replaying ambiguously submitted commands.
 
 ## 3. Keep Proxmox sampling failures cheap and recoverable
 
