@@ -3,7 +3,6 @@
     // Addons every terminal can use; XtermBlazor clones them per terminal.
     XtermBlazor.registerAddons({
         "addon-fit": new FitAddon.FitAddon(),
-        "addon-web-links": new WebLinksAddon.WebLinksAddon((event, uri) => window.open(uri, "_blank", "noopener")),
     });
 
     const observers = new Map();
@@ -164,6 +163,7 @@
 
     // Per terminal: the phone keyboard input (terminal-touch-input.js).
     const touchInputs = new Map();
+    const linkHandlers = new Map();
     // Phone keyboards rewrite text they already typed (autocorrect, predictions, swipe typing). xterm.js has already
     // sent those keys, so the terminal ends up with garbled text. Ask the browser not to do that in xterm's input.
     function hardenInput(terminal) {
@@ -177,29 +177,6 @@
         textarea.setAttribute("autocapitalize", "off");
         textarea.setAttribute("spellcheck", "false");
         textarea.setAttribute("enterkeyhint", "send");
-    }
-
-    // Link activation runs on xterm's screen; mouse reporting runs on its parent. Let the screen open the link,
-    // then stop the press/release from also reaching tmux and asking the harness to open a browser on the Runner.
-    function enableBrowserLinkClicks(element) {
-        const screen = element.querySelector(".xterm-screen");
-        if (!screen || screen.dataset.browserLinkClicks) {
-            return;
-        }
-        screen.dataset.browserLinkClicks = "true";
-        let linkPress = false;
-        screen.addEventListener("mousedown", event => {
-            linkPress = event.button === 0 && !event.shiftKey && screen.classList.contains("xterm-cursor-pointer");
-            if (linkPress) {
-                event.stopPropagation();
-            }
-        });
-        screen.addEventListener("mouseup", event => {
-            if (linkPress) {
-                event.stopPropagation();
-                linkPress = false;
-            }
-        });
     }
 
     // Swipe to scroll on touch screens. xterm.js only scrolls its own scrollback on touch. When the program asks for
@@ -719,7 +696,8 @@
             const element = terminal.element?.parentElement ?? document.getElementById(id);
             const xtermElement = terminal.element ?? element;
             if (xtermElement) {
-                enableBrowserLinkClicks(xtermElement);
+                linkHandlers.get(id)?.dispose();
+                linkHandlers.set(id, damTerminalLinks.install(terminal));
             }
             if (xtermElement && !xtermElement.dataset.touchScroll) {
                 xtermElement.dataset.touchScroll = "true";
@@ -913,6 +891,8 @@
         },
 
         dispose(id) {
+            linkHandlers.get(id)?.dispose();
+            linkHandlers.delete(id);
             this.disconnect(id);
             observers.get(id)?.disconnect();
             observers.delete(id);

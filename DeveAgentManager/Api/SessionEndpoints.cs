@@ -72,6 +72,15 @@ internal static class SessionEndpoints
 
         sessions.MapGet("/{sessionId:guid}/files", (Guid sessionId, SessionFileStore files, CancellationToken ct) => files.ListAsync(sessionId, ct))
             .RequireSession(SessionAccess.Read);
+        sessions.MapGet("/{sessionId:guid}/files/{fileId:guid}/preview", async (Guid sessionId, Guid fileId, HttpContext context, SessionFileStore files, CancellationToken ct) =>
+        {
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+            context.Response.Headers.CacheControl = "private, no-store";
+            if (await files.GetAsync(sessionId, fileId, ct) is not { } file) return Results.NotFound();
+            try { return Results.Ok(await SessionFilePreviewReader.ReadAsync(files.DataPath(sessionId, fileId), file.FileName, ct)); }
+            catch (FileNotFoundException) { return Results.NotFound(); }
+            catch (DirectoryNotFoundException) { return Results.NotFound(); }
+        }).RequireSession(SessionAccess.Read);
         // Always an attachment, resumable (range requests), never sniffed or cached.
         sessions.MapGet("/{sessionId:guid}/files/{fileId:guid}/download", async (Guid sessionId, Guid fileId, HttpContext context, SessionFileStore files, CancellationToken ct) =>
         {

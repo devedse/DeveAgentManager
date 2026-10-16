@@ -20,6 +20,8 @@
                     <small class="session-file-meta">@FileSize(file.Bytes) · @file.CreatedAt.Humanize() · <span class="mono" title="@($"SHA-256 {file.Sha256}")">SHA-256 @file.Sha256[..12]…</span></small>
                 </div>
                 <div class="session-file-actions">
+                    <MudButton OnClick="() => FilePreviewDialog.OpenAsync(Dialogs, file)" Class="session-file-view" Variant="Variant.Outlined" Size="Size.Small"
+                               StartIcon="@Icons.Material.Rounded.Visibility" aria-label="@($"View {file.FileName}")">View</MudButton>
                     @* download: the browser saves it, and Blazor's router leaves the link alone. *@
                     <MudButton Href="@ManagerApi.DownloadUrl(file)" download="@file.FileName" Class="session-file-download" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
                                StartIcon="@Icons.Material.Rounded.Download" aria-label="@($"Download {file.FileName}")">Download</MudButton>

@@ -1,0 +1,74 @@
+@inject ManagerApi Api
+
+<MudDialog Class="file-preview-dialog">
+    <TitleContent>
+        <div class="help-heading file-preview-title">
+            <MudText Typo="Typo.h6">@File.FileName</MudText>
+            <HelpTip Label="Viewing shared files"><p>Read text files here. Markdown files can switch between rendered formatting and their original text. Previews support UTF-8 and UTF-16 text up to 512 KiB; download other files to open them.</p></HelpTip>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <LoadingSection Loaded="_loaded" Error="@_error" Retry="LoadAsync" Label="Loading file preview">
+            <Placeholder><SkeletonDetail /></Placeholder>
+            <ChildContent>
+                @if (_preview?.Text is { } text)
+                {
+                    @if (_preview.Markdown)
+                    {
+                        <div class="file-preview-modes" role="group" aria-label="File view mode">
+                            <MudButton OnClick="() => _rendered = true" Variant="@(_rendered ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" aria-pressed="@_rendered">Rendered</MudButton>
+                            <MudButton OnClick="() => _rendered = false" Variant="@(!_rendered ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" aria-pressed="@(!_rendered)">Text</MudButton>
+                        </div>
+                    }
+                    <div class="file-preview-content" tabindex="0" aria-label="File contents">
+                        @if (_preview.Markdown && _rendered)
+                        {
+                            <article class="markdown file-preview-markdown">@_html</article>
+                        }
+                        else
+                        {
+                            <pre class="file-preview-text">@text</pre>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2">@_preview?.UnavailableReason</MudText>
+                }
+            </ChildContent>
+        </LoadingSection>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Href="@ManagerApi.DownloadUrl(File)" download="@File.FileName" StartIcon="@Icons.Material.Rounded.Download">Download</MudButton>
+        <MudButton OnClick="() => Dialog.Close()">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public SessionFileDto File { get; set; } = default!;
+    private SessionFilePreview? _preview;
+    private MarkupString _html;
+    private bool _rendered = true;
+    private bool _loaded;
+    private string? _error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _error = null;
+        try
+        {
+            _preview = await Api.PreviewSessionFileAsync(File);
+            _html = _preview.Markdown ? MarkdownRenderer.FileToHtml(_preview.Text) : default;
+            _loaded = true;
+        }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
+    }
+
+    public static Task OpenAsync(IDialogService dialogs, SessionFileDto file) => dialogs.ShowAsync<FilePreviewDialog>(file.FileName,
+        new DialogParameters<FilePreviewDialog> { { d => d.File, file } },
+        new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.ExtraLarge, CloseButton = true });
+}

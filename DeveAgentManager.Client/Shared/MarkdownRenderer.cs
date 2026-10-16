@@ -1,6 +1,7 @@
 using Markdig;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
+using Markdig.Renderers.Html;
 using Microsoft.AspNetCore.Components;
 
 namespace DeveAgentManager.Client.Shared;
@@ -15,6 +16,32 @@ public static class MarkdownRenderer
         .UseAdvancedExtensions()
         .DisableHtml()
         .Build();
+
+    // Files need tables, code, lists and headings; arbitrary HTML attributes and embedded media stay disabled.
+    private static readonly MarkdownPipeline FilePipeline = new MarkdownPipelineBuilder()
+        .UsePipeTables().UseTaskLists().UseEmphasisExtras().UseAutoIdentifiers().UseAutoLinks().DisableHtml().Build();
+
+    public static MarkupString FileToHtml(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return default;
+        var document = Markdown.Parse(text, FilePipeline);
+        foreach (var link in document.Descendants<LinkInline>())
+        {
+            link.Url = FileUrl(link.Url);
+            if (!link.IsImage && !link.Url.StartsWith('#'))
+            {
+                var attributes = link.GetAttributes();
+                attributes.AddProperty("target", "_blank");
+                attributes.AddProperty("rel", "noopener noreferrer");
+            }
+        }
+        foreach (var link in document.Descendants<AutolinkInline>()) link.Url = FileUrl(link.Url);
+        return new(document.ToHtml(FilePipeline));
+    }
+
+    private static string FileUrl(string? url) => url is not null && !url.Any(char.IsControl)
+        && (url.StartsWith('#') || Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http" or "mailto")
+        ? url : "#";
 
     public static MarkupString ToHtml(string? text)
     {

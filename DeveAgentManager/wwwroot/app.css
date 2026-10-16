@@ -3086,11 +3086,25 @@ body:has(.terminal-layout) .agent-attention-popover {
 .session-file-caption { font-size: .875rem; overflow-wrap: anywhere; }
 .session-file-meta { color: var(--dam-muted); font-size: .75rem; overflow-wrap: anywhere; }
 .session-file-actions { display: flex; align-items: center; gap: 4px; }
+.file-preview-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
+.file-preview-title { min-width: 0; }
+.file-preview-title .mud-typography { overflow-wrap: anywhere; }
+.file-preview-modes { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.file-preview-content { max-height: 65dvh; min-height: 120px; overflow: auto; border: 1px solid var(--dam-border); border-radius: 10px; background: var(--dam-surface-2); padding: 16px; }
+.file-preview-text { font-family: monospace; font-size: .875rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.file-preview-markdown { overflow-wrap: anywhere; }
+.file-preview-markdown img { max-width: 100%; }
+.file-preview-markdown table { display: block; max-width: 100%; overflow-x: auto; }
+@media (max-width: 520px) {
+    .file-preview-dialog .mud-dialog-content { padding: 12px; }
+    .file-preview-content { padding: 12px; }
+}
 /* Phones: a full-width download button under the name, easy to tap. */
 @media (max-width: 520px) {
     .session-file { grid-template-columns: auto minmax(0, 1fr); }
-    .session-file-actions { grid-column: 1 / -1; }
-    .session-file-download { flex: 1 1 auto; }
+    .session-file-actions { grid-column: 1 / -1; flex-wrap: wrap; }
+    .session-file-view { flex: 1 1 auto; }
+    .session-file-download { flex: 1 1 100%; order: 1; }
 }
 .shared-image-navigation { display: flex; align-items: center; margin-right: auto; white-space: nowrap; }
 .shared-image-stage { position: relative; overflow: hidden; min-height: 100px; touch-action: pan-y pinch-zoom; user-select: none; }

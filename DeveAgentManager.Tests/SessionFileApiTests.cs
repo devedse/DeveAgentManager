@@ -52,6 +52,10 @@ public sealed class SessionFileApiTests(ApiSecurityTests.Manager manager) : ICla
         Assert.Equal(("attachment", "app-release.apk"), (download.Content.Headers.ContentDisposition?.DispositionType, download.Content.Headers.ContentDisposition?.FileNameStar));
         Assert.Equal("nosniff", download.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.True(download.Headers.CacheControl!.NoStore);
+        var previewUrl = $"/api/sessions/{sessionId}/files/{file.Id}/preview";
+        var binaryPreview = await reader.GetFromJsonAsync<SessionFilePreview>(previewUrl, ApiJson.Options);
+        Assert.Null(binaryPreview!.Text);
+        Assert.Contains("binary", binaryPreview.UnavailableReason!);
 
         // An interrupted download on a phone continues where it stopped.
         var resumed = await reader.SendAsync(new HttpRequestMessage(HttpMethod.Get, url) { Headers = { Range = new RangeHeaderValue(10, null) } });
@@ -63,7 +67,40 @@ public sealed class SessionFileApiTests(ApiSecurityTests.Manager manager) : ICla
         Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"/api/sessions/{sessionId}/files/{file.Id}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await owner.DeleteAsync($"/api/sessions/{sessionId}/files/{file.Id}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await reader.GetAsync(url)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await reader.GetAsync(previewUrl)).StatusCode);
         Assert.Empty((await reader.GetFromJsonAsync<List<SessionFileDto>>($"/api/sessions/{sessionId}/files", ApiJson.Options))!);
+    }
+
+    [Fact]
+    public async Task FilePreviewRequiresConversationReadPermissionAndReturnsInertUncachedText()
+    {
+        var (owner, ownerId) = await SignedInAsNewUserAsync();
+        var (stranger, strangerId) = await SignedInAsNewUserAsync();
+        var sessionId = Guid.NewGuid();
+        await using (var db = await manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync())
+        {
+            db.Sessions.Add(new StoredSession { Id = sessionId, OwnerId = ownerId, Title = "Preview", HarnessId = "codex" });
+            await db.SaveChangesAsync();
+        }
+        var store = manager.Services.GetRequiredService<SessionFileStore>();
+        const string markdown = "# Preview\n<script>alert('untrusted')</script>\n";
+        var data = Encoding.UTF8.GetBytes(markdown);
+        using var incoming = await store.ReceiveAsync(data.Length, Convert.ToHexStringLower(SHA256.HashData(data)), (s, ct) => s.WriteAsync(data, ct).AsTask(), default);
+        var file = await store.CommitAsync(sessionId, Guid.NewGuid(), incoming, "report.md", "", default);
+        var url = $"/api/sessions/{sessionId}/files/{file.Id}/preview";
+        Assert.Equal(HttpStatusCode.NotFound, (await stranger.GetAsync(url)).StatusCode);
+        var anonymous = manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(url)).StatusCode);
+        await manager.Services.GetRequiredService<Sharing>().ShareSessionAsync(TestUsers.Plain(ownerId), sessionId, strangerId);
+        var response = await stranger.GetAsync(url);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType!.MediaType);
+        Assert.True(response.Headers.CacheControl!.NoStore);
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        var preview = await response.Content.ReadFromJsonAsync<SessionFilePreview>(ApiJson.Options);
+        Assert.Equal(markdown, preview!.Text);
+        Assert.True(preview.Markdown);
+        Assert.Null(preview.UnavailableReason);
     }
 
     /// <summary>A new user, signed in, past choosing their own password, as the Portal (its header and origin).</summary>

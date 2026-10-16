@@ -1,0 +1,15 @@
+# Proxmox status warning mentioning a configuration file
+
+The usage sampler requests `GET /api2/json/nodes/{node}/qemu/{vmid}/status/current` through the configured Proxmox HTTPS API client. It does not open a host file, mount the Proxmox filesystem or run SSH commands on the Proxmox host. The apparent file access in the exception is Proxmox explaining its own failed operation.
+
+Proxmox's [status endpoint implementation](https://github.com/proxmox/qemu-server/blob/master/src/PVE/API2/Qemu.pm) calls `PVE::QemuConfig->load_config` before reading the VM counters. Its [configuration path implementation](https://github.com/proxmox/qemu-server/blob/master/src/PVE/QemuConfig.pm) constructs `nodes/{node}/qemu-server/{vmid}.conf`. These paths belong to Proxmox's internal cluster configuration. The API checks VM.Audit permission for status reads; this does not add a host filesystem permission to the Manager.
+
+The Manager added this endpoint for one-second CPU/RAM sampling in commit `7ace57b` on 2026-09-29. Migration recovery was added in `b446810`; the bounded five-second sampling attempt and more selective fallback were added in `aa60c6c`. None introduced direct host-file reading. The provider also uses Proxmox configuration APIs for existing template and provisioning checks, which are separate from sampling.
+
+For an existing VM, the sampler prefers the node learned by a full cluster status check. Until that is available, it tries the VM's stored creation node. A node-specific missing-configuration response can trigger a cluster VM lookup and one status read at a newly discovered node. Generic authentication, transport and server errors do not trigger that recovery. The entire attempt, including any rediscovery, has a five-second budget.
+
+The reported warning contains both the five-second budget exception and an inner Proxmox missing-configuration exception. It proves that the requested node did not provide that VM configuration and the sampling attempt had exhausted its deadline by exception handling. It does not establish that the configuration was deleted, that the VM stopped, or that a migration definitely occurred. If the first request takes the entire budget, the selective recovery is deliberately skipped for that attempt. The existing timer then retries after ten seconds. A successful full status lookup can independently refresh the node cache.
+
+User impact is a gap in fresh CPU/RAM readings and slower fallback status readings. This sampler does not stop agents or change their VM configuration. Its warning is logged once when sampling starts failing, with a recovery entry once sampling resumes.
+
+To establish the deployment cause, correlate the failed UTC timestamp and VM ID with the requested node, the cluster resource listing at that time, migration/HA history, API proxy logs and later sampling recovery. These can distinguish an outdated location, migration in progress, a removed VM or cluster/API trouble. Keep host identities, addresses, tokens and raw deployment logs out of tracked documentation. No Proxmox host, VM or sampling behavior was modified during this investigation.
