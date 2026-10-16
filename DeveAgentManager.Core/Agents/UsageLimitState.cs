@@ -13,7 +13,7 @@ internal static class UsageLimitState
 
     internal static bool HasExpired(AgentLimit limit, DateTime now) => DetectedReset(limit) is { } reset && reset <= now;
 
-    internal static AgentScreenDetection ApplyExpiry(Agent agent, AgentLimit? limit, string screen, string? identity,
+    internal static AgentScreenDetection ApplyResetStatus(Agent agent, AgentLimit? limit, string screen, string? identity,
         AgentScreenDetection detection, DateTime now, UsageLimitReader? reader = null)
     {
         // Batched activity snapshots use pipes; the continuation probe stores the same fields with colons.
@@ -26,7 +26,7 @@ internal static class UsageLimitState
         var current = reader.Screen(agent, new(screen, identity ?? "", limit.TimeZoneId, false, ""), now);
         if (!current.Available) return detection with { Status = AgentActivityStatus.Unknown, Rule = "usage-limit-unavailable", Reason = current.Problem! };
         if (current.Limit?.Message != limit.Message) return detection;
-        return detection with { Status = AgentActivityStatus.Ready, Rule = "usage-limit-expired",
-            Reason = "The detected usage-limit reset has passed. The prompt was paused; continue it when ready." };
+        return detection with { Rule = "usage-limit-reset-passed",
+            Reason = "The advertised reset has passed, but the usage-limit error is still visible. The agent has not resumed." };
     }
 }

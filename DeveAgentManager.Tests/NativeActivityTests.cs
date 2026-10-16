@@ -124,8 +124,8 @@ public class NativeActivityTests
     [InlineData(AgentActivityStatus.Unknown, "usage-limit-unavailable")]
     [InlineData(AgentActivityStatus.Unknown, "codex/matching-timeout")]
     [InlineData(AgentActivityStatus.Unknown, "snapshot-unavailable")]
-    [InlineData(AgentActivityStatus.Ready, "usage-limit-expired")]
-    public void NativeEventsPreserveUnavailableAndExpiredLimitObservations(AgentActivityStatus status, string rule)
+    [InlineData(AgentActivityStatus.UsageLimited, "usage-limit-reset-passed")]
+    public void NativeEventsPreserveUnavailableAndUnresolvedLimitObservations(AgentActivityStatus status, string rule)
     {
         foreach (var nativeState in new[] { "Started", "Completed", "Aborted" })
         {

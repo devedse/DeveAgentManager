@@ -11,6 +11,188 @@ public sealed class AgentContinuationTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    [Fact]
+    public async Task AutomaticScheduleFollowsNewerResetAndRemainsVisibleUntilRecovery()
+    {
+        await using var rig = await Rig.Create();
+        rig.Clock.Utc = new(2026, 10, 16, 16, 5, 0, TimeSpan.Zero);
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.Codex("Oct 22nd, 2026 8:41 AM"), TimeZone = "Europe/Amsterdam" };
+        await rig.Service.SetAutomaticAsync(rig.Id, true, 2, Ct);
+        Assert.Equal(new DateTime(2026, 10, 22, 6, 42, 0, DateTimeKind.Utc), (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt);
+
+        // A manual Continue gets a different quota window. Only automatic schedules follow it.
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.ChangedCodexReset };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var next = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal(new DateTime(2026, 10, 16, 16, 26, 0, DateTimeKind.Utc), next.DetectedResetAt);
+        Assert.Equal(next.DetectedResetAt!.Value.AddMinutes(1), next.ContinueAt);
+        rig.Service.Dispose(); rig.Service = rig.NewService();
+        rig.Clock.Utc = new(2026, 10, 16, 16, 34, 0, TimeSpan.Zero);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        for (var i = 0; i < 3; i++) await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        ReadyWithoutLimit(rig);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+    }
+
+    [Fact]
+    public async Task CurrentLimitOutweighsReplyTimestampAfterItsReset()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.SetAutomaticAsync(rig.Id, true, 2, Ct);
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            (await db.Agents.FindAsync([rig.Id], Ct))!.LastAssistantMessageAt = rig.Clock.Utc.UtcDateTime;
+            await db.SaveChangesAsync(Ct);
+        }
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+    }
+
+    [Fact]
+    public async Task NewLimitWithUnknownResetReplacesAutomaticScheduleWithoutGuessing()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.SetAutomaticAsync(rig.Id, true, 2, Ct);
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = UsageLimitParserTests.Codex("an unknown time") };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var limit = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal("Detected", limit.Status);
+        Assert.Null(limit.ContinueAt);
+        Assert.Null(limit.DetectedResetAt);
+        Assert.Contains("reset time is uncertain", (await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Detail);
+        rig.Clock.Utc = rig.Clock.Utc.AddHours(1);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+    }
+
+    [Fact]
+    public async Task LegacyExpiredDetectionRetainsObservationDateAndCatchesUpOnlyOnce()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            (await db.AgentLimits.FindAsync([rig.Id], Ct))!.Status = "Expired";
+            await db.SaveChangesAsync(Ct);
+        }
+        var observedAt = rig.Clock.Utc.UtcDateTime;
+        rig.Clock.Utc = rig.Clock.Utc.AddDays(1);
+        await rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var limit = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal(observedAt, limit.DetectedAt);
+        Assert.Equal(observedAt.AddMinutes(2), limit.DetectedResetAt);
+        Assert.Equal(1, rig.Terminal.Sends);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+    }
+
+    [Fact]
+    public async Task UnrecognizedScreenDoesNotClearKnownLimit()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = "unrecognized screen" };
+        rig.Clock.Utc = rig.Clock.Utc.AddHours(1);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal("Detected", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        ReadyWithoutLimit(rig);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RecoveryBeforeResetClearsAutomaticSchedule(bool working)
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.SetAutomaticAsync(rig.Id, true, 2, Ct);
+        ReadyWithoutLimit(rig);
+        if (working) rig.Terminal.Screen = rig.Terminal.Screen with { Screen = "• Working (2s • esc to interrupt)\n" + rig.Terminal.Screen.Screen };
+        else
+        {
+            await using var db = rig.Factory.CreateDbContext();
+            (await db.Agents.FindAsync([rig.Id], Ct))!.LastAssistantMessageAt = rig.Clock.Utc.UtcDateTime.AddSeconds(1);
+            await db.SaveChangesAsync(Ct);
+        }
+        rig.Clock.Utc = rig.Clock.Utc.AddSeconds(5);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+        Assert.True((await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Enabled);
+        Assert.Equal(0, rig.Terminal.Sends);
+    }
+
+    [Fact]
+    public async Task ChangedWordingWithSameResetDoesNotLoseUnsentAutomaticReservation()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.SetAutomaticAsync(rig.Id, true, 2, Ct);
+        var due = (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt;
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = rig.Terminal.Screen.Screen.Replace("Upgrade to Pro", "Upgrade your plan") };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(due, (await rig.Service.GetAsync(rig.Id, Ct))!.ContinueAt);
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        // A changed rejection after a confirmed send must not release that send's key.
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = rig.Terminal.Screen.Screen.Replace("Upgrade your plan", "Upgrade to Pro") };
+        for (var i = 0; i < 3; i++) await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        Assert.Contains("already attempted", (await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Detail);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReplacedAutomaticScheduleRecordsCurrentPaneAndTimezone(bool timezoneChanged)
+    {
+        await using var rig = await Rig.Create();
+        await rig.Service.SetAutomaticAsync(rig.Id, true, 2, Ct);
+        rig.Terminal.Screen = timezoneChanged ? rig.Terminal.Screen with { TimeZone = "Etc/UTC" }
+            : rig.Terminal.Screen with { Identity = "replacement-pane" };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            var limit = (await db.AgentLimits.FindAsync([rig.Id], Ct))!;
+            Assert.Equal(rig.Terminal.Screen.Identity, limit.PaneIdentity);
+            Assert.Equal(rig.Terminal.Screen.TimeZone, limit.TimeZoneId);
+        }
+        rig.Clock.Utc = rig.Clock.Utc.AddMinutes(3);
+        for (var i = 0; i < 3; i++) await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+    }
+
+    [Fact]
+    public async Task FailedFirstObservationIsVisibleWithoutInventingADurableLimit()
+    {
+        await using var rig = await Rig.Create();
+        var reader = new FaultingLimitReader { FailScreen = true };
+        rig.Reader = reader;
+        rig.Service.Dispose(); rig.Service = rig.NewService();
+        await rig.Service.SetAutomaticAsync(rig.Id, true, null, Ct);
+        var status = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.NotNull(status.DetectionProblem);
+        Assert.True(status.Manual);
+        await using (var db = rig.Factory.CreateDbContext()) Assert.Empty(await db.AgentLimits.ToListAsync(Ct));
+        Assert.True((await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Enabled);
+        reader.FailScreen = false;
+        ReadyWithoutLimit(rig);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+        Assert.Equal(0, rig.Terminal.Sends);
+    }
+
     [Theory]
     [InlineData(false, "Detected")]
     [InlineData(false, "Scheduled")]
@@ -91,7 +273,7 @@ public sealed class AgentContinuationTests
         rig.Clock.Utc = rig.Clock.Utc.AddSeconds(1);
         await Task.WhenAll(rig.Service.RefreshAsync(rig.Id, Ct), rig.Service.RefreshAsync(rig.Id, Ct));
         Assert.Equal(1, rig.Terminal.Sends);
-        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
     }
 
     [Theory]
@@ -337,17 +519,17 @@ public sealed class AgentContinuationTests
     }
 
     [Fact]
-    public async Task ExpiredDetectionHidesButtonButKeepsOriginalResetAndAllowsManualSchedule()
+    public async Task PassedResetStaysVisibleWithoutAutomaticPermissionAndAllowsManualSchedule()
     {
         await using var rig = await Rig.Create();
         await rig.Service.RefreshAsync(rig.Id, Ct);
         Assert.NotNull(await rig.Service.GetAsync(rig.Id, Ct));
         rig.Clock.Utc = rig.Clock.Utc.AddMinutes(2);
-        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+        Assert.NotNull(await rig.Service.GetAsync(rig.Id, Ct));
         await rig.Service.RefreshAsync(rig.Id, Ct);
-        Assert.Equal("Expired", await rig.StatusAsync());
+        Assert.Equal("Detected", await rig.StatusAsync());
         await rig.Service.RefreshAsync(rig.Id, Ct);
-        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+        Assert.NotNull(await rig.Service.GetAsync(rig.Id, Ct));
         Assert.Equal(0, rig.Terminal.Sends);
         await rig.Service.ScheduleAsync(rig.Id, null, Ct, continueAfterMinutes: 1, manual: true);
         var scheduled = (await rig.Service.GetAsync(rig.Id, Ct))!;
@@ -361,6 +543,8 @@ public sealed class AgentContinuationTests
         rig.Clock.Utc = rig.Clock.Utc.AddMinutes(1);
         await rig.Service.RefreshAsync(rig.Id, Ct);
         Assert.Equal(1, rig.Terminal.Sends);
+        ReadyWithoutLimit(rig);
+        await rig.Service.RefreshAsync(rig.Id, Ct);
         Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
     }
 
@@ -738,7 +922,7 @@ public sealed class AgentContinuationTests
         for (var i = 0; i < 4; i++) await rig.Service.RefreshAsync(rig.Id, Ct);
         Assert.Equal(1, rig.Terminal.Sends);
         Assert.True((await rig.Service.GetAutomaticAsync(rig.Id, Ct)).Enabled);
-        Assert.Null(await rig.Service.GetAsync(rig.Id, Ct));
+        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
     }
 
     [Fact]

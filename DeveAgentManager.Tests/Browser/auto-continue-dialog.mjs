@@ -76,8 +76,48 @@ try {
     assert.equal(await dialog.getByText('Next continue:').count(), 0);
     await page.screenshot({ path: '/tmp/dam-auto-continue-unknown.png' });
 
+    // Enabling the policy is not proof that it can currently continue. Check the toolbar
+    // independently of the dialog, including the phone's narrow toolbar and both themes.
+    const checkStatus = async (hint, color) => {
+        await page.goto(base + `/agents/${id}`);
+        const button = page.getByRole('button', { name: hint, exact: true });
+        await button.waitFor({ timeout: 60000 });
+        assert.equal(await button.evaluate((element, color) => element.classList.contains(`mud-${color}-text`), color), true, hint);
+        return button;
+    };
+    automatic = { enabled: true, remaining: null, sent: 18, available: true, detail: 'The reset time is uncertain. Switch to a one-time schedule to choose it manually.' };
+    await context.addInitScript(() => localStorage.setItem('dam-theme', 'dark'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await checkStatus('Auto-continue needs attention: reset time unknown', 'warning');
+    await page.getByRole('button', { name: 'Auto-continue needs attention: reset time unknown', exact: true }).click();
+    await dialog.locator('.mud-alert-outlined-warning, .mud-alert-text-warning, .mud-alert-filled-warning').first().waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'unknown-reset dialog overflows on phone');
+    await page.screenshot({ path: '/tmp/dam-auto-continue-warning-phone.png' });
+
+    limit = { ...detected, status: 'Scheduled', continueAt: new Date(reset.getTime() + 60000).toISOString() };
+    automatic.detail = 'Waiting until one minute after the detected reset.';
+    await checkStatus('Auto-continue scheduled for 2030-01-02 14:01 (Europe/Amsterdam)', 'info');
+    limit = { ...limit, continueAt: '2020-01-01T00:00:00Z', detail: 'Waiting for an empty prompt. Your draft will not be submitted.' };
+    automatic.detail = limit.detail;
+    await checkStatus('Auto-continue waiting; view reason', 'warning');
+
+    limit = { ...detected, status: 'Sent' };
+    automatic.detail = 'Continue submitted. Waiting for the harness to resume.';
+    await checkStatus('Continue submitted; waiting for the agent to resume', 'warning');
+    await page.getByRole('button', { name: 'Continue submitted; waiting for the agent to resume', exact: true }).click();
+    await dialog.getByText(detected.message, { exact: true }).waitFor();
+    await dialog.getByText('Continue was submitted; the usage limit has not cleared.', { exact: true }).waitFor();
+
+    limit = { ...detected, status: 'Uncertain' };
+    await checkStatus('Continue delivery uncertain; check the terminal', 'error');
+    limit = { ...detected, manual: true, detectedResetAt: null, detectionProblem: 'Usage-limit detection is temporarily unavailable. Saved settings are retained; retry detection.' };
+    await checkStatus('Auto-continue on · detection unavailable', 'warning');
+    limit = null;
+    automatic.detail = 'Waiting for a detected usage limit.';
+    await checkStatus('Auto-continue on · unlimited', 'success');
+
     assert.deepEqual(errors, []);
-    console.log(`Passed (${engine}): automatic mode shows the limit on screen and its detected reset (or that it has none), and the next continue right after switching on.`);
+    console.log(`Passed (${engine}): detected resets, unknown resets, future schedules, blocked delivery, unresolved sends, uncertainty and healthy automatic mode have distinct visible status, including on phones.`);
 } finally {
     await browser.close();
 }

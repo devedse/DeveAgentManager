@@ -15,18 +15,18 @@ public class UsageLimitStateTests
         var limit = new AgentLimit { SessionId = UsageLimitState.Session(agent), PaneIdentity = "pane:pid:start:boot",
             Message = "■ You've hit your usage limit. Try again at 3:00 PM.", TimeZoneId = "UTC", DetectedAt = now };
         var detection = new AgentScreenDetection(AgentActivityStatus.UsageLimited, "limited", "limit");
-        var failed = UsageLimitState.ApplyExpiry(agent, limit, "screen", "pane|pid|start|boot", detection, now,
+        var failed = UsageLimitState.ApplyResetStatus(agent, limit, "screen", "pane|pid|start|boot", detection, now,
             new FaultingLimitReader { FailStored = true });
         Assert.Equal(AgentActivityStatus.Unknown, failed.Status);
         var other = new Agent { Id = Guid.NewGuid(), HarnessId = "codex", State = AgentState.Running };
-        Assert.Equal(detection, UsageLimitState.ApplyExpiry(other, null, "screen", "another-pane", detection, now));
+        Assert.Equal(detection, UsageLimitState.ApplyResetStatus(other, null, "screen", "another-pane", detection, now));
         Assert.Equal("■ You've hit your usage limit. Try again at 3:00 PM.", limit.Message);
     }
 
     [Theory]
     [InlineData("codex", "Europe/Amsterdam", "■ You've hit your usage limit. Try again at 3:00 PM.")]
     [InlineData("claude", "UTC", "└ You've hit your weekly limit · resets Oct 2, 3pm (Europe/Amsterdam)")]
-    public void ExpiredLimitBecomesReadyWithoutLosingPausedNotification(string harness, string zone, string message)
+    public void PassedResetKeepsUsageLimitedUntilLiveRecovery(string harness, string zone, string message)
     {
         var before = new DateTime(2026, 10, 2, 12, 59, 0, DateTimeKind.Utc);
         var after = before.AddMinutes(1);
@@ -37,22 +37,22 @@ public class UsageLimitStateTests
             Message = UsageLimitParser.Parse(harness, screen, zone, before)!.Message,
             TimeZoneId = zone, DetectedAt = before, ResetAt = after.AddHours(1) }; // A manual override must not change expiry.
         var detection = new AgentScreenDetection(AgentActivityStatus.UsageLimited, "limit", "usage-limit", message);
-        Assert.Equal(detection, UsageLimitState.ApplyExpiry(agent, limit, screen, "%1|123|456|boot-id", detection, before));
+        Assert.Equal(detection, UsageLimitState.ApplyResetStatus(agent, limit, screen, "%1|123|456|boot-id", detection, before));
         AgentActivityTracker.Apply(agent, detection, "%1|123|456|boot-id", before);
         var token = AgentAttentionService.Attention(agent, false, before)!.Token;
-        var expired = UsageLimitState.ApplyExpiry(agent, limit, screen, "%1|123|456|boot-id", detection, after);
-        Assert.Equal(AgentActivityStatus.Ready, expired.Status);
+        var expired = UsageLimitState.ApplyResetStatus(agent, limit, screen, "%1|123|456|boot-id", detection, after);
+        Assert.Equal(AgentActivityStatus.UsageLimited, expired.Status);
         AgentActivityTracker.Apply(agent, expired, "%1|123|456|boot-id", after);
         var attention = AgentAttentionService.Attention(agent, false, after)!;
         Assert.Equal(AgentAttentionKind.UsageLimit, attention.Kind);
-        Assert.Contains("paused", attention.Reason);
+        Assert.Contains("not resumed", attention.Reason);
         Assert.Equal(token, attention.Token);
         agent.DismissedAttentionToken = token;
         Assert.Null(AgentAttentionService.Attention(agent, false, after));
         Assert.True(UsageLimitState.HasExpired(limit, after.AddDays(1))); // No time-only rollover to tomorrow.
-        Assert.Equal(detection, UsageLimitState.ApplyExpiry(agent, limit, screen, "another-pane", detection, after));
-        Assert.Equal(detection, UsageLimitState.ApplyExpiry(agent, limit, screen.Replace("3", "4"), "%1|123|456|boot-id", detection, after));
+        Assert.Equal(detection, UsageLimitState.ApplyResetStatus(agent, limit, screen, "another-pane", detection, after));
+        Assert.Equal(detection, UsageLimitState.ApplyResetStatus(agent, limit, screen.Replace("3", "4"), "%1|123|456|boot-id", detection, after));
         var working = detection with { Status = AgentActivityStatus.Working };
-        Assert.Equal(working, UsageLimitState.ApplyExpiry(agent, limit, screen, "%1|123|456|boot-id", working, after));
+        Assert.Equal(working, UsageLimitState.ApplyResetStatus(agent, limit, screen, "%1|123|456|boot-id", working, after));
     }
 }

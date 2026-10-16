@@ -49,7 +49,7 @@ public static class AgentActivityTracker
             || nativeTurn.State is not ("Started" or "Completed" or "Aborted")) nativeTurn = null;
         // A native lifecycle event identifies a turn independently of polling cadence and footer formatting.
         // Live approval/limit/working controls keep precedence over an older completion in the session file.
-        var nativeReady = detection.Status == AgentActivityStatus.Ready && detection.Rule != "usage-limit-expired";
+        var nativeReady = detection.Status == AgentActivityStatus.Ready;
         if (nativeTurn is { State: "Started" } && nativeReady)
             detection = detection with { Status = AgentActivityStatus.Working, Rule = "codex/native-turn-started",
                 Reason = "Codex is working on its current turn.", Evidence = "Native session recorded task_started.", CompletionEvidence = null };
@@ -96,7 +96,7 @@ public static class AgentActivityTracker
             && observation.PendingSince is { } stableSince && now - stableSince >= TimeSpan.FromSeconds(5);
         var turnCompleted = completed || previous.CurrentTurnCompleted && detection.Status is not
             (AgentActivityStatus.Working or AgentActivityStatus.NeedsInput or AgentActivityStatus.UsageLimited)
-            && nativeTurn is not { State: "Aborted" or "Started" } && detection.Rule != "usage-limit-expired";
+            && nativeTurn is not { State: "Aborted" or "Started" };
         var meaningfulChange = changedProcess || status != previous.Status || turnCompleted != previous.CurrentTurnCompleted || detection.QuestionWaiting != previous.QuestionWaiting
             || detection.BackgroundTaskCount != previous.BackgroundTaskCount
             || reason != previous.Reason || detection.Rule != previous.Rule || completed;

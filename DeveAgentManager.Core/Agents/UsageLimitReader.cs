@@ -17,6 +17,7 @@ public class UsageLimitReader(ILogger<UsageLimitReader> logger, TimeProvider clo
     private readonly ConcurrentDictionary<(Guid, string), Incident> _incidents = new();
     public string? Problem(Guid agentId) => _incidents.Keys.Any(k => k.Item1 == agentId)
         ? "Usage-limit detection is temporarily unavailable. Saved settings are retained; retry detection." : null;
+    public string? ScreenProblem(Guid agentId) => _incidents.ContainsKey((agentId, "screen")) ? Problem(agentId) : null;
 
     public UsageLimitRead Screen(Agent agent, LimitScreen screen, DateTime now) => Read(agent, screen.Screen, screen.TimeZone,
         screen.ObservedAt ?? now, "screen");

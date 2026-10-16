@@ -16,6 +16,15 @@ When the user requests changes, commit and push them to `master` as soon as they
 requests work on a branch, commit and push to that branch instead. Do not leave requested changes only in the local
 working tree or ask for separate permission to commit and push.
 
+## Usage-limit continuations
+
+A passed reset is permission to retry, never proof that the agent resumed. Keep a current rejection and its send
+result visible until a healthy live observation establishes recovery. A newer rejection replaces an automatic
+schedule; explicit one-time schedules, drafts and uncertain sends retain their protections. Anchor clock-only resets
+to the original observation, and never resend merely because the same error remains visible. Keep enabled-policy
+state separate from whether continuation can currently proceed. See [docs/usage-limit-continuations.md](docs/usage-limit-continuations.md)
+for the regression matrix and diagnostics required when changing this flow.
+
 ## UI: explanations go in help tips
 
 Keep pages short. A heading or field gets at most one short line of visible text; anything longer goes behind a (?)

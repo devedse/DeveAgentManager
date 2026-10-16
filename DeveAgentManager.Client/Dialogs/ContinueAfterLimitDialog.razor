@@ -47,12 +47,17 @@
             }
             else { <MudText Typo="Typo.body2">Unlimited continuations</MudText> }
             @* The limit on screen now, and its reset: what switching on (or what is on) will do with it. *@
-            @if (!Limit.Manual && Limit.Status is not ("Sent" or "Cancelled"))
+            @if (!Limit.Manual)
             {
                 <MudText Class="mt-3">@Limit.Message</MudText>
                 <MudText Typo="Typo.body2">@_resetDescription</MudText>
             }
-            @if (Automatic.Detail is not null) { <MudAlert Severity="Severity.Info" Class="mt-3">@Automatic.Detail</MudAlert> }
+            @if (Automatic.Detail is not null) { <MudAlert Severity="@AutomaticSeverity" Class="mt-3">@Automatic.Detail</MudAlert> }
+            @if (!Limit.Manual && Limit.Status == "Sent")
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-3"><div class="help-heading"><span>Continue was submitted; the usage limit has not cleared.</span>
+                    <HelpTip Label="Unresolved usage limit"><p>The Manager sends at most once for a detected reset. Check the terminal before retrying. A passed reset time alone does not mean the agent resumed.</p></HelpTip></div></MudAlert>
+            }
             @if (_enabled && Limit.Status == "Scheduled" && _continueDescription is not null) { <MudText Class="mt-2">Next continue: <b>@_continueDescription</b></MudText> }
             <MudText Class="mt-3" Typo="Typo.body2">Sends so far: @Automatic.Sent.</MudText>
         }
@@ -126,7 +131,7 @@
         {
             <MudButton Color="Color.Warning" Disabled="_busy" OnClick="CancelAsync">Cancel scheduled continue</MudButton>
         }
-        else if (LimitLoaded && AutomaticLoaded && AutomaticLoadError is null && !_enabled && !Limit.NativeAutoContinue && (Limit.Status is "Detected" or "Cancelled" || (Limit.Manual && Limit.Status == "Sent")))
+        else if (LimitLoaded && AutomaticLoaded && AutomaticLoadError is null && !_enabled && !Limit.NativeAutoContinue && (Limit.Status is "Detected" or "Expired" or "Cancelled" || (Limit.Manual && Limit.Status == "Sent")))
         {
             <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || !_loaded" OnClick="ScheduleAsync">Schedule continue</MudButton>
         }
@@ -143,6 +148,9 @@
     [Parameter] public string? LimitLoadError { get; set; }
     [Parameter] public string? AutomaticLoadError { get; set; }
     private bool _autoMode, _enabled, _limited;
+    private Severity AutomaticSeverity => Limit.DetectionProblem is not null || Limit.Status == "Uncertain" || !Limit.Manual &&
+        (Limit.Status is "Detected" or "Expired" or "Sent" || Limit.Status == "Scheduled" && Limit.Detail?.StartsWith("Waiting", StringComparison.Ordinal) == true)
+        ? Severity.Warning : Severity.Info;
     private int _remaining = 1;
     private DateTime? _date;
     private TimeSpan? _time;

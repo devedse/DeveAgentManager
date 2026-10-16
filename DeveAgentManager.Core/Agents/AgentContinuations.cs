@@ -108,9 +108,16 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         await using var db = await factory.CreateDbContextAsync(ct);
         var row = await db.AgentLimits.AsNoTracking().FirstOrDefaultAsync(l => l.AgentId == id, ct);
         var agent = await db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, ct);
-        if (row is null || agent is null || row.Status == "Cleared" || IsStale(row, agent)) return null;
+        if (agent is null) return null;
+        if (row is null || row.Status == "Cleared" || IsStale(row, agent))
+            // A failed first observation has no durable row yet. Surface its warning without
+            // inventing a detected limit, and ignore failures interpreting obsolete stored rows.
+            return _reader.ScreenProblem(id) is { } problem
+                ? new("Usage-limit detection unavailable.", null, Now, null, null, "Detected", null, false, true, DetectionProblem: problem)
+                : null;
         var read = _reader.Stored(id, row);
-        if (read.Available && _reader.Problem(id) is null && row.Status is not ("Scheduled" or "Sending" or "Uncertain") && read.Limit?.ResetAt <= Now) return null;
+        // A reset is an advertised retry time, not evidence that the stopped turn resumed.
+        // Keep the limit and delivery result visible until a live observation clears them.
         return Dto(row, read, _reader.Problem(id));
     }
 
@@ -250,6 +257,33 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         var stored = row is { Manual: false } ? _reader.Stored(id, row) : new UsageLimitRead(null);
         if (!stored.Available && row is not { Automatic: false, Status: "Scheduled" }) { events.AgentChanged(agent.RunnerId, id); return; }
         var detectedReset = stored.Limit?.ResetAt;
+        var activity = screen is null ? AgentActivityStatus.Unknown
+            : AgentScreenDetector.Detect(agent.HarnessId, screen.Screen, Now).Status;
+
+        // Automatic schedules follow the current rejection. A retry or account-side quota
+        // change can replace a weekly reset with a session reset before the old due date.
+        // Explicit one-time schedules and ambiguous/in-progress sends remain untouched.
+        if (row is { Automatic: true, Status: "Scheduled" } && row.SessionId == Session(agent)
+            && parsed is not null && (row.Message != parsed.Message || row.PaneIdentity != screen!.Identity
+                || row.TimeZoneId != parsed.TimeZoneId || parsed.NativeAutoContinue))
+        {
+            Clear(row);
+            // Scheduled is an unsent reservation. Release it so changed wording with
+            // the same reset can be scheduled again; Sent/Uncertain never take this path.
+            if (policy is not null) policy.LastLimitKey = null;
+            diagnostics?.Record(id, "Continuation", "The current usage-limit message changed; replacing the automatic schedule.");
+        }
+        else if (row is { Automatic: true, Status: "Scheduled" } && row.SessionId == Session(agent)
+            && parsed is null && screen is not null && (activity == AgentActivityStatus.Working
+                || activity == AgentActivityStatus.Ready && agent.LastAssistantMessageAt > row.DetectedAt))
+        {
+            Clear(row);
+            if (policy is { Enabled: true })
+            {
+                policy.LastLimitKey = null;
+                policy.Detail = "The agent resumed. Waiting for the next usage limit.";
+            }
+        }
 
         // Repair stored messages after parser improvements without moving their observation
         // date or overwriting a manually selected reset / existing schedule.
@@ -260,6 +294,8 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
             if (original?.Message == parsed.Message)
             {
                 row.Message = original.Message;
+                // Repair pre-fix expiry rows without re-anchoring a clock-only reset to today.
+                if (row.Status == "Expired") { row.Status = "Detected"; row.ContinueAt = null; row.Detail = original.Detail; }
                 if (row.Status == "Detected" && row.ResetAt is null)
                 {
                     row.ResetAt = original.ResetAt;
@@ -271,7 +307,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         // Re-arm only for a detected reset, never by repeatedly reacting to an old screen.
         // The reset key is persisted before sending and survives process/Manager restarts.
         if (policy is { Enabled: true } && parsed is not null && !parsed.NativeAutoContinue
-            && row is not null && row.Status is not ("Scheduled" or "Sending" or "Uncertain" or "Sent")
+            && row is not null && row.Status is not ("Scheduled" or "Sending" or "Uncertain" or "Sent" or "Cleared")
             && row.Message == parsed.Message && row.SessionId == Session(agent) && !row.Manual
             && detectedReset is { } reset)
         {
@@ -284,6 +320,8 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                 row.Detail = null;
                 policy.LastLimitKey = key;
                 policy.Detail = "Waiting until one minute after the detected reset.";
+                logger.LogInformation("Automatic continuation for {Agent} scheduled at {ContinueAt}; detected reset {ResetAt}, timezone {TimeZone}",
+                    id, row.ContinueAt, reset, row.TimeZoneId);
                 // The claim below must find Scheduled in the database even on an already-expired reset.
                 await db.SaveChangesAsync(ct);
                 events.AgentChanged(agent.RunnerId, id);
@@ -303,9 +341,8 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         {
             if (dispatch && row.ContinueAt <= Now)
             {
-                var activity = screen is null ? AgentActivityStatus.Unknown
-                    : AgentScreenDetector.Detect(agent.HarnessId, screen.Screen, Now).Status;
-                if (ContinuedWithout(agent, row, activity))
+                // A current rejection takes priority over cached work/reply timestamps.
+                if (parsed is null && ContinuedWithout(agent, row, activity))
                 {
                     row.Status = "Cleared";
                     row.ContinueAt = null;
@@ -343,7 +380,7 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                             policy.Sent++;
                             if (policy.Remaining is { } count) policy.Remaining = Math.Max(0, count - 1);
                             if (policy.Remaining == 0) policy.Enabled = false;
-                            policy.Detail = policy.Enabled ? "Continue sent. Waiting for the next usage limit." : "The chosen number of continuations has been sent.";
+                            policy.Detail = policy.Enabled ? "Continue submitted. Waiting for the harness to resume." : "The chosen number of continuations has been sent.";
                         }
                         // Force Scheduled to be written back after the database-only claim above.
                         db.Entry(row).Property(l => l.Status).IsModified = true;
@@ -361,21 +398,15 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                 }
             }
         }
-        else if (row is not null && row.Status is not ("Uncertain" or "Cleared") && detectedReset <= Now
-            && (parsed is null || (parsed.Message == row.Message && Session(agent) == row.SessionId && screen?.Identity == row.PaneIdentity)))
-        {
-            row.Status = "Expired";
-            row.ContinueAt = null;
-            row.Detail = "The detected reset has passed. The prompt was paused by a usage limit.";
-        }
         else if (row?.Status == "Sent" && parsed is null && screen is not null &&
-            AgentScreenDetector.Detect(agent.HarnessId, screen.Screen, Now).Status is AgentActivityStatus.Ready or AgentActivityStatus.Working)
+            activity is AgentActivityStatus.Ready or AgentActivityStatus.Working)
         {
             // A successful continuation is no longer an active limit once normal activity resumes.
             // Require positive live evidence: a missing connection or unrecognized screen is not recovery.
             row.Status = "Cleared";
             row.ContinueAt = null;
             row.Detail = null;
+            if (policy is { Enabled: true }) policy.Detail = "The agent resumed. Waiting for the next usage limit.";
         }
         else if (row?.Status is "Sent" or "Uncertain" && (parsed is null || parsed.Message == row.Message))
         {
@@ -383,7 +414,8 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         }
         else if (parsed is null)
         {
-            if (row is null || row.Status == "Cleared" || row.Manual)
+            if (row is null || row.Status == "Cleared" || row.Manual
+                || activity is not (AgentActivityStatus.Ready or AgentActivityStatus.Working))
             {
                 if (db.ChangeTracker.HasChanges()) { await db.SaveChangesAsync(ct); events.AgentChanged(agent.RunnerId, id); }
                 return;
@@ -407,6 +439,9 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                 row.ContinueAt = null;
                 row.Status = "Detected";
                 row.Detail = parsed.Detail;
+                diagnostics?.Record(id, "Usage limit", $"Detected usage limit. Timezone: {row.TimeZoneId ?? "unknown"}. Reset UTC: {row.ResetAt?.ToString("O") ?? "unknown"}. Automatic continuation: {policy?.Enabled == true}.");
+                logger.LogInformation("Usage limit detected for {Agent}; reset {ResetAt}, timezone {TimeZone}, automatic continuation {Automatic}",
+                    id, row.ResetAt, row.TimeZoneId, policy?.Enabled == true);
             }
             // A parser update can resolve an already-detected message without changing its text.
             // Repair only an unresolved detection, never a chosen reset or an armed schedule.
@@ -420,8 +455,11 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
         if (policy is { Enabled: true })
         {
             if (parsed?.NativeAutoContinue == true) policy.Detail = "Waiting while Claude continues automatically.";
-            else if (parsed is not null && row?.Status == "Detected" && detectedReset is null)
+            else if (parsed is not null && row?.Status == "Detected" && row.ResetAt is null)
                 policy.Detail = "The reset time is uncertain. Switch to a one-time schedule to choose it manually.";
+            else if (parsed is not null && row?.Status == "Detected" && policy.LastLimitKey == Session(agent) + "|" + detectedReset?.ToString("O"))
+                policy.Detail = row.Detail = "A continuation was already attempted for this reset. Check the terminal before retrying.";
+            else if (parsed is not null && row?.Status == "Detected") policy.Detail = "Usage limit detected. Preparing automatic continuation.";
             else if (row is { Automatic: true, Status: "Scheduled", Detail: not null }) policy.Detail = row.Detail;
         }
         if (db.ChangeTracker.HasChanges())

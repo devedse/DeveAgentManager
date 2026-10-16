@@ -9,6 +9,19 @@ public sealed class UsageLimitParserTests
     internal static string Claude(string message) => $"{message}\n\n❯ \n  bypass permissions on";
     internal static string PiQuotaScreen => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", "pi-quota-exceeded.txt"));
 
+    internal static string ChangedCodexReset => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", "codex-changed-usage-reset.txt"));
+
+    [Fact]
+    public void LatestClockOnlyLimitWinsOverEarlierDatedLimitEvenAfterReset()
+    {
+        var now = new DateTime(2026, 10, 16, 16, 34, 0, DateTimeKind.Utc);
+        var parsed = UsageLimitParser.Parse("codex", ChangedCodexReset, "Europe/Amsterdam", now)!;
+        Assert.Equal(new DateTime(2026, 10, 16, 16, 26, 0, DateTimeKind.Utc), parsed.ResetAt);
+        Assert.DoesNotContain("Oct 22", parsed.Message);
+        Assert.Equal(DeveAgentManager.Contracts.AgentActivityStatus.UsageLimited,
+            AgentScreenDetector.Detect("codex", ChangedCodexReset, now).Status);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -10,7 +10,7 @@ else
 {
     <MudTooltip Text="@Hint">
         <MudIconButton Icon="@StatusIcon"
-                       Class="@(_automatic.Enabled ? "auto-continue-active" : _limit?.Status == "Detected" && !_limit.NativeAutoContinue ? "limit-alert-blink" : "")"
+                       Class="@(_limit?.Status is "Detected" or "Expired" && !_limit.NativeAutoContinue ? "limit-alert-blink" : _automatic.Enabled && StatusColor == Color.Success ? "auto-continue-active" : "")"
                        Color="@StatusColor" Size="Size.Small" OnClick="OpenAsync" aria-label="@Hint" />
     </MudTooltip>
 }
@@ -19,25 +19,41 @@ else
     [Parameter] public Guid AgentId { get; set; }
     /// <summary>An entry in the toolbar's ⋮ menu, when the toolbar has no room for the button.</summary>
     [Parameter] public bool InMenu { get; set; }
-    private Color StatusColor => _limit?.DetectionProblem is not null || _limitError is not null || _automaticError is not null ? Color.Warning : _automatic.Enabled ? Color.Success : _limit is null ? Color.Default : Color.Warning;
+    private bool DetectionUnavailable => _limit?.DetectionProblem is not null || _limitError is not null || _automaticError is not null;
+    private bool UnknownReset => _limit is { Manual: false, DetectedResetAt: null, Status: "Detected" or "Expired" };
+    private bool ScheduleWaiting => _limit is { Status: "Scheduled" } && (_limit.Detail?.StartsWith("Waiting", StringComparison.Ordinal) == true || _limit.ContinueAt <= DateTime.UtcNow);
+    private Color StatusColor => _limit?.Status == "Uncertain" ? Color.Error
+        : DetectionUnavailable ? Color.Warning
+        : !_limitLoaded || !_automaticLoaded ? Color.Default
+        : _limit?.NativeAutoContinue == true ? Color.Info
+        : _limit?.Status == "Scheduled" ? (ScheduleWaiting ? Color.Warning : Color.Info)
+        : _limit is not null ? Color.Warning
+        : _automatic.Enabled ? Color.Success : Color.Default;
     private AgentLimitDto? _limit;
     private AutoContinueDto _automatic = new();
     private string? _scheduledLocal, _limitError, _automaticError;
     private bool _limitLoaded, _automaticLoaded;
     protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
-    private string StatusIcon => _automatic.Enabled ? Icons.Material.Rounded.Autorenew : _limit?.Status switch
+    private string StatusIcon => DetectionUnavailable || UnknownReset ? Icons.Material.Rounded.WarningAmber : _limit?.Status switch
     {
         "Scheduled" => Icons.Material.Rounded.Schedule,
         "Sending" => Icons.Material.Rounded.Sync,
         "Sent" => Icons.Material.Rounded.CheckCircle,
         "Cancelled" => Icons.Material.Rounded.EventBusy,
         "Uncertain" => Icons.Material.Rounded.ErrorOutline,
-        _ => Icons.Material.Rounded.HourglassBottom
+        _ => _automatic.Enabled ? Icons.Material.Rounded.Autorenew : Icons.Material.Rounded.HourglassBottom
     };
     private string Hint => !_automaticLoaded && _automaticError is null || !_limitLoaded && _limitError is null ? "Loading continuation status…"
         : _automaticError is not null ? "Automatic continuation status unavailable; retry"
         : _limitError is not null ? (_automatic.Enabled ? "Auto-continue on · limit status unavailable; retry" : "Continuation status unavailable; retry")
         : _limit?.DetectionProblem is not null ? (_automatic.Enabled ? "Auto-continue on · detection unavailable" : "Usage-limit detection unavailable; retry")
+        : _limit?.Status == "Uncertain" ? "Continue delivery uncertain; check the terminal"
+        : _automatic.Enabled && _limit?.NativeAutoContinue == true ? "Claude is handling its own automatic continuation"
+        : _automatic.Enabled && UnknownReset ? "Auto-continue needs attention: reset time unknown"
+        : _automatic.Enabled && _limit?.Status == "Scheduled" ? (ScheduleWaiting ? "Auto-continue waiting; view reason" : $"Auto-continue scheduled for {_scheduledLocal ?? "the detected reset"}")
+        : _automatic.Enabled && _limit?.Status == "Sending" ? "Sending automatic continue"
+        : _automatic.Enabled && _limit?.Status == "Sent" ? "Continue submitted; waiting for the agent to resume"
+        : _automatic.Enabled && _limit is not null ? "Auto-continue needs attention; view usage limit"
         : _automatic.Enabled ? $"Auto-continue on · {(_automatic.Remaining is { } count ? $"{count} remaining" : "unlimited")}" : _limit is null ? "Schedule continue" : _limit?.NativeAutoContinue == true ? "Usage limit: Claude will continue automatically"
         : _limit?.Status == "Scheduled" ? $"Continue scheduled for {_scheduledLocal ?? "your chosen time"}"
         : _limit?.Status == "Sending" ? "Sending scheduled continue"
