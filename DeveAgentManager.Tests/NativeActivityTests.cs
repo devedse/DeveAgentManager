@@ -208,6 +208,12 @@ public class NativeActivityTests
             Assert.Equal("Completed", matching.NativeTurn!.State);
             Assert.Equal("completed", matching.NativeTurn.TurnId);
             Assert.Null((await Read("00000000-0000-0000-0000-000000000002")).NativeTurn);
+            var header = JsonSerializer.Serialize(new { type = "session_meta", payload = new { id = Session } });
+            string Started(DateTime at) => header + "\n" + JsonSerializer.Serialize(new { timestamp = at, type = "event_msg", payload = new { type = "task_started", turn_id = "active" } }) + "\n";
+            await File.WriteAllTextAsync(history, Started(DateTime.UtcNow.AddMinutes(-1)), TestContext.Current.CancellationToken);
+            Assert.Null((await Read(Session)).NativeTurn); // A previous process's unfinished turn is not current work.
+            await File.WriteAllTextAsync(history, Started(DateTime.UtcNow), TestContext.Current.CancellationToken);
+            Assert.Equal("Started", (await Read(Session)).NativeTurn!.State);
             await File.WriteAllTextAsync(history, "corrupt native header\n", TestContext.Current.CancellationToken);
             var corrupt = await Read(Session);
             Assert.Null(corrupt.NativeTurn);

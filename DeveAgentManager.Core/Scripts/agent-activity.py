@@ -46,7 +46,15 @@ def native_activity(config, identity):
                 home=pathlib.Path(env.get(b'CODEX_HOME',env.get(b'HOME',b'')+b'/.codex').decode())
                 candidates=list(home.glob('sessions/*/*/*/rollout-*-'+session_id+'.jsonl'))
                 if len(candidates)!=1: return None
-                return read_codex_turn(candidates[0],session_id)
+                turn=read_codex_turn(candidates[0],session_id)
+                if turn and turn['State']=='Started':
+                    # Resume can leave an unfinished start from a previous CLI process in the file.
+                    # Only starts belonging to this process can establish current work.
+                    ticks=int(process.joinpath('stat').read_text().rsplit(')',1)[1].split()[19])
+                    uptime=float(pathlib.Path('/proc/uptime').read_text().split()[0])
+                    started=datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=uptime-ticks/os.sysconf('SC_CLK_TCK'))
+                    if datetime.datetime.fromisoformat(turn['At'].replace('Z','+00:00'))<started-datetime.timedelta(seconds=1): return None
+                return turn
             pending.extend(process.joinpath('task',current,'children').read_text().split())
         except (OSError,ValueError,UnicodeError,IndexError): continue
     return None
