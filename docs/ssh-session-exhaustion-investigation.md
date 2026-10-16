@@ -1,4 +1,22 @@
-# SSH session exhaustion investigation
+# SSH session exhaustion investigation and recovery
+
+## Implemented correction
+
+The command pool now reuses up to ten SSH transports per Runner, lending each transport to one operation at a time. Ten preserves the previous SSH.NET command concurrency budget; it does not increase the Runner's MaxSessions setting. Connections are created on demand with authentication serialized within each pool. Sequential operations reuse an idle connection. Waiting for capacity and connection setup share the caller's command deadline.
+
+Exclusive leases let cancellation close the affected transport during SSH.NET's synchronous channel setup, as well as while awaiting a result. Later independent operations can open a replacement. Other leased transports and browser terminals keep running. Failed operations are never replayed: a remote command may have executed even when its result was lost. Setup exceptions from streaming commands are handled inside the same protected execution path, and output pumps are owned through cleanup.
+
+Endpoint/credential invalidation retires the old pool: idle transports close immediately and existing operations drain before their connections close. Old failures act only on their own leases, so they cannot remove a newer replacement. Manager disposal closes active transports during shutdown. SFTP uses its own exclusive single-transport pool and asynchronous transfers; command connection failures do not discard a healthy file transfer.
+
+Transport failures log Runner ID, connection ID/age, the known execution phase, exception type and cancellation state. The public library API does not distinguish channel open from exec-request submission, so that combined phase is reported honestly. Shell text, output and exception payloads are excluded from these diagnostics. No keepalive, server capacity or workload replay policy was changed.
+
+The isolated OpenSSH regression uses loopback, temporary keys/data and the normal MaxSessions=10. It verifies sequential reuse, a twenty-command burst on the bounded pool, simultaneous commands on distinct transports, deadline recovery, a running command surviving pool retirement, no duplicated side effect, cancellation during a paused channel open, no late exec request, streaming output and SFTP. It resumes and removes only its disposable server processes. CI installs openssh-server for this test. Unit tests cover capacity, canceled waiters, late old failures and retirement during connection setup. Live deployment behavior must still be recorded separately from these tests.
+
+Local validation: all 655 tests pass, the Release solution builds, and activity/scheduling browser checks pass in Chromium/light and Firefox/dark at desktop and phone sizes. The read-only native probe was also checked against running sessions: a completed idle session returned its recorded completion, while long active sessions without a lifecycle event in the bounded tail fell back to screen evidence. No production SSH service or agent was restarted for verification.
+
+## Historical investigation
+
+The remainder records the evidence collected before implementation and the proposed direction at that time. The initial production delay remains unproven; the confirmed recovery defect can be corrected independently.
 
 Investigated 2026-10-16. Status: evidence collected and correction proposed; SSH transport is unchanged.
 

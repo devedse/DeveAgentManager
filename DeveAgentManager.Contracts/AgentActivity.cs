@@ -8,7 +8,7 @@ public sealed record AgentActivityDto(AgentActivityStatus Status, string Reason,
     bool CurrentTurnCompleted = false)
 {
     public bool UnseenCompletion => CompletedAt is not null && CompletionSequence > SeenCompletionSequence;
-    public bool IsFinished => Status == AgentActivityStatus.Ready && CurrentTurnCompleted && BackgroundTaskCount is not > 0;
+    public bool IsFinished => Status == AgentActivityStatus.Ready && CurrentTurnCompleted && UnseenCompletion && BackgroundTaskCount is not > 0;
 }
 
 public enum AgentAttentionKind { NeedsInput, QuestionWaiting, UsageLimit, UnexpectedExit, Finished, Unclear }

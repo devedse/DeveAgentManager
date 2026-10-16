@@ -11,7 +11,7 @@ public static class AgentActivityTracker
 {
     public sealed record Observation(AgentActivityDto Snapshot, string Identity, bool TurnObserved,
         AgentActivityStatus? Pending, DateTime? PendingSince, string? LastCompletion, string? PendingCompletion = null,
-        string? SessionIdentity = null);
+        string? SessionIdentity = null, NativeTurnObservation? NativeTurn = null, string? LastNativeCompletion = null);
 
     public static Observation Read(Agent agent)
     {
@@ -37,15 +37,35 @@ public static class AgentActivityTracker
         return snapshot;
     }
 
-    public static bool Apply(Agent agent, AgentScreenDetection detection, string identity, DateTime now)
+    public static bool Apply(Agent agent, AgentScreenDetection detection, string identity, DateTime now,
+        NativeTurnObservation? nativeTurn = null)
     {
         var old = Read(agent);
         var previous = old.Snapshot;
         var session = UsageLimitState.Session(agent);
+        var screenFingerprint = detection.CompletionEvidence is { } screenEvidence ? Hash(screenEvidence) : null;
+        if (agent.HarnessId != "codex" || nativeTurn?.SessionId != agent.HarnessSessionId
+            || string.IsNullOrWhiteSpace(nativeTurn?.TurnId) || nativeTurn.At > now.AddSeconds(5)
+            || nativeTurn.State is not ("Started" or "Completed" or "Aborted")) nativeTurn = null;
+        // A native lifecycle event identifies a turn independently of polling cadence and footer formatting.
+        // Live approval/limit/working controls keep precedence over an older completion in the session file.
+        if (nativeTurn is { State: "Started" } && detection.Status is AgentActivityStatus.Ready or AgentActivityStatus.Unknown)
+            detection = detection with { Status = AgentActivityStatus.Working, Rule = "codex/native-turn-started",
+                Reason = "Codex is working on its current turn.", Evidence = "Native session recorded task_started.", CompletionEvidence = null };
+        var nativeComplete = nativeTurn is { State: "Completed" } && detection.Status == AgentActivityStatus.Ready;
+        if (nativeComplete)
+            detection = detection with { Reason = "Codex completed its turn and its prompt is ready for input.",
+                Rule = "codex/native-turn-completed", Evidence = "Native session recorded task_complete." };
+        else if (nativeTurn is { State: "Aborted" } && detection.Status == AgentActivityStatus.Ready)
+            detection = detection with { Reason = "Codex's last turn was interrupted; its prompt is ready for input.",
+                Rule = "codex/native-turn-aborted", Evidence = "Native session recorded turn_aborted." };
         var changedProcess = old.Identity != identity || old.SessionIdentity is not null && old.SessionIdentity != session;
-        var fingerprint = detection.CompletionEvidence is { } evidence ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(evidence))) : null;
+        var completionEvidence = nativeComplete ? $"native:{nativeTurn!.SessionId}:{nativeTurn.TurnId}"
+            : nativeTurn is not null ? null : detection.CompletionEvidence;
+        var fingerprint = completionEvidence is { } evidence ? Hash(evidence) : null;
         var observation = changedProcess ? old with { Identity = identity, TurnObserved = false, Pending = null, PendingSince = null,
-            LastCompletion = fingerprint, Snapshot = previous with { CompletedAt = null, CurrentTurnCompleted = false } } : old;
+            LastCompletion = nativeTurn is not null ? old.LastCompletion : fingerprint,
+            Snapshot = previous with { CurrentTurnCompleted = false } } : old;
         previous = observation.Snapshot;
         var status = detection.Status;
         var reason = detection.Reason;
@@ -62,12 +82,20 @@ public static class AgentActivityTracker
         else observation = observation with { Pending = null, PendingSince = null };
         if (detection.Status == AgentActivityStatus.Working)
             observation = observation with { TurnObserved = true,
-                LastCompletion = !observation.TurnObserved && fingerprint is not null ? fingerprint : observation.LastCompletion };
-        var completed = !changedProcess && status == AgentActivityStatus.Ready && observation.TurnObserved
-            && fingerprint is not null && fingerprint != observation.LastCompletion
+                LastCompletion = !observation.TurnObserved && screenFingerprint is not null ? screenFingerprint : observation.LastCompletion };
+        if (nativeTurn is { State: "Aborted" }) observation = observation with { TurnObserved = false };
+        // Upgrade a previously recorded completion using fresh, session-bound proof. Keep its existing
+        // acknowledgement sequence, so viewing it before the upgrade cannot create a second notification.
+        var recovered = nativeComplete && fingerprint != old.LastNativeCompletion
+            && (old.NativeTurn is null || previous.CurrentTurnCompleted) && previous.CompletedAt is { } recorded
+            && nativeTurn!.At <= recorded && (old.SessionIdentity == session || old.SessionIdentity is null && old.Identity == identity)
+            && previous.Status == AgentActivityStatus.Ready;
+        var completed = recovered || status == AgentActivityStatus.Ready && (observation.TurnObserved || nativeComplete)
+            && fingerprint is not null && fingerprint != (nativeComplete ? observation.LastNativeCompletion : observation.LastCompletion)
             && observation.PendingSince is { } stableSince && now - stableSince >= TimeSpan.FromSeconds(5);
         var turnCompleted = completed || previous.CurrentTurnCompleted && detection.Status is not
-            (AgentActivityStatus.Working or AgentActivityStatus.NeedsInput or AgentActivityStatus.UsageLimited);
+            (AgentActivityStatus.Working or AgentActivityStatus.NeedsInput or AgentActivityStatus.UsageLimited)
+            && nativeTurn is not { State: "Aborted" };
         var meaningfulChange = changedProcess || status != previous.Status || turnCompleted != previous.CurrentTurnCompleted || detection.QuestionWaiting != previous.QuestionWaiting
             || detection.BackgroundTaskCount != previous.BackgroundTaskCount
             || reason != previous.Reason || detection.Rule != previous.Rule || completed;
@@ -75,20 +103,30 @@ public static class AgentActivityTracker
         var snapshot = new AgentActivityDto(status, reason, detection.Rule, detection.Evidence, now,
             changedProcess || status != previous.Status ? now : previous.Since, sequence,
             status == AgentActivityStatus.Working && detection.QuestionWaiting,
-            completed ? now : previous.CompletedAt, completed ? sequence : previous.CompletionSequence, agent.SeenCompletionSequence, detection.BackgroundTaskCount, turnCompleted);
-        if (status == AgentActivityStatus.Ready && fingerprint is not null && (completed || !observation.TurnObserved))
-            observation = observation with { LastCompletion = fingerprint, TurnObserved = false, Pending = null, PendingSince = null };
-        observation = observation with { Snapshot = snapshot, SessionIdentity = session };
+            completed ? nativeComplete ? nativeTurn!.At : now : previous.CompletedAt,
+            completed && !recovered ? sequence : previous.CompletionSequence, agent.SeenCompletionSequence, detection.BackgroundTaskCount, turnCompleted);
+        if (status == AgentActivityStatus.Ready && fingerprint is not null && (completed || !observation.TurnObserved && !nativeComplete))
+            observation = observation with { LastCompletion = screenFingerprint ?? observation.LastCompletion,
+                LastNativeCompletion = completed && nativeComplete ? fingerprint : observation.LastNativeCompletion,
+                TurnObserved = false, Pending = null, PendingSince = null };
+        observation = observation with { Snapshot = snapshot, SessionIdentity = session, NativeTurn = nativeTurn ?? observation.NativeTurn };
         agent.ActivityJson = JsonSerializer.Serialize(observation);
         agent.Working = status == AgentActivityStatus.Working;
         return meaningfulChange;
     }
 
+    private static string Hash(string evidence) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(evidence)));
+
     public static void Reset(Agent agent)
     {
         var old = Read(agent);
-        agent.ActivityJson = null;
         agent.SeenCompletionSequence = old.Snapshot.Sequence; // acknowledge the conversation being restarted/switched
+        // Retain completion identity across a harness restart, so resuming the same native turn does not
+        // manufacture a new completion. A later native turn still has a different identity.
+        agent.ActivityJson = JsonSerializer.Serialize(old with { Identity = "", TurnObserved = false, Pending = null,
+            PendingSince = null, PendingCompletion = null, Snapshot = old.Snapshot with { Status = AgentActivityStatus.Unknown,
+                Rule = "not-observed", Reason = "Waiting for the restarted harness to be observed.",
+                CurrentTurnCompleted = false, CompletedAt = null, SeenCompletionSequence = agent.SeenCompletionSequence } });
         agent.Working = false;
     }
 }

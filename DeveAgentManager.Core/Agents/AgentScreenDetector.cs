@@ -18,11 +18,12 @@ public static class AgentScreenDetector
     private static string Evidence(string value) => value.Length <= 240 ? value : value[..240] + "…";
     private const string PromptPattern = @"^\s*(?:[›❯](?:\s|$)|›[⠁⠂⠄⠈⠐⠠⡀⢀])";
     private static string? CodexCompletion(string text) => text.Split('\n').LastOrDefault(line =>
-        Has(line, @"^\s*Worked for [0-9][^\n]*·\s*[0-9]{1,2}:[0-9]{2}[^\n]*$"))?.Trim();
+        Has(line, @"^\s*Worked for [0-9][^\n]*[·•]\s*(?:[0-9]{1,2}:[0-9]{2}|[A-Z][a-z]{2}\s+[0-9]{1,2}\s+at\s+[0-9]{1,2}:[0-9]{2})[^\n]*$"))?.Trim();
     private static readonly Rule[] Rules =
     [
         new("codex-transcript-viewer", 110, "viewer controls", c => c.Harness == "codex"
-            && Has(c.After, "↑/↓ to scroll") && Has(c.After, "q to quit") && Has(c.After, "pgup/pgdn|home/end")
+            && (Has(c.After, "↑/↓ to scroll") && Has(c.After, "q to quit") && Has(c.After, "pgup/pgdn|home/end")
+                || Has(c.Tail, "↓ Back to bottom") && Has(c.Tail, "enter/esc latest"))
             ? new(AgentActivityStatus.Unknown, "Codex is showing conversation history; this view does not establish live activity.", "") : null),
         new("usage-limit", 100, "current error", c => Limit(c)),
         new("live-input-controls", 90, "below current prompt / modal controls", Blocked),

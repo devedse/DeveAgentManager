@@ -6,7 +6,6 @@ using DeveAgentManager.Core.Security;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Renci.SshNet;
-using Renci.SshNet.Common;
 
 namespace DeveAgentManager.Core.Ssh;
 
@@ -30,7 +29,7 @@ public sealed record CommandResult(int ExitCode, string Output, string Error)
 public sealed class RunnerCommandException(string message) : Exception(message);
 
 /// <summary>
-/// Runs commands and transfers files on Runners over SSH. Keeps one connection per Runner open and reuses it.
+/// Runs commands and transfers files on Runners over SSH. Reuses a bounded pool of exclusively leased connections per Runner.
 /// Every command runs in bash with the Manager's env.sh sourced, so tools installed by setup are on the PATH.
 /// </summary>
 public sealed class RunnerShell(
@@ -44,7 +43,11 @@ public sealed class RunnerShell(
 
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(2);
 
+    // Preserve the former ten-command concurrency budget, without sharing a transport between commands.
+    internal const int CommandCapacity = 10;
     private readonly ConcurrentDictionary<Guid, Pooled> _pool = new();
+    private readonly CancellationTokenSource _shutdown = new();
+    private int _disposed;
 
     public SshTarget CreateTarget(Runner runner)
     {
@@ -70,60 +73,74 @@ public sealed class RunnerShell(
     public Task<SshClient> ConnectNewAsync(Runner runner, CancellationToken cancellationToken) =>
         connector.ConnectAsync(CreateTarget(runner), HostKeyLearner(runner), cancellationToken);
 
-    public async Task<CommandResult> RunAsync(Runner runner, string script, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
-    {
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout ?? DefaultTimeout);
-
-        var client = await GetClientAsync(runner, timeoutSource.Token);
-        using var command = client.CreateCommand(Wrap(script));
-        try
-        {
-            await command.ExecuteAsync(timeoutSource.Token);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException($"Command on '{runner.Name}' timed out after {(timeout ?? DefaultTimeout).TotalSeconds:0}s.");
-        }
-        catch (SshConnectionException)
-        {
-            Invalidate(runner.Id);
-            throw;
-        }
-
-        return new CommandResult(command.ExitStatus ?? -1, command.Result, command.Error);
-    }
+    public Task<CommandResult> RunAsync(Runner runner, string script, TimeSpan? timeout = null, CancellationToken cancellationToken = default) =>
+        ExecuteAsync(runner, script, timeout ?? DefaultTimeout, null, cancellationToken);
 
     /// <summary>Runs a command and reports every output line (stdout and stderr) as it arrives. Returns the exit code.</summary>
-    public async Task<int> RunStreamingAsync(Runner runner, string script, Action<string> onLine, TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout);
+    public async Task<int> RunStreamingAsync(Runner runner, string script, Action<string> onLine, TimeSpan timeout, CancellationToken cancellationToken) =>
+        (await ExecuteAsync(runner, "exec 2>&1\n" + script, timeout, onLine, cancellationToken)).ExitCode;
 
-        var client = await GetClientAsync(runner, timeoutSource.Token);
-        using var command = client.CreateCommand(Wrap("exec 2>&1\n" + script));
-        var execute = command.ExecuteAsync(timeoutSource.Token);
-        var pump = Task.Run(() => PumpLines(command.OutputStream, onLine), CancellationToken.None);
+    private async Task<CommandResult> ExecuteAsync(Runner runner, string script, TimeSpan timeout,
+        Action<string>? onLine, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
+        deadline.CancelAfter(timeout);
+        RunnerConnectionPool<SshClient>.Lease? lease = null;
+        var phase = "waiting for a connection";
         try
         {
-            await execute;
+            lease = await RentCommandAsync(runner, deadline.Token);
+            phase = "opening channel / submitting command";
+            // SSH.NET ExecuteAsync performs channel setup synchronously, before it observes cancellation.
+            // Closing this exclusively leased transport also interrupts setup, preventing a delayed open
+            // from submitting work after its deadline. Never reuse or replay this operation after failure.
+            using var abort = deadline.Token.Register(lease.Discard);
+            return await Task.Run(async () =>
+            {
+                deadline.Token.ThrowIfCancellationRequested();
+                using var command = lease.Client.CreateCommand(Wrap(script));
+                Task? pump = null;
+                try
+                {
+                    var execute = command.ExecuteAsync(deadline.Token);
+                    phase = "awaiting command result";
+                    if (onLine is not null) pump = Task.Run(() => PumpLines(command.OutputStream, onLine), CancellationToken.None);
+                    await execute;
+                    deadline.Token.ThrowIfCancellationRequested();
+                    if (pump is not null) await pump;
+                    return new CommandResult(command.ExitStatus ?? -1, onLine is null ? command.Result : "", command.Error);
+                }
+                catch
+                {
+                    lease.Discard();
+                    command.Dispose();
+                    // Cleanup must not replace the transport failure with a pump's disposed-stream error.
+                    if (pump is not null) { try { await pump; } catch { } }
+                    throw;
+                }
+                finally
+                {
+                    // Own the pump through teardown, including exceptions during synchronous setup.
+                    command.Dispose();
+                }
+            }, CancellationToken.None);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception ex)
         {
-            throw new TimeoutException($"Command on '{runner.Name}' timed out after {timeout.TotalMinutes:0} minutes.");
-        }
-        catch (SshConnectionException)
-        {
-            Invalidate(runner.Id);
+            lease?.Discard();
+            // Do not attach SSH.NET's exception: some exceptions include the full shell command.
+            logger.Log(cancellationToken.IsCancellationRequested || _shutdown.IsCancellationRequested ? LogLevel.Debug : LogLevel.Warning,
+                "SSH command failed on runner {RunnerId}; connection {ConnectionId}, age {AgeSeconds:F1}s, phase {Phase}, failure {Failure}, canceled {Canceled}. The command was not replayed",
+                runner.Id, lease?.Id, lease?.Age.TotalSeconds, phase, ex.GetType().Name, deadline.IsCancellationRequested);
+            if (deadline.IsCancellationRequested)
+            {
+                _shutdown.Token.ThrowIfCancellationRequested();
+                cancellationToken.ThrowIfCancellationRequested();
+                throw new TimeoutException($"Command on '{runner.Name}' timed out after {timeout.TotalSeconds:0}s. Its remote outcome may be unknown.");
+            }
             throw;
         }
-        finally
-        {
-            // The output stream ends when the channel closes; don't wait forever if it doesn't.
-            await Task.WhenAny(pump, Task.Delay(TimeSpan.FromSeconds(5), CancellationToken.None));
-        }
-
-        return command.ExitStatus ?? -1;
+        finally { lease?.Dispose(); }
     }
 
     public Task UploadAsync(Runner runner, string remotePath, string content, string mode = "600", CancellationToken cancellationToken = default) =>
@@ -138,18 +155,13 @@ public sealed class RunnerShell(
             (await RunAsync(runner, $"mkdir -p {ShellQuote.Path(directory)}", cancellationToken: cancellationToken)).EnsureSuccess($"Creating {directory}");
         }
 
-        var sftp = await GetSftpAsync(runner, cancellationToken);
-        var sftpPath = ToSftpPath(sftp, remotePath);
-        try
+        var sftpPath = await WithSftpAsync(runner, async (sftp, ct) =>
         {
+            var path = ToSftpPath(sftp, remotePath);
             using var stream = new MemoryStream(bytes);
-            await Task.Run(() => sftp.UploadFile(stream, sftpPath, true), cancellationToken);
-        }
-        catch (SshConnectionException)
-        {
-            Invalidate(runner.Id);
-            throw;
-        }
+            await sftp.UploadFileAsync(stream, path, ct);
+            return path;
+        }, cancellationToken);
 
         (await RunAsync(runner, $"chmod {mode} {ShellQuote.Path(remotePath)}", cancellationToken: cancellationToken)).EnsureSuccess($"chmod {remotePath}");
         return sftpPath;
@@ -161,47 +173,38 @@ public sealed class RunnerShell(
     /// <summary>A file's bytes, or null when it doesn't exist or is larger than <paramref name="maxBytes"/>.</summary>
     public async Task<byte[]?> DownloadBytesAsync(Runner runner, string remotePath, long maxBytes, CancellationToken cancellationToken = default)
     {
-        var sftp = await GetSftpAsync(runner, cancellationToken);
-        var sftpPath = ToSftpPath(sftp, remotePath);
-        try
+        return await WithSftpAsync<byte[]?>(runner, async (sftp, ct) =>
         {
-            if (!sftp.Exists(sftpPath) || sftp.GetAttributes(sftpPath) is not { IsRegularFile: true } attributes || attributes.Size > maxBytes)
-            {
+            var path = ToSftpPath(sftp, remotePath);
+            if (!await sftp.ExistsAsync(path, ct) || await sftp.GetAttributesAsync(path, ct) is not { IsRegularFile: true } attributes || attributes.Size > maxBytes)
                 return null;
-            }
-
             using var stream = new MemoryStream();
-            await Task.Run(() => sftp.DownloadFile(sftpPath, stream), cancellationToken);
+            await sftp.DownloadFileAsync(path, stream, ct);
             return stream.Length > maxBytes ? null : stream.ToArray();
-        }
-        catch (SshConnectionException)
-        {
-            Invalidate(runner.Id);
-            throw;
-        }
+        }, cancellationToken);
     }
 
-    /// <summary>
-    /// Streams a file into <paramref name="destination"/> instead of memory, for large files. False when it doesn't exist
-    /// or is larger than <paramref name="maxBytes"/>.
-    /// </summary>
-    public async Task<bool> DownloadToAsync(Runner runner, string remotePath, Stream destination, long maxBytes, CancellationToken cancellationToken = default)
-    {
-        var sftp = await GetSftpAsync(runner, cancellationToken);
-        var sftpPath = ToSftpPath(sftp, remotePath);
-        try
+    /// <summary>Streams a file into the destination. False when absent or larger than maxBytes.</summary>
+    public Task<bool> DownloadToAsync(Runner runner, string remotePath, Stream destination, long maxBytes, CancellationToken cancellationToken = default) =>
+        WithSftpAsync(runner, async (sftp, ct) =>
         {
-            if (!sftp.Exists(sftpPath) || sftp.GetAttributes(sftpPath) is not { IsRegularFile: true } attributes || attributes.Size > maxBytes)
-            {
+            var path = ToSftpPath(sftp, remotePath);
+            if (!await sftp.ExistsAsync(path, ct) || await sftp.GetAttributesAsync(path, ct) is not { IsRegularFile: true } attributes || attributes.Size > maxBytes)
                 return false;
-            }
-
-            await sftp.DownloadFileAsync(sftpPath, destination, cancellationToken);
+            await sftp.DownloadFileAsync(path, destination, ct);
             return true;
-        }
-        catch (SshConnectionException)
+        }, cancellationToken);
+
+    private async Task<T> WithSftpAsync<T>(Runner runner, Func<SftpClient, CancellationToken, Task<T>> operation, CancellationToken ct)
+    {
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct, _shutdown.Token);
+        using var lease = await RentSftpAsync(runner, lifetime.Token);
+        using var abort = lifetime.Token.Register(lease.Discard);
+        try { return await operation(lease.Client, lifetime.Token); }
+        catch
         {
-            Invalidate(runner.Id);
+            lease.Discard();
+            lifetime.Token.ThrowIfCancellationRequested();
             throw;
         }
     }
@@ -210,16 +213,16 @@ public sealed class RunnerShell(
     {
         if (_pool.TryRemove(runnerId, out var pooled))
         {
-            pooled.Dispose();
+            pooled.Retire();
         }
     }
 
     public void Dispose()
     {
-        foreach (var runnerId in _pool.Keys)
-        {
-            Invalidate(runnerId);
-        }
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _shutdown.Cancel(); // Also reaches leases draining out of retired generations.
+        foreach (var pair in _pool)
+            if (_pool.TryRemove(pair)) pair.Value.Dispose();
     }
 
     /// <remarks>Line endings are normalized: scripts in C# raw strings get CRLF when the repo is checked out on Windows.</remarks>
@@ -286,93 +289,45 @@ public sealed class RunnerShell(
         onLine(text);
     }
 
-    private async Task<SshClient> GetClientAsync(Runner runner, CancellationToken cancellationToken)
+    private async Task<RunnerConnectionPool<SshClient>.Lease> RentCommandAsync(Runner runner, CancellationToken ct)
     {
-        var pooled = GetPooled(runner);
-        await pooled.Lock.WaitAsync(cancellationToken);
-        try
+        while (true)
         {
-            if (pooled.Client is { IsConnected: true })
-            {
-                return pooled.Client;
-            }
-
-            pooled.Client?.Dispose();
-            pooled.Client = null;
-            logger.LogDebug("Connecting to runner {Runner} at {Host}", runner.Name, runner.Host);
-            pooled.Client = await connector.ConnectAsync(CreateTarget(runner), HostKeyLearner(runner), cancellationToken);
-            return pooled.Client;
-        }
-        finally
-        {
-            pooled.Lock.Release();
+            ct.ThrowIfCancellationRequested();
+            try { return await GetPooled(runner).Commands.RentAsync(ct); }
+            catch (RunnerConnectionPool<SshClient>.RetiredException) { /* Replaced before any command was assigned. */ }
         }
     }
 
-    private async Task<SftpClient> GetSftpAsync(Runner runner, CancellationToken cancellationToken)
+    private async Task<RunnerConnectionPool<SftpClient>.Lease> RentSftpAsync(Runner runner, CancellationToken ct)
     {
-        // Make sure the host key is known before SFTP connects, so both use the same trusted key.
-        await GetClientAsync(runner, cancellationToken);
-
-        var pooled = GetPooled(runner);
-        await pooled.Lock.WaitAsync(cancellationToken);
-        try
+        // Learn/verify the host key first, without holding a command lease during a file transfer.
+        using (await RentCommandAsync(runner, ct)) { }
+        while (true)
         {
-            if (pooled.Sftp is { IsConnected: true })
-            {
-                return pooled.Sftp;
-            }
-
-            pooled.Sftp?.Dispose();
-            pooled.Sftp = await connector.ConnectSftpAsync(CreateTarget(runner), cancellationToken);
-            return pooled.Sftp;
-        }
-        finally
-        {
-            pooled.Lock.Release();
+            ct.ThrowIfCancellationRequested();
+            try { return await GetPooled(runner).Files.RentAsync(ct); }
+            catch (RunnerConnectionPool<SftpClient>.RetiredException) { }
         }
     }
 
     private Pooled GetPooled(Runner runner)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var endpoint = $"{runner.Username}@{runner.Host}:{runner.SshPort}";
         while (true)
         {
-            var pooled = _pool.GetOrAdd(runner.Id, _ => new Pooled(endpoint));
-            if (pooled.Endpoint == endpoint)
-            {
-                return pooled;
-            }
-
-            // The Runner got a new address (DHCP): drop the old connection.
-            if (_pool.TryRemove(new KeyValuePair<Guid, Pooled>(runner.Id, pooled)))
-            {
-                pooled.Dispose();
-            }
+            var pooled = _pool.GetOrAdd(runner.Id, _ => new Pooled(endpoint,
+                new(CommandCapacity, ct => connector.ConnectAsync(CreateTarget(runner), HostKeyLearner(runner), ct), c => c.IsConnected),
+                new(1, ct => connector.ConnectSftpAsync(CreateTarget(runner), ct), c => c.IsConnected)));
+            if (pooled.Endpoint == endpoint) return pooled;
+            if (_pool.TryRemove(new KeyValuePair<Guid, Pooled>(runner.Id, pooled))) pooled.Retire();
         }
     }
 
-    private sealed class Pooled(string endpoint) : IDisposable
+    private sealed record Pooled(string Endpoint, RunnerConnectionPool<SshClient> Commands, RunnerConnectionPool<SftpClient> Files) : IDisposable
     {
-        public string Endpoint { get; } = endpoint;
-
-        public SemaphoreSlim Lock { get; } = new(1, 1);
-
-        public SshClient? Client { get; set; }
-
-        public SftpClient? Sftp { get; set; }
-
-        public void Dispose()
-        {
-            try
-            {
-                Client?.Dispose();
-                Sftp?.Dispose();
-            }
-            catch
-            {
-                // Closing a dead connection can throw; nothing to do about it.
-            }
-        }
+        public void Retire() { Commands.Retire(); Files.Retire(); }
+        public void Dispose() { Commands.Dispose(); Files.Dispose(); }
     }
 }

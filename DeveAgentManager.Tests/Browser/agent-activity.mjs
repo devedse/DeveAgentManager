@@ -37,7 +37,7 @@ await page.route('**/api/**',async route=>{
  else if(path==='/api/agents/attention') body=activity.currentTurnCompleted&&activity.status==='Ready'&&!activity.backgroundTaskCount&&activity.unseenCompletion&&!dismissed?[{agentId:id,name:agent.name,runnerName:agent.runnerName,harnessId:'codex',kind:'Finished',reason:'Finished since you last viewed this agent.',at:now,completionSequence:5,token:'A'.repeat(64)}]:[];
  else if(path===`/api/agents/${id}/attention/dismiss`){assert.equal(route.request().postDataJSON().token,'A'.repeat(64));dismissed=true;return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}/limit/continue`){schedules.push(route.request().postDataJSON());return route.fulfill({status:204});}
- else if(path===`/api/agents/${id}/seen`){seen.push(route.request().postDataJSON());activity.unseenCompletion=false;activity.seenCompletionSequence=5;return route.fulfill({status:204});}
+ else if(path===`/api/agents/${id}/seen`){seen.push(route.request().postDataJSON());activity.unseenCompletion=false;activity.seenCompletionSequence=activity.completionSequence;return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}`)body=agent;
  else if(path===`/api/agents/${id}/limit`)body=agent.harnessId==='claude'&&limitVisible?{message:"You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)",timeZoneId:'Europe/Amsterdam',detectedAt:now,resetAt:'2026-10-04T02:00:00Z',detectedResetAt:'2026-10-04T01:00:00Z',continueAt:limitStatus==='Scheduled'?'2026-10-04T01:01:00Z':null,status:limitStatus,detail:limitDetail,nativeAutoContinue:false,detectionProblem}:null;
  else if(path==='/api/agents')body=[agent];
@@ -111,12 +111,12 @@ assert.equal(seen.length,0,'unfocused terminal acknowledged completion');
 await page.evaluate(()=>{document.hasFocus=()=>true;});
 await page.waitForTimeout(5500);
 assert.deepEqual(seen,[{completionSequence:5}]);
-await page.getByRole('button',{name:'Explain Example agent status: Finished',exact:true}).waitFor();
+await page.getByRole('button',{name:'Explain Example agent status: Ready',exact:true}).waitFor({timeout:25000});
 activity.status='Working';activity.currentTurnCompleted=false;
 await page.getByRole('button',{name:'Explain Example agent status: Working',exact:true}).waitFor({timeout:25000});
 activity.status='Ready'; // Old historical completion must not label an interrupted later turn Finished.
 await page.getByRole('button',{name:'Explain Example agent status: Ready',exact:true}).waitFor({timeout:25000});
-activity.currentTurnCompleted=true;
+activity.currentTurnCompleted=true;activity.completionSequence=6;activity.unseenCompletion=true;activity.sequence=6;
 await page.getByRole('button',{name:'Explain Example agent status: Finished',exact:true}).waitFor({timeout:25000});
 await page.locator('button[aria-label="Harness quick commands"]:visible').click();
 await page.getByRole('menuitem',{name:'/status · Usage and status',exact:true}).click();

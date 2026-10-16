@@ -534,7 +534,8 @@ public sealed partial class AgentService(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agents = await db.Agents.Where(a => a.RunnerId == runner.Id).ToListAsync(cancellationToken);
 
-        var result = (await shell.RunAsync(runner, BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern)), captureScreens: true),
+        var result = (await shell.RunAsync(runner, BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern)), captureScreens: true,
+            nativeSessions: agents.ToDictionary(a => a.TmuxSession, a => new NativeActivityTarget(a.HarnessId, a.HarnessSessionId))),
             TimeSpan.FromSeconds(30), cancellationToken)).EnsureSuccess("Reading agent state");
         var (_, panes, _) = ParsePanes(result.Output);
         var knownLimits = await db.AgentLimits.AsNoTracking().Where(l => db.Agents.Any(a => a.Id == l.AgentId && a.RunnerId == runner.Id)).ToDictionaryAsync(l => l.AgentId, cancellationToken);
@@ -560,7 +561,7 @@ public sealed partial class AgentService(
                     if (screen?.Screen is { } currentScreen)
                         detection = UsageLimitState.ApplyExpiry(agent, knownLimits.GetValueOrDefault(agent.Id), currentScreen, screen.Identity, detection, DateTime.UtcNow, limitReader);
                     activityChanged = AgentActivityTracker.Apply(agent, detection,
-                        screen?.Identity ?? AgentActivityTracker.Read(agent).Identity, observedAt);
+                        screen?.Identity ?? AgentActivityTracker.Read(agent).Identity, observedAt, screen?.NativeTurn);
                     working = agent.Working;
                 }
             }
@@ -654,7 +655,9 @@ public sealed partial class AgentService(
     /// Bash that prints the Runner's time, tmux's panes, and after <see cref="BusyMarker"/> the sessions whose screen shows
     /// their harness's busy pattern.
     /// </summary>
-    internal static string BuildStateScript(IEnumerable<(string Session, string? BusyPattern)> agents, bool captureScreens = false)
+    internal sealed record NativeActivityTarget(string Harness, string? SessionId);
+    internal static string BuildStateScript(IEnumerable<(string Session, string? BusyPattern)> agents, bool captureScreens = false,
+        IReadOnlyDictionary<string, NativeActivityTarget>? nativeSessions = null)
     {
         var targets = agents.ToArray();
         var script = new StringBuilder("""
@@ -676,7 +679,11 @@ public sealed partial class AgentService(
         {
             script.Append("echo '--screens--'\npython3 - ");
             foreach (var target in targets) script.Append(ShellQuote.Quote(target.Session)).Append(' ');
-            script.Append("<<'DAM_STATE'\n").Append(LimitTerminal.BatchProbe).Append("\nDAM_STATE\n");
+            script.Append("<<'DAM_STATE'\n");
+            if (nativeSessions is not null)
+                script.Append("import json\nactivity_targets=json.loads(").Append(JsonSerializer.Serialize(JsonSerializer.Serialize(nativeSessions)))
+                    .Append(")\n").Append(NativeActivityProbe.Script).Append('\n');
+            script.Append(LimitTerminal.BatchProbe).Append("\nDAM_STATE\n");
         }
 
         return script.ToString();
@@ -684,7 +691,8 @@ public sealed partial class AgentService(
 
     internal const string BusyMarker = "--busy--";
     internal sealed record ObservedScreen(string Session, string? Identity, string? Screen,
-        string? TimeZone = null, bool InputEmpty = false, string? Hash = null, DateTime? ObservedAt = null)
+        string? TimeZone = null, bool InputEmpty = false, string? Hash = null, DateTime? ObservedAt = null,
+        NativeTurnObservation? NativeTurn = null)
     {
         internal LimitScreen? ToLimitScreen() => Screen is not null && Identity is not null && Hash is not null
             ? new(Screen, Identity.Replace('|', ':'), TimeZone, InputEmpty, Hash, ObservedAt) : null;

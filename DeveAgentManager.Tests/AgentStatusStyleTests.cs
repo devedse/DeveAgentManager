@@ -10,7 +10,7 @@ public class AgentStatusStyleTests
     [Theory]
     [InlineData(AgentActivityStatus.Ready, null, false, "Finished")]
     [InlineData(AgentActivityStatus.Ready, 0, false, "Finished")]
-    [InlineData(AgentActivityStatus.Ready, null, true, "Finished")]
+    [InlineData(AgentActivityStatus.Ready, null, true, "Ready")]
     [InlineData(AgentActivityStatus.Ready, 1, false, "Background · 1")]
     [InlineData(AgentActivityStatus.Working, null, false, "Working")]
     [InlineData(AgentActivityStatus.Working, 1, false, "Working")]

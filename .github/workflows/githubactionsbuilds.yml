@@ -42,6 +42,11 @@ jobs:
       run: dotnet restore DeveAgentManager.slnx
     - name: dotnet build
       run: dotnet build DeveAgentManager.slnx -c Release --no-restore /p:Version=${{ needs.generate_version_number.outputs.version }}
+    - name: Install isolated SSH test server
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y openssh-server
+        sudo install -d -m 0755 /run/sshd
     - name: dotnet test
       run: dotnet test --solution DeveAgentManager.slnx -c Release --no-build --verbosity normal
 

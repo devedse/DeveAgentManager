@@ -28,7 +28,7 @@ public class AgentActivityTests
     }
 
     [Fact]
-    public void ViewingCompletionDoesNotChangeFinishedAndAnInterruptedLaterTurnDoesNotReuseIt()
+    public void ViewingCompletionClearsFinishedAndAnInterruptedLaterTurnDoesNotReuseIt()
     {
         var agent = NewAgent();
         AgentActivityTracker.Apply(agent, Working, "process", Now);
@@ -39,11 +39,11 @@ public class AgentActivityTests
         agent.SeenCompletionSequence = done.CompletionSequence;
         var seen = AgentActivityTracker.GetDto(agent, Now.AddSeconds(10));
         Assert.False(seen.UnseenCompletion);
-        Assert.True(seen.IsFinished);
+        Assert.False(seen.IsFinished);
         // The durable JSON is sufficient across a Manager restart.
         var restored = new Agent { HarnessId = agent.HarnessId, HarnessSessionId = agent.HarnessSessionId,
             State = agent.State, ActivityJson = agent.ActivityJson, SeenCompletionSequence = agent.SeenCompletionSequence };
-        Assert.True(AgentActivityTracker.GetDto(restored, Now.AddSeconds(10)).IsFinished);
+        Assert.False(AgentActivityTracker.GetDto(restored, Now.AddSeconds(10)).IsFinished);
         Assert.False(AgentActivityTracker.GetDto(restored, Now.AddSeconds(60)).IsFinished);
         AgentActivityTracker.Apply(agent, Working, "process", Now.AddSeconds(15));
         Assert.False(AgentActivityTracker.GetDto(agent, Now.AddSeconds(15)).IsFinished);

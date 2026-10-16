@@ -26,12 +26,13 @@ public sealed class SshConnector(ManagerSshKey key)
         var seenFingerprint = await ConnectVerifiedAsync(client, target, cancellationToken);
         client.KeepAliveInterval = TimeSpan.FromSeconds(30);
 
-        if (target.KnownHostKey is null && onHostKeyLearned is not null)
+        try
         {
-            await onHostKeyLearned(seenFingerprint);
+            if (target.KnownHostKey is null && onHostKeyLearned is not null)
+                await onHostKeyLearned(seenFingerprint);
+            return client;
         }
-
-        return client;
+        catch { client.Dispose(); throw; }
     }
 
     public async Task<SftpClient> ConnectSftpAsync(SshTarget target, CancellationToken cancellationToken)

@@ -137,6 +137,9 @@ public sealed class LimitTerminal(RunnerShell shell) : ILimitTerminal
                 target='='+session+':'
                 state=snapshot()
                 state['Identity']=state['Identity'].replace(':','|')
+                if 'native_activity' in globals():
+                    try: state['NativeTurn']=native_activity(activity_targets.get(session),state['Identity'])
+                    except (OSError,ValueError,KeyError,TypeError,AttributeError,IndexError): state['NativeTurn']=None
                 print(json.dumps(dict(Session=session,**state)))
             except (OSError,ValueError,IndexError,RuntimeError,subprocess.CalledProcessError):
                 print(json.dumps(dict(Session=session,Identity=None,Screen=None)))

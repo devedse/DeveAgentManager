@@ -1,5 +1,8 @@
 # Activity fixes and connection investigation plan
 
+> Follow-up implementation: the accepted behavior is now Finished for an unseen current completion, clearing to Ready when its terminal is viewed. Codex native lifecycle recovery preserves acknowledgement through upgrades. SSH pooling uses exclusively leased reusable transports, isolating cancellation and draining retirement without replay. See [current activity behavior](agent-activity.md) and [SSH recovery](ssh-session-exhaustion-investigation.md). The remaining sections preserve the earlier plan and investigation history; statements that viewing must retain Finished or that SSH is investigation-only are superseded by this follow-up.
+
+
 Status: **items 1, 3, 4 and 5 implemented and verified locally; SSH remains investigation only**. Updated 2026-10-16. Live deployment verification is separate and pending.
 
 ## Scope and delivery
