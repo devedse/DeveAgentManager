@@ -9,6 +9,7 @@
   <ItemGroup>
     <!-- Harness screens captured while they worked and while they waited, for the busy patterns. -->
     <None Include="Screens\*.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Browser\*.py" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Js\*.cjs" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Desktop\*.py" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\DeveAgentManager.Core\Scripts\desktop.py" Link="Desktop\desktop.py" CopyToOutputDirectory="PreserveNewest" />

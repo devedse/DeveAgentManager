@@ -1,10 +1,12 @@
 const playwright = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 const engine = process.env.DAM_TEST_BROWSER ?? 'chromium';
 const browser = await playwright[engine].launch();
 const base = process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
 try {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, hasTouch: true });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, hasTouch: true, isMobile: engine === 'chromium' });
     await context.addInitScript(() => { window.__opened = []; window.open = (...args) => { window.__opened.push(args); return null; }; });
     const page = await context.newPage();
     const errors = [];
@@ -61,13 +63,28 @@ try {
             screen.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], changedTouches: [new Touch({ identifier: 1, target: screen, clientX: p.x, clientY: p.y })] }));
         }, p);
     }
-    for (const width of [1280, 390]) {
+    for (const transport of ['direct', 'tmux']) for (const width of [1280, 390]) {
         await page.setViewportSize({ width, height: 850 });
         await page.goto(base + `/agents/${id}`);
+        // Let lazy WASM resources finish before another full navigation can cancel their downloads.
+        await page.waitForLoadState('networkidle');
         await screen.waitFor({ timeout: 60000 });
         await page.waitForTimeout(700);
-        socket.send(Buffer.from('\x1b[2J\x1b[H' + lines.join('\r\n') + '\r\n\x1b[?1000h\x1b[?1002h\x1b[?1006h'));
+        if (transport === 'tmux') {
+            const size = await page.evaluate(() => {
+                const terminal = [...XtermBlazor._terminals.values()][0].terminal;
+                return { cols: terminal.cols, rows: terminal.rows };
+            });
+            const fixture = spawnSync('python3', [fileURLToPath(new URL('./tmux-link-stream.py', import.meta.url)),
+                '--cols', String(size.cols), '--rows', String(size.rows)], { timeout: 10000 });
+            assert.equal(fixture.status, 0, fixture.stderr?.toString());
+            assert.ok(fixture.stdout.includes(Buffer.from('https://example.org/named#details')), 'tmux must preserve the named link target');
+            socket.send(fixture.stdout);
+        } else {
+            socket.send(Buffer.from('\x1b[2J\x1b[H' + lines.join('\r\n') + '\r\n\x1b[?1000h\x1b[?1002h\x1b[?1006h'));
+        }
         await page.locator('.xterm-rows').getByText('Named report', { exact: false }).waitFor();
+        await page.waitForTimeout(200);
         received = '';
         let before = (await opened()).length;
         const url = await point(1);
@@ -101,5 +118,5 @@ try {
         assert.match(received, /\x1b\[</, 'ordinary terminal input keeps mouse reporting');
     }
     assert.deepEqual(errors, []);
-    console.log(`Passed (${engine}): URL and OSC 8 activation, phone tap, preserved fragments, no duplicate remote clicks, swipe and unsafe protocol guards, normal mouse reporting.`);
+    console.log(`Passed (${engine}): direct and real-tmux URL/OSC 8 activation, phone tap, preserved fragments, no duplicate remote clicks, swipe and unsafe protocol guards, normal mouse reporting.`);
 } finally { await browser.close(); }

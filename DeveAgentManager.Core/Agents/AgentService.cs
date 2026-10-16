@@ -384,17 +384,24 @@ public sealed partial class AgentService(
             throw new AgentNotRunningException($"Agent '{agent.Name}' is not running. Start it first.");
         }
 
+        return (runner, "bash -c " + ShellQuote.Quote(BuildAttachScript(agent.TmuxSession, readOnly)));
+    }
+
+    internal static string BuildAttachScript(string tmuxSession, bool readOnly)
+    {
+        // Declare capabilities for this browser client only. Without hyperlinks, tmux strips OSC 8 URLs
+        // from named links before xterm can open them locally; clicks then reach the harness instead.
+        const string attach = "exec tmux -u -T RGB,hyperlinks attach-session";
         // tmux sizes the window to the screen used last (window-size latest), and every resize makes pi redraw its whole
         // conversation. So a terminal that joins while others are attached joins watching (ignore-size): opening or
         // refreshing a tab changes nothing. It takes the size once its user types (ClaimSizeAsync).
-        var target = ShellQuote.Quote("=" + agent.TmuxSession);
-        var attach = readOnly
-            ? $"exec tmux -u attach-session -f read-only,ignore-size -t {target}"
+        var target = ShellQuote.Quote("=" + tmuxSession);
+        return readOnly
+            ? $"{attach} -f read-only,ignore-size -t {target}"
             : $"""
-              if [ -n "$(tmux list-clients -t {target} 2>/dev/null)" ]; then exec tmux -u attach-session -f ignore-size -t {target}; fi
-              exec tmux -u attach-session -t {target}
+              if [ -n "$(tmux list-clients -t {target} 2>/dev/null)" ]; then {attach} -f ignore-size -t {target}; fi
+              {attach} -t {target}
               """;
-        return (runner, "bash -c " + ShellQuote.Quote(attach));
     }
 
     /// <summary>

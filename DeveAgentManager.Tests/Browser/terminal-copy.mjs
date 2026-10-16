@@ -89,6 +89,8 @@ try {
     await page.mouse.down();
     await page.mouse.move(box.x + 60, box.y + 8, { steps: 4 });
     await page.mouse.up();
+    // Browser input reaches the mock Manager asynchronously, after the mouse API has returned.
+    for (let i = 0; i < 20 && !/\x1b\[<0;\d+;\d+m/.test(received); i++) await page.waitForTimeout(50);
     assert.match(received, /\x1b\[<32;\d+;\d+M[\s\S]*\x1b\[<0;\d+;\d+m/, 'the drag went to tmux');
     ws.send(osc52('selected with the mouse', ''));
     await page.locator('.mud-snackbar').getByText('Copied 23 characters').waitFor({ timeout: 5000 });
