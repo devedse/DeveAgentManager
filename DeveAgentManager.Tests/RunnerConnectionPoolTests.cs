@@ -47,6 +47,26 @@ public class RunnerConnectionPoolTests
     }
 
     [Fact]
+    public async Task SlowConnectionSetupDoesNotBlockReuseOfAnotherHealthyConnection()
+    {
+        var pending = new TaskCompletionSource<Transport>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var count = 0;
+        using var pool = new RunnerConnectionPool<Transport>(2,
+            _ => ++count == 1 ? Task.FromResult(new Transport()) : pending.Task, t => !t.Closed);
+        using var first = await pool.RentAsync(TestContext.Current.CancellationToken);
+        var connecting = pool.RentAsync(TestContext.Current.CancellationToken);
+        first.Dispose();
+        try
+        {
+            using var reused = await pool.RentAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+            Assert.Same(first.Client, reused.Client);
+            Assert.False(connecting.IsCompleted);
+        }
+        finally { pending.TrySetResult(new Transport()); }
+        using var second = await connecting;
+    }
+
+    [Fact]
     public async Task RetirementDrainsRunningOperationsAndRejectsWaiters()
     {
         using var pool = new RunnerConnectionPool<Transport>(1, _ => Task.FromResult(new Transport()), t => !t.Closed);

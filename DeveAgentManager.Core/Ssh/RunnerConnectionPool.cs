@@ -50,20 +50,14 @@ internal sealed class RunnerConnectionPool<T>(int capacity, Func<CancellationTok
         await _slots.WaitAsync(ct);
         try
         {
+            ct.ThrowIfCancellationRequested();
+            // Reusing a healthy idle transport must not wait behind another transport's slow login.
+            if (TakeIdle() is { } idle) return idle;
             // Avoid a burst of simultaneous SSH authentications when the pool grows.
             await _connecting.WaitAsync(ct);
             try
             {
-                lock (_gate)
-                {
-                    if (_retired) throw new RetiredException();
-                    while (_idle.TryPop(out var existing))
-                    {
-                        if (!existing.Closed && connected(existing.Client)) return new(this, existing);
-                        _all.Remove(existing);
-                        existing.Close();
-                    }
-                }
+                if (TakeIdle() is { } returned) return returned;
 
                 var created = new Connection(await connect(ct));
                 lock (_gate)
@@ -81,6 +75,21 @@ internal sealed class RunnerConnectionPool<T>(int capacity, Func<CancellationTok
             finally { _connecting.Release(); }
         }
         catch { _slots.Release(); throw; }
+    }
+
+    private Lease? TakeIdle()
+    {
+        lock (_gate)
+        {
+            if (_retired) throw new RetiredException();
+            while (_idle.TryPop(out var existing))
+            {
+                if (!existing.Closed && connected(existing.Client)) return new(this, existing);
+                _all.Remove(existing);
+                existing.Close();
+            }
+            return null;
+        }
     }
 
     private void Return(Connection connection)
