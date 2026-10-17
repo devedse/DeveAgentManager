@@ -63,6 +63,7 @@ The 2026-10-16 regression exposed two incorrect assumptions in the existing beha
 | Codex appends a yellow warning panel, including a wrapped “Heads up” quota advisory | End the rejection at the warning marker. Repair already-stored combined messages using their original observation date; never use a warning's clock as the reset. |
 | Rejection wording changes but the reset is unchanged | Preserve the unsent automatic reservation; a confirmed send still prevents another send for that reset. |
 | Explicit one-time schedule encounters changed text | Preserve the user's schedule and its empty-prompt/readiness checks. |
+| Claude completion footer ends with `· 1 shell still running` or `· 2 shells still running` | Keep the session rejection and reset visible; recognize native continuation and never send a duplicate prompt. Later assistant/tool output still invalidates the old rejection. |
 | Draft, changed screen or native Claude continuation | Preserve the draft and guarded delivery; let Claude's own continuation take priority. |
 | Transport loss, unavailable parser or unfamiliar screen | Preserve saved limits and delivery evidence; never infer recovery or replay an ambiguous send. |
 | Healthy live activity resumes | Clear the obsolete rejection and retain the automatic policy for the next limit. |

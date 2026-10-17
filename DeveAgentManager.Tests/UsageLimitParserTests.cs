@@ -23,6 +23,29 @@ public sealed class UsageLimitParserTests
     }
 
     [Theory]
+    [InlineData(" · 2 shells still running")]
+    [InlineData(" · 1 shell still running")]
+    [InlineData("")]
+    public void ClaudeSessionLimitWithBackgroundShellsRemainsLimited(string suffix)
+    {
+        var screen = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", "claude-session-limit-background-shells.txt"))
+            .Replace(" · 2 shells still running", suffix);
+        var now = new DateTime(2026, 10, 18, 0, 0, 0, DateTimeKind.Utc);
+        var parsed = UsageLimitParser.Parse("claude", screen, "UTC", now);
+        Assert.NotNull(parsed);
+        Assert.Equal(new DateTime(2026, 10, 18, 0, 50, 0, DateTimeKind.Utc), parsed.ResetAt);
+        Assert.Equal("Europe/Amsterdam", parsed.TimeZoneId);
+        Assert.True(parsed.NativeAutoContinue);
+        Assert.DoesNotContain("shell", parsed.Message);
+        var detection = AgentScreenDetector.Detect("claude", screen, now);
+        Assert.Equal(DeveAgentManager.Contracts.AgentActivityStatus.UsageLimited, detection.Status);
+        Assert.Equal(2, detection.BackgroundTaskCount);
+
+        // A real assistant response still makes the earlier rejection historical.
+        Assert.Null(UsageLimitParser.Parse("claude", screen.Replace("✻ Sautéed", "● Work resumed.\n✻ Sautéed"), "UTC", now));
+    }
+
+    [Theory]
     [InlineData("⚠ Heads up, you have less than 25% of your weekly limit left. Run /status for a breakdown.")]
     [InlineData("⚠ Heads up, you have less than 25% of your\nweekly limit left. Run /status for a breakdown.")]
     [InlineData("⚠️\nHeads up, you have less than 25% of your weekly limit left.")]

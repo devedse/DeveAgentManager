@@ -96,7 +96,7 @@ public static class UsageLimitParser
         // A later submitted prompt or assistant/tool output means this is an old error in the conversation.
         var following = start < 0 ? [] : lines.Skip(start + 1).Take(prompt - start - 1).ToArray();
         bool CompletedFooter(string line) => harness == "claude" && Match(line,
-            @"^\s*[✻✢✽✶✳*] .+ for \d+[smh](?: \d+[smh])*\s*·\s*done \d{1,2}:\d{2}(?: [AP]M)?\s*$").Success;
+            @"^\s*[✻✢✽✶✳*] .+ for \d+[smh](?: \d+[smh])*\s*·\s*done \d{1,2}:\d{2}(?: [AP]M)?(?:\s*·\s*[1-9][0-9]* shells? still running)?\s*$").Success;
         // Claude Code's own notice about this limit ("● Usage limit reached · continuing automatically at 6:40pm") is
         // part of it, not later output. "● Usage limit reset" is not: the limit is over.
         bool LimitNotice(string line) => harness == "claude" && Match(line,

@@ -1,0 +1,13 @@
+  268 +}
+  └ You've hit your session limit · resets 2:50am (Europe/Amsterdam)
+
+● Usage limit reached · continuing automatically at 2:50am · esc to cancel
+
+✻ Sautéed for 36m 41s · done 1:20 AM · 2 shells still running
+
+──────────────────────────────────────── example-agent ─
+❯ 
+────────────────────────────────────────────────────────
+  ⚠ Usage limit reached · limit resets 2:50am
+    Continuing automatically at 2:50am · esc to cancel
+  ⏵⏵ bypass permissions on · PR #5 · 2 shells · example-workspace · ↓ to manage
