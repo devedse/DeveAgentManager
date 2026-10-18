@@ -24,6 +24,47 @@ public sealed class SessionFileApiTests(ApiSecurityTests.Manager manager) : ICla
     private const string Password = "file-password-1";
 
     [Fact]
+    public async Task AgentArtifactsAreVisibleAndDownloadableInEverySessionAndSurviveHistoryDeletion()
+    {
+        var (owner, ownerId) = await SignedInAsNewUserAsync();
+        var (reader, readerId) = await SignedInAsNewUserAsync();
+        var agent = Guid.NewGuid(); var runner = Guid.NewGuid(); var old = Guid.NewGuid(); var current = Guid.NewGuid();
+        await using (var db = await manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync())
+        {
+            db.Runners.Add(new Runner { Id = runner, OwnerId = ownerId });
+            db.Agents.Add(new Agent { Id = agent, OwnerId = ownerId, RunnerId = runner });
+            db.Sessions.AddRange(new StoredSession { Id = old, OwnerId = ownerId, WorkspaceAgentId = agent },
+                new StoredSession { Id = current, OwnerId = ownerId, WorkspaceAgentId = agent, AgentId = agent });
+            await db.SaveChangesAsync();
+        }
+        var files = manager.Services.GetRequiredService<SessionFileStore>();
+        var data = Encoding.UTF8.GetBytes("# Shared across sessions\n");
+        using var incoming = await files.ReceiveAsync(data.Length, Convert.ToHexStringLower(SHA256.HashData(data)), (s, ct) => s.WriteAsync(data, ct).AsTask(), default);
+        var file = await files.CommitAsync(old, Guid.NewGuid(), incoming, "report.md", "Report", default);
+        var png = new byte[] { 137, 80, 78, 71, 13, 10, 26, 10, 1 };
+        var image = await manager.Services.GetRequiredService<SessionImageStore>().SaveAsync(old, Guid.NewGuid(), png, "image.png", "Image", default);
+        var privateData = Encoding.UTF8.GetBytes("private");
+        using var otherIncoming = await files.ReceiveAsync(privateData.Length, Convert.ToHexStringLower(SHA256.HashData(privateData)), (s, ct) => s.WriteAsync(privateData, ct).AsTask(), default);
+        var privateFile = await files.CommitAsync(current, Guid.NewGuid(), otherIncoming, "private.txt", "", default);
+        var sharing = manager.Services.GetRequiredService<Sharing>();
+        await sharing.ShareSessionAsync(TestUsers.Plain(ownerId), old, readerId);
+        Assert.Single((await reader.GetFromJsonAsync<List<SessionFileDto>>($"/api/sessions/{old}/files", ApiJson.Options))!);
+        Assert.Equal(HttpStatusCode.NotFound, (await reader.GetAsync($"/api/sessions/{old}/files/{privateFile.Id}/download")).StatusCode);
+        await sharing.ShareAgentAsync(TestUsers.Plain(ownerId), agent, readerId, AgentAccess.Read);
+        Assert.Equal(2, (await reader.GetFromJsonAsync<List<SessionFileDto>>($"/api/sessions/{current}/files", ApiJson.Options))!.Count);
+        Assert.Equal(data, await reader.GetByteArrayAsync($"/api/sessions/{current}/files/{file.Id}/download"));
+        Assert.Equal(png, await reader.GetByteArrayAsync($"/api/sessions/{current}/images/{image.Id}"));
+        Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"/api/sessions/{old}")).StatusCode);
+        var listed = await reader.GetFromJsonAsync<List<SessionFileDto>>($"/api/sessions/{current}/files", ApiJson.Options);
+        Assert.All(listed!, f => Assert.Equal(current, f.SessionId));
+        var preview = await reader.GetFromJsonAsync<SessionFilePreview>($"/api/sessions/{current}/files/{file.Id}/preview", ApiJson.Options);
+        Assert.Equal(Encoding.UTF8.GetString(data), preview!.Text);
+        Assert.Equal(png, await reader.GetByteArrayAsync($"/api/sessions/{current}/images/{image.Id}/download"));
+        Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"/api/sessions/{current}/files/{file.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await reader.GetAsync($"/api/sessions/{current}/files/{file.Id}/download")).StatusCode);
+    }
+
+    [Fact]
     public async Task SharedFiles_DownloadAsResumableInertAttachments_AndOnlyTheOwnerDeletesThem()
     {
         var (owner, ownerId) = await SignedInAsNewUserAsync();

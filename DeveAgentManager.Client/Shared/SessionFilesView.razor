@@ -58,7 +58,7 @@ else
 
     private async Task DeleteAsync(SessionFileDto file)
     {
-        if (await Dialogs.ShowMessageBoxAsync($"Delete {file.FileName}?", "It is removed from this conversation for everyone who can open it. This can't be undone.",
+        if (await Dialogs.ShowMessageBoxAsync($"Delete {file.FileName}?", "It is removed from this agent’s shared files in every session. This can't be undone.",
                 yesText: "Delete", cancelText: "Cancel") != true) return;
         try
         {

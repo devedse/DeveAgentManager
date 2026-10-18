@@ -15,7 +15,10 @@
     <ChildContent>
         <div class="switch-menu">
             <div class="viewers-title help-heading">Continue with
-                <HelpTip Label="Switching harness or account" Text="Same folder, same conversation. Another harness gets the conversation as text." /></div>
+                <HelpTip Label="Switching harness or account">
+                    <p>The agent continues in the same folder. Completed tool calls and their results carry over as structured history. Incomplete or unsupported exchanges are labelled as historical records; the full original stays in the Manager.</p>
+                    <p>Historical commands are not run again. The new harness uses its own tools and selected model for new work. Hidden reasoning stays with the original provider. Migration details are available on the session page.</p>
+                </HelpTip></div>
             @if (!_loaded)
             {
                 @if (_loadError is not null)
@@ -141,8 +144,7 @@
         var changesHarness = harness.Id != Agent.HarnessId;
         var target = account is null ? harness.DisplayName : $"{harness.DisplayName} ({account.Name})";
         var message = changesHarness
-            ? $"The agent's harness is stopped and the conversation moves to {harness.DisplayName}: your messages, the answers and what the tools did carry over as text, "
-              + "the model's hidden thinking stays behind. It keeps working in the same folder, with the files as they are. This takes a few seconds; the full conversation stays in the Manager."
+            ? $"Continue the conversation with {harness.DisplayName} in the same folder, preserving completed tool history and a backup of the original?"
             : $"{harness.DisplayName} restarts with the account '{account?.Name}' and resumes the conversation.";
         if (!IsOwner && account is not null)
         {

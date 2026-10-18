@@ -56,41 +56,41 @@ internal static class SessionEndpoints
             return Results.NoContent();
         }).RequireSession(SessionAccess.Owner);
 
-        sessions.MapGet("/{sessionId:guid}/images", (Guid sessionId, SessionImageStore images, CancellationToken ct) => images.ListAsync(sessionId, ct))
+        sessions.MapGet("/{sessionId:guid}/images", (Guid sessionId, AgentArtifacts images, CurrentUser user, CancellationToken ct) => images.ListImagesAsync(sessionId, user, ct))
             .RequireSession(SessionAccess.Read);
-        sessions.MapGet("/{sessionId:guid}/images/{imageId:guid}", async (Guid sessionId, Guid imageId, HttpContext context, SessionImageStore images, CancellationToken ct) =>
-            await images.ReadAsync(sessionId, imageId, ct) is { } image
+        sessions.MapGet("/{sessionId:guid}/images/{imageId:guid}", async (Guid sessionId, Guid imageId, HttpContext context, AgentArtifacts images, CurrentUser user, CancellationToken ct) =>
+            await images.ImageAsync(sessionId, imageId, user, ct) is { } image
                 ? ManagerApi.Image(context, image.Data, image.Image.ContentType, TimeSpan.FromMinutes(5))
                 : Results.NotFound()).RequireSession(SessionAccess.Read);
-        sessions.MapGet("/{sessionId:guid}/images/{imageId:guid}/download", async (Guid sessionId, Guid imageId, HttpContext context, SessionImageStore images, CancellationToken ct) =>
+        sessions.MapGet("/{sessionId:guid}/images/{imageId:guid}/download", async (Guid sessionId, Guid imageId, HttpContext context, AgentArtifacts images, CurrentUser user, CancellationToken ct) =>
         {
-            if (await images.ReadAsync(sessionId, imageId, ct) is not { } image) return Results.NotFound();
+            if (await images.ImageAsync(sessionId, imageId, user, ct) is not { } image) return Results.NotFound();
             context.Response.Headers.XContentTypeOptions = "nosniff";
             context.Response.Headers.CacheControl = "private, no-store";
             return Results.File(image.Data, image.Image.ContentType, image.Image.FileName);
         }).RequireSession(SessionAccess.Read);
 
-        sessions.MapGet("/{sessionId:guid}/files", (Guid sessionId, SessionFileStore files, CancellationToken ct) => files.ListAsync(sessionId, ct))
+        sessions.MapGet("/{sessionId:guid}/files", (Guid sessionId, AgentArtifacts files, CurrentUser user, CancellationToken ct) => files.ListFilesAsync(sessionId, user, ct))
             .RequireSession(SessionAccess.Read);
-        sessions.MapGet("/{sessionId:guid}/files/{fileId:guid}/preview", async (Guid sessionId, Guid fileId, HttpContext context, SessionFileStore files, CancellationToken ct) =>
+        sessions.MapGet("/{sessionId:guid}/files/{fileId:guid}/preview", async (Guid sessionId, Guid fileId, HttpContext context, AgentArtifacts files, CurrentUser user, CancellationToken ct) =>
         {
             context.Response.Headers.XContentTypeOptions = "nosniff";
             context.Response.Headers.CacheControl = "private, no-store";
-            if (await files.GetAsync(sessionId, fileId, ct) is not { } file) return Results.NotFound();
-            try { return Results.Ok(await SessionFilePreviewReader.ReadAsync(files.DataPath(sessionId, fileId), file.FileName, ct)); }
+            if (await files.FileAsync(sessionId, fileId, user, ct) is not { } found) return Results.NotFound();
+            try { return Results.Ok(await SessionFilePreviewReader.ReadAsync(found.Path, found.File.FileName, ct)); }
             catch (FileNotFoundException) { return Results.NotFound(); }
             catch (DirectoryNotFoundException) { return Results.NotFound(); }
         }).RequireSession(SessionAccess.Read);
         // Always an attachment, resumable (range requests), never sniffed or cached.
-        sessions.MapGet("/{sessionId:guid}/files/{fileId:guid}/download", async (Guid sessionId, Guid fileId, HttpContext context, SessionFileStore files, CancellationToken ct) =>
+        sessions.MapGet("/{sessionId:guid}/files/{fileId:guid}/download", async (Guid sessionId, Guid fileId, HttpContext context, AgentArtifacts files, CurrentUser user, CancellationToken ct) =>
         {
-            if (await files.GetAsync(sessionId, fileId, ct) is not { } file) return Results.NotFound();
+            if (await files.FileAsync(sessionId, fileId, user, ct) is not { } found) return Results.NotFound();
             context.Response.Headers.XContentTypeOptions = "nosniff";
             context.Response.Headers.CacheControl = "private, no-store";
-            return TypedResults.PhysicalFile(files.DataPath(sessionId, fileId), SessionFileStore.DownloadType(file.FileName), file.FileName, enableRangeProcessing: true);
+            return TypedResults.PhysicalFile(found.Path, SessionFileStore.DownloadType(found.File.FileName), found.File.FileName, enableRangeProcessing: true);
         }).RequireSession(SessionAccess.Read);
-        sessions.MapDelete("/{sessionId:guid}/files/{fileId:guid}", async (Guid sessionId, Guid fileId, SessionService service, CancellationToken ct) =>
-            await service.DeleteFileAsync(sessionId, fileId, ct) ? Results.NoContent() : Results.NotFound())
+        sessions.MapDelete("/{sessionId:guid}/files/{fileId:guid}", async (Guid sessionId, Guid fileId, SessionService service, CurrentUser user, CancellationToken ct) =>
+            await service.DeleteFileAsync(sessionId, fileId, ct, user) ? Results.NoContent() : Results.NotFound())
             .RequireSession(SessionAccess.Owner);
 
         sessions.MapGet("/{sessionId:guid}/shares", async (Guid sessionId, Sharing sharing, CancellationToken ct) =>

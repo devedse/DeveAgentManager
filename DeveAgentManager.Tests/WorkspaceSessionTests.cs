@@ -1,6 +1,9 @@
 using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
+using DeveAgentManager.Core.Abstractions;
+using DeveAgentManager.Core.Agents;
+using DeveAgentManager.Core.Accounts;
 using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Harnesses.Pi;
 using Microsoft.EntityFrameworkCore;
@@ -35,6 +38,70 @@ public sealed class WorkspaceSessionTests
         Assert.Single(await db.Sessions.Where(s => s.AgentId == rig.Agent.Id).ToListAsync(Ct));
         Assert.Equal("restored-native", (await db.Agents.SingleAsync(Ct)).HarnessSessionId);
         Assert.Null((await db.Agents.SingleAsync(Ct)).LastAssistantMessageAt);
+    }
+
+    [Fact]
+    public async Task SelectingAnotherHarnessRestoresIt_AndNewSessionsUseTheRestoredHarness()
+    {
+        using var rig = new Rig();
+        await rig.CreateAsync();
+        var original = (await rig.Service.GetForAgentAsync(rig.Agent.Id, Ct))!;
+        var codexId = Guid.NewGuid();
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            db.Sessions.Add(new StoredSession { Id = codexId, OwnerId = rig.Agent.OwnerId, WorkspaceAgentId = rig.Agent.Id,
+                HarnessId = "codex", HarnessSessionId = "saved-codex", HarnessTrail = "claude,codex", Title = "Saved Codex chat" });
+            await db.SaveChangesAsync(Ct);
+        }
+        using (await rig.Service.LockAsync(Ct))
+            await rig.Service.SelectLockedAsync(rig.Runner, rig.Agent, codexId, null, "restored-codex", Ct);
+        Assert.Equal("codex", rig.Agent.HarnessId);
+        Assert.Equal("claude,codex", (await rig.Service.GetAsync(codexId, Ct))!.HarnessTrail);
+        Assert.Equal("pi", (await rig.Service.GetAsync(original.Id, Ct))!.HarnessId);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            var agent = await db.Agents.SingleAsync(Ct);
+            Assert.Equal("codex", agent.HarnessId);
+            Assert.Equal("restored-codex", agent.HarnessSessionId);
+        }
+        using (await rig.Service.LockAsync(Ct))
+            await rig.Service.SelectLockedAsync(rig.Runner, rig.Agent, null, "New Codex chat", "new-codex", Ct);
+        Assert.Equal("codex", (await rig.Service.GetForAgentAsync(rig.Agent.Id, Ct))!.HarnessId);
+        using (await rig.Service.LockAsync(Ct))
+            await rig.Service.SelectLockedAsync(rig.Runner, rig.Agent, original.Id, null, "back-to-pi", Ct);
+        Assert.Equal("pi", rig.Agent.HarnessId);
+        Assert.Null(rig.Agent.AccountId);
+        Assert.Equal("codex", (await rig.Service.GetAsync(codexId, Ct))!.HarnessId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnavailableSavedHarnessOrDefaultLoginFailsBeforeStoppingOrSelecting(bool installed)
+    {
+        using var rig = new Rig();
+        await rig.CreateAsync();
+        var original = (await rig.Service.GetForAgentAsync(rig.Agent.Id, Ct))!;
+        var other = Guid.NewGuid();
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            (await db.Runners.SingleAsync(Ct)).Harnesses = installed ? "pi,codex" : "pi";
+            db.Sessions.Add(new StoredSession { Id = other, OwnerId = rig.Agent.OwnerId, WorkspaceAgentId = rig.Agent.Id, HarnessId = "codex" });
+            await db.SaveChangesAsync(Ct);
+        }
+        IHarness[] harnesses = [new PiHarness(), new DeveAgentManager.Harnesses.Codex.CodexHarness()];
+        var events = new ManagerEvents();
+        var accounts = new AccountService(rig.Factory, null!, null!, harnesses, events, NullLogger<AccountService>.Instance);
+        // No SSH dependency: either preflight must reject before any attempt to stop the current process.
+        var service = new AgentService(rig.Factory, null!, harnesses, rig.Service, accounts, null!, null!, null!, events, NullLogger<AgentService>.Instance);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SelectSessionAsync(rig.Agent.Id, other, null, Ct));
+        Assert.Contains(installed ? "login" : "not installed", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(original.Id, (await rig.Service.GetForAgentAsync(rig.Agent.Id, Ct))!.Id);
+        await using var check = rig.Factory.CreateDbContext();
+        var agent = await check.Agents.SingleAsync(Ct);
+        Assert.Equal("pi", agent.HarnessId);
+        Assert.Equal(AgentState.Stopped, agent.State);
+        Assert.Equal("first", agent.HarnessSessionId);
     }
 
     [Fact]

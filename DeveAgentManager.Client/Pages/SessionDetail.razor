@@ -57,6 +57,20 @@
                 <div><span class="fact-label">Owner</span><span>@_stored.OwnerName · shared with you read-only</span></div>
             }
             <div><span class="fact-label">Harness</span><span>@(_stored.HarnessTrail is { } trail && trail.Contains(',') ? string.Join(" → ", trail.Split(',')) : _stored.HarnessId)</span></div>
+            @if (_session.Migration is { } migration)
+            {
+                <div>
+                    <span class="fact-label help-heading">Migration <HelpTip Label="Conversation migration">
+                        <p>Conversion v@migration.Version from @migration.From to @migration.To. Completed calls keep their arguments and results. Archived exchanges and omitted context remain in the original backup; they are not evidence of new execution.</p>
+                        <p>@migration.ArchivedExchanges archived exchanges, @migration.OmittedExchanges omitted exchanges and @migration.OmittedImages omitted images. Context budget: @migration.BudgetCharacters characters, with room reserved for new work.</p>
+                        @foreach (var issue in migration.Issues)
+                        {
+                            <p>@issue.Reason: @issue.Count</p>
+                        }
+                    </HelpTip></span>
+                    <span>@migration.PreservedCalls tool calls preserved · @migration.CreatedAt.Humanize()</span>
+                </div>
+            }
             <div><span class="fact-label">Where</span><span>@(_stored.Agent is { } a ? $"{a.Name} on {a.RunnerName}" : _stored.RunnerName is null ? "Imported" : $"No agent (last on {_stored.RunnerName})")</span></div>
             @if (_stored.RepositoryUrl is not null)
             {
@@ -74,14 +88,14 @@
         <ConversationView Session="_session" />
         <div class="panel mt-4">
             <div class="help-heading mb-3"><MudText Typo="Typo.h6">Shared images</MudText>
-                <HelpTip Label="Shared images">Images published by the agent or saved from the desktop stay with this conversation across session and harness switches. Agents can publish a file with <code>dam-tools share-image /path/to/image.png --caption "Description"</code>.</HelpTip></div>
+                <HelpTip Label="Shared images"><p>Images published by the agent or saved from the desktop are available in all its sessions, including after an older session is deleted.</p><p>Agents can publish a file with <code>dam-tools share-image /path/to/image.png --caption "Description"</code>.</p></HelpTip></div>
             <SessionImagesView @key="SessionId" SessionId="SessionId" />
         </div>
         <div class="panel mt-4">
             <div class="help-heading mb-3"><MudText Typo="Typo.h6">Shared files</MudText>
                 <HelpTip Label="Shared files">
-                    <p>Files the agent shares for download, such as a built APK or installer. They stay with this conversation across session and harness switches.</p>
-                    <p>Agents share one with <code>dam-tools share-file /path/to/app.apk --caption "Description"</code>, up to 1 GiB. Deleting a file or the conversation can't be undone.</p>
+                    <p>Files the agent shares for download, such as a built APK or installer. They are available in every session of this agent, including after an older session is deleted.</p>
+                    <p>Agents share one with <code>dam-tools share-file /path/to/app.apk --caption "Description"</code>, up to 1 GiB. Deleting a file removes it from every session. This can't be undone. Other agents use <code>dam-tools list-artifacts --all</code> and <code>dam-tools fetch-artifact &lt;id&gt; --agent &lt;agent-id&gt;</code> to retrieve files their owner may read.</p>
                 </HelpTip></div>
             <SessionFilesView @key="SessionId" SessionId="SessionId" />
         </div>

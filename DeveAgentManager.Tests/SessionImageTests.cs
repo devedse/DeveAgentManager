@@ -57,7 +57,7 @@ public sealed class SessionImageTests : IDisposable
     }
 
     [Fact]
-    public async Task SnapshotOwnershipSurvivesSessionSwitchButCannotCrossRunnersAndDeletionRemovesImages()
+    public async Task SnapshotOwnershipSurvivesSessionSwitchAndHistoryDeletionButCannotCrossRunners()
     {
         var factory = new Factory(Path.Combine(_folder, "test.db"));
         var runnerId = Guid.NewGuid(); var agentId = Guid.NewGuid(); var sessionId = Guid.NewGuid();
@@ -73,7 +73,7 @@ public sealed class SessionImageTests : IDisposable
         var events = new ManagerEvents();
         var store = new SessionImageStore(Options);
         var sessions = new SessionService(factory, null!, [], [], store, new SessionFileStore(Options), Options, events, NullLogger<SessionService>.Instance);
-        var images = new SessionImages(factory, null!, sessions, store, new AccessControl(factory), events, NullLogger<SessionImages>.Instance);
+        var images = new SessionImages(factory, null!, sessions, store, new AccessControl(factory), NullLogger<SessionImages>.Instance);
         await Assert.ThrowsAsync<ArgumentException>(() => images.SaveSnapshotAsync(TestUsers.Admin, Guid.NewGuid(), sessionId, Png, "", default));
         // Only who can write to the conversation's agent saves into it.
         await Assert.ThrowsAsync<KeyNotFoundException>(() => images.SaveSnapshotAsync(TestUsers.Plain(Guid.NewGuid()), runnerId, sessionId, Png, "", default));
@@ -81,7 +81,7 @@ public sealed class SessionImageTests : IDisposable
         await images.SaveSnapshotAsync(TestUsers.Admin, runnerId, sessionId, Png, "UI", default);
         Assert.Single(await store.ListAsync(sessionId, default));
         await sessions.DeleteAsync(sessionId);
-        Assert.Empty(await store.ListAsync(sessionId, default));
+        Assert.Single(await store.ListAsync(sessionId, default));
         await Assert.ThrowsAsync<KeyNotFoundException>(() => images.SaveSnapshotAsync(TestUsers.Admin, runnerId, sessionId, Png, "", default));
         images.Dispose();
     }

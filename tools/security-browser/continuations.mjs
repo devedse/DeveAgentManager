@@ -1,4 +1,4 @@
-// Runs the continuation UI regression against an isolated Manager and disposable test-only login.
+// Runs conversation and continuation UI regressions against an isolated Manager and disposable test-only login.
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -28,14 +28,14 @@ try {
         await new Promise(resolve => setTimeout(resolve, 250));
     }
     if (!ready) throw new Error('Isolated Manager did not start within 30 seconds');
-    for (const script of ['auto-continue-dialog.mjs', 'agent-activity.mjs']) {
+    for (const script of ['auto-continue-dialog.mjs', 'agent-activity.mjs', 'session-migration.mjs', 'workspace-sessions.mjs', 'file-viewer.mjs']) {
         const test = spawn(process.execPath, [resolve('DeveAgentManager.Tests/Browser', script)], {
             env: { ...process.env, DAM_TEST_URL: base, DAM_TEST_PASSWORD: password,
                 PLAYWRIGHT_MODULE: resolve('tools/security-browser/node_modules/playwright/index.mjs') },
             stdio: 'inherit'
         });
         const code = await new Promise(resolve => test.once('exit', resolve));
-        if (code !== 0) throw new Error(`Continuation browser regression ${script} failed (${code})`);
+        if (code !== 0) throw new Error(`Portal browser regression ${script} failed (${code})`);
     }
 } catch (error) {
     console.error(logs.join('').slice(-5000).replaceAll(password, '[test password]'));

@@ -1,4 +1,7 @@
 <MudDialog>
+    <TitleContent><div class="help-heading"><MudText Typo="Typo.h6">Shared files</MudText>
+        <HelpTip Label="Agent shared files"><p>This agent's shared files are available in every session. Deleting a saved session keeps these files. Deleting a file removes it from the collection for everyone.</p><p>Other agents can retrieve files their owner may read with <code>dam-tools list-artifacts --all</code> and <code>dam-tools fetch-artifact &lt;id&gt; --agent &lt;agent-id&gt;</code>.</p></HelpTip>
+    </div></TitleContent>
     <DialogContent><SessionFilesView SessionId="SessionId" /></DialogContent>
     <DialogActions><MudButton OnClick="() => Dialog.Close()">Close</MudButton></DialogActions>
 </MudDialog>

@@ -194,5 +194,62 @@ class CommandLineTests(unittest.TestCase):
             self.assertIn("dam-tools:", missing.stderr)
 
 
+class ArtifactDownloadTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.home = Path(temp.name)
+        self.requests = self.home / "requests"
+        self.requests.mkdir()
+        self.agent, self.session = str(uuid.uuid4()), str(uuid.uuid4())
+        self.record = dict(id=str(uuid.uuid4()), agentId=self.agent, sessionId=self.session, operation="fetch",
+                           artifactId=str(uuid.uuid4()), token="test-only-capability")
+        self.folder = self.requests / uuid.UUID(self.record["id"]).hex
+        self.folder.mkdir()
+        (self.folder / "request.json").write_text(json.dumps(self.record))
+        self.data = b"a file from another runner"
+        (self.folder / "content").write_bytes(self.data)
+        self.response = dict(bytes=len(self.data), sha256=hashlib.sha256(self.data).hexdigest(),
+                             artifact=dict(id=str(uuid.uuid4()), fileName="../../report.txt"))
+        for name, value in (("ARTIFACT_REQUESTS", self.requests), ("ARTIFACT_CACHE", self.home / "cache")):
+            patcher = patch.object(share, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_verified_download_is_private_and_stays_inside_callers_cache(self):
+        target = share.receive_artifact(self.folder, self.response, self.agent)
+        self.assertEqual(self.data, target.read_bytes())
+        self.assertTrue(target.is_relative_to(share.ARTIFACT_CACHE / uuid.UUID(self.agent).hex))
+        self.assertEqual("report.txt", target.name)
+        self.assertEqual(0o600, target.stat().st_mode & 0o777)
+        self.assertEqual(target, share.receive_artifact(self.folder, self.response, self.agent))
+        with self.assertRaises(FileExistsError):
+            share.receive_artifact(self.folder, self.response, self.agent, str(target))
+        self.assertEqual(self.data, target.read_bytes())
+        self.assertFalse(list(target.parent.glob(".pending-*")))
+
+    def test_bad_checksum_truncation_oversize_and_symlink_never_install_content(self):
+        target = self.home / "download.txt"
+        for data in (b"changed", self.data[:-1], self.data + b"more"):
+            (self.folder / "content").write_bytes(data)
+            with self.assertRaises(ValueError):
+                share.receive_artifact(self.folder, self.response, self.agent, str(target))
+            self.assertFalse(target.exists())
+            self.assertFalse(list(self.home.glob(".pending-*")))
+        (self.folder / "content").unlink()
+        (self.folder / "content").symlink_to(self.home / "outside")
+        with self.assertRaises(OSError):
+            share.receive_artifact(self.folder, self.response, self.agent, str(target))
+        with self.assertRaises(ValueError):
+            share.prepare_artifact_response(self.record["id"])
+
+    def test_pending_is_bounded_ignores_partial_records_and_completed_requests(self):
+        self.assertEqual([self.record], share.pending_artifacts())
+        (self.folder / "response.json").write_text("{}")
+        self.assertEqual([], share.pending_artifacts())
+        with self.assertRaises(ValueError):
+            share.artifact_folder("../outside")
+
+
 if __name__ == "__main__":
     unittest.main()

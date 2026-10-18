@@ -12,8 +12,8 @@ namespace DeveAgentManager.Harnesses.Codex;
 /// Codex's session files (~/.codex/sessions/YYYY/MM/DD/rollout-&lt;time&gt;-&lt;uuid&gt;.jsonl, one
 /// <c>{timestamp, type, payload}</c> per line) to and from DeveSession. Every line is kept in
 /// <see cref="DeveEntry.Native"/>, so a Codex session written back is the same session with its id and folder updated.
-/// The history is linear, so each entry's parent is the one before it. Messages from other harnesses are written as
-/// plain user and assistant text (see <see cref="SessionFlattener"/>), which <c>codex resume</c> continues like its own.
+/// The history is linear, so each entry's parent is the one before it. Foreign completed tool exchanges remain
+/// native response items, independently of the terminal's display events.
 /// </summary>
 public sealed class CodexSessionFormat : ISessionFormat
 {
@@ -93,6 +93,9 @@ public sealed class CodexSessionFormat : ISessionFormat
                 // are the harness's own bookkeeping.
             }
 
+            SessionToolMetadata.Read(entry, line);
+            if (True(line, "damErrorPrefix") && entry.Content?.SingleOrDefault() is { Type: "toolResult", Content: { Count: > 0 } } errorResult)
+                errorResult.Content.RemoveAt(0);
             session.Entries.Add(entry);
             previous = entry.Id;
         }
@@ -139,9 +142,13 @@ public sealed class CodexSessionFormat : ISessionFormat
                 break;
             case "function_call":
                 AddCall(entry, Str(item, "call_id"), Str(item, "name"), ParseArguments(Str(item, "arguments")));
+                entry.Content![0].CallType = "function";
+                entry.Content[0].Namespace = Str(item, "namespace");
                 break;
             case "custom_tool_call":
                 AddCall(entry, Str(item, "call_id"), Str(item, "name"), new JsonObject { ["input"] = Str(item, "input") });
+                entry.Content![0].CallType = "custom";
+                entry.Content[0].Namespace = Str(item, "namespace");
                 break;
             case "local_shell_call":
                 var command = (item["action"] as JsonObject)?["command"];
@@ -189,7 +196,8 @@ public sealed class CodexSessionFormat : ISessionFormat
         }
         catch (JsonException)
         {
-            return new JsonObject { ["input"] = arguments };
+            // Keep malformed function arguments distinguishable from a valid custom-tool input object.
+            return JsonValue.Create(arguments);
         }
     }
 
@@ -282,15 +290,63 @@ public sealed class CodexSessionFormat : ISessionFormat
     /// </summary>
     private static IEnumerable<JsonObject> WriteForeign(DeveEntry entry)
     {
-        if (entry.Kind != DeveEntryKind.Message || entry.Role is not (DeveRole.User or DeveRole.Assistant))
+        if (entry.Kind != DeveEntryKind.Message || entry.Role is not (DeveRole.User or DeveRole.Assistant or DeveRole.Tool))
         {
             yield break;
         }
 
+        var timestamp = Iso(entry.Timestamp == default ? DateTime.UtcNow : entry.Timestamp);
+        JsonObject Response(JsonObject payload, DeveBlock? block = null)
+        {
+            var line = new JsonObject { ["timestamp"] = timestamp, ["type"] = "response_item", ["payload"] = payload };
+            if (block is not null) SessionToolMetadata.Write(new DeveEntry { Content = [block] }, line);
+            return line;
+        }
+
+        // Preserve block order: commentary before/after a call must not move across it.
+        var ordinary = new List<DeveBlock>();
+        foreach (var block in entry.Content ?? [])
+        {
+            if (block.Type is not ("toolCall" or "toolResult")) { ordinary.Add(block); continue; }
+            if (ordinary.Count > 0)
+            {
+                foreach (var line in WriteMessage(entry, ordinary)) yield return line;
+                ordinary.Clear();
+            }
+            if (block.Type == "toolCall")
+            {
+                var custom = block.CallType == "custom";
+                var call = new JsonObject { ["type"] = custom ? "custom_tool_call" : "function_call", ["call_id"] = block.Id, ["name"] = block.Name };
+                if (custom) call["input"] = block.Arguments?["input"]?.GetValue<string>() ?? "";
+                else call["arguments"] = block.Arguments?.ToJsonString() ?? "{}";
+                if (block.Namespace is not null) call["namespace"] = block.Namespace;
+                yield return Response(call, block);
+            }
+            else
+            {
+                var output = new JsonArray();
+                if (block.IsError == true) output.Add(new JsonObject { ["type"] = "input_text", ["text"] = "[Historical tool result: error]" });
+                foreach (var part in block.Content ?? [])
+                {
+                    if (part.Type == "text") output.Add(new JsonObject { ["type"] = "input_text", ["text"] = part.Text ?? "" });
+                    else if (part.Type == "image") output.Add(new JsonObject { ["type"] = "input_image", ["image_url"] = $"data:{part.MimeType};base64,{part.Data}" });
+                }
+                var line = Response(new JsonObject { ["type"] = block.CallType == "custom" ? "custom_tool_call_output" : "function_call_output",
+                    ["call_id"] = block.ToolCallId, ["output"] = output }, block);
+                if (block.IsError == true) line["damErrorPrefix"] = true;
+                yield return line;
+            }
+        }
+        if (ordinary.Count > 0)
+            foreach (var line in WriteMessage(entry, ordinary)) yield return line;
+    }
+
+    private static IEnumerable<JsonObject> WriteMessage(DeveEntry entry, List<DeveBlock> blocks)
+    {
         var user = entry.Role == DeveRole.User;
-        var text = string.Join("\n\n", (entry.Content ?? []).Where(b => b.Type == "text" && !string.IsNullOrEmpty(b.Text)).Select(b => b.Text));
+        var text = string.Join("\n\n", blocks.Where(b => b.Type == "text" && !string.IsNullOrEmpty(b.Text)).Select(b => b.Text));
         var images = user
-            ? (entry.Content ?? []).Where(b => b.Type == "image" && !string.IsNullOrEmpty(b.Data)).Select(b => $"data:{b.MimeType ?? "image/png"};base64,{b.Data}").ToList()
+            ? blocks.Where(b => b.Type == "image" && !string.IsNullOrEmpty(b.Data)).Select(b => $"data:{b.MimeType ?? "image/png"};base64,{b.Data}").ToList()
             : [];
         if (text.Length == 0 && images.Count == 0)
         {
@@ -309,12 +365,15 @@ public sealed class CodexSessionFormat : ISessionFormat
             content.Add(new JsonObject { ["type"] = "input_image", ["image_url"] = image });
         }
 
-        yield return new JsonObject
+        var response = new JsonObject
         {
             ["timestamp"] = timestamp,
             ["type"] = "response_item",
             ["payload"] = new JsonObject { ["type"] = "message", ["role"] = user ? "user" : "assistant", ["content"] = content },
         };
+
+        SessionToolMetadata.Write(entry, response);
+        yield return response;
 
         var shown = new JsonObject { ["type"] = user ? "user_message" : "agent_message", ["message"] = text };
         if (user && images.Count > 0)

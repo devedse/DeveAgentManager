@@ -2,6 +2,9 @@
 
 Shared files have **View** and **Download** actions in the conversation and terminal downloads list. Text opens inside a themed dialog. Markdown (`.md`, `.markdown`, `.mdown`, `.mkd`) opens rendered, with **Rendered** and **Text** buttons to switch views without another download. Closing the viewer returns to the file list.
 
+The collection is shared across an agent's sessions. Deleting a saved conversation retains the agent's files and images;
+see [agent artifacts](agent-artifacts.md) for retention, permissions and access from other agents through `dam-tools`.
+
 The viewer reuses the existing [Markdig](https://github.com/xoofx/markdig) dependency. It uses a file-specific pipeline for headings, tables, task lists, emphasis, autolinks and fenced code; raw HTML, generic HTML attributes and executable media extensions are disabled. Text view uses Blazor text escaping. Explicit web links open a separate tab with opener/referrer isolation. Unavailable relative links are neutralized rather than navigating the Manager. Existing fragment links remain local to the rendered document.
 
 The preview endpoint requires the same conversation read permission as downloads, returns JSON rather than inline file content, and sends private/no-store and nosniff headers. Reads are bounded to 512 KiB plus one byte, including a file growing during the read. UTF-8 and BOM-marked UTF-16 are supported. Invalid encodings, binary control characters and oversized files show a short explanation with the original Download action. Opening a preview never changes the shared original. Initial loading and failed requests use the standard placeholder and Retry flow.

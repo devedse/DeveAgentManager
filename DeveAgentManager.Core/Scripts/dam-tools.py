@@ -21,6 +21,154 @@ FILES = Path.home() / ".deveagentmanager/shared-files"
 MAX_FILE_BYTES = 1024 * 1024 * 1024
 # A copy interrupted by a crash leaves a staging folder; no real copy takes this long.
 STALE_STAGING_SECONDS = 6 * 60 * 60
+ARTIFACT_REQUESTS = Path.home() / ".deveagentmanager/artifact-requests"
+ARTIFACT_CACHE = Path.home() / ".deveagentmanager/artifact-cache"
+
+
+def artifact_folder(ident):
+    ident = uuid.UUID(ident).hex
+    if ARTIFACT_REQUESTS.is_symlink():
+        raise ValueError("Artifact request directory cannot be a symlink.")
+    folder = ARTIFACT_REQUESTS / ident
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("Artifact request is unavailable.")
+    return folder
+
+
+def pending_artifacts():
+    records = []
+    if not ARTIFACT_REQUESTS.exists() or ARTIFACT_REQUESTS.is_symlink():
+        return records
+    for folder in sorted(ARTIFACT_REQUESTS.iterdir()):
+        try:
+            if folder.is_symlink() or uuid.UUID(folder.name).hex != folder.name:
+                continue
+            if time.time() - folder.stat().st_mtime > STALE_STAGING_SECONDS:
+                shutil.rmtree(folder)
+                continue
+            metadata = folder / "request.json"
+            if (folder / "response.json").exists() or metadata.is_symlink() or metadata.stat().st_size > 16384:
+                continue
+            record = json.loads(metadata.read_text())
+            if uuid.UUID(record["id"]).hex != folder.name:
+                continue
+            uuid.UUID(record["agentId"])
+            uuid.UUID(record["sessionId"])
+            if (record.get("operation") not in ("list", "fetch")
+                    or type(record.get("offset", 0)) is not int or record.get("offset", 0) < 0
+                    or type(record.get("limit", 100)) is not int or not 1 <= record.get("limit", 100) <= 200
+                    or type(record.get("all", False)) is not bool
+                    or not isinstance(record.get("token"), str) or not 0 < len(record["token"]) <= 4096
+                    or (record.get("sourceAgent") is not None and (not isinstance(record["sourceAgent"], str) or len(record["sourceAgent"]) > 128))
+                    or record.get("kind") not in (None, "file", "image")):
+                continue
+            if record["operation"] == "fetch":
+                uuid.UUID(record["artifactId"])
+            if len(records) < 20:
+                records.append({key: value for key, value in record.items() if key in (
+                    "id", "agentId", "sessionId", "operation", "sourceAgent", "artifactId", "kind", "offset", "limit", "all", "token")})
+        except (ValueError, OSError, KeyError, TypeError, AttributeError):
+            continue
+    return records
+
+
+def prepare_artifact_response(ident):
+    folder = artifact_folder(ident)
+    if (folder / "request.json").is_symlink():
+        raise ValueError("Invalid artifact request metadata.")
+    for name in ("content", "response.json"):
+        path = folder / name
+        if path.exists() or path.is_symlink():
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("Invalid artifact response path.")
+    folder.chmod(0o700)
+
+
+def receive_artifact(folder, response, agent, output=None):
+    size, expected = response.get("bytes"), response.get("sha256")
+    if type(size) is not int or not 0 < size <= MAX_FILE_BYTES or not is_sha256(expected):
+        raise ValueError("Invalid artifact size or checksum.")
+    item = response["artifact"]
+    name = Path(item["fileName"].replace("\\", "/")).name
+    if name in ("", ".", ".."):
+        name = "artifact"
+    target = Path(output).expanduser().absolute() if output else ARTIFACT_CACHE / uuid.UUID(agent).hex / uuid.UUID(item["id"]).hex / name
+    target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    temporary = target.with_name(".pending-" + uuid.uuid4().hex)
+    source = folder / "content"
+    try:
+        digest, count = hashlib.sha256(), 0
+        with os.fdopen(os.open(source, os.O_RDONLY | os.O_NOFOLLOW), "rb") as data:
+            if not stat.S_ISREG(os.fstat(data.fileno()).st_mode):
+                raise ValueError("Invalid artifact content.")
+            with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as dest:
+                while chunk := data.read(1024 * 1024):
+                    count += len(chunk)
+                    if count > size:
+                        raise ValueError("Artifact exceeded its expected size.")
+                    digest.update(chunk)
+                    dest.write(chunk)
+                dest.flush()
+                os.fsync(dest.fileno())
+        if count != size or digest.hexdigest() != expected:
+            raise ValueError("Artifact download did not match its checksum.")
+        # Never overwrite user work, even if a destination appeared while we were transferring.
+        try:
+            os.link(temporary, target)
+        except FileExistsError:
+            if output or target.is_symlink():
+                raise
+            with os.fdopen(os.open(target, os.O_RDONLY | os.O_NOFOLLOW), "rb") as cached:
+                cached_hash = hashlib.sha256()
+                while chunk := cached.read(1024 * 1024):
+                    cached_hash.update(chunk)
+                if os.fstat(cached.fileno()).st_size != size or cached_hash.hexdigest() != expected:
+                    raise ValueError("Cached artifact changed. Choose a new --output path.")
+        return target
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def request_artifacts(args, parser, operation):
+    if args.timeout <= 0 or not args.timeout < float("inf") or getattr(args, "offset", 0) < 0:
+        parser.error("Use a positive finite timeout and a non-negative offset.")
+    agent, session = os.environ.get("DAM_AGENT_ID", ""), os.environ.get("DAM_SESSION_ID", "")
+    if not agent or not session:
+        parser.error("Run from a DAM agent so its read permissions can be checked.")
+    record = dict(id=str(uuid.uuid4()), agentId=str(uuid.UUID(agent)), sessionId=str(uuid.UUID(session)),
+                  operation=operation, sourceAgent=args.agent, offset=getattr(args, "offset", 0),
+                  limit=getattr(args, "limit", 100), all=getattr(args, "all", False))
+    token_path = Path.home() / ".deveagentmanager/artifact-access" / (uuid.UUID(agent).hex + ".token")
+    if not token_path.is_file() or token_path.is_symlink() or token_path.stat().st_size > 4096:
+        raise ValueError("Artifact access is not installed yet. Wait for runner tools to update, or restart this agent.")
+    record["token"] = token_path.read_text().strip()
+    if operation == "fetch":
+        record.update(artifactId=str(uuid.UUID(args.id)), kind=args.kind)
+    if ARTIFACT_REQUESTS.is_symlink():
+        raise ValueError("Artifact request directory cannot be a symlink.")
+    ARTIFACT_REQUESTS.mkdir(parents=True, mode=0o700, exist_ok=True)
+    folder = ARTIFACT_REQUESTS / uuid.UUID(record["id"]).hex
+    folder.mkdir(mode=0o700)
+    atomic_job(folder / "request.json", record)
+    deadline = time.monotonic() + args.timeout
+    response_path = folder / "response.json"
+    while time.monotonic() < deadline:
+        if response_path.is_file() and not response_path.is_symlink():
+            if response_path.stat().st_size > 2 * 1024 * 1024:
+                raise ValueError("Artifact response exceeded its size limit.")
+            response = json.loads(response_path.read_text())
+            try:
+                if "error" in response:
+                    raise ValueError(response["error"])
+                if operation == "list":
+                    print(json.dumps(response))
+                else:
+                    print(receive_artifact(folder, response, agent, args.output))
+            finally:
+                shutil.rmtree(folder)
+            return
+        time.sleep(0.2)
+    raise ValueError("Artifact request timed out; the Manager or runner may be offline. It only requests a read; no agent work was launched.")
 
 
 def image_type(data):
@@ -195,7 +343,7 @@ def share_image(args, parser):
         parser.error("Run from an agent, or supply --agent and --session UUIDs.")
     record = publish(args.path, args.agent, args.session, args.caption)
     print("Image shared: " + (record["caption"] or record["fileName"]))
-    print("The user sees it under Shared images in this agent's conversation.")
+    print("The user sees it under Shared images in every session of this agent.")
 
 
 def share_file(args, parser):
@@ -203,7 +351,7 @@ def share_file(args, parser):
         parser.error("Run from an agent, or supply --agent and --session UUIDs.")
     record = publish_file(args.path, args.agent, args.session, args.caption)
     print(f"File shared: {record['fileName']} ({size_text(record['bytes'])}, SHA-256 {record['sha256']})")
-    print("The user can download it under Shared files in this agent's conversation once the Manager has copied it, "
+    print("The user can download it under Shared files in every session of this agent once the Manager has copied it, "
           "usually within seconds.")
 
 
@@ -422,6 +570,12 @@ def retry_completion(ident):
         print(json.dumps(public_job(record)))
 
 def main():
+    if sys.argv[1:] == ["--pending-transfers"]:
+        print(json.dumps(dict(files=pending_files(), requests=pending_artifacts())))
+        return
+    if sys.argv[1:2] == ["--prepare-artifact-response"] and len(sys.argv) == 3:
+        prepare_artifact_response(sys.argv[2])
+        return
     if sys.argv[1:2] == ["--job-worker"] and len(sys.argv) == 3:
         run_job_worker(sys.argv[2])
         return
@@ -447,6 +601,21 @@ def main():
     parser = argparse.ArgumentParser(prog="dam-tools", description=__doc__, epilog="Use your harness built-in background tasks whenever it supports them. "
                                      "Use run-job only when the harness has no built-in background-job support. Long runtimes, restart survival and validation needs are not exceptions.")
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+
+    listing = commands.add_parser("list-artifacts", help="List this agent's shared files and images across all its sessions")
+    listing.add_argument("--agent", help="Source agent name or id (default: this agent)")
+    listing.add_argument("--all", action="store_true", help="Discover all agents and artifacts your owner may read")
+    listing.add_argument("--offset", type=int, default=0, help="Skip this many artifacts")
+    listing.add_argument("--limit", type=int, choices=range(1, 201), metavar="1-200", default=100)
+    listing.add_argument("--timeout", type=float, default=300, help="Seconds to wait for the Manager")
+    listing.set_defaults(run=lambda args: request_artifacts(args, listing, "list"))
+    fetch = commands.add_parser("fetch-artifact", help="Download a shared file or image, including from another runner")
+    fetch.add_argument("id", help="Artifact id from list-artifacts")
+    fetch.add_argument("--agent", help="Source agent name or id (default: this agent)")
+    fetch.add_argument("--kind", choices=("file", "image"), help="Only needed when an id is ambiguous")
+    fetch.add_argument("--output", help="New local file path; refuses to overwrite an existing file")
+    fetch.add_argument("--timeout", type=float, default=300, help="Seconds to wait for the Manager")
+    fetch.set_defaults(run=lambda args: request_artifacts(args, fetch, "fetch"))
 
     share = commands.add_parser("share-image", help="Show an image to the user in this agent's conversation",
                                 description="Show an image (a screenshot, chart or diagram) to the user. "
