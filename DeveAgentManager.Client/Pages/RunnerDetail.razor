@@ -89,15 +89,15 @@
             <MudItem xs="12" lg="8">
                 <div class="panel panel-flush">
                     <MudTabs @bind-ActivePanelIndex="_tab" Elevation="0" ApplyEffectsToContainer="true" Class="panel-tabs" TabPanelsClass="panel-tab-content" MinimumTabWidth="0">
-                        <MudTabPanel Text="Agents" Icon="@Icons.Material.Rounded.SmartToy" BadgeData="@(_runner.Agents.Count > 0 ? _runner.Agents.Count : null)" BadgeColor="Color.Primary">
-                            <AgentTable Agents="_runner.Agents" EmptyText="@(ready ? "Start an agent to work on a repository on this Runner." : "Agents can start once the Runner is ready.")">
+                        <MudTabPanel Text="Agents" Icon="@Icons.Material.Rounded.SmartToy" BadgeData="@(VisibleAgents.Count > 0 ? VisibleAgents.Count : null)" BadgeColor="Color.Primary">
+                            <GroupedAgentTable Agents="VisibleAgents" User="_user" EmptyText="@(ready ? "Start an agent to work on a repository on this Runner." : "Agents can start once the Runner is ready.")">
                                 <EmptyContent>
                                     @if (ready)
                                     {
                                         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
                                     }
                                 </EmptyContent>
-                            </AgentTable>
+                            </GroupedAgentTable>
                         </MudTabPanel>
                         <MudTabPanel Text="Setup log" Icon="@Icons.Material.Rounded.Notes">
                             <RunnerLogView RunnerId="_runner.Id" Height="560px" />
@@ -287,6 +287,7 @@
 
     private ManagerInfoDto? _info;
     private CurrentUserDto? _user;
+    private IReadOnlyList<AgentDto> VisibleAgents => (_runner?.Agents ?? []).ForAgentList(_user).ByLastReply().ToList();
     private RunnerDto? _runner;
     private DesktopStatusDto? _desktop;
     private DateTime _desktopReadAt;

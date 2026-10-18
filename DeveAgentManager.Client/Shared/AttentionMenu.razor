@@ -10,19 +10,21 @@
     <ChildContent>
         <MudMenuItem Href="activity" Icon="@Icons.Material.Rounded.MonitorHeart">View all agent statuses</MudMenuItem>
         <MudDivider />
-        <div class="help-heading">
-            <span>Sound effects</span>
-            <HelpTip Label="notification sounds"><p>Play a gentle sound when your agent or an agent shared with you finishes or reaches a usage limit, including a limit with automatic continuation. Each switch previews its sound when enabled. Saved for your account in this browser. Keep a Manager tab open and interact with it after opening to allow audio. Existing statuses do not play again on reload.</p></HelpTip>
+        <div class="notification-sounds" @onclick:stopPropagation="true">
+            <div class="help-heading notification-sounds-heading">
+                <span>Sound effects</span>
+                <HelpTip Label="notification sounds"><p>Play a gentle sound when your agent or an agent shared with you finishes or reaches a usage limit, including a limit with automatic continuation. Each switch previews its sound when enabled. Saved for your account in this browser. Keep a Manager tab open and interact with it after opening to allow audio. Existing statuses do not play again on reload.</p></HelpTip>
+            </div>
+            @if (!_soundReady)
+            {
+                <MenuLoading Label="Loading sound preferences" />
+            }
+            else
+            {
+                <MudSwitch T="bool" Value="_sounds.Finished" ValueChanged='value => SetSoundAsync("finished", value)' Disabled="_soundBusy" Color="Color.Primary" Label="Finished" LabelPlacement="Placement.Start" Class="notification-sound-switch" />
+                <MudSwitch T="bool" Value="_sounds.Limit" ValueChanged='value => SetSoundAsync("limit", value)' Disabled="_soundBusy" Color="Color.Primary" Label="Usage limit" LabelPlacement="Placement.Start" Class="notification-sound-switch" />
+            }
         </div>
-        @if (!_soundReady)
-        {
-            <MenuLoading Label="Loading sound preferences" />
-        }
-        else
-        {
-            <MudMenuItem Icon="@(_sounds.Finished ? Icons.Material.Rounded.VolumeUp : Icons.Material.Rounded.VolumeOff)" OnClick='() => ToggleSoundAsync("finished")' AutoClose="false">Finished sounds: @(_sounds.Finished ? "On" : "Off")</MudMenuItem>
-            <MudMenuItem Icon="@(_sounds.Limit ? Icons.Material.Rounded.VolumeUp : Icons.Material.Rounded.VolumeOff)" OnClick='() => ToggleSoundAsync("limit")' AutoClose="false">Usage-limit sounds: @(_sounds.Limit ? "On" : "Off")</MudMenuItem>
-        }
         <MudDivider />
         @if (!Loaded)
         {
@@ -71,6 +73,7 @@
     protected override async Task OnInitializedAsync() { await base.OnInitializedAsync(); _ = TickAsync(); }
     private Guid _userId;
     private bool _soundReady;
+    private bool _soundBusy;
     private SoundPreferences _sounds = new();
     public sealed class SoundPreferences
     {
@@ -112,8 +115,13 @@
             await JS.InvokeVoidAsync("damNotificationSounds.observe", (object)states);
         }
     }
-    private async Task ToggleSoundAsync(string kind) =>
-        _sounds = await JS.InvokeAsync<SoundPreferences>("damNotificationSounds.toggle", kind);
+    private async Task SetSoundAsync(string kind, bool enabled)
+    {
+        if (_soundBusy) return;
+        _soundBusy = true;
+        try { _sounds = await JS.InvokeAsync<SoundPreferences>("damNotificationSounds.set", kind, enabled); }
+        finally { _soundBusy = false; }
+    }
     private async Task TickAsync()
     {
         try { using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15)); while (await timer.WaitForNextTickAsync(_stop.Token)) await ReloadAsync(); }

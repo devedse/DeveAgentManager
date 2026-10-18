@@ -36,9 +36,10 @@ window.damNotificationSounds = (() => {
             prefs = { finished: saved.finished === true, limit: saved.limit === true };
             return prefs;
         },
-        async toggle(kind) {
+        async set(kind, enabled) {
             prefs = read(settingsKey(), prefs);
-            prefs[kind] = !prefs[kind];
+            if (prefs[kind] === enabled) return prefs;
+            prefs[kind] = enabled;
             write(settingsKey(), prefs);
             if (prefs[kind]) { await unlock(); await play(kind); }
             return prefs;

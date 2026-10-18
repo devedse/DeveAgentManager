@@ -68,6 +68,23 @@ try {
     assert.equal(await shared.locator('.agent-row').count(), 1);
     assert.equal(await others.locator('.account-badge').count(), 1);
     assert.deepEqual(await names('.app-nav .nav-agent-name'), ['just-now', 'ten-minutes-ago', 'never-replied'], 'sidebar excludes agents visible only through administration');
+    for (const path of ['/', `/runners/${runnerId}`]) {
+        await page.goto(base + path);
+        await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.list-title').first().waitFor({ timeout: 60000 });
+        assert.deepEqual((await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.list-title').allInnerTexts()).map(text => expected.find(name => text.includes(name))), ['ten-minutes-ago', 'never-replied'], `${path}: own order`);
+        assert.equal(await page.getByRole('region', { name: 'Shared with you', exact: true }).locator('.agent-row').count(), 1);
+        assert.equal(await page.getByRole('region', { name: 'Other users’ agents', exact: true }).locator('.agent-row').count(), 1);
+    }
+    const originalAgents = [...agents];
+    for (let n = 0; n < 9; n++) agents.push({ ...agents[0], id: `00000000-0000-0000-0000-0000000002${n}0`, name: `recent-other-${n}`, lastAssistantMessageAt: at(0) });
+    await page.goto(base + '/');
+    await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.list-title').first().waitFor({ timeout: 60000 });
+    assert.equal(await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.agent-row').count(), 2, 'dashboard cap cannot hide own agents behind administrative agents');
+    assert.equal(await page.getByRole('region', { name: 'Shared with you', exact: true }).locator('.agent-row').count(), 1);
+    assert.equal(await page.getByRole('region', { name: 'Other users’ agents', exact: true }).locator('.agent-row').count(), 8);
+    agents.splice(0, agents.length, ...originalAgents);
+    await page.goto(base + '/agents');
+    await own.locator('.list-title').first().waitFor({ timeout: 60000 });
     await page.getByPlaceholder('Search agents').fill('just-now');
     await own.getByText('No agents of yours match.').waitFor();
     await others.waitFor({ state: 'detached' });
@@ -95,18 +112,32 @@ try {
     await otherSessions.waitFor({ state: 'detached' });
     // Preferences live under the bell, are independent, and survive reload for this user/browser.
     await page.locator('button[aria-label="Agents needing attention: 0"]').click();
-    const finishedSound = page.getByRole('menuitem', { name: 'Finished sounds: Off', exact: true });
+    const finishedSound = page.getByLabel('Finished', { exact: true });
+    const limitSound = page.getByLabel('Usage limit', { exact: true });
     await finishedSound.waitFor();
-    await finishedSound.click();
-    await page.getByRole('menuitem', { name: 'Finished sounds: On', exact: true }).waitFor();
-    await page.getByRole('menuitem', { name: 'Usage-limit sounds: Off', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Usage-limit sounds: On', exact: true }).waitFor();
+    assert.equal(await finishedSound.isChecked(), false);
+    await finishedSound.check();
+    await limitSound.check();
+    await page.waitForFunction(() => Object.keys(localStorage).some(key => key.startsWith('dam.notification-sounds.') && !key.endsWith('.played') && JSON.parse(localStorage.getItem(key)).limit === true));
+    const inset = await page.locator('.notification-sounds').evaluate(el => {
+        const style = getComputedStyle(el);
+        return { left: parseFloat(style.paddingLeft), right: parseFloat(style.paddingRight) };
+    });
+    assert.ok(inset.left >= 16 && inset.right >= 16, 'sound heading and switches have menu padding');
+    assert.ok(await page.locator('.notification-sounds').evaluate(el => el.scrollWidth <= el.clientWidth), 'sound controls fit the menu on phones');
+    await page.locator('.notification-sounds input:disabled').waitFor({ state: 'detached' });
+    await page.locator('.agent-attention-popover').screenshot({ path: '/tmp/dam-sound-switches.png' });
+    await page.evaluate(() => window.damTheme.set('dark'));
+    await page.waitForTimeout(300); // Allow MudBlazor's theme change to render.
+    assert.ok(await page.locator('.notification-sounds').evaluate(el => el.scrollWidth <= el.clientWidth), 'dark sound controls fit the menu');
+    await page.locator('.agent-attention-popover').screenshot({ path: '/tmp/dam-sound-switches-dark.png' });
     await page.reload();
     await page.locator('button[aria-label="Agents needing attention: 0"]').click();
-    await page.getByRole('menuitem', { name: 'Finished sounds: On', exact: true }).waitFor();
-    await page.getByRole('menuitem', { name: 'Usage-limit sounds: On', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Usage-limit sounds: Off', exact: true }).waitFor();
-    assert.equal(await page.getByRole('menuitem', { name: 'Finished sounds: On', exact: true }).count(), 1);
+    await finishedSound.waitFor();
+    assert.equal(await finishedSound.isChecked(), true);
+    assert.equal(await limitSound.isChecked(), true);
+    await limitSound.uncheck();
+    assert.equal(await finishedSound.isChecked(), true);
     assert.ok(await page.evaluate(async () => {
         const audio = new AudioContext();
         try {
@@ -122,14 +153,20 @@ try {
     await page.reload();
     await page.locator('button[aria-label="Agents needing attention: 0"]').click();
     await page.getByRole('menuitem', { name: "Couldn't load. Retry", exact: true }).waitFor();
-    await page.getByRole('menuitem', { name: 'Finished sounds: On', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Finished sounds: Off', exact: true }).waitFor();
+    await finishedSound.uncheck();
+    assert.equal(await finishedSound.isChecked(), false);
     await context.route('**/api/me', route => route.fulfill({ json: { ...me, roles: 'None' } }));
     await page.goto(base + '/agents');
     await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.list-title').first().waitFor({ timeout: 60000 });
     assert.equal(await page.getByRole('region', { name: 'Other users’ agents', exact: true }).count(), 0, 'ordinary users have no administrative section');
     assert.equal(await page.getByRole('region', { name: 'Shared with you', exact: true }).locator('.agent-row').count(), 1);
     assert.equal(await page.locator('.agent-table .agent-row').count(), 3, 'administrative-only agents are excluded from the page');
+    for (const path of ['/', `/runners/${runnerId}`]) {
+        await page.goto(base + path);
+        await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.list-title').first().waitFor({ timeout: 60000 });
+        assert.equal(await page.getByRole('region', { name: 'Other users’ agents', exact: true }).count(), 0, `${path}: no ordinary-user administrative section`);
+        assert.equal(await page.locator('.agent-table .agent-row').count(), 3);
+    }
     console.log('Passed: independent saved sound preferences, bundled audio decoding and notification API failure.');
     console.log('Passed: ownership sections use owner identity despite admin permissions, with search and phone layouts.');
     console.log(`Passed (${engine}): agents are listed by last reply on the Agents page, dashboard, Agent activity, a Runner's page and in the navigation.`);

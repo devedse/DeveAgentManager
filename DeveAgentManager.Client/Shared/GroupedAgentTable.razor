@@ -1,0 +1,25 @@
+@foreach (var section in new[] { "Your agents", "Shared with you", "Other users’ agents" })
+{
+    var own = section == "Your agents";
+    var agents = Agents.ForAgentList(User)
+        .Where(a => (a.OwnerId == User?.Id ? "Your agents" : a.SharedWithMe ? "Shared with you" : "Other users’ agents") == section)
+        .ByLastReply().Take(LimitPerSection).ToList();
+    @if (own || agents.Count > 0)
+    {
+        <section aria-label="@section">
+            <div class="session-group-heading"><h2 class="mud-typography mud-typography-h6">@section</h2></div>
+            <AgentTable Agents="agents" ShowRunner="ShowRunner" ShowOwner="@(!own)" EmptyText="@EmptyText">
+                <EmptyContent>@EmptyContent</EmptyContent>
+            </AgentTable>
+        </section>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<AgentDto> Agents { get; set; } = [];
+    [Parameter, EditorRequired] public CurrentUserDto? User { get; set; }
+    [Parameter] public bool ShowRunner { get; set; }
+    [Parameter] public int LimitPerSection { get; set; } = int.MaxValue;
+    [Parameter] public string EmptyText { get; set; } = "No agents of yours match.";
+    [Parameter] public RenderFragment? EmptyContent { get; set; }
+}

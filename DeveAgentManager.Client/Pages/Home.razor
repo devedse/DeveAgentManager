@@ -123,14 +123,14 @@
                         <MudButton Href="agents" Variant="Variant.Text" Size="Size.Small" EndIcon="@Icons.Material.Rounded.ChevronRight">All agents</MudButton>
                     </div>
                     @* The same rows, with the same quick actions, as on the Agents and Runner pages. *@
-                    <AgentTable Agents="_agents.Take(8).ToList()" ShowRunner="true" EmptyText="Start an agent on a Runner to work on a repository.">
+                    <GroupedAgentTable Agents="_agents" User="_user" LimitPerSection="8" ShowRunner="true" EmptyText="Start an agent on a Runner to work on a repository.">
                                 <EmptyContent>
                                     @if (_runners.Count > 0)
                                     {
                                         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
                                     }
                                 </EmptyContent>
-                            </AgentTable>
+                            </GroupedAgentTable>
 
                 </div>
             </MudItem>
@@ -188,7 +188,7 @@
         _user = await Me.GetAsync();
         _info ??= await Api.InfoAsync();
         _runners = await runners;
-        _agents = (await agents).ByLastReply().ToList();
+        _agents = (await agents).ForAgentList(_user).ByLastReply().ToList();
     }
 
     private Task NewRunnerAsync() => Dialogs.ShowAsync<NewRunnerDialog>();

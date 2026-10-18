@@ -25,7 +25,7 @@ function tab() {
     assert.equal(a.init('user-one').limit, false);
     const idle = [{ id: 'agent', finished: null, limit: null }];
     await a.observe(idle);
-    await a.toggle('limit');
+    await a.set('limit', true);
     assert.equal(first.count(), 1, 'enabling previews the sound');
     await a.observe([{ id: 'agent', limit: 'rejection-one' }]);
     assert.equal(first.count(), 2);
@@ -33,21 +33,21 @@ function tab() {
     assert.equal(first.count(), 2, 'polling the same limit stays silent');
     await a.observe([{ id: 'agent', finished: 'completion-one' }]);
     assert.equal(first.count(), 2, 'finished is independently disabled');
-    await a.toggle('finished');
+    await a.set('finished', true);
     await a.observe([{ id: 'agent', finished: 'completion-two' }]);
     assert.equal(first.count(), 4);
     await a.observe([{ id: 'agent', finished: 'completion-two' }, { id: 'newly-shared', limit: 'old-limit' }]);
     assert.equal(first.count(), 4, 'newly visible agents do not replay old statuses');
     const second = tab(), b = second.api;
     assert.equal(b.init('user-one').finished, true, 'preferences persist across tabs/reloads');
-    await b.toggle('limit'); // off
-    await b.toggle('limit'); // on: preview unlocks this tab
+    await b.set('limit', false); // off
+    await b.set('limit', true); // on: preview unlocks this tab
     await b.observe(idle);
     await a.observe([{ id: 'agent', limit: 'rejection-two' }]);
     const before = second.count();
     await b.observe([{ id: 'agent', limit: 'rejection-two' }]);
     assert.equal(second.count(), before, 'another tab already played the event');
-    await b.toggle('limit'); // Disabling in another tab must also silence this one.
+    await b.set('limit', false); // Disabling in another tab must also silence this one.
     const countBeforeDisable = first.count();
     await a.observe([{ id: 'agent', limit: 'rejection-three' }]);
     assert.equal(first.count(), countBeforeDisable, 'disabling applies across tabs');
