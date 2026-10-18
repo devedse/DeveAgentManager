@@ -16,7 +16,8 @@ public static class RequestSecurity
 {
     /// <summary>API, live hub and terminal paths: they answer 401/403 instead of redirecting to the login page.</summary>
     public static bool IsMachinePath(PathString path) =>
-        path.StartsWithSegments("/account") || path.StartsWithSegments("/api") || path.StartsWithSegments("/hubs") || path.StartsWithSegments("/ws");
+        path.StartsWithSegments("/account") || path.StartsWithSegments("/api") || path.StartsWithSegments("/hubs") || path.StartsWithSegments("/ws")
+        || path.StartsWithSegments("/shared-preview");
 
     /// <summary>True when the request has no Origin, or one that is this Manager (same scheme, host and port).</summary>
     public static bool IsSameOrigin(HttpRequest request, bool requireOrigin = false)

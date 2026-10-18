@@ -72,12 +72,17 @@ internal static class SessionEndpoints
 
         sessions.MapGet("/{sessionId:guid}/files", (Guid sessionId, AgentArtifacts files, CurrentUser user, CancellationToken ct) => files.ListFilesAsync(sessionId, user, ct))
             .RequireSession(SessionAccess.Read);
-        sessions.MapGet("/{sessionId:guid}/files/{fileId:guid}/preview", async (Guid sessionId, Guid fileId, HttpContext context, AgentArtifacts files, CurrentUser user, CancellationToken ct) =>
+        sessions.MapGet("/{sessionId:guid}/files/{fileId:guid}/preview", async (Guid sessionId, Guid fileId, HttpContext context, AgentArtifacts files, CurrentUser user, SharedFilePreviews previews, CancellationToken ct) =>
         {
             context.Response.Headers.XContentTypeOptions = "nosniff";
             context.Response.Headers.CacheControl = "private, no-store";
             if (await files.FileAsync(sessionId, fileId, user, ct) is not { } found) return Results.NotFound();
-            try { return Results.Ok(await SessionFilePreviewReader.ReadAsync(found.Path, found.File.FileName, ct)); }
+            try
+            {
+                var preview = SessionFilePreviewReader.IsHtml(found.File.FileName) ? new SessionFilePreview(null, false, null)
+                    : await SessionFilePreviewReader.ReadAsync(found.Path, found.File.FileName, ct);
+                return Results.Ok(preview.UnavailableReason is null ? previews.WithUrls(context, sessionId, fileId, found.File.FileName, preview) : preview);
+            }
             catch (FileNotFoundException) { return Results.NotFound(); }
             catch (DirectoryNotFoundException) { return Results.NotFound(); }
         }).RequireSession(SessionAccess.Read);

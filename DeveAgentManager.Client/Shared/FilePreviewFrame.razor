@@ -1,0 +1,22 @@
+<div class="file-preview-frame-stage">
+    <iframe @key="Url" class="file-preview-frame" src="@Url" title="@Title" sandbox="@(Scripts ? "allow-scripts allow-downloads allow-popups" : "")"
+            referrerpolicy="no-referrer" @onload="() => _loaded = true" @onerror="Failed" style="@(_loaded ? null : "visibility:hidden")"></iframe>
+    <LoadingSection Loaded="_loaded" Error="@_error" Retry="Reload" Label="Loading file preview" Class="file-preview-frame-loading">
+        <Placeholder><SkeletonDetail /></Placeholder>
+        <ChildContent />
+    </LoadingSection>
+</div>
+@code {
+    [Parameter, EditorRequired] public string Url { get; set; } = "";
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public bool Scripts { get; set; }
+    [Parameter] public EventCallback Reload { get; set; }
+    private string? _previousUrl, _error;
+    private bool _loaded;
+    protected override void OnParametersSet()
+    {
+        if (_previousUrl == Url) return;
+        _previousUrl = Url; _loaded = false; _error = null;
+    }
+    private void Failed() => _error = "Couldn't load this preview. Try again or download the original file.";
+}

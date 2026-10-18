@@ -24,6 +24,72 @@ public sealed class SessionFileApiTests(ApiSecurityTests.Manager manager) : ICla
     private const string Password = "file-password-1";
 
     [Fact]
+    public async Task HtmlStreamsWithScopedAssetsAndRevocationAndLargeTextHasNoPreviewCap()
+    {
+        var (owner, ownerId) = await SignedInAsNewUserAsync();
+        var (reader, readerId) = await SignedInAsNewUserAsync();
+        var session = Guid.NewGuid(); var unrelated = Guid.NewGuid();
+        await using (var db = await manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync())
+        {
+            db.Sessions.AddRange(new StoredSession { Id = session, OwnerId = ownerId }, new StoredSession { Id = unrelated, OwnerId = ownerId });
+            await db.SaveChangesAsync();
+        }
+        var files = manager.Services.GetRequiredService<SessionFileStore>();
+        async Task<SessionFileDto> SaveAsync(Guid id, string name, byte[] data)
+        {
+            using var received = await files.ReceiveAsync(data.Length, Convert.ToHexStringLower(SHA256.HashData(data)), (s, ct) => s.WriteAsync(data, ct).AsTask(), default);
+            return await files.CommitAsync(id, Guid.NewGuid(), received, name, "", default);
+        }
+        var html = Encoding.UTF8.GetBytes("<!doctype html><html><head><link rel='stylesheet' href='assets/site.css'></head><body><img src='chart.png'><script>document.body.dataset.ready='yes'</script><!--" + new string('x', 10 * 1024 * 1024) + "--></body></html>");
+        var page = await SaveAsync(session, "report.html", html);
+        await SaveAsync(session, "site.css", "body{color:green}"u8.ToArray());
+        await SaveAsync(unrelated, "private.js", "window.private=true"u8.ToArray());
+        var png = new byte[] { 137, 80, 78, 71, 13, 10, 26, 10, 1 };
+        await manager.Services.GetRequiredService<SessionImageStore>().SaveAsync(session, Guid.NewGuid(), png, "chart.png", "", default);
+        var previewPath = $"/api/sessions/{session}/files/{page.Id}/preview";
+        var sharing = manager.Services.GetRequiredService<Sharing>();
+        await sharing.ShareSessionAsync(TestUsers.Plain(ownerId), session, readerId);
+        var preview = await reader.GetFromJsonAsync<SessionFilePreview>(previewPath, ApiJson.Options);
+        Assert.NotNull(preview!.HtmlUrl); Assert.NotNull(preview.SourceUrl); Assert.Null(preview.Text);
+        Assert.Null(preview.UnavailableReason);
+        var anonymous = manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var response = await anonymous.GetAsync(preview.HtmlUrl);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(html, await response.Content.ReadAsByteArrayAsync());
+        Assert.Equal("text/html", response.Content.Headers.ContentType!.MediaType);
+        var csp = response.Headers.GetValues("Content-Security-Policy").Single();
+        Assert.Contains("sandbox allow-scripts", csp); Assert.DoesNotContain("allow-same-origin", csp);
+        Assert.True(response.Headers.CacheControl!.NoStore);
+        Assert.Equal("no-referrer", response.Headers.GetValues("Referrer-Policy").Single());
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("cross-origin", response.Headers.GetValues("Cross-Origin-Resource-Policy").Single());
+        var directory = preview.HtmlUrl[..(preview.HtmlUrl.LastIndexOf('/') + 1)];
+        var style = await anonymous.GetAsync(directory + "assets/site.css");
+        Assert.Equal("text/css", style.Content.Headers.ContentType!.MediaType);
+        Assert.Equal("*", style.Headers.GetValues("Access-Control-Allow-Origin").Single());
+        Assert.Equal(png, await anonymous.GetByteArrayAsync(directory + "chart.png"));
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync(directory + "private.js")).StatusCode);
+        var source = await anonymous.GetAsync(preview.SourceUrl);
+        Assert.Equal("text/plain", source.Content.Headers.ContentType!.MediaType);
+        Assert.Equal(html, await source.Content.ReadAsByteArrayAsync());
+        var ranged = await anonymous.SendAsync(new HttpRequestMessage(HttpMethod.Get, preview.HtmlUrl) { Headers = { Range = new RangeHeaderValue(0, 19) } });
+        Assert.Equal(HttpStatusCode.PartialContent, ranged.StatusCode);
+        Assert.Equal(html[..20], await ranged.Content.ReadAsByteArrayAsync());
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync(preview.HtmlUrl.Replace("/view/", "/invalid/"))).StatusCode);
+        await sharing.UnshareSessionAsync(TestUsers.Plain(ownerId), session, readerId);
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync(preview.HtmlUrl)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync(directory + "chart.png")).StatusCode);
+        var text = Encoding.UTF8.GetBytes(new string('a', 2 * 1024 * 1024));
+        var large = await SaveAsync(session, "large.log", text);
+        var largePreview = await owner.GetFromJsonAsync<SessionFilePreview>($"/api/sessions/{session}/files/{large.Id}/preview", ApiJson.Options);
+        Assert.Null(largePreview!.UnavailableReason); Assert.NotNull(largePreview.SourceUrl); Assert.Null(largePreview.Text);
+        Assert.Equal(text, await anonymous.GetByteArrayAsync(largePreview.SourceUrl));
+        var signIns = manager.Services.GetRequiredService<SignInSessions>();
+        foreach (var login in await signIns.ListAsync(ownerId)) await signIns.RevokeAsync(ownerId, login.Id);
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync(largePreview.SourceUrl)).StatusCode);
+    }
+
+    [Fact]
     public async Task AgentArtifactsAreVisibleAndDownloadableInEverySessionAndSurviveHistoryDeletion()
     {
         var (owner, ownerId) = await SignedInAsNewUserAsync();

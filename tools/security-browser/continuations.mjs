@@ -28,9 +28,9 @@ try {
         await new Promise(resolve => setTimeout(resolve, 250));
     }
     if (!ready) throw new Error('Isolated Manager did not start within 30 seconds');
-    for (const script of ['auto-continue-dialog.mjs', 'agent-activity.mjs', 'session-migration.mjs', 'workspace-sessions.mjs', 'file-viewer.mjs']) {
+    for (const script of ['auto-continue-dialog.mjs', 'agent-activity.mjs', 'session-migration.mjs', 'workspace-sessions.mjs', 'file-viewer.mjs', 'html-viewer.mjs']) {
         const test = spawn(process.execPath, [resolve('DeveAgentManager.Tests/Browser', script)], {
-            env: { ...process.env, DAM_TEST_URL: base, DAM_TEST_PASSWORD: password,
+            env: { ...process.env, DAM_TEST_URL: base, DAM_TEST_PASSWORD: password, DAM_TEST_DATA_DIR: scratch,
                 PLAYWRIGHT_MODULE: resolve('tools/security-browser/node_modules/playwright/index.mjs') },
             stdio: 'inherit'
         });

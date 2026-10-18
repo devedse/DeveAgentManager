@@ -4,6 +4,14 @@ using Xunit;
 namespace DeveAgentManager.Tests;
 public sealed class ManagerLogStoreTests
 {
+    [Fact]
+    public void PreviewReadCapabilitiesAreRedactedFromPathsInDiagnostics()
+    {
+        const string token = "test-only-protected-preview-capability_123";
+        var safe = DeveAgentManager.Core.Security.DiagnosticText.Redact($"GET https://example.test/shared-preview/{token}/view/report.html");
+        Assert.DoesNotContain(token, safe);
+        Assert.Contains("/shared-preview/[redacted]/view/report.html", safe);
+    }
     [Fact] public void LogsAreFilteredRedactedAndSurviveRestart()
     {
         var directory = Directory.CreateTempSubdirectory("dam-logs-");

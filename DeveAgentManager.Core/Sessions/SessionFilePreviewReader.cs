@@ -3,19 +3,21 @@ using DeveAgentManager.Contracts;
 
 namespace DeveAgentManager.Core.Sessions;
 
-/// <summary>Bounded, inert text preview; original downloads remain available for every file.</summary>
+/// <summary>Small inline text or a streamed preview descriptor. File size never prevents viewing text or HTML.</summary>
 public static class SessionFilePreviewReader
 {
-    public const int MaxBytes = 512 * 1024;
+    public const int InlineBytes = 512 * 1024;
+    public static bool IsHtml(string name) => Path.GetExtension(name).ToLowerInvariant() is ".html" or ".htm";
+    public static string Charset(ReadOnlySpan<byte> data) => data.StartsWith(new byte[] { 0xff, 0xfe }) ? "utf-16"
+        : data.StartsWith(new byte[] { 0xfe, 0xff }) ? "utf-16BE" : "utf-8";
 
     public static async Task<SessionFilePreview> ReadAsync(string path, string name, CancellationToken ct)
     {
         var markdown = Path.GetExtension(name).ToLowerInvariant() is ".md" or ".markdown" or ".mdown" or ".mkd";
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
             4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        if (stream.Length > MaxBytes) return new(null, markdown, "This file is too large to preview (512 KiB maximum). Download it to read it.");
-        // Read at most the limit plus one, even if the file grows after the length check.
-        var bytes = new byte[MaxBytes + 1];
+        // Large content is streamed directly to the browser, not buffered/serialized in the Manager.
+        var bytes = new byte[(int)Math.Min(stream.Length, InlineBytes)];
         var count = 0;
         while (count < bytes.Length)
         {
@@ -23,16 +25,21 @@ public static class SessionFilePreviewReader
             if (read == 0) break;
             count += read;
         }
-        if (count > MaxBytes) return new(null, markdown, "This file is too large to preview (512 KiB maximum). Download it to read it.");
         try
         {
             var data = bytes.AsSpan(0, count);
-            var text = data.StartsWith(new byte[] { 0xff, 0xfe }) ? new UnicodeEncoding(false, true, true).GetString(data[2..])
-                : data.StartsWith(new byte[] { 0xfe, 0xff }) ? new UnicodeEncoding(true, true, true).GetString(data[2..])
-                : new UTF8Encoding(false, true).GetString(data.StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? data[3..] : data);
+            var encoding = Charset(data) switch { "utf-16" => (Encoding)new UnicodeEncoding(false, true, true),
+                "utf-16BE" => new UnicodeEncoding(true, true, true), _ => new UTF8Encoding(false, true) };
+            var skip = data.StartsWith(new byte[] { 0xff, 0xfe }) || data.StartsWith(new byte[] { 0xfe, 0xff }) ? 2
+                : data.StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0;
+            var chars = new char[encoding.GetMaxCharCount(count)];
+            // A sample ending in a partial Unicode character is valid when more bytes follow.
+            encoding.GetDecoder().Convert(data[skip..], chars, flush: stream.Position == stream.Length,
+                out _, out var used, out _);
+            var text = new string(chars, 0, used);
             if (text.Any(c => char.IsControl(c) && c is not ('\r' or '\n' or '\t')))
                 return new(null, markdown, "This file contains binary data. Download it to open it.");
-            return new(text, markdown, null);
+            return new(stream.Position == stream.Length ? text : null, markdown, null);
         }
         catch (DecoderFallbackException)
         {

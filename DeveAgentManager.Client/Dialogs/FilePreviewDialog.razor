@@ -1,35 +1,49 @@
 @inject ManagerApi Api
+@implements IDisposable
 
 <MudDialog Class="file-preview-dialog">
     <TitleContent>
         <div class="help-heading file-preview-title">
             <MudText Typo="Typo.h6">@File.FileName</MudText>
-            <HelpTip Label="Viewing shared files"><p>Read text files here. Markdown files can switch between rendered formatting and their original text. Previews support UTF-8 and UTF-16 text up to 512 KiB; download other files to open them.</p></HelpTip>
+            <HelpTip Label="Viewing shared files"><p>View HTML websites, Markdown and text here, with no preview size cap. HTML supports embedded images, public web resources and relative assets shared by the same agent. Share each local asset too; private Runner paths are unavailable to the browser.</p><p>HTML runs in an isolated view with its own scripts and styling. Use Text to read the source, or open the page in a separate tab. Large text streams directly to the browser; large Markdown starts in Text mode and renders when requested.</p></HelpTip>
         </div>
     </TitleContent>
     <DialogContent>
         <LoadingSection Loaded="_loaded" Error="@_error" Retry="LoadAsync" Label="Loading file preview">
             <Placeholder><SkeletonDetail /></Placeholder>
             <ChildContent>
-                @if (_preview?.Text is { } text)
+                @if (_preview is { UnavailableReason: null } && (_preview.Text is not null || _preview.SourceUrl is not null))
                 {
-                    @if (_preview.Markdown)
+                    @if (_preview.Markdown || _preview.HtmlUrl is not null)
                     {
                         <div class="file-preview-modes" role="group" aria-label="File view mode">
-                            <MudButton OnClick="() => _rendered = true" Variant="@(_rendered ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" aria-pressed="@_rendered">Rendered</MudButton>
+                            <MudButton OnClick="ShowRenderedAsync" Variant="@(_rendered ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" aria-pressed="@_rendered">Rendered</MudButton>
                             <MudButton OnClick="() => _rendered = false" Variant="@(!_rendered ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" aria-pressed="@(!_rendered)">Text</MudButton>
                         </div>
                     }
-                    <div class="file-preview-content" tabindex="0" aria-label="File contents">
-                        @if (_preview.Markdown && _rendered)
-                        {
-                            <article class="markdown file-preview-markdown">@_html</article>
-                        }
-                        else
-                        {
-                            <pre class="file-preview-text">@text</pre>
-                        }
-                    </div>
+                    @if (_preview.HtmlUrl is { } htmlPage && _rendered)
+                    {
+                        <FilePreviewFrame @key="htmlPage" Url="@htmlPage" Title="@($"HTML preview of {File.FileName}")" Scripts="true" Reload="LoadAsync" />
+                    }
+                    else if (!_rendered && _preview.SourceUrl is { } source && _preview.Text is null)
+                    {
+                        <FilePreviewFrame @key="source" Url="@source" Title="@($"Source of {File.FileName}")" Reload="LoadAsync" />
+                    }
+                    else
+                    {
+                        <div class="file-preview-content" tabindex="0" aria-label="File contents">
+                            @if (_rendered && _preview.Markdown)
+                            {
+                                <LoadingSection Loaded="@(!_renderLoading && _renderError is null)" Error="@_renderError" Retry="ShowRenderedAsync" Label="Rendering Markdown" @key="(_renderLoading, _renderError)">
+                                    <ChildContent><article class="markdown file-preview-markdown">@_html</article></ChildContent>
+                                </LoadingSection>
+                            }
+                            else
+                            {
+                                <pre class="file-preview-text">@_preview.Text</pre>
+                            }
+                        </div>
+                    }
                 }
                 else
                 {
@@ -39,6 +53,10 @@
         </LoadingSection>
     </DialogContent>
     <DialogActions>
+        @if (_preview?.HtmlUrl is { } website)
+        {
+            <MudButton Href="@website" Target="_blank" rel="noopener noreferrer" StartIcon="@Icons.Material.Rounded.OpenInNew">Open in new tab</MudButton>
+        }
         <MudButton Href="@ManagerApi.DownloadUrl(File)" download="@File.FileName" StartIcon="@Icons.Material.Rounded.Download">Download</MudButton>
         <MudButton OnClick="() => Dialog.Close()">Close</MudButton>
     </DialogActions>
@@ -52,6 +70,9 @@
     private bool _rendered = true;
     private bool _loaded;
     private string? _error;
+    private bool _renderLoading;
+    private string? _renderError;
+    private readonly CancellationTokenSource _lifetime = new();
 
     protected override Task OnInitializedAsync() => LoadAsync();
 
@@ -62,11 +83,30 @@
         {
             _preview = await Api.PreviewSessionFileAsync(File);
             _html = _preview.Markdown ? MarkdownRenderer.FileToHtml(_preview.Text) : default;
+            _rendered = _preview.HtmlUrl is not null || _preview.Markdown && _preview.Text is not null;
             _loaded = true;
         }
         catch (ApiException ex) { _error = ex.Message; }
         catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
     }
+
+    private async Task ShowRenderedAsync()
+    {
+        _rendered = true;
+        if (_preview is not { Markdown: true, Text: null, SourceUrl: { } source }) return;
+        _renderLoading = true; _renderError = null;
+        try
+        {
+            var text = await Api.PreviewSourceAsync(source, _lifetime.Token);
+            _preview = _preview with { Text = text };
+            _html = MarkdownRenderer.FileToHtml(text);
+        }
+        catch (HttpRequestException) { _renderError = LoadingSection.Unreachable; }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        finally { _renderLoading = false; }
+    }
+
+    public void Dispose() { _lifetime.Cancel(); _lifetime.Dispose(); }
 
     public static Task OpenAsync(IDialogService dialogs, SessionFileDto file) => dialogs.ShowAsync<FilePreviewDialog>(file.FileName,
         new DialogParameters<FilePreviewDialog> { { d => d.File, file } },
