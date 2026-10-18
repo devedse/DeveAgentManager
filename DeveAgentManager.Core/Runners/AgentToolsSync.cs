@@ -1,4 +1,6 @@
 using DeveAgentManager.Contracts;
+using DeveAgentManager.Core.Sessions;
+using DeveAgentManager.Core.Ssh;
 using DeveAgentManager.Core.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -10,7 +12,7 @@ namespace DeveAgentManager.Core.Runners;
 /// Keeps dam-tools current on Ready Runners whose setup installed it (<see cref="RunnerSetupService.SyncAgentToolsAsync"/>):
 /// each is checked once after the Manager starts, and again after a failure or a new setup.
 /// </summary>
-public sealed class AgentToolsSync(IDbContextFactory<ManagerDbContext> factory, RunnerSetupService setup, ILogger<AgentToolsSync> logger) : BackgroundService
+public sealed class AgentToolsSync(IDbContextFactory<ManagerDbContext> factory, RunnerSetupService setup, ILogger<AgentToolsSync> logger, ArtifactTokens tokens, RunnerShell shell) : BackgroundService
 {
     private readonly HashSet<(Guid RunnerId, DateTime? SetupAt)> _current = [];
 
@@ -29,6 +31,8 @@ public sealed class AgentToolsSync(IDbContextFactory<ManagerDbContext> factory, 
                         try
                         {
                             if (await setup.SyncAgentToolsAsync(runner, stoppingToken)) logger.LogInformation("Updated dam-tools on {Runner}", runner.Name);
+                            foreach (var agent in await db.Agents.AsNoTracking().Where(a => a.RunnerId == runner.Id).ToListAsync(stoppingToken))
+                                await tokens.InstallAsync(shell, runner, agent, stoppingToken);
                             _current.Add((runner.Id, runner.LastSetupAt));
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)

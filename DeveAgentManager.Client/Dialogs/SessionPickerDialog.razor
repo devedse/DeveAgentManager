@@ -3,7 +3,10 @@
 
 <MudDialog>
     <TitleContent><div class="help-heading"><MudText Typo="Typo.h6">Sessions</MudText>
-        <HelpTip Label="Sessions">One session runs at a time in this workspace. Switching saves and stops the current chat; project files are shared. Sessions open in the current harness (@Agent.HarnessId). Select another session before deleting the active one.</HelpTip>
+        <HelpTip Label="Sessions">
+            <p>One session runs at a time in this workspace. Switching saves and stops the current chat; project files are shared. Each saved session opens in its own harness. A new session uses the current harness (@Agent.HarnessId).</p>
+            <p>Restoring another harness uses the owner's permitted default login for it. To convert a conversation, use Continue with in the terminal. Select another session before deleting the active one.</p>
+        </HelpTip>
     </div></TitleContent>
     <DialogContent>
         <MudText Typo="Typo.subtitle2" Class="session-workspace-name">@Agent.Name</MudText>

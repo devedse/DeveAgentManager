@@ -31,6 +31,9 @@ public sealed class DeveSession
 
     public List<DeveEntry> Entries { get; set; } = [];
 
+    /// <summary>The latest cross-harness conversion, without conversation or credential contents.</summary>
+    public SessionMigrationReport? Migration { get; set; }
+
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -154,6 +157,9 @@ public sealed class DeveEntry
 
     public string? Error { get; set; }
 
+    /// <summary>DAM-generated migration context: notice, archive or summary; never a new user instruction.</summary>
+    public string? MigrationKind { get; set; }
+
     /// <summary>For <see cref="DeveEntryKind.Summary"/>: "compaction" or "branch".</summary>
     public string? SummaryKind { get; set; }
 
@@ -197,6 +203,11 @@ public sealed class DeveBlock
 
     /// <summary>shell, read, write, edit, search, web or other: how the call maps to other harnesses' tools.</summary>
     public string? ToolKind { get; set; }
+
+    /// <summary>Native call encoding (function or custom), retained through other harnesses as replay metadata.</summary>
+    public string? CallType { get; set; }
+
+    public string? Namespace { get; set; }
 
     public JsonNode? Arguments { get; set; }
 

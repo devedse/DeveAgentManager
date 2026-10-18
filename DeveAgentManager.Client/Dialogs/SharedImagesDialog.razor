@@ -1,4 +1,7 @@
 <MudDialog>
+    <TitleContent><div class="help-heading"><MudText Typo="Typo.h6">Shared images</MudText>
+        <HelpTip Label="Agent shared images"><p>This agent's shared images are available in every session, including after an older session is deleted.</p><p>Other agents can retrieve images their owner may read with <code>dam-tools list-artifacts --all</code> and <code>dam-tools fetch-artifact &lt;id&gt; --agent &lt;agent-id&gt; --kind image</code>.</p></HelpTip>
+    </div></TitleContent>
     <DialogContent><SessionImagesView SessionId="SessionId" /></DialogContent>
     <DialogActions><MudButton OnClick="() => Dialog.Close()">Close</MudButton></DialogActions>
 </MudDialog>

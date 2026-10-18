@@ -113,16 +113,144 @@ public class NativeHistoryTransportTests
         Assert.Equal((await service.LoadAsync(saved.Id, Ct)).ToJson(), (await service.LoadAsync(copy.Id, Ct)).ToJson());
         Assert.Equal(png, (await imageStore.ReadAsync(copy.Id, imageId, Ct))!.Value.Data);
         Assert.Equal(fileBytes, await File.ReadAllBytesAsync(fileStore.DataPath(copy.Id, fileId), Ct));
+
+        var foreignExport = await service.ExportAsync(saved.Id, "codex", Ct);
+        var exportedCalls = new CodexSessionFormat().Read(foreignExport.Content).ActivePath().SelectMany(e => e.Content ?? []).Where(b => b.Type == "toolCall").ToList();
+        Assert.Single(exportedCalls);
+        Assert.Equal("Bash", exportedCalls[0].Name);
+        var brokenFormats = formats.Select(f => f.HarnessId == "codex" ? new LossyFormat(f) : f).ToArray();
+        var broken = new SessionService(factory, fixture.Shell, brokenFormats, [], imageStore, fileStore, options,
+            new ManagerEvents(), NullLogger<SessionService>.Instance);
+        var beforeFailure = (await service.LoadAsync(saved.Id, Ct)).ToJson();
+        using (await service.LockAsync(Ct))
+            await Assert.ThrowsAsync<FormatException>(() => broken.MoveToHarnessAsync(runner, agent, "codex", "rejected-session", Ct));
+        Assert.Equal(beforeFailure, (await service.LoadAsync(saved.Id, Ct)).ToJson());
+        Assert.Equal("claude", (await service.GetAsync(saved.Id, Ct))!.HarnessId);
+        Assert.False(File.Exists(formats.Single(f => f.HarnessId == "codex").GetPath("rejected-session", agent.WorkingDirectory, DateTime.UtcNow)));
         using (await service.LockAsync(Ct))
             await service.MoveToHarnessAsync(runner, agent, "codex", "moved-session", Ct);
-        Assert.Single(Directory.GetFiles(options.SessionsDirectory, $"{saved.Id:N}.*.json"));
+        Assert.Equal(2, Directory.GetFiles(options.SessionsDirectory, $"{saved.Id:N}.*.json").Length);
+        var moved = (await service.GetAsync(saved.Id, Ct))!;
+        var movedPath = formats.Single(f => f.HarnessId == "codex").GetPath("moved-session", agent.WorkingDirectory, DateTime.UtcNow);
+        var migrated = new CodexSessionFormat().Read(await File.ReadAllTextAsync(movedPath, Ct));
+        Assert.Single(migrated.ActivePath().SelectMany(e => e.Content ?? []), b => b.Type == "toolCall");
+        Assert.Equal("codex", moved.HarnessId);
+        Assert.Equal("moved-session", moved.HarnessSessionId);
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(movedPath)!, "*.dam-tmp-*"));
+        // A native sync after switching keeps the content-free report separately from conversion backups.
+        agent.HarnessId = "codex"; agent.HarnessSessionId = "moved-session";
+        await using (var db = factory.CreateDbContext())
+        {
+            var row = await db.Agents.SingleAsync(a => a.Id == agent.Id, Ct);
+            row.HarnessId = "codex"; row.HarnessSessionId = "moved-session"; await db.SaveChangesAsync(Ct);
+        }
+        await service.SyncRunnerAsync(runner, Ct);
+        var afterSync = await service.LoadAsync(saved.Id, Ct);
+        Assert.Equal(1, afterSync.Migration!.PreservedCalls);
+        Assert.Equal("moved-session", afterSync.Migration.TargetSessionId);
+        Assert.Equal("codex", afterSync.Sources.Last().Harness);
+        // Selecting an older native Claude session restores Claude, regardless of the currently running Codex chat.
+        var older = await service.ImportAsync(User.BootstrapId, "older.claude.jsonl", content, Ct);
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.Sessions.SingleAsync(s => s.Id == older.Id, Ct)).WorkspaceAgentId = agent.Id;
+            var login = new Account { Id = Guid.NewGuid(), CreatedById = User.BootstrapId, HarnessId = "codex", Name = "Previous test login",
+                Kind = AccountKind.ApiKey, ProtectedSecret = "test-only-unusable-secret", Enabled = true };
+            db.Accounts.Add(login);
+            var row = await db.Agents.SingleAsync(a => a.Id == agent.Id, Ct);
+            row.AccountId = login.Id; row.RunningAccountId = login.Id;
+            agent.AccountId = login.Id; agent.RunningAccountId = login.Id;
+            await db.SaveChangesAsync(Ct);
+        }
+        using (await service.LockAsync(Ct))
+            await service.SelectLockedAsync(runner, agent, older.Id, null, "restored-claude", Ct);
+        Assert.Equal("claude", agent.HarnessId);
+        var restored = (await service.GetAsync(older.Id, Ct))!;
+        Assert.Equal("claude", restored.HarnessId);
+        Assert.Equal("claude", restored.HarnessTrail);
+        Assert.Equal("codex", (await service.GetAsync(saved.Id, Ct))!.HarnessId);
+        var restoredPath = formats.Single(f => f.HarnessId == "claude").GetPath("restored-claude", agent.WorkingDirectory, DateTime.UtcNow);
+        var restoredNative = new ClaudeSessionFormat().Read(await File.ReadAllTextAsync(restoredPath, Ct));
+        Assert.Contains(restoredNative.ActivePath().SelectMany(e => e.Content ?? []), b => b.Type == "toolCall" && b.Id == "toolu_1");
+        Assert.DoesNotContain("DAM session migration", await File.ReadAllTextAsync(restoredPath, Ct));
+        Assert.Empty(Directory.GetFiles(options.SessionsDirectory, $"{older.Id:N}.*.json"));
+        await using (var db = factory.CreateDbContext())
+        {
+            var row = await db.Agents.SingleAsync(a => a.Id == agent.Id, Ct);
+            Assert.Equal("claude", row.HarnessId);
+            Assert.Equal("restored-claude", row.HarnessSessionId);
+            Assert.Null(row.AccountId);
+            Assert.Null(row.RunningAccountId);
+            Assert.Single(await db.Sessions.Where(s => s.AgentId == agent.Id).ToListAsync(Ct));
+        }
         using (await service.LockAsync(Ct))
             await service.SelectLockedAsync(runner, agent, null, "new chat", "new-native", Ct);
         await service.DeleteAsync(saved.Id, Ct);
         Assert.False(Directory.Exists(Path.Combine(options.SessionsDirectory, "native", saved.Id.ToString("N"))));
         Assert.Empty(Directory.GetFiles(options.SessionsDirectory, $"{saved.Id:N}.*.json"));
+        Assert.False(File.Exists(Path.Combine(options.SessionsDirectory, "migrations", $"{saved.Id:N}.json")));
         Assert.Equal(png, (await imageStore.ReadAsync(copy.Id, imageId, Ct))!.Value.Data);
         Assert.Equal(fileBytes, await File.ReadAllBytesAsync(fileStore.DataPath(copy.Id, fileId), Ct));
+
+        // Continuing an archive of a removed agent gets an independent artifact collection. The old source folder
+        // may belong to an already-deleted session; its retained files still travel with a permitted continued copy.
+        var artifacts = new AgentArtifacts(factory, options, fileStore, imageStore,
+            new DeveAgentManager.Core.Users.AccessControl(factory), new ManagerEvents());
+        await artifacts.PreserveAsync(agent.Id, Ct);
+        var continuedAgent = new Agent { Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Name = "continued archive", RunnerId = runner.Id,
+            HarnessId = "claude", HarnessSessionId = "continued-archive", WorkingDirectory = "/continued-workspace" };
+        await using (var db = factory.CreateDbContext())
+        {
+            await db.Agents.Where(a => a.Id == agent.Id).ExecuteDeleteAsync(Ct);
+            db.Agents.Add(continuedAgent); await db.SaveChangesAsync(Ct);
+        }
+        await service.AttachToAgentAsync(runner, continuedAgent, older.Id, Ct);
+        var continued = (await service.GetForAgentAsync(continuedAgent.Id, Ct))!;
+        Assert.NotEqual(older.Id, continued.Id);
+        Assert.Equal(fileBytes, await File.ReadAllBytesAsync(fileStore.DataPath(continued.Id, fileId), Ct));
+        var privateImage = Guid.NewGuid();
+        await imageStore.SaveAsync(continued.Id, privateImage, png, "new.png", "New agent only", Ct);
+        Assert.DoesNotContain(await artifacts.ListImagesAsync(older.Id, TestUsers.Admin, Ct), i => i.Id == privateImage);
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task AtomicInstallationRejectsCorruptionAndKeepsThePreviousFile()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipWhen(!OperatingSystem.IsLinux() || !File.Exists("/usr/sbin/sshd"), "Requires isolated OpenSSH fixture.");
+        await using var fixture = await RunnerShellIntegrationTests.Fixture.StartAsync();
+        var path = fixture.Root + "/home/previous history.jsonl";
+        await fixture.Shell.UploadAtomicAsync(fixture.Runner, path, "last good history", Ct);
+        Assert.Equal("last good history", await File.ReadAllTextAsync(path, Ct));
+        var bin = fixture.Root + "/bad-checksum";
+        Directory.CreateDirectory(bin);
+        var checksum = bin + "/sha256sum";
+        await File.WriteAllTextAsync(checksum, "#!/bin/sh\nprintf 'incorrect  checksum\\n'\n", Ct);
+        File.SetUnixFileMode(checksum, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var environment = fixture.Root + "/home/.deveagentmanager/env.sh";
+        Directory.CreateDirectory(Path.GetDirectoryName(environment)!);
+        await File.WriteAllTextAsync(environment, $"export PATH={ShellQuote.Quote(bin)}:\"$PATH\"\n", Ct);
+        await Assert.ThrowsAsync<RunnerCommandException>(() => fixture.Shell.UploadAtomicAsync(fixture.Runner, path, "corrupted new history", Ct));
+        Assert.Equal("last good history", await File.ReadAllTextAsync(path, Ct));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, "*.dam-tmp-*"));
+        using var canceled = new CancellationTokenSource();
+        await canceled.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Shell.UploadAtomicAsync(fixture.Runner, path, "interrupted history", canceled.Token));
+        Assert.Equal("last good history", await File.ReadAllTextAsync(path, Ct));
+    }
+
+    private sealed class LossyFormat(ISessionFormat inner) : ISessionFormat
+    {
+        public string HarnessId => inner.HarnessId;
+        public string LocateCommand(string id) => inner.LocateCommand(id);
+        public string GetPath(string id, string cwd, DateTime at) => inner.GetPath(id, cwd, at);
+        public DeveSession Read(string content) => inner.Read(content);
+        public string Write(DeveSession session, string id, string cwd)
+        {
+            var damaged = DeveSession.FromJson(session.ToJson());
+            foreach (var entry in damaged.Entries) entry.Content?.RemoveAll(b => b.Type is "toolCall" or "toolResult");
+            return inner.Write(damaged, id, cwd);
+        }
     }
 
     // The fixture overrides shell HOME; SFTP still starts in the operating system user's home.

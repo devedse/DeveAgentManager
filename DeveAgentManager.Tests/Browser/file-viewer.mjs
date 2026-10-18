@@ -26,7 +26,8 @@ try {
             if (delay) await new Promise(resolve => setTimeout(resolve, 1100));
             if (fail) return route.fulfill({ status: 503, json: { detail: 'Test-only preview unavailable' } });
             return route.fulfill({ json: file === files[0] ? { text: markdown, markdown: true } : file === files[1] ? { text: 'line 1\n\tline 2 <tag>\n' + 'long'.repeat(150), markdown: false }
-                : { text: null, markdown: false, unavailableReason: file === files[2] ? 'This file contains binary data. Download it to open it.' : 'This file is too large to preview (512 KiB maximum). Download it to read it.' } });
+                : file === files[2] ? { text: null, markdown: false, unavailableReason: 'This file contains binary data. Download it to open it.' }
+                : { text: 'large text content\n'.repeat(50000), markdown: false } });
         }
         if (file && path.endsWith('/download')) return route.fulfill({ body: 'test-only original content', headers: { 'content-disposition': `attachment; filename="${file.fileName}"` } });
         const body = path === '/api/info' ? info : path === `/api/sessions/${id}` ? { id, access: 'Read', ownerName: 'Test user', title: 'Files', harnessId: 'codex', messageCount: 0, createdAt: now, updatedAt: now }
@@ -65,9 +66,13 @@ try {
     assert.match(await dialog.locator('.file-preview-text').textContent(), /^line 1\n\tline 2 <tag>/);
     assert.equal(await dialog.getByRole('button', { name: 'Rendered', exact: true }).count(), 0);
     await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
-    for (const name of ['app.apk', 'large.txt']) {
+    await page.getByRole('button', { name: 'View large.txt', exact: true }).click();
+    await dialog.locator('.file-preview-text').waitFor();
+    assert.ok((await dialog.locator('.file-preview-text').textContent()).length > 512 * 1024);
+    await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
+    for (const name of ['app.apk']) {
         await page.getByRole('button', { name: `View ${name}`, exact: true }).click();
-        await dialog.getByText(name === 'app.apk' ? /contains binary data/ : /too large to preview/).waitFor();
+        await dialog.getByText(/contains binary data/).waitFor();
         const [download] = await Promise.all([page.waitForEvent('download'), dialog.getByRole('link', { name: 'Download', exact: true }).click()]);
         assert.equal(download.suggestedFilename(), name);
         await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
@@ -81,5 +86,5 @@ try {
     await dialog.getByRole('button', { name: 'Retry', exact: true }).click();
     await dialog.getByRole('heading', { name: 'Results', exact: true }).waitFor();
     assert.deepEqual(errors, []);
-    console.log(`Passed (${engine}): Markdown/text toggle, tables/code, inert content, original downloads, binary/size fallbacks, read-only access, loading/retry, 320px phone and both themes.`);
+    console.log(`Passed (${engine}): Markdown/text toggle, tables/code, inert content, original downloads, binary fallback, large text, read-only access, loading/retry, 320px phone and both themes.`);
 } finally { await browser.close(); }

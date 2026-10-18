@@ -30,7 +30,7 @@ public sealed partial class AgentService(
     AccessControl access,
     ManagerEvents events,
     ILogger<AgentService> logger,
-    AgentContinuations? continuations = null, AgentDiagnostics? diagnostics = null, UsageLimitReader? limitReader = null)
+    AgentContinuations? continuations = null, AgentDiagnostics? diagnostics = null, UsageLimitReader? limitReader = null, ArtifactTokens? artifactTokens = null)
 {
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
 
@@ -195,7 +195,7 @@ public sealed partial class AgentService(
     /// <summary>
     /// Continues the agent in another harness and/or with another harness login, in the same folder on the same Runner
     /// (e.g. when a subscription ran out). The harness is stopped gracefully and the conversation synced. For another
-    /// harness the conversation moves as text (tool calls become short descriptions; thinking stays behind); for another
+    /// harness the conversation moves with completed tool exchanges (thinking stays behind); for another
     /// login of the same harness the conversation simply resumes.
     /// <paramref name="accountId"/> must be one of <paramref name="actor"/>'s own logins; null means the owner's default,
     /// which only the owner can pick (nobody switches an agent to someone else's login).
@@ -220,36 +220,49 @@ public sealed partial class AgentService(
         }
 
         logger.LogInformation("Switching agent {Agent} from {From} to {To} (account {Account})", agent.Name, agent.HarnessId, harnessId, accountId);
-        (await shell.RunAsync(runner, BuildStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), cancellationToken))
-            .EnsureSuccess("Stopping the harness");
-
-        if (changesHarness)
+        try
         {
-            // The latest messages first, then the conversation moves to the new harness's own format.
-            await sessions.SyncRunnerLockedAsync(runner, cancellationToken, agent.Id);
-            var sessionId = target.NewSessionId(Guid.NewGuid());
-            await sessions.MoveToHarnessAsync(runner, agent, harnessId, sessionId, cancellationToken);
-            agent.HarnessId = harnessId;
-            agent.HarnessSessionId = sessionId;
+            (await shell.RunAsync(runner, BuildStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), cancellationToken))
+                .EnsureSuccess("Stopping the harness");
+
+            if (changesHarness)
+            {
+                // The latest messages first, then the conversation moves to the new harness's own format.
+                await sessions.SyncRunnerLockedAsync(runner, cancellationToken, agent.Id);
+                var sessionId = target.NewSessionId(Guid.NewGuid());
+                await sessions.MoveToHarnessAsync(runner, agent, harnessId, sessionId, cancellationToken);
+                agent.HarnessId = harnessId;
+                agent.HarnessSessionId = sessionId;
+            }
+
+            agent.AccountId = accountId;
+            agent.LoginBlocked = false;
+            agent.LoginStopPending = false;
+            db.AgentLoginGrants.RemoveRange(await db.AgentLoginGrants.Where(g => g.AgentId == agent.Id).ToListAsync(cancellationToken));
+            AgentActivityTracker.Reset(agent);
+            agent.State = AgentState.Starting;
+            agent.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            events.AgentChanged(runner.Id, agent.Id);
+
+            await LaunchAsync(runner, agent, restart: true, cancellationToken, useDefaultModel: changesHarness, loginActor: actor);
+            agent.State = AgentState.Running;
+            agent.StateMessage = null;
+            agent.ExitCode = null;
+            agent.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            events.AgentChanged(runner.Id, agent.Id);
         }
-
-        agent.AccountId = accountId;
-        agent.LoginBlocked = false;
-        agent.LoginStopPending = false;
-        db.AgentLoginGrants.RemoveRange(await db.AgentLoginGrants.Where(g => g.AgentId == agent.Id).ToListAsync(cancellationToken));
-        AgentActivityTracker.Reset(agent);
-        agent.State = AgentState.Starting;
-        agent.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
-        events.AgentChanged(runner.Id, agent.Id);
-
-        await LaunchAsync(runner, agent, restart: true, cancellationToken, useDefaultModel: changesHarness, loginActor: actor);
-        agent.State = AgentState.Running;
-        agent.StateMessage = null;
-        agent.ExitCode = null;
-        agent.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
-        events.AgentChanged(runner.Id, agent.Id);
+        catch (Exception ex)
+        {
+            // Keep the selected native session available for an explicit Start; never retry a failed switch.
+            agent.State = AgentState.Error;
+            agent.StateMessage = ex.Message;
+            agent.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(CancellationToken.None);
+            events.AgentChanged(runner.Id, agent.Id);
+            throw;
+        }
     }
 
     private async Task RequireOwnLoginAsync(CurrentUser actor, Guid agentId, IHarness harness, Guid? accountId, CancellationToken cancellationToken)
@@ -273,23 +286,33 @@ public sealed partial class AgentService(
             throw new ArgumentException($"Choose a {harness.DisplayName} login you have Use access to.");
     }
 
-    /// <summary>Selects a saved chat or starts an empty chat in the same workspace and harness.</summary>
+    /// <summary>Restores a saved chat in its own harness; a new chat uses the workspace's current harness.</summary>
     public async Task SelectSessionAsync(Guid agentId, Guid? sessionId, string? title, CancellationToken ct = default)
     {
         using var lease = await sessions.LockAsync(ct);
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var agent = await db.Agents.Include(a => a.Runner).SingleAsync(a => a.Id == agentId, ct);
         var runner = RequireReady(agent.Runner!);
-        var importingConversation = false;
+        var targetHarnessId = agent.HarnessId;
         if (sessionId is { } id)
         {
             var selected = await sessions.GetAsync(id, ct) ?? throw new ArgumentException("Session not found.");
             if (selected.WorkspaceAgentId != agent.Id) throw new InvalidOperationException("Choose a session from this workspace.");
             if (selected.AgentId == agent.Id) return;
-            importingConversation = selected.HarnessId != agent.HarnessId;
+            targetHarnessId = selected.HarnessId;
         }
         if (!string.IsNullOrWhiteSpace(title)) SessionService.ValidateTitle(title);
-        var nativeId = GetHarness(agent.HarnessId).NewSessionId(Guid.NewGuid());
+        var target = GetHarness(targetHarnessId);
+        var changesHarness = targetHarnessId != agent.HarnessId;
+        if (changesHarness && !runner.HarnessIds.Contains(targetHarnessId))
+            throw new InvalidOperationException($"{target.DisplayName} is not installed on '{runner.Name}'. Install it first (Runner → Operations).");
+        if (agent.LoginStopPending || !changesHarness && agent.LoginBlocked)
+            throw new InvalidOperationException("Choose a permitted login after pending enforcement completes.");
+        // A login belongs to a harness. When restoring another harness, resolve the owner's permitted default for it
+        // before stopping anything; never carry an incompatible login over or use ambient Runner credentials.
+        await accounts.ResolveAsync(new Agent { Id = agent.Id, OwnerId = agent.OwnerId, HarnessId = targetHarnessId,
+            AccountId = changesHarness ? null : agent.AccountId }, ct);
+        var nativeId = target.NewSessionId(Guid.NewGuid());
         try
         {
             agent.State = AgentState.Starting;
@@ -304,7 +327,7 @@ public sealed partial class AgentService(
             agent.StateMessage = null;
             await db.SaveChangesAsync(ct);
             events.AgentChanged(runner.Id, agent.Id);
-            await LaunchAsync(runner, agent, restart: true, ct, useDefaultModel: importingConversation);
+            await LaunchAsync(runner, agent, restart: true, ct);
             agent.State = AgentState.Running;
             agent.ExitCode = null;
         }
@@ -369,6 +392,7 @@ public sealed partial class AgentService(
             await shell.RunAsync(agent.Runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: cancellationToken);
         }
 
+        await sessions.PreserveArtifactsAsync(agentId, cancellationToken);
         db.Agents.Remove(agent);
         await db.SaveChangesAsync(cancellationToken);
         events.Publish(new ManagerEvent(ManagerEventKind.AgentRemoved, agent.RunnerId, agent.Id));
@@ -806,6 +830,9 @@ public sealed partial class AgentService(
         + "`dam-tools share-image <file> --caption \"<what it shows>\"`; it appears in their conversation. "
         + "To give the user a file to download, such as a built APK or installer, run "
         + "`dam-tools share-file <file> --caption \"<what it is>\"`. "
+        + "Shared files and images belong to this agent across all its sessions. Use `dam-tools list-artifacts` for your collection, "
+        + "`dam-tools list-artifacts --all` to discover readable agents and their artifacts, and "
+        + "`dam-tools fetch-artifact <id> --agent <source-agent-id>` to get a local file, including from another runner. "
         + "Use your harness’s built-in background tasks whenever it supports them. "
         + "Use `dam-tools run-job` only when your harness has no built-in background-job support. Long runtimes, restart survival and validation needs are not exceptions. "
         + "Run `dam-tools --help` for other tools.";
@@ -859,6 +886,7 @@ public sealed partial class AgentService(
         // The browser terminal (xterm.js) and tmux support 24-bit color, but programs inside tmux only use it when told.
         var zone = Runners.RunnerTimeZones.Validate(runner.TimeZoneId ?? await settings.GetDefaultTimeZoneAsync(cancellationToken));
         var stored = await sessions.GetForAgentAsync(agent.Id, cancellationToken);
+        if (artifactTokens is not null) await artifactTokens.InstallAsync(shell, runner, agent, cancellationToken);
         var imageContext = $"export DAM_AGENT_ID={ShellQuote.Quote(agent.Id.ToString("N"))}; export DAM_SESSION_ID={ShellQuote.Quote(stored?.Id.ToString("N") ?? "")}; ";
         var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; {ownerEnvironment}{accountEnvironment}{imageContext}export TZ={ShellQuote.Quote(zone)}; export COLORTERM=truecolor; exec {harnessCommand}");
         var session = ShellQuote.Quote("=" + agent.TmuxSession);

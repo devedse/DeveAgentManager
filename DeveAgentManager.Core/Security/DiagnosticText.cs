@@ -11,6 +11,7 @@ public static class DiagnosticText
     private static readonly Regex Cookies = new(@"\b(Cookie\s*:\s*)[^\r\n]*", Options, TimeSpan.FromMilliseconds(100));
     private static readonly Regex Credentials = new("([\\\"']?(?:password|token|secret|authorization|cookie|api[_-]?key)[\\\"']?\\s*[:=]\\s*)(?:\\\"[^\\\"]*(?:\\\"|$)|'[^']*(?:'|$)|[^\\s,;]+)", Options, TimeSpan.FromMilliseconds(100));
     private static readonly Regex Keys = new(@"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\z)", Options, TimeSpan.FromMilliseconds(100));
+    private static readonly Regex PreviewUrls = new(@"(/shared-preview/)[A-Za-z0-9_-]+", Options, TimeSpan.FromMilliseconds(100));
 
     public static string Redact(string text)
     {
@@ -19,6 +20,7 @@ public static class DiagnosticText
         {
             text = Authorization.Replace(text, "$1[redacted]");
             text = Cookies.Replace(text, "$1[redacted]");
+            text = PreviewUrls.Replace(text, "$1[redacted]");
             return Keys.Replace(Credentials.Replace(Bearer.Replace(text, "$1[redacted]"), "$1[redacted]"), "[private key redacted]");
         }
         catch (RegexMatchTimeoutException) { return "[Payload omitted: diagnostic sanitization exceeded its time limit]"; }

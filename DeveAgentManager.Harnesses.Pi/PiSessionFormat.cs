@@ -57,6 +57,7 @@ public sealed class PiSessionFormat : ISessionFormat
             }
 
             var entry = ReadEntry(item);
+            SessionToolMetadata.Read(entry, item);
             session.Entries.Add(entry);
             lastTimestamp = entry.Timestamp;
             if (entry is { Kind: DeveEntryKind.Event, Event: "title" } && entry.Text is { Length: > 0 } name)
@@ -116,6 +117,7 @@ public sealed class PiSessionFormat : ISessionFormat
 
             foreach (var line in lines)
             {
+                SessionToolMetadata.Write(entry, line);
                 AppendLine(output, line);
             }
 

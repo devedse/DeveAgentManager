@@ -24,17 +24,24 @@ public sealed class SessionFilePreviewTests
     }
 
     [Fact]
-    public async Task BinaryInvalidEncodingAndLargeFilesKeepDownloadInsteadOfRendering()
+    public async Task BinaryAndInvalidEncodingKeepDownloadWhileLargeTextStreamsWithoutSizeRejection()
     {
-        foreach (var bytes in new byte[][] { [0x50, 0x4b, 0, 3], [0xff, 0xfe, 0], [0xff, 0xff], new byte[SessionFilePreviewReader.MaxBytes + 1] })
+        foreach (var bytes in new byte[][] { [0x50, 0x4b, 0, 3], [0xff, 0xfe, 0], [0xff, 0xff], new byte[SessionFilePreviewReader.InlineBytes + 1] })
         {
             var result = await PreviewAsync(bytes, "claimed-text.md");
             Assert.Null(result.Text);
             Assert.Contains("Download", result.UnavailableReason!);
         }
-        var boundary = await PreviewAsync(Encoding.UTF8.GetBytes(new string('x', SessionFilePreviewReader.MaxBytes)), "log.txt");
-        Assert.Equal(SessionFilePreviewReader.MaxBytes, boundary.Text!.Length);
+        var boundary = await PreviewAsync(Encoding.UTF8.GetBytes(new string('x', SessionFilePreviewReader.InlineBytes)), "log.txt");
+        Assert.Equal(SessionFilePreviewReader.InlineBytes, boundary.Text!.Length);
         Assert.False(boundary.Markdown);
+        var large = await PreviewAsync(Encoding.UTF8.GetBytes(new string('x', SessionFilePreviewReader.InlineBytes) + "🌍"), "log.txt");
+        Assert.Null(large.Text);
+        Assert.Null(large.UnavailableReason);
+        // The inline sample can stop partway through a Unicode sequence.
+        var split = await PreviewAsync(Encoding.UTF8.GetBytes(new string('x', SessionFilePreviewReader.InlineBytes - 1) + "🌍"), "large.md");
+        Assert.True(split.Markdown);
+        Assert.Null(split.UnavailableReason);
     }
 
     [Fact]

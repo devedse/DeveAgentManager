@@ -158,7 +158,7 @@ public class RunnerShellIntegrationTests
                     KbdInteractiveAuthentication no
                     MaxSessions 10
                     SetEnv HOME={root}/home
-                    Subsystem sftp internal-sftp
+                    Subsystem sftp internal-sftp -d {root}/home
                     LogLevel VERBOSE
 
                     """, Ct);

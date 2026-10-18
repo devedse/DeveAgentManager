@@ -128,55 +128,76 @@ Content blocks: `text`, `image` (`mimeType`, base64 `data`), `thinking` (`text`,
 
 ## Moving between harnesses
 
-**Continue with…** in an agent's terminal, or continuing a stored session with another harness, uses
-**conversation as text** (`SessionFlattener`):
+**Continue with…**, importing/continuing a conversation in a differently configured agent, and exports to another harness use
+`SessionMigration`. Native records from the same harness keep their existing lossless path. Periodic synchronization
+still copies native bytes incrementally; it never runs conversion or loads full histories to populate lists.
 
-- The active branch becomes alternating user and assistant messages with **text and images only**. Tool calls become
-  short lines like ▸ ran `dotnet test` or ▸ edited `src/Maze.cs`, with their output trimmed to about 1200 characters.
-  Summaries become a user message ("Summary of the earlier conversation"), and pi's `!` shell runs are included.
-  Codex's code-mode `exec` scripts are read as the tools they call (each `exec_command`, `apply_patch`, `view_image`
-  and web search becomes its own line), and their JSON results are unwrapped to the command output, with
-  `(exit code N)` or `(still running)` where that applies.
-- **Thinking stays behind**: signatures (Anthropic) and encrypted reasoning (OpenAI) only work for the provider that
-  made them.
-- The first message says where the conversation came from. Conversations longer than about 400k characters keep
-  their most recent part, with a note saying how many messages were left out. An image counts as 6,000 characters
-  (about what a model charges for it, whatever its file size), and only the 20 most recent images are kept.
-- The target harness gets it as its own session file under a new id, which it resumes: `claude --resume`,
-  `codex resume` (the Manager writes Codex's `session_meta` header itself), and pi's `--session-id`. The stored
-  conversation before the move is kept next to it in `/data/sessions` (`<id>.<time>.<harness>.json`).
-  `HarnessTrail` records the way it went, e.g. `pi,codex,claude`.
+The converter reads the active branch and groups assistant calls with their results. Complete exchanges keep their
+original tool names, JSON arguments, output, errors and images. Tool IDs are remapped consistently to portable IDs;
+parallel calls stay together. Claude writes `tool_use` and `tool_result` blocks, Codex writes function/custom-call
+response items and matching outputs, and pi writes tool calls and result messages. Codex terminal display events
+are separate from model history and never count as another execution.
 
-Why text and not translated tool calls: providers reject tool calls and results that don't pair up exactly, and a
-model can't be handed calls to tools it doesn't have. Text is what every harness resumes reliably.
+Completed foreign tools need not exist in the destination tool set: the supported CLIs preserve them as history.
+Names are not translated into superficially similar tools. In particular, a Codex code-mode script remains one
+opaque call and result. The converter does not evaluate JavaScript or infer which nested calls executed. It never
+runs a historical command, retries a pending job or treats a started background process as completed. New work uses
+the destination harness's actual tools, workspace, account and selected model.
 
-Reference for a later, fuller translation. What carries over, and what can't:
+Incomplete exchanges, duplicate IDs/results, malformed arguments, unsupported names and oversized exchanges become
+labelled historical records. These are data, not new user instructions or completed tool exchanges. Source shell
+execution events and compaction summaries are also labelled as historical context. Ordinary assistant text claiming
+that a command ran remains assistant text; it is never promoted into evidence of execution. Archived context is
+shown separately in the conversation viewer. Missing results are not replaced with invented success/error outputs.
 
-| | pi | Claude Code | Codex |
-|---|---|---|---|
-| Text, images | yes | yes | yes |
-| Tool calls and results | `toolCall` + `toolResult` message | `tool_use` + `tool_result` block in a user message | `function_call` / `custom_tool_call` + `*_output` |
-| Thinking | text + signature (provider-specific) | text + signature (Anthropic only) | `encrypted_content` (OpenAI only) |
-| Branches | tree | tree | linear |
-| System prompt | stored (`system` messages) | not stored | stored (`session_meta`, `developer`) |
+The default context allowance is 320,000 estimated characters, reserving 1,500 for a transfer notice. This is a
+conservative text/image budget, not an exact token count or a promise about every configurable model's context
+window. Complete exchanges are selected newest first, while preserving the latest actual user request. Older units
+that do not fit are omitted explicitly. A single exchange larger than half the allowance becomes a bounded archival
+excerpt. The latest user request is never silently truncated; if it cannot fit, conversion fails with the original
+session still available. Up to 20 recent images share a 12,000,000-character base64 allowance, with a per-image
+limit of 5,000,000 base64 characters; images in tool results count too. Omitted images leave a labelled placeholder.
+Arguments of a retained structured call are never shortened. All original records stay in the source backup.
 
-- **Thinking signatures only work for the provider that made them.** When the target harness talks to another
-  provider, thinking is sent as plain text (or dropped when there is none, as with Codex's encrypted reasoning).
-- **Tool calls map by kind.** Every tool call gets a `toolKind`, and the target harness's equivalent is used where one
-  exists. Other tools (MCP, extensions, Codex's `exec` scripts) become text in the conversation ("ran `x`, output:
-  ..."), because a model can't be handed calls to tools it doesn't have.
+Source system prompts, hidden reasoning and provider replay signatures are excluded from foreign model context.
+They remain in the original native archive. The new harness supplies its own system instructions. Only the active
+branch moves; abandoned branches remain available in the source. A second move replaces the previous transfer
+notice. Envelope metadata (`damHistoryKind`, `damToolHistory`) preserves archival provenance and custom-call
+encoding through repeated switches without adding fields to provider message bodies or changing tool arguments.
 
-  | `toolKind` | pi | Claude Code | Codex |
-  |---|---|---|---|
-  | `shell` | `bash` (`command`) | `Bash` (`command`) | `exec` / `exec_command` |
-  | `read` | `read` (`path`, `offset`, `limit`) | `Read` (`file_path`, `offset`, `limit`) | via `exec` |
-  | `write` | `write` (`path`, `content`) | `Write` (`file_path`, `content`) | `apply_patch` |
-  | `edit` | `edit` (`path`, `edits`) | `Edit` (`file_path`, `old_string`, `new_string`) | `apply_patch` |
-  | `search` | (extensions) | `Grep`, `Glob` | via `exec` |
-  | `web` | `web_search`, `fetch_content` (extensions) | `WebSearch`, `WebFetch` | `web_search` |
+Before installation, the destination bytes are read back and checked for paired calls, exact arguments/results,
+error state, encoding hints and user images. A failed writer aborts before upload. The Runner receives a private
+staging file, verifies its SHA-256 and atomically renames it. A cancelled or failed transfer cannot overwrite the
+last good file. An uncertain SSH acknowledgement is never permission to replay an installation or user work.
+The stored session mapping changes only after a successful installation. Failed startup leaves the selected
+conversation in an error state available for an explicit Start; it does not automatically rerun the switch.
 
-- **System prompts are not carried over.** Every harness brings its own; only the conversation moves.
-- **Only the active branch moves** to a harness without trees. The full tree stays in the DeveSession.
+The original conversation is backed up as `/data/sessions/<id>.<time>.<harness>.json`. `HarnessTrail` records the
+route. Content-free conversion reports live in `/data/sessions/migrations/<id>.json`, bound to the destination's
+native session ID; they survive subsequent native sync and are copied with a continued session. They contain
+adapter version, time, route, budget and counts/reasons, never commands or output. The session page shows the
+latest report behind a help tip. Deleting a session also deletes its report and conversion backups.
+
+### Verification and compatibility
+
+`SessionMigrationTests` covers all six directions between Claude Code, Codex and pi, repeated moves, parallel calls,
+errors, tool images, opaque code-mode scripts, malformed/incomplete calls, literal fabricated command narratives,
+branches, budget limits and source immutability. `NativeHistoryTransportTests` covers real SSH installation,
+checksum/cancellation rejection, writer loss, source/mapping recovery, exports, copies, reports after sync and deletion.
+Existing format and incremental-sync checks continue to cover native preservation.
+
+Run `python3 tools/session-migration-gate/gate.py` with .NET 10 and the three CLIs installed. It generates sessions
+using the real DAM readers/writers, resumes them with isolated temporary configuration and fake credentials, and
+serves model responses from a loopback stub. Each route must send structured historical calls/results, execute a
+fresh real shell tool, persist its native call record and leave historical side effects untouched. Pi is checked
+with both Anthropic and OpenAI wire formats. The gate uses no subscription or real model API. Verified locally with
+Claude Code 2.1.302, Codex 0.162.1 and pi 1.2.0. Re-run it after harness upgrades. Other pi providers may transform
+history differently; the gate does not establish every hosted provider's acceptance policy or a model's behaviour.
+
+Existing flattened histories are not automatically repaired: prose cannot establish which commands executed.
+Preserve the current conversation, identify the last trustworthy native backup, and create an explicit continuation
+using verified workspace state and subsequent user instructions. Keep the affected original for inspection. This
+change does not restart or rewrite existing agents, and does not guarantee that a model will never fabricate claims.
 
 ## Workspaces and selected conversations
 
@@ -193,8 +214,12 @@ Runner files and repository files are untouched. Deleting a workspace leaves its
 or continuation on a new Runner.
 
 Selection stops the current harness gracefully and performs a final sync before changing the selected chat.
-It then restores the chosen chat into the workspace's current harness, using a fresh native session ID. The
-selection and agent's native ID are committed together. Other chats remain saved. A failed final sync or
+It restores each saved chat in its own recorded harness, using a fresh native session ID. The saved harness must
+be installed; when it differs, the owner's permitted default login is checked before stopping the current process.
+An incompatible login is cleared, and the harness, login selection, active session and native ID change together.
+The saved harness's model is resumed normally. New chats use the workspace's current harness. Selecting a chat does
+not convert its history or append a harness to its trail; use **Continue with…** for an explicit conversion.
+Other chats remain saved. A failed final sync or
 missing saved history aborts selection; a failed launch leaves the selected chat available to retry with Start.
 Lifecycle changes and background observation/sync are serialized so an old snapshot cannot change the new
 chat's state. Continuation schedules are bound to the old native session identity and cannot run in a new chat.
@@ -211,6 +236,6 @@ inferred from file size. Project files are shared across sessions; switching doe
 When transferring a conversation into Claude, the launch explicitly passes the Manager's Claude default
 model with `--model` (or `default` if none is configured). Claude's resume behavior can restore a model
 from the transcript ahead of `settings.json`; model fields inserted for compatibility during conversion
-must not choose the new session's model. This applies to harness switches, cross-harness session selection,
-and continuing an imported conversation on a new agent. Ordinary restarts and same-harness resumes keep
+must not choose the new session's model. This applies to explicit harness switches
+and continuing an imported conversation on a new agent. Ordinary restarts and saved-session selection keep
 the conversation's model choice. See https://code.claude.com/docs/en/model-config.

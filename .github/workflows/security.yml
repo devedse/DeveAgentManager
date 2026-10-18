@@ -52,7 +52,7 @@ jobs:
       - run: npx --prefix tools/security-browser playwright install --with-deps chromium
       - run: dotnet publish DeveAgentManager/DeveAgentManager.csproj -c Release -o .validation/publish
       - run: node tools/security-browser/check.mjs
-      - name: Check continuation states and warning colors
+      - name: Check conversation and notification UI
         run: node tools/security-browser/continuations.mjs
   passive-scan:
     runs-on: ubuntu-latest

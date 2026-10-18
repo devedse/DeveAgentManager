@@ -146,6 +146,21 @@ public sealed class RunnerShell(
     public Task UploadAsync(Runner runner, string remotePath, string content, string mode = "600", CancellationToken cancellationToken = default) =>
         UploadAsync(runner, remotePath, Encoding.UTF8.GetBytes(content), mode, cancellationToken);
 
+    /// <summary>Installs a complete verified file by rename. A failed/cancelled upload cannot replace the last good file.</summary>
+    internal async Task UploadAtomicAsync(Runner runner, string remotePath, string content, CancellationToken ct)
+    {
+        var bytes = Encoding.UTF8.GetBytes(content);
+        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
+        var temporary = remotePath + ".dam-tmp-" + Guid.NewGuid().ToString("N");
+        await UploadAsync(runner, temporary, bytes, "600", ct);
+        var path = ShellQuote.Path(temporary);
+        // This submission is never retried: transport loss after rename is an uncertain installation, not permission
+        // to launch/replay work. Uncommitted temporary files do not match the harness's session-file glob.
+        (await RunAsync(runner, $"set -e\ntemporary={path}\ntrap 'rm -f -- \"$temporary\"' EXIT\n"
+            + $"actual=$(sha256sum -- {path})\n[ \"${{actual%% *}}\" = {ShellQuote.Quote(hash)} ]\n"
+            + $"mv -fT -- {path} {ShellQuote.Path(remotePath)}", cancellationToken: ct)).EnsureSuccess("Installing verified conversation history");
+    }
+
     /// <summary>Writes a file on the Runner (creating its folder) and returns its absolute path there.</summary>
     public async Task<string> UploadAsync(Runner runner, string remotePath, byte[] bytes, string mode = "600", CancellationToken cancellationToken = default)
     {
@@ -169,6 +184,17 @@ public sealed class RunnerShell(
 
     public async Task<string?> DownloadAsync(Runner runner, string remotePath, CancellationToken cancellationToken = default) =>
         await DownloadBytesAsync(runner, remotePath, long.MaxValue, cancellationToken) is { } bytes ? Encoding.UTF8.GetString(bytes) : null;
+
+    /// <summary>Streams an artifact to a prepared private request folder, without buffering it in managed memory.</summary>
+    internal async Task UploadFromAsync(Runner runner, string remotePath, Stream source, CancellationToken ct)
+    {
+        await WithSftpAsync(runner, async (sftp, token) =>
+        {
+            await sftp.UploadFileAsync(source, ToSftpPath(sftp, remotePath), token);
+            return true;
+        }, ct);
+        (await RunAsync(runner, $"chmod 600 {ShellQuote.Path(remotePath)}", cancellationToken: ct)).EnsureSuccess("Protecting artifact download");
+    }
 
     /// <summary>A file's bytes, or null when it doesn't exist or is larger than <paramref name="maxBytes"/>.</summary>
     public async Task<byte[]?> DownloadBytesAsync(Runner runner, string remotePath, long maxBytes, CancellationToken cancellationToken = default)

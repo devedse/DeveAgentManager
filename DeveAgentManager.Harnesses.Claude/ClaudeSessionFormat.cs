@@ -11,8 +11,7 @@ namespace DeveAgentManager.Harnesses.Claude;
 /// <summary>
 /// Claude Code's session files (~/.claude/projects/&lt;folder&gt;/&lt;uuid&gt;.jsonl) to and from DeveSession. Every line
 /// is kept in <see cref="DeveEntry.Native"/>, so a Claude session written back is the same session with its id and
-/// folder updated. Messages from other harnesses are written as plain user and assistant text (see
-/// <see cref="SessionFlattener"/>), which Claude Code resumes like its own.
+/// folder updated. Foreign completed tool exchanges use native tool_use/tool_result blocks.
 /// </summary>
 public sealed class ClaudeSessionFormat : ISessionFormat
 {
@@ -102,6 +101,7 @@ public sealed class ClaudeSessionFormat : ISessionFormat
                     break;
             }
 
+            SessionToolMetadata.Read(entry, line);
             session.Entries.Add(entry);
             if (uuid is not null)
             {
@@ -269,35 +269,16 @@ public sealed class ClaudeSessionFormat : ISessionFormat
         return output.ToString();
     }
 
-    /// <summary>A Claude line for a user or assistant message from another harness (text and images).</summary>
+    /// <summary>A native Claude message, including completed historical calls and tool results.</summary>
     private static JsonObject? WriteForeign(DeveEntry entry, string sessionId, string workingDirectory)
     {
-        if (entry.Kind != DeveEntryKind.Message || entry.Role is not (DeveRole.User or DeveRole.Assistant))
+        if (entry.Kind != DeveEntryKind.Message || entry.Role is not (DeveRole.User or DeveRole.Assistant or DeveRole.Tool))
         {
             return null;
         }
 
-        var content = new JsonArray();
-        foreach (var block in entry.Content ?? [])
-        {
-            if (block.Type == "text" && !string.IsNullOrEmpty(block.Text))
-            {
-                content.Add(new JsonObject { ["type"] = "text", ["text"] = block.Text });
-            }
-            else if (block.Type == "image" && entry.Role == DeveRole.User && !string.IsNullOrEmpty(block.Data))
-            {
-                content.Add(new JsonObject
-                {
-                    ["type"] = "image",
-                    ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = block.MimeType ?? "image/png", ["data"] = block.Data },
-                });
-            }
-        }
-
-        if (content.Count == 0)
-        {
-            return null;
-        }
+        var content = WriteBlocks(entry.Content ?? [], entry.Role != DeveRole.Assistant);
+        if (content.Count == 0) return null;
 
         var line = new JsonObject
         {
@@ -308,31 +289,52 @@ public sealed class ClaudeSessionFormat : ISessionFormat
             ["sessionId"] = sessionId,
             ["version"] = WrittenVersion,
             ["gitBranch"] = "",
-            ["type"] = entry.Role == DeveRole.User ? "user" : "assistant",
+            ["type"] = entry.Role == DeveRole.Assistant ? "assistant" : "user",
             ["uuid"] = Guid.NewGuid().ToString(),
             ["timestamp"] = Iso(entry.Timestamp == default ? DateTime.UtcNow : entry.Timestamp),
         };
 
-        if (entry.Role == DeveRole.User)
-        {
+        if (entry.Role != DeveRole.Assistant)
             line["message"] = new JsonObject { ["role"] = "user", ["content"] = content };
-        }
         else
         {
             var model = entry.Model?.Provider == "anthropic" && entry.Model.Id is { Length: > 0 } id && id != "<synthetic>" ? id : FallbackModel;
             line["message"] = new JsonObject
             {
                 ["id"] = "msg_dam_" + Guid.NewGuid().ToString("N"),
-                ["type"] = "message",
-                ["role"] = "assistant",
-                ["model"] = model,
-                ["content"] = content,
-                ["stop_reason"] = "end_turn",
+                ["type"] = "message", ["role"] = "assistant", ["model"] = model, ["content"] = content,
+                ["stop_reason"] = entry.Content?.Any(b => b.Type == "toolCall") == true ? "tool_use" : "end_turn",
                 ["stop_sequence"] = null,
                 ["usage"] = new JsonObject { ["input_tokens"] = 0, ["output_tokens"] = 0 },
             };
         }
-
+        SessionToolMetadata.Write(entry, line);
         return line;
+    }
+
+    private static JsonArray WriteBlocks(IEnumerable<DeveBlock> blocks, bool user)
+    {
+        var content = new JsonArray();
+        foreach (var block in blocks)
+        {
+            if (block.Type == "text" && !string.IsNullOrEmpty(block.Text))
+            {
+                content.Add(new JsonObject { ["type"] = "text", ["text"] = block.Text });
+            }
+            else if (block.Type == "image" && user && !string.IsNullOrEmpty(block.Data))
+            {
+                content.Add(new JsonObject
+                {
+                    ["type"] = "image",
+                    ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = block.MimeType ?? "image/png", ["data"] = block.Data },
+                });
+            }
+            else if (block.Type == "toolCall" && !user)
+                content.Add(new JsonObject { ["type"] = "tool_use", ["id"] = block.Id, ["name"] = block.Name, ["input"] = block.Arguments?.DeepClone() ?? new JsonObject() });
+            else if (block.Type == "toolResult" && user)
+                content.Add(new JsonObject { ["type"] = "tool_result", ["tool_use_id"] = block.ToolCallId,
+                    ["is_error"] = block.IsError ?? false, ["content"] = WriteBlocks(block.Content ?? [], true) });
+        }
+        return content;
     }
 }

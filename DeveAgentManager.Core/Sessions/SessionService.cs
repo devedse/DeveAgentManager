@@ -26,8 +26,15 @@ public sealed class SessionService(
     SessionFileStore files,
     ManagerOptions options,
     ManagerEvents events,
-    ILogger<SessionService> logger)
+    ILogger<SessionService> logger,
+    AgentArtifacts? artifacts = null)
 {
+    private readonly AgentArtifacts _artifacts = artifacts ?? new(dbFactory, options, files, images, new AccessControl(dbFactory), events);
+    internal Task PreserveArtifactsAsync(Guid agentId, CancellationToken ct) => _artifacts.PreserveAsync(agentId, ct);
+    internal Task<bool> ArtifactPublicationBelongsAsync(Guid runner, Guid agent, Guid session, CancellationToken ct) =>
+        _artifacts.OwnsSourceAsync(runner, agent, session, ct);
+    internal Task ArtifactsChangedAsync(Guid sessionId, CancellationToken ct) => _artifacts.NotifyAsync(sessionId, ct);
+
     private readonly NativeHistoryStore _native = new(options.SessionsDirectory);
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly Dictionary<Guid, (DateTime Version, string Text)> _previews = new();
@@ -138,6 +145,18 @@ public sealed class SessionService(
             }
             else result = new DeveSession();
         }
+        var reportPath = MigrationPathFor(sessionId);
+        if (File.Exists(reportPath))
+        {
+            try
+            {
+                await using var reportStream = File.OpenRead(reportPath);
+                var report = await JsonSerializer.DeserializeAsync<SessionMigrationReport>(reportStream, DeveSession.JsonOptions, cancellationToken);
+                if (report?.TargetSessionId == result.Sources.LastOrDefault()?.SessionId) result.Migration = report;
+            }
+            catch (Exception ex) when (ex is IOException or JsonException)
+            { logger.LogWarning("Could not read migration diagnostics for {Session}: {ErrorType}", sessionId, ex.GetType().Name); }
+        }
         return result;
     }
 
@@ -161,6 +180,12 @@ public sealed class SessionService(
             else if (stored.AgentId is not null || stored.WorkspaceAgentId is not null)
             {
                 throw new InvalidOperationException("This session already belongs to a running agent. Open that agent instead.");
+            }
+            else if (await _artifacts.HasCollectionAsync(stored.Id, cancellationToken))
+            {
+                // A deleted agent's archives still reference this source folder. Continue an independent copy so
+                // future publications by the new agent cannot appear in the old agent's remaining archives.
+                stored = await CopyAsync(db, stored, agent.OwnerId, cancellationToken);
             }
 
             await WriteForHarnessAsync(runner, stored, agent.HarnessId, agent.HarnessSessionId, agent.WorkingDirectory, cancellationToken);
@@ -187,7 +212,7 @@ public sealed class SessionService(
 
     /// <summary>
     /// Moves an agent's conversation to another harness, on the same Runner and in the same folder: the stored
-    /// conversation is converted (as text, see <see cref="SessionFlattener"/>) and written as the new harness's own
+    /// conversation is converted (see <see cref="SessionMigration"/>) and written as the new harness's own
     /// session under <paramref name="harnessSessionId"/>, which the harness then resumes. The conversation as it was
     /// before is kept next to it in /data/sessions. Sync the Runner first, so the latest messages move along.
     /// </summary>
@@ -206,7 +231,7 @@ public sealed class SessionService(
 
     /// <summary>
     /// Writes a stored conversation to a Runner in a harness's format. Its own harness gets it unchanged; another harness
-    /// gets it as text. Updates the stored session to point at the new file (the next sync reads it).
+    /// gets validated structured tool history. Updates the stored session after verified installation.
     /// </summary>
     private async Task WriteForHarnessAsync(Runner runner, StoredSession stored, string harnessId, string harnessSessionId, string workingDirectory, CancellationToken cancellationToken)
     {
@@ -218,7 +243,7 @@ public sealed class SessionService(
         var from = session.Sources.LastOrDefault()?.Harness ?? session.Entries.LastOrDefault(e => e.Harness is not null)?.Harness ?? stored.HarnessId;
         if (session.Entries.Count > 0 && from != harnessId)
         {
-            session = SessionFlattener.Flatten(session, DisplayName(from), DisplayName(harnessId));
+            session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(harnessId), harnessId);
         }
 
         // Nothing to move (e.g. pi writes its file only with the first message): the new harness starts a conversation
@@ -226,7 +251,17 @@ public sealed class SessionService(
         if (session.Entries.Count > 0)
         {
             var path = format.GetPath(harnessSessionId, workingDirectory, DateTime.UtcNow);
-            await shell.UploadAsync(runner, path, format.Write(session, harnessSessionId, workingDirectory), "600", cancellationToken);
+            var content = format.Write(session, harnessSessionId, workingDirectory);
+            if (session.Migration is not null && from != harnessId)
+                SessionMigration.ValidateWritten(session, format.Read(content));
+            await shell.UploadAtomicAsync(runner, path, content, cancellationToken);
+            if (session.Migration is { } report)
+            {
+                report.TargetSessionId = harnessSessionId;
+                await SaveMigrationAsync(stored.Id, report, cancellationToken);
+                logger.LogInformation("Session {Session} migration v{Version} {From} to {To}: {Preserved} calls, {Archived} archived, {Omitted} omitted exchanges, {Images} omitted images",
+                    stored.Id, report.Version, report.From, report.To, report.PreservedCalls, report.ArchivedExchanges, report.OmittedExchanges, report.OmittedImages);
+            }
         }
 
         var trail = (stored.HarnessTrail ?? stored.HarnessId).Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
@@ -421,7 +456,12 @@ public sealed class SessionService(
         var harnessFormat = _formats.GetValueOrDefault(format) ?? throw new ArgumentException($"Unknown export format '{format}'.");
         var harnessSessionId = stored.HarnessSessionId ?? sessionId.ToString("N");
         var cwd = session.Cwd ?? stored.WorkingDirectory ?? "/";
-        return new SessionExport($"{name}.{format}.jsonl", "application/x-ndjson", harnessFormat.Write(session, harnessSessionId, cwd));
+        var from = session.Sources.LastOrDefault()?.Harness ?? stored.HarnessId;
+        if (from != format && session.Entries.Count > 0)
+            session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(format), format);
+        var content = harnessFormat.Write(session, harnessSessionId, cwd);
+        if (from != format) SessionMigration.ValidateWritten(session, harnessFormat.Read(content));
+        return new SessionExport($"{name}.{format}.jsonl", "application/x-ndjson", content);
     }
 
     public async Task DeleteAsync(Guid sessionId, CancellationToken cancellationToken = default)
@@ -430,23 +470,21 @@ public sealed class SessionService(
         using var lease = await LockAsync(cancellationToken);
         if (await db.Sessions.AnyAsync(s => s.Id == sessionId && s.AgentId != null, cancellationToken))
             throw new InvalidOperationException("Select another session before deleting the active conversation.");
+        await _artifacts.RemoveSessionAsync(sessionId, cancellationToken);
         await db.Sessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync(cancellationToken);
         File.Delete(PathFor(sessionId));
+        if (File.Exists(MigrationPathFor(sessionId))) File.Delete(MigrationPathFor(sessionId));
         await _native.DeleteAsync(sessionId, cancellationToken);
-        images.DeleteSession(sessionId);
-        files.DeleteSession(sessionId);
         if (Directory.Exists(options.SessionsDirectory))
             foreach (var backup in Directory.EnumerateFiles(options.SessionsDirectory, $"{sessionId:N}.*.json")) File.Delete(backup);
         events.Publish(new ManagerEvent(ManagerEventKind.SessionRemoved, SessionId: sessionId));
     }
 
     /// <summary>Removes a file an agent shared from the conversation; false when it wasn't there.</summary>
-    public async Task<bool> DeleteFileAsync(Guid sessionId, Guid fileId, CancellationToken ct)
+    public async Task<bool> DeleteFileAsync(Guid sessionId, Guid fileId, CancellationToken ct, CurrentUser? actor = null)
     {
         using var lease = await LockAsync(ct);
-        if (!await files.DeleteAsync(sessionId, fileId, ct)) return false;
-        events.SessionChanged(sessionId);
-        return true;
+        return await _artifacts.DeleteFileAsync(sessionId, fileId, actor, ct);
     }
 
     public async Task RenameAsync(Guid id, string title, CancellationToken ct)
@@ -491,8 +529,8 @@ public sealed class SessionService(
             await SaveAsync(copy.Id, await LoadAsync(source.Id, cancellationToken), cancellationToken);
         }
 
-        await images.CopyAsync(source.Id, copy.Id, cancellationToken);
-        await files.CopyAsync(source.Id, copy.Id, cancellationToken);
+        var owner = await db.Users.AsNoTracking().SingleAsync(u => u.Id == ownerId, cancellationToken);
+        await _artifacts.CopyAttachmentsAsync(source.Id, copy.Id, CurrentUser.From(owner), cancellationToken);
         db.Sessions.Add(copy);
         return copy;
     }
@@ -502,6 +540,7 @@ public sealed class SessionService(
         stored.SavedSize = _native.Exists(stored.Id) ? _native.Size(stored.Id) : File.Exists(PathFor(stored.Id)) ? new FileInfo(PathFor(stored.Id)).Length : 0;
         stored.TotalSize = stored.SavedSize + (Directory.Exists(options.SessionsDirectory)
             ? Directory.EnumerateFiles(options.SessionsDirectory, $"{stored.Id:N}.*.json").Sum(p => new FileInfo(p).Length) : 0);
+        if (File.Exists(MigrationPathFor(stored.Id))) stored.TotalSize += new FileInfo(MigrationPathFor(stored.Id)).Length;
     }
 
     // Caller holds LockAsync and has stopped and synced the outgoing harness.
@@ -516,26 +555,36 @@ public sealed class SessionService(
         };
         if (selected.WorkspaceAgentId != agent.Id) throw new InvalidOperationException("Choose a session from this workspace.");
         if (selected.AgentId != null && selected.AgentId != agent.Id) throw new InvalidOperationException("Session is already active elsewhere.");
+        var changesHarness = selected.HarnessId != agent.HarnessId;
+        if (changesHarness && agent.LoginStopPending) throw new InvalidOperationException("Wait for pending login enforcement before changing harnesses.");
+        var accountId = changesHarness ? null : agent.AccountId;
         if (id.HasValue)
         {
-            if (selected.HarnessId != agent.HarnessId) { await BackupAsync(selected, ct); selected.TitlePinned = true; }
-            await WriteForHarnessAsync(runner, selected, agent.HarnessId, nativeId, agent.WorkingDirectory, ct);
+            await WriteForHarnessAsync(runner, selected, selected.HarnessId, nativeId, agent.WorkingDirectory, ct);
         }
         else { selected.HarnessSessionId = nativeId; db.Sessions.Add(selected); }
         selected.WorkingDirectory = agent.WorkingDirectory;
         selected.RepositoryUrl = agent.RepositoryUrl;
         selected.RepositoryBranch = agent.RepositoryBranch;
         selected.RunnerName = runner.Name;
-        selected.HarnessTrail ??= agent.HarnessId;
+        selected.HarnessTrail ??= selected.HarnessId;
         // Detach and attach in one transaction, while satisfying the unique active-session index.
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await db.Sessions.Where(s => s.AgentId == agent.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.AgentId, (Guid?)null), ct);
         selected.AgentId = agent.Id;
         await db.Agents.Where(a => a.Id == agent.Id).ExecuteUpdateAsync(a => a
-            .SetProperty(x => x.HarnessSessionId, nativeId).SetProperty(x => x.LastAssistantMessageAt, (DateTime?)null), ct);
+            .SetProperty(x => x.HarnessId, selected.HarnessId).SetProperty(x => x.HarnessSessionId, nativeId)
+            .SetProperty(x => x.AccountId, accountId)
+            .SetProperty(x => x.LoginBlocked, changesHarness ? false : agent.LoginBlocked)
+            .SetProperty(x => x.RunningAccountId, changesHarness ? null : agent.RunningAccountId)
+            .SetProperty(x => x.LastAssistantMessageAt, (DateTime?)null), ct);
+        if (changesHarness) db.AgentLoginGrants.RemoveRange(await db.AgentLoginGrants.Where(g => g.AgentId == agent.Id).ToListAsync(ct));
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+        agent.HarnessId = selected.HarnessId;
         agent.HarnessSessionId = nativeId;
+        agent.AccountId = accountId;
+        if (changesHarness) { agent.LoginBlocked = false; agent.RunningAccountId = null; }
         agent.LastAssistantMessageAt = null;
         events.SessionChanged(selected.Id, agent.Id);
     }
@@ -659,6 +708,7 @@ public sealed class SessionService(
                 await session.WriteAsync(stream, cancellationToken);
             File.Move(path + ".tmp", path, overwrite: true);
             await _native.DeleteAsync(sessionId, cancellationToken);
+            if (session.Migration is { } report) await SaveMigrationAsync(sessionId, report, cancellationToken);
         }
         finally
         {
@@ -667,6 +717,22 @@ public sealed class SessionService(
     }
 
     private string PathFor(Guid sessionId) => Path.Combine(options.SessionsDirectory, $"{sessionId:N}.json");
+
+    private string MigrationPathFor(Guid sessionId) => Path.Combine(options.SessionsDirectory, "migrations", $"{sessionId:N}.json");
+
+    private async Task SaveMigrationAsync(Guid sessionId, SessionMigrationReport report, CancellationToken ct)
+    {
+        var path = MigrationPathFor(sessionId);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            await using (var stream = File.Create(temporary))
+                await JsonSerializer.SerializeAsync(stream, report, DeveSession.JsonOptions, ct);
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { File.Delete(temporary); }
+    }
 
     private static string SafeFileName(string title)
     {

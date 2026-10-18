@@ -13,7 +13,7 @@ namespace DeveAgentManager.Core.Sessions;
 
 /// <summary>Imports explicit image publications independently of whether any browser is open.</summary>
 public sealed class SessionImages(IDbContextFactory<ManagerDbContext> factory, RunnerShell shell,
-    SessionService sessions, SessionImageStore store, AccessControl access, ManagerEvents events, ILogger<SessionImages> logger) : BackgroundService
+    SessionService sessions, SessionImageStore store, AccessControl access, ILogger<SessionImages> logger) : BackgroundService
 {
     private sealed record Publication(Guid Id, Guid AgentId, Guid SessionId, string FileName, string Caption, string ContentType, long Bytes);
 
@@ -50,10 +50,9 @@ public sealed class SessionImages(IDbContextFactory<ManagerDbContext> factory, R
         foreach (var item in publications.Take(20))
         {
             if (item.Id == Guid.Empty || item.Bytes is <= 0 or > SessionImageStore.MaxBytes || item.FileName is null || item.Caption is null) continue;
-            await using var db = await factory.CreateDbContextAsync(ct);
-            if (!await BelongsAsync(db, runner.Id, item.AgentId, item.SessionId, ct))
+            if (!await sessions.ArtifactPublicationBelongsAsync(runner.Id, item.AgentId, item.SessionId, ct))
             {
-                // Deleted sessions cannot accumulate a forever-retrying outbox.
+                // Removed agents and unknown sources cannot accumulate a forever-retrying outbox.
                 await AcknowledgeAsync(runner, item.Id, ct);
                 continue;
             }
@@ -62,10 +61,10 @@ public sealed class SessionImages(IDbContextFactory<ManagerDbContext> factory, R
             try
             {
                 using var lease = await sessions.LockAsync(ct);
-                if (await BelongsAsync(db, runner.Id, item.AgentId, item.SessionId, ct))
+                if (await sessions.ArtifactPublicationBelongsAsync(runner.Id, item.AgentId, item.SessionId, ct))
                 {
                     await store.SaveAsync(item.SessionId, item.Id, data, item.FileName, item.Caption, ct);
-                    events.SessionChanged(item.SessionId, item.AgentId);
+                    await sessions.ArtifactsChangedAsync(item.SessionId, ct);
                 }
             }
             catch (ArgumentException) { logger.LogDebug("Discarding invalid image {Image}", item.Id); }
@@ -91,7 +90,7 @@ public sealed class SessionImages(IDbContextFactory<ManagerDbContext> factory, R
             throw new KeyNotFoundException("Session not found.");
         if (!await BelongsAsync(db, runnerId, owner.Value, sessionId, ct)) throw new ArgumentException("Choose a conversation on this runner.");
         var image = await store.SaveAsync(sessionId, Guid.NewGuid(), data, "desktop.jpg", caption ?? "Desktop snapshot", ct);
-        events.SessionChanged(sessionId, owner);
+        await sessions.ArtifactsChangedAsync(sessionId, ct);
         return image;
     }
 }

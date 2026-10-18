@@ -13,6 +13,13 @@ else
         {
             switch (entry)
             {
+                case { Kind: DeveEntryKind.Message, MigrationKind: "notice" or "archive" or "summary" }:
+                    <details class="conv-system">
+                        <summary><MudIcon Icon="@Icons.Material.Rounded.History" Size="Size.Small" /> @(entry.MigrationKind == "notice" ? "Conversation migration" : "Historical context")</summary>
+                        <pre>@entry.PlainText()</pre>
+                    </details>
+                    break;
+
                 case { Kind: DeveEntryKind.Message, Role: DeveRole.System }:
                     <details class="conv-system">
                         <summary><MudIcon Icon="@Icons.Material.Rounded.Settings" Size="Size.Small" /> System prompt and tools</summary>

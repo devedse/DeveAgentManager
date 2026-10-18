@@ -14,9 +14,11 @@ namespace DeveAgentManager.Core.Sessions;
 /// its own, so a large transfer from one never holds up the others.
 /// </summary>
 public sealed class SessionFiles(IDbContextFactory<ManagerDbContext> factory, RunnerShell shell, SessionService sessions,
-    SessionFileStore store, ManagerEvents events, ILogger<SessionFiles> logger) : BackgroundService
+    SessionFileStore store, ILogger<SessionFiles> logger, ArtifactTransfers? transfers = null) : BackgroundService
 {
     internal sealed record Publication(Guid Id, Guid AgentId, Guid SessionId, string FileName, string Caption, long Bytes, string Sha256);
+
+    private sealed record Batch(List<Publication> Files, List<ArtifactTransfers.Request> Requests);
 
     /// <summary>Only touched by the collection loop.</summary>
     private readonly Dictionary<Guid, Task> _collecting = [];
@@ -60,9 +62,19 @@ public sealed class SessionFiles(IDbContextFactory<ManagerDbContext> factory, Ru
     {
         // Only start Python when something was shared: this runs every few seconds on every runner.
         var result = await shell.RunAsync(runner,
-            "if [ -x ~/.deveagentmanager/dam-tools.py ] && [ -n \"$(ls -A ~/.deveagentmanager/shared-files 2>/dev/null)\" ]; then python3 ~/.deveagentmanager/dam-tools.py --pending-files; else printf '[]'; fi", TimeSpan.FromSeconds(15), ct);
-        if (!result.Succeeded || result.Output.Length > 100_000) return;
-        var publications = JsonSerializer.Deserialize<List<Publication>>(result.Output, ApiJson.Options) ?? [];
+            "if [ -x ~/.deveagentmanager/dam-tools.py ] && { [ -n \"$(ls -A ~/.deveagentmanager/shared-files 2>/dev/null)\" ] || [ -n \"$(ls -A ~/.deveagentmanager/artifact-requests 2>/dev/null)\" ]; }; then python3 ~/.deveagentmanager/dam-tools.py --pending-transfers; else printf '{\"files\":[],\"requests\":[]}'; fi", TimeSpan.FromSeconds(15), ct);
+        if (!result.Succeeded || result.Output.Length > 200_000) return;
+        var batch = JsonSerializer.Deserialize<Batch>(result.Output, ApiJson.Options);
+        if (batch is null) return;
+        // Read requests share the existing poll; a failed request must not prevent importing publications.
+        if (transfers is not null)
+            foreach (var request in batch.Requests.Take(20))
+            {
+                try { await transfers.ProcessAsync(runner, request, ct); }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                { logger.LogDebug(ex, "Could not serve artifact request {Request} on {Runner}", request.Id, runner.Id); }
+            }
+        var publications = batch.Files;
         foreach (var item in publications.Take(20))
         {
             var remote = $"~/.deveagentmanager/shared-files/{item.Id:N}/file";
@@ -74,16 +86,15 @@ public sealed class SessionFiles(IDbContextFactory<ManagerDbContext> factory, Ru
     }
 
     /// <summary>
-    /// Brings one shared file into its conversation. True when the Runner can drop its copy: it was imported (now or
-    /// before), or it can never be (the conversation is gone or the file isn't what was shared). Transfer and disk errors
+    /// Brings one shared file into its agent's collection. True when the Runner can drop its copy: it was imported (now or
+    /// before), or it can never be (the agent is gone, the source is unknown, or the file isn't what was shared). Transfer and disk errors
     /// throw, so the file is tried again later.
     /// </summary>
     internal async Task<bool> ImportAsync(Guid runnerId, Publication item, Func<Stream, CancellationToken, Task<bool>> download, CancellationToken ct)
     {
         if (item.Id == Guid.Empty || item.FileName is null || item.Caption is null) return false;
-        await using var db = await factory.CreateDbContextAsync(ct);
-        // Deleted conversations cannot accumulate a forever-retrying outbox.
-        if (!await SessionImages.BelongsAsync(db, runnerId, item.AgentId, item.SessionId, ct)) return true;
+        // A removed agent or unknown source cannot accumulate a forever-retrying outbox.
+        if (!await sessions.ArtifactPublicationBelongsAsync(runnerId, item.AgentId, item.SessionId, ct)) return true;
         if (await store.GetAsync(item.SessionId, item.Id, ct) is not null) return true;
         try
         {
@@ -93,10 +104,10 @@ public sealed class SessionFiles(IDbContextFactory<ManagerDbContext> factory, Ru
                 if (!await download(target, token)) throw new InvalidDataException("The shared file is gone or too large.");
             }, ct);
             using var lease = await sessions.LockAsync(ct);
-            if (await SessionImages.BelongsAsync(db, runnerId, item.AgentId, item.SessionId, ct))
+            if (await sessions.ArtifactPublicationBelongsAsync(runnerId, item.AgentId, item.SessionId, ct))
             {
                 await store.CommitAsync(item.SessionId, item.Id, incoming, item.FileName, item.Caption, ct);
-                events.SessionChanged(item.SessionId, item.AgentId);
+                await sessions.ArtifactsChangedAsync(item.SessionId, ct);
             }
         }
         catch (InvalidDataException ex)

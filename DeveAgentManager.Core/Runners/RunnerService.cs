@@ -326,6 +326,7 @@ public sealed partial class RunnerService(
             }
         }
 
+        foreach (var agent in op.Runner.Agents) await sessions.PreserveArtifactsAsync(agent.Id, cancellation);
         shell.Invalidate(op.Runner.Id);
         await op.RemoveAsync();
         logs.Delete(op.Runner.Id);

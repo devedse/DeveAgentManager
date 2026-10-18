@@ -127,7 +127,7 @@ public sealed class SessionFileTests : IDisposable
         events.Changed += e => changed.Add(e.SessionId);
         var store = new SessionFileStore(Options);
         var sessions = new SessionService(factory, null!, [], [], new SessionImageStore(Options), store, Options, events, NullLogger<SessionService>.Instance);
-        var files = new SessionFiles(factory, null!, sessions, store, events, NullLogger<SessionFiles>.Instance);
+        var files = new SessionFiles(factory, null!, sessions, store, NullLogger<SessionFiles>.Instance);
         var (data, sha) = Content("PK android package");
         var downloads = 0;
         Func<Stream, CancellationToken, Task<bool>> download = async (target, ct) => { downloads++; await target.WriteAsync(data, ct); return true; };
@@ -155,13 +155,13 @@ public sealed class SessionFileTests : IDisposable
         Assert.Single(await store.ListAsync(sessionId, default));
         Assert.Empty(Directory.EnumerateFiles(Incoming));
 
-        // Deleting the conversation deletes its files.
+        // Deleting history retains the living agent’s shared collection.
         await using (var db = factory.CreateDbContext())
         {
             await db.Sessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(s => s.SetProperty(x => x.AgentId, (Guid?)null));
         }
         await sessions.DeleteAsync(sessionId);
-        Assert.Empty(await store.ListAsync(sessionId, default));
+        Assert.Single(await store.ListAsync(sessionId, default));
         files.Dispose();
     }
 

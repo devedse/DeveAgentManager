@@ -5,7 +5,8 @@ parses appended records into a compact metadata index. Reading, exporting,
 copying or moving a conversation reconstructs the complete DeveSession through
 the same format reader. Native replay data, tool records, thinking signatures,
 images and abandoned branches stay in the raw copy; they are not discarded to
-make the index smaller. Cross-harness conversion keeps its existing semantics.
+make the index smaller. Explicit cross-harness conversion uses structured tool exchanges (see [session-formats.md](session-formats.md));
+it remains outside periodic synchronization.
 
 ## Storage and compatibility
 
