@@ -1,4 +1,5 @@
 using DeveAgentManager.Core.Sessions;
+using System.Text.Json.Nodes;
 
 namespace DeveAgentManager.Core.Abstractions;
 
@@ -9,7 +10,8 @@ public interface ISessionFormat
 
     /// <summary>
     /// Bash that prints "&lt;size-in-bytes&gt; &lt;path&gt;" of the harness's session file for this session id, or nothing
-    /// when it doesn't exist (yet).
+    /// when it doesn't exist (yet). Incremental formats also leave the located path in shell variable f,
+    /// allowing the caller to capture inode and nanosecond modification/change timestamps in the same batch.
     /// </summary>
     string LocateCommand(string sessionId);
 
@@ -17,6 +19,11 @@ public interface ISessionFormat
     string GetPath(string sessionId, string workingDirectory, DateTime createdAt);
 
     DeveSession Read(string content);
+
+    // Implementations may opt into streaming and incremental metadata parsing.
+    DeveSession Read(TextReader reader) => Read(reader.ReadToEnd());
+    bool SupportsIncrementalRead => false;
+    void AppendLines(SessionReadCursor cursor, IEnumerable<JsonObject> lines) => throw new NotSupportedException();
 
     /// <summary>
     /// Writes the session in the harness's own format, under <paramref name="sessionId"/> and for

@@ -11,7 +11,7 @@ namespace DeveAgentManager.Tests;
 public class HarnessFormatTests
 {
     // Lines as Claude Code 2.1 writes them (shortened), plus a tool call and its result.
-    private static readonly string ClaudeSession = string.Join('\n',
+    internal static readonly string ClaudeSession = string.Join('\n',
         """{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-26T09:48:16.975Z","sessionId":"7294817d-8c1d-4058-a31a-d8ee9a43f685","content":"hello there"}""",
         """{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"hello there"},"uuid":"u1","timestamp":"2026-09-26T09:48:17.054Z","userType":"external","cwd":"/home/remoteman/work/maze","sessionId":"7294817d-8c1d-4058-a31a-d8ee9a43f685","version":"2.1.283","gitBranch":"HEAD"}""",
         """{"parentUuid":"u1","isSidechain":false,"attachment":{"type":"date","date":"2026-09-26"},"type":"attachment","uuid":"at1","timestamp":"2026-09-26T09:48:17.136Z","cwd":"/home/remoteman/work/maze","sessionId":"7294817d-8c1d-4058-a31a-d8ee9a43f685"}""",
@@ -23,7 +23,7 @@ public class HarnessFormatTests
         """{"type":"cost-state","sessionId":"7294817d-8c1d-4058-a31a-d8ee9a43f685","totalCostUSD":0}""") + "\n";
 
     // Lines as Codex 0.157 writes them (shortened), plus a tool call and its output.
-    private static readonly string CodexSession = string.Join('\n',
+    internal static readonly string CodexSession = string.Join('\n',
         """{"timestamp":"2026-09-26T09:00:00.000Z","type":"session_meta","payload":{"id":"0199aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee","timestamp":"2026-09-26T09:00:00.000Z","cwd":"/home/remoteman/work/maze","originator":"codex_cli_rs","cli_version":"0.157.1","source":"cli","model_provider":"openai"}}""",
         """{"timestamp":"2026-09-26T09:00:01.000Z","type":"response_item","payload":{"type":"message","id":"msg_d","role":"developer","content":[{"type":"input_text","text":"<skills_instructions>..."}]}}""",
         """{"timestamp":"2026-09-26T09:00:01.000Z","type":"response_item","payload":{"type":"message","id":"msg_e","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/home/remoteman/work/maze</cwd>\n</environment_context>"}]}}""",

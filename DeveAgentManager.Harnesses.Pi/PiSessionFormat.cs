@@ -21,7 +21,7 @@ public sealed class PiSessionFormat : ISessionFormat
 
     public string LocateCommand(string sessionId) =>
         $"f=$(ls -1 \"$HOME\"/.pi/agent/sessions/*/*_{ShellQuote.Quote(sessionId)}.jsonl 2>/dev/null | head -n1); " +
-        "if [ -n \"$f\" ]; then printf '%s %s\\n' \"$(stat -c %s \"$f\")\" \"$f\"; fi";
+        "if [ -n \"$f\" ]; then printf '%s %s\\n' \"$(stat -L -c %s \"$f\")\" \"$f\"; fi";
 
     public string GetPath(string sessionId, string workingDirectory, DateTime createdAt) =>
         $"~/.pi/agent/sessions/{SessionDirectoryName(workingDirectory)}/{createdAt.ToUniversalTime():yyyy-MM-ddTHH-mm-ss-fff}Z_{sessionId}.jsonl";
@@ -33,34 +33,21 @@ public sealed class PiSessionFormat : ISessionFormat
         return "--" + path.Replace('/', '-').Replace('\\', '-').Replace(':', '-') + "--";
     }
 
-    public DeveSession Read(string content)
+    public bool SupportsIncrementalRead => true;
+    public DeveSession Read(string content) { using var reader = new StringReader(content); return Read(reader); }
+    public DeveSession Read(TextReader reader)
     {
-        var session = new DeveSession();
-        DateTime? lastTimestamp = null;
-        foreach (var raw in content.Split('\n'))
+        var cursor = new SessionReadCursor();
+        AppendLines(cursor, JsonLines.Parse(reader));
+        return cursor.Session;
+    }
+
+    public void AppendLines(SessionReadCursor cursor, IEnumerable<JsonObject> lines)
+    {
+        var session = cursor.Session;
+        DateTime? lastTimestamp = session.UpdatedAt == default ? null : session.UpdatedAt;
+        foreach (var item in lines)
         {
-            var line = raw.Trim();
-            if (line.Length == 0)
-            {
-                continue;
-            }
-
-            JsonObject? item;
-            try
-            {
-                item = JsonNode.Parse(line) as JsonObject;
-            }
-            catch (JsonException)
-            {
-                // A line cut off while pi was writing it; the next sync reads it complete.
-                continue;
-            }
-
-            if (item is null)
-            {
-                continue;
-            }
-
             if (Str(item, "type") == "session")
             {
                 session.Sources.Add(new DeveSource { Harness = HarnessId, SessionId = Str(item, "id"), Header = item });
@@ -81,7 +68,6 @@ public sealed class PiSessionFormat : ISessionFormat
         session.LeafId = session.Entries.LastOrDefault()?.Id;
         session.UpdatedAt = lastTimestamp ?? session.CreatedAt;
         session.Title ??= session.FirstPrompt();
-        return session;
     }
 
     public string Write(DeveSession session, string sessionId, string workingDirectory)

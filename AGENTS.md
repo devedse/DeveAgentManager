@@ -83,3 +83,11 @@ URLs and upstream references are allowed. Mark test-only credentials clearly; ne
 Before committing docs, review the diff and scan all tracked documentation for private deployment details and secrets.
 Do not paste matching secret values into command output or reports. Removing a value from the current files does not
 remove it from Git history; report any exposed credential so its owner can rotate it.
+
+## Conversation synchronization
+
+Keep periodic sync incremental and list metadata separate from full history reads. Preserve exact native records on
+disk, including images and replay data. Verify the entire committed prefix before accepting a suffix; same-size edits,
+truncation, replacement and interrupted sync must preserve the last good checkpoint or rebuild safely. Test format,
+metadata and active-branch parity plus real SSH transfer and copy/switch/export behavior. See
+[docs/lean-session-sync.md](docs/lean-session-sync.md).

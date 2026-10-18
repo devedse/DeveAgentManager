@@ -9,7 +9,7 @@ namespace DeveAgentManager.Tests;
 public class SessionTests
 {
     // A small pi session with every kind of line pi writes (see pi's docs/session-format.md).
-    private static readonly string PiSession = string.Join('\n',
+    internal static readonly string PiSession = string.Join('\n',
         """{"type":"session","version":3,"id":"orig-id","timestamp":"2026-09-25T10:00:00.000Z","cwd":"/home/remoteman/work/maze"}""",
         """{"type":"message","id":"s1","parentId":null,"timestamp":"2026-09-25T10:00:00.100Z","message":{"role":"system","content":"","sections":{"preamble":"You are pi.","cwd":"/home/remoteman/work/maze"},"toolsAdded":[{"name":"bash"}],"timestamp":1790330400100}}""",
         """{"type":"model_change","id":"m1","parentId":"s1","timestamp":"2026-09-25T10:00:00.200Z","provider":"anthropic","modelId":"claude-opus-4-5"}""",

@@ -184,6 +184,40 @@ public sealed class RunnerShell(
         }, cancellationToken);
     }
 
+    /// <summary>Transfers a stable, bounded snapshot suffix. Hash verification catches edits anywhere in the old prefix.</summary>
+    internal async Task<string?> DownloadHistoryRangeAsync(Runner runner, string remotePath, long offset, long size,
+        string? prefixHash, Stream destination, CancellationToken ct)
+    {
+        var path = ShellQuote.Path(remotePath);
+        if (prefixHash is not null)
+        {
+            var check = await RunAsync(runner, $"set -o pipefail; head -c {offset} -- {path} | sha256sum", cancellationToken: ct);
+            check.EnsureSuccess("Verifying native history prefix");
+            if (!check.Output.StartsWith(prefixHash, StringComparison.OrdinalIgnoreCase)) return null;
+        }
+        await WithSftpAsync(runner, async (sftp, token) =>
+        {
+            using var input = sftp.OpenRead(ToSftpPath(sftp, remotePath));
+            input.Position = offset;
+            var remaining = size - offset;
+            var buffer = new byte[65536];
+            while (remaining > 0)
+            {
+                var count = await input.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, remaining)), token);
+                if (count == 0) throw new IOException("Native history was truncated during transfer.");
+                await destination.WriteAsync(buffer.AsMemory(0, count), token);
+                remaining -= count;
+            }
+            return true;
+        }, ct);
+        // Validate exactly the requested prefix, not the whole growing file. Appends after size are harmless.
+        var snapshot = await RunAsync(runner, $"set -o pipefail; head -c {size} -- {path} | sha256sum", cancellationToken: ct);
+        snapshot.EnsureSuccess("Verifying native history snapshot");
+        var hash = snapshot.Output.Trim().Split(' ', 2)[0];
+        if (hash.Length != 64 || !hash.All(char.IsAsciiHexDigit)) throw new IOException("Invalid native history snapshot checksum.");
+        return hash;
+    }
+
     /// <summary>Streams a file into the destination. False when absent or larger than maxBytes.</summary>
     public Task<bool> DownloadToAsync(Runner runner, string remotePath, Stream destination, long maxBytes, CancellationToken cancellationToken = default) =>
         WithSftpAsync(runner, async (sftp, ct) =>

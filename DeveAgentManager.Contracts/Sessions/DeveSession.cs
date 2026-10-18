@@ -40,6 +40,16 @@ public sealed class DeveSession
     public string ToJson(bool indented = false) =>
         JsonSerializer.Serialize(this, indented ? new JsonSerializerOptions(JsonOptions) { WriteIndented = true } : JsonOptions);
 
+    public Task WriteAsync(Stream stream, CancellationToken ct = default) => JsonSerializer.SerializeAsync(stream, this, JsonOptions, ct);
+
+    public static async Task<DeveSession> ReadAsync(Stream stream, CancellationToken ct = default)
+    {
+        var session = await JsonSerializer.DeserializeAsync<DeveSession>(stream, JsonOptions, ct)
+            ?? throw new FormatException("Empty DeveSession.");
+        if (session.Format != FormatName) throw new FormatException("Not a DeveSession.");
+        return session;
+    }
+
     public static DeveSession FromJson(string json)
     {
         var session = JsonSerializer.Deserialize<DeveSession>(json, JsonOptions) ?? throw new FormatException("Empty DeveSession.");

@@ -103,3 +103,12 @@ Upstream references:
 - [Microsoft diagnostics client library](https://learn.microsoft.com/en-us/dotnet/core/diagnostics/diagnostics-client-library)
 - [Allocation and GC tracing](https://learn.microsoft.com/en-us/dotnet/core/diagnostics/dotnet-trace)
 - [Heap-capture overhead](https://learn.microsoft.com/en-us/dotnet/core/diagnostics/dotnet-gcdump)
+
+## Incremental history synchronization
+
+See [lean conversation synchronization](lean-session-sync.md) for the optimized
+storage path and its recovery rules. Download markers now report the requested
+suffix size, and native parsing markers report the bytes actually parsed (a suffix
+or a full rebuild). Native synchronization no longer serializes the whole history
+on every update. List reply previews read a small persisted checkpoint; full saved
+history reads should correspond to explicit operations or legacy migration.

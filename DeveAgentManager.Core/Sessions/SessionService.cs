@@ -29,8 +29,9 @@ public sealed class SessionService(
     ILogger<SessionService> logger,
     DeveAgentManager.Core.Diagnostics.MemoryDiagnostics? memory = null)
 {
+    private readonly NativeHistoryStore _native = new(options.SessionsDirectory, memory);
     private readonly SemaphoreSlim _previewGate = new(1, 1);
-    private readonly Dictionary<Guid, (DateTime UpdatedAt, string Text)> _previews = new();
+    private readonly Dictionary<Guid, (DateTime Version, string Text)> _previews = new();
     /// <summary>The latest reply of each agent whose conversations <paramref name="user"/> can read.</summary>
     public async Task<List<DeveAgentManager.Contracts.AgentReplyPreviewDto>> ReplyPreviewsAsync(CurrentUser user, CancellationToken ct)
     {
@@ -40,18 +41,20 @@ public sealed class SessionService(
         {
             await using var db = await dbFactory.CreateDbContextAsync(ct);
             var saved = await db.Sessions.AsNoTracking()
-                .Where(s => s.AgentId != null && (user.Has(UserRoles.ConversationManager) || s.Agent!.OwnerId == user.Id || s.Agent.Shares.Any(x => x.UserId == user.Id))).ToListAsync(ct);
+                .Where(s => s.AgentId != null && (user.Has(UserRoles.ConversationManager) || s.Agent!.OwnerId == user.Id || s.Agent.Shares.Any(x => x.UserId == user.Id)))
+                .Select(s => new { s.Id, s.AgentId, s.UpdatedAt, s.LastSyncedAt }).ToListAsync(ct);
             var ids = saved.Select(s => s.Id).ToHashSet();
             foreach (var id in _previews.Keys.Where(id => !ids.Contains(id)).ToArray()) _previews.Remove(id);
             var result = new List<DeveAgentManager.Contracts.AgentReplyPreviewDto>();
             foreach (var session in saved.OrderByDescending(s => s.UpdatedAt).DistinctBy(s => s.AgentId))
             {
-                if (!_previews.TryGetValue(session.Id, out var cached) || cached.UpdatedAt != session.UpdatedAt)
+                var version = session.LastSyncedAt ?? session.UpdatedAt;
+                if (!_previews.TryGetValue(session.Id, out var cached) || cached.Version != version)
                 {
                     try
                     {
-                        var conversation = await LoadAsync(session.Id, ct);
-                        cached = (session.UpdatedAt, ReplyPreview(conversation));
+                        var summary = await _native.SummaryAsync(session.Id, ct);
+                        cached = (version, summary?.ReplyPreview ?? ReplyPreview(await LoadAsync(session.Id, ct)));
                         _previews[session.Id] = cached;
                     }
                     catch (Exception ex) when (ex is IOException or JsonException or FormatException)
@@ -129,7 +132,16 @@ public sealed class SessionService(
     {
         var path = PathFor(sessionId);
         using var observation = memory?.BeginFile("saved-history-load", sessionId, path);
-        var result = File.Exists(path) ? DeveSession.FromJson(await File.ReadAllTextAsync(path, cancellationToken)) : new DeveSession();
+        var result = await _native.LoadAsync(sessionId, _formats, cancellationToken);
+        if (result is null)
+        {
+            if (File.Exists(path))
+            {
+                await using var stream = File.OpenRead(path);
+                result = await DeveSession.ReadAsync(stream, cancellationToken);
+            }
+            else result = new DeveSession();
+        }
         observation?.Complete();
         return result;
     }
@@ -189,7 +201,7 @@ public sealed class SessionService(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var stored = await db.Sessions.FirstOrDefaultAsync(s => s.AgentId == agent.Id, cancellationToken)
             ?? throw new InvalidOperationException("This agent has no stored conversation to move.");
-        Backup(stored);
+        await BackupAsync(stored, cancellationToken);
 
         stored.TitlePinned = true; // Keep the conversation name across format conversion.
         await WriteForHarnessAsync(runner, stored, harnessId, harnessSessionId, agent.WorkingDirectory, cancellationToken);
@@ -204,7 +216,7 @@ public sealed class SessionService(
     private async Task WriteForHarnessAsync(Runner runner, StoredSession stored, string harnessId, string harnessSessionId, string workingDirectory, CancellationToken cancellationToken)
     {
         var format = _formats.GetValueOrDefault(harnessId) ?? throw new InvalidOperationException($"Conversations can't be continued in '{harnessId}' yet.");
-        if (stored.MessageCount > 0 && !File.Exists(PathFor(stored.Id)))
+        if (stored.MessageCount > 0 && !HasSaved(stored.Id))
             throw new IOException("The saved history is missing. Restore it before switching sessions.");
         var session = await LoadAsync(stored.Id, cancellationToken);
         session.Title = stored.Title;
@@ -236,11 +248,19 @@ public sealed class SessionService(
         stored.LastSyncedAt = null;
     }
 
-    private void Backup(StoredSession stored)
+    private bool HasSaved(Guid id) => _native.Exists(id) || File.Exists(PathFor(id));
+
+    private async Task BackupAsync(StoredSession stored, CancellationToken ct)
     {
-        var before = PathFor(stored.Id);
-        if (File.Exists(before)) File.Copy(before, Path.Combine(options.SessionsDirectory,
-            $"{stored.Id:N}.{DateTime.UtcNow:yyyyMMdd-HHmmss-fffffff}.{stored.HarnessId}.json"));
+        if (!HasSaved(stored.Id)) return;
+        var backup = Path.Combine(options.SessionsDirectory, $"{stored.Id:N}.{DateTime.UtcNow:yyyyMMdd-HHmmss-fffffff}.{stored.HarnessId}.json");
+        if (_native.Exists(stored.Id))
+        {
+            var conversation = await LoadAsync(stored.Id, ct);
+            await using var output = File.Create(backup);
+            await conversation.WriteAsync(output, ct);
+        }
+        else File.Copy(PathFor(stored.Id), backup);
     }
 
     private string DisplayName(string harnessId) => harnessDisplayNames.GetValueOrDefault(harnessId, harnessId);
@@ -295,12 +315,13 @@ public sealed class SessionService(
         var script = new StringBuilder();
         foreach (var session in sessions)
         {
-            script.Append($"echo {LocateMarker} {session.Id:N}; ").Append(_formats[session.HarnessId].LocateCommand(session.HarnessSessionId!)).Append('\n');
+            script.Append($"echo {LocateMarker} {session.Id:N}; f=; ").Append(_formats[session.HarnessId].LocateCommand(session.HarnessSessionId!)).Append("; if [ -n \"$f\" ]; then printf '__DAM_STAMP__ %s\\n' \"$(stat -L -c '%d:%i:%y:%z' \"$f\")\"; fi\n");
         }
 
         var result = await shell.RunAsync(runner, script.ToString(), TimeSpan.FromSeconds(30), cancellationToken);
         result.EnsureSuccess("Locating session histories");
         var located = ParseLocated(result.Output);
+        var stamps = ParseStamps(result.Output);
         foreach (var session in sessions)
         {
             if (!located.TryGetValue(session.Id, out var file))
@@ -309,28 +330,40 @@ public sealed class SessionService(
                     throw new IOException("The current history could not be found. Session selection was not changed.");
                 continue;
             }
-            if (file.Size == session.SourceSize && file.Path == session.SourcePath)
+            if (!_formats[session.HarnessId].SupportsIncrementalRead && file.Size == session.SourceSize && file.Path == session.SourcePath)
             {
                 continue;
             }
 
             try
             {
+                stamps.TryGetValue(session.Id, out var stamp);
+                var incremental = _formats[session.HarnessId].SupportsIncrementalRead && stamp is not null;
+                if (incremental && session.SourceSize == file.Size && session.SourcePath == file.Path
+                    && await _native.IsCurrentAsync(session.Id, session.HarnessId, file.Path, file.Size, stamp!, cancellationToken)) continue;
                 using var observation = memory?.Begin("session-sync", session.Id, file.Size, session.HarnessId);
-                string content;
-                using (var download = memory?.Begin("history-download", session.Id, file.Size, session.HarnessId))
-                {
-                    content = await shell.DownloadAsync(runner, file.Path, cancellationToken)
-                        ?? throw new IOException("Could not download the current conversation.");
-                    download?.Complete();
-                }
                 DeveSession deve;
-                using (var parse = memory?.Begin("native-history-parse", session.Id, file.Size, session.HarnessId))
+                if (incremental)
                 {
-                    deve = _formats[session.HarnessId].Read(content);
-                    parse?.Complete();
+                    var sync = await _native.SyncAsync(session.Id, _formats[session.HarnessId], file.Path, file.Size, stamp!,
+                        async (offset, hash, output, ct) =>
+                        {
+                            using var download = memory?.Begin("history-download", session.Id, file.Size - offset, session.HarnessId);
+                            var ok = await shell.DownloadHistoryRangeAsync(runner, file.Path, offset, file.Size, hash, output, ct);
+                            download?.Complete();
+                            return new NativeHistoryTransfer(ok is not null, ok);
+                        }, cancellationToken);
+                    if (!sync.Changed && session.SourceSize == file.Size && session.SourcePath == file.Path) { observation?.Complete(); continue; }
+                    deve = sync.Metadata;
+                    File.Delete(PathFor(session.Id)); // The verified native copy is now the authoritative full history.
                 }
-                await SaveAsync(session.Id, deve, cancellationToken);
+                else
+                {
+                    var content = await shell.DownloadAsync(runner, file.Path, cancellationToken)
+                        ?? throw new IOException("Could not download the current conversation.");
+                    deve = _formats[session.HarnessId].Read(content);
+                    await SaveAsync(session.Id, deve, cancellationToken);
+                }
                 Apply(session, deve, session.Agent?.Name);
                 if (session.Agent is { } agent) UpdateLastAssistantMessage(agent, deve);
                 session.SourcePath = file.Path;
@@ -408,6 +441,7 @@ public sealed class SessionService(
             throw new InvalidOperationException("Select another session before deleting the active conversation.");
         await db.Sessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync(cancellationToken);
         File.Delete(PathFor(sessionId));
+        await _native.DeleteAsync(sessionId, cancellationToken);
         images.DeleteSession(sessionId);
         files.DeleteSession(sessionId);
         if (Directory.Exists(options.SessionsDirectory))
@@ -461,7 +495,7 @@ public sealed class SessionService(
             CreatedAt = now,
             UpdatedAt = now,
         };
-        if (File.Exists(PathFor(source.Id)))
+        if (HasSaved(source.Id))
         {
             await SaveAsync(copy.Id, await LoadAsync(source.Id, cancellationToken), cancellationToken);
         }
@@ -474,7 +508,7 @@ public sealed class SessionService(
 
     private void UpdateSizes(StoredSession stored)
     {
-        stored.SavedSize = File.Exists(PathFor(stored.Id)) ? new FileInfo(PathFor(stored.Id)).Length : 0;
+        stored.SavedSize = _native.Exists(stored.Id) ? _native.Size(stored.Id) : File.Exists(PathFor(stored.Id)) ? new FileInfo(PathFor(stored.Id)).Length : 0;
         stored.TotalSize = stored.SavedSize + (Directory.Exists(options.SessionsDirectory)
             ? Directory.EnumerateFiles(options.SessionsDirectory, $"{stored.Id:N}.*.json").Sum(p => new FileInfo(p).Length) : 0);
     }
@@ -493,7 +527,7 @@ public sealed class SessionService(
         if (selected.AgentId != null && selected.AgentId != agent.Id) throw new InvalidOperationException("Session is already active elsewhere.");
         if (id.HasValue)
         {
-            if (selected.HarnessId != agent.HarnessId) { Backup(selected); selected.TitlePinned = true; }
+            if (selected.HarnessId != agent.HarnessId) { await BackupAsync(selected, ct); selected.TitlePinned = true; }
             await WriteForHarnessAsync(runner, selected, agent.HarnessId, nativeId, agent.WorkingDirectory, ct);
         }
         else { selected.HarnessSessionId = nativeId; db.Sessions.Add(selected); }
@@ -513,6 +547,18 @@ public sealed class SessionService(
         agent.HarnessSessionId = nativeId;
         agent.LastAssistantMessageAt = null;
         events.SessionChanged(selected.Id, agent.Id);
+    }
+
+    internal static Dictionary<Guid, string> ParseStamps(string output)
+    {
+        var result = new Dictionary<Guid, string>();
+        Guid? current = null;
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (line.StartsWith(LocateMarker + " ", StringComparison.Ordinal)) current = Guid.TryParse(line[(LocateMarker.Length + 1)..], out var id) ? id : null;
+            else if (current is { } session && line.StartsWith("__DAM_STAMP__ ", StringComparison.Ordinal)) result[session] = line[14..];
+        }
+        return result;
     }
 
     internal static Dictionary<Guid, (long Size, string Path)> ParseLocated(string output)
@@ -585,7 +631,12 @@ public sealed class SessionService(
         var existing = await db.Sessions.Include(s => s.Agent).Where(s => s.Agent != null && s.Agent.LastAssistantMessageAt == null).ToListAsync(ct);
         foreach (var saved in existing)
         {
-            try { UpdateLastAssistantMessage(saved.Agent!, await LoadAsync(saved.Id, ct)); }
+            try
+            {
+                var summary = await _native.SummaryAsync(saved.Id, ct);
+                if (summary is not null) saved.Agent!.LastAssistantMessageAt = summary.LastAssistantMessageAt;
+                else UpdateLastAssistantMessage(saved.Agent!, await LoadAsync(saved.Id, ct));
+            }
             catch (Exception ex) when (ex is IOException or JsonException or FormatException)
             { logger.LogWarning(ex, "Could not read saved message timestamps for session {Session}", saved.Id); }
         }
@@ -616,14 +667,14 @@ public sealed class SessionService(
         try
         {
             // Write next to it and move, so a reader never sees half a file.
-            string json;
             using (var serialize = memory?.Begin("history-serialize", sessionId))
             {
-                json = session.ToJson();
+                await using var stream = new FileStream(path + ".tmp", FileMode.Create, FileAccess.Write, FileShare.None, 65536, true);
+                await session.WriteAsync(stream, cancellationToken);
                 serialize?.Complete();
             }
-            await File.WriteAllTextAsync(path + ".tmp", json, cancellationToken);
             File.Move(path + ".tmp", path, overwrite: true);
+            await _native.DeleteAsync(sessionId, cancellationToken);
             observation?.Complete();
         }
         finally

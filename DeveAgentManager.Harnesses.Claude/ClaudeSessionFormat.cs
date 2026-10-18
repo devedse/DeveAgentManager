@@ -25,7 +25,7 @@ public sealed class ClaudeSessionFormat : ISessionFormat
 
     public string LocateCommand(string sessionId) =>
         $"f=$(ls -1t \"$HOME\"/.claude/projects/*/{ShellQuote.Quote(sessionId)}.jsonl \"$HOME\"/.deveagentmanager/agent-runtime/*/*/claude/projects/*/{ShellQuote.Quote(sessionId)}.jsonl 2>/dev/null | head -n1); " +
-        "if [ -n \"$f\" ]; then printf '%s %s\\n' \"$(stat -c %s \"$f\")\" \"$f\"; fi";
+        "if [ -n \"$f\" ]; then printf '%s %s\\n' \"$(stat -L -c %s \"$f\")\" \"$f\"; fi";
 
     public string GetPath(string sessionId, string workingDirectory, DateTime createdAt) =>
         $"~/.claude/projects/{ProjectDirectoryName(workingDirectory)}/{sessionId}.jsonl";
@@ -34,14 +34,23 @@ public sealed class ClaudeSessionFormat : ISessionFormat
     public static string ProjectDirectoryName(string workingDirectory) =>
         new(workingDirectory.Select(c => char.IsAsciiLetterOrDigit(c) ? c : '-').ToArray());
 
-    public DeveSession Read(string content)
+    public bool SupportsIncrementalRead => true;
+    public DeveSession Read(string content) { using var reader = new StringReader(content); return Read(reader); }
+    public DeveSession Read(TextReader reader)
     {
-        var session = new DeveSession();
-        string? customTitle = null;
-        string? autoTitle = null;
-        string? lastTreeEntry = null;
-        var index = 0;
-        foreach (var line in Parse(content))
+        var cursor = new SessionReadCursor();
+        AppendLines(cursor, JsonLines.Parse(reader));
+        return cursor.Session;
+    }
+
+    public void AppendLines(SessionReadCursor cursor, IEnumerable<JsonObject> lines)
+    {
+        var session = cursor.Session;
+        string? customTitle = cursor.CustomTitle;
+        string? autoTitle = cursor.AutoTitle;
+        string? lastTreeEntry = session.LeafId;
+        var index = cursor.LineCount;
+        foreach (var line in lines)
         {
             index++;
             var uuid = Str(line, "uuid");
@@ -102,7 +111,9 @@ public sealed class ClaudeSessionFormat : ISessionFormat
 
         session.LeafId = lastTreeEntry;
         session.Title = customTitle ?? autoTitle ?? session.FirstPrompt();
-        return session;
+        cursor.LineCount = index;
+        cursor.CustomTitle = customTitle;
+        cursor.AutoTitle = autoTitle;
     }
 
     private static void ReadUser(DeveEntry entry, JsonObject message, bool compactSummary)

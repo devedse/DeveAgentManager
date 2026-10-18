@@ -1,10 +1,11 @@
 # Session formats
 
-DeveAgentManager stores every conversation in one harness-neutral format, the **DeveSession**, so a session can be
+DeveAgentManager exposes every conversation in one harness-neutral format, the **DeveSession**, so a session can be
 viewed in the Portal, survive its Runner, be resumed on another Runner and later be continued in another harness.
 This document describes the native formats of pi, Claude Code and Codex, the DeveSession format, and how they map.
 
-Status: **pi is implemented** (read and write). Claude Code and Codex are researched below but not implemented.
+Status: pi, Claude Code and Codex support reading and writing. Native histories are synchronized incrementally; see
+[lean conversation synchronization](lean-session-sync.md) for storage, recovery and regression checks.
 
 ## Native formats
 
@@ -67,7 +68,8 @@ The history is **linear** (no tree). `codex resume <uuid>` resumes it.
 
 ## DeveSession
 
-One JSON document per session, stored by the Manager in `/data/sessions/<session-id>.json`:
+The portable/imported format is one JSON document per session, stored in `/data/sessions/<session-id>.json`.
+Synced native histories use the native store described above and produce this same structure when loaded or exported:
 
 ```jsonc
 {

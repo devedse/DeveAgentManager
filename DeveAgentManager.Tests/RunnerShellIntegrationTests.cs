@@ -118,7 +118,7 @@ public class RunnerShellIntegrationTests
         return await output;
     }
 
-    private sealed class Fixture(string root, Process server, ManagerSshKey key, RunnerShell shell, Runner runner) : IAsyncDisposable
+    internal sealed class Fixture(string root, Process server, ManagerSshKey key, RunnerShell shell, Runner runner) : IAsyncDisposable
     {
         internal string Root => root;
         internal string Log => root + "/server.log";

@@ -14,7 +14,13 @@ public static class JsonLines
     /// <summary>The JSON objects in a JSONL file. Lines cut off while the harness was writing them are skipped.</summary>
     public static IEnumerable<JsonObject> Parse(string content)
     {
-        foreach (var raw in content.Split('\n'))
+        using var reader = new StringReader(content);
+        foreach (var item in Parse(reader)) yield return item;
+    }
+
+    public static IEnumerable<JsonObject> Parse(TextReader reader)
+    {
+        while (reader.ReadLine() is { } raw)
         {
             var line = raw.Trim();
             if (line.Length == 0)

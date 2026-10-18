@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Collections.Concurrent;
 using DeveAgentManager.Contracts;
 
 namespace DeveAgentManager.Core.Agents;
@@ -11,10 +12,12 @@ public static class AgentScreenDetector
 {
     private sealed record Rule(string Id, int Priority, string Region, Func<Context, AgentScreenDetection?> Match);
     private sealed record Context(string Harness, string[] Lines, int Prompt, string Before, string After, string Tail, DateTime Now);
-    private static bool Has(string text, string pattern) => Regex.IsMatch(text, pattern,
-        RegexOptions.Multiline | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
-    private static string? Find(string text, string pattern) => Regex.Match(text, pattern,
-        RegexOptions.Multiline | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)) is { Success: true } m ? m.Value.Trim() : null;
+    // Rule patterns are fixed. Keep them instead of thrashing the process-wide 15-entry Regex cache every poll.
+    private static readonly ConcurrentDictionary<string, Regex> Patterns = new();
+    private static Regex Pattern(string pattern) => Patterns.GetOrAdd(pattern,
+        p => new Regex(p, RegexOptions.Multiline | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)));
+    private static bool Has(string text, string pattern) => Pattern(pattern).IsMatch(text);
+    private static string? Find(string text, string pattern) => Pattern(pattern).Match(text) is { Success: true } m ? m.Value.Trim() : null;
     private static string Evidence(string value) => value.Length <= 240 ? value : value[..240] + "…";
     private const string PromptPattern = @"^\s*(?:[›❯](?:\s|$)|›[⠁⠂⠄⠈⠐⠠⡀⢀])";
     private static string? CodexCompletion(string text) => text.Split('\n').LastOrDefault(line =>
@@ -35,6 +38,8 @@ public static class AgentScreenDetector
         new("claude-ready-prompt", 50, "prompt box and completion footer", ClaudeReady),
         new("pi-ready-prompt", 50, "empty prompt box and usage footer", PiReady),
     ];
+
+    private static readonly Rule[] OrderedRules = Rules.OrderByDescending(r => r.Priority).ToArray();
 
     private static AgentScreenDetection? Limit(Context context)
     {
@@ -61,7 +66,7 @@ public static class AgentScreenDetector
         var after = prompt >= 0 ? string.Join('\n', lines.Skip(prompt + 1)) : "";
         var tail = string.Join('\n', lines.Where(l => !string.IsNullOrWhiteSpace(l)).TakeLast(15));
         var c = new Context(harness, lines, prompt, before, after, tail, now);
-        foreach (var rule in Rules.OrderByDescending(r => r.Priority))
+        foreach (var rule in OrderedRules)
             if (rule.Match(c) is { } match) return match with { Rule = $"{harness}/{rule.Id} · {rule.Region}", BackgroundTaskCount = BackgroundCount(c) };
         return new(AgentActivityStatus.Unknown, "The current screen has no recognized live status. No completion is inferred.", $"{harness}/unrecognized-screen");
     }

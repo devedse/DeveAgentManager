@@ -24,7 +24,7 @@ public sealed class CodexSessionFormat : ISessionFormat
 
     public string LocateCommand(string sessionId) =>
         $"f=$(ls -1t \"$HOME\"/.codex/sessions/*/*/*/rollout-*-{ShellQuote.Quote(sessionId)}.jsonl \"$HOME\"/.deveagentmanager/agent-runtime/*/*/codex/sessions/*/*/*/rollout-*-{ShellQuote.Quote(sessionId)}.jsonl 2>/dev/null | head -n1); " +
-        "if [ -n \"$f\" ]; then printf '%s %s\\n' \"$(stat -c %s \"$f\")\" \"$f\"; fi";
+        "if [ -n \"$f\" ]; then printf '%s %s\\n' \"$(stat -L -c %s \"$f\")\" \"$f\"; fi";
 
     public string GetPath(string sessionId, string workingDirectory, DateTime createdAt)
     {
@@ -32,12 +32,21 @@ public sealed class CodexSessionFormat : ISessionFormat
         return $"~/.codex/sessions/{time:yyyy}/{time:MM}/{time:dd}/rollout-{time:yyyy-MM-ddTHH-mm-ss}-{sessionId}.jsonl";
     }
 
-    public DeveSession Read(string content)
+    public bool SupportsIncrementalRead => true;
+    public DeveSession Read(string content) { using var reader = new StringReader(content); return Read(reader); }
+    public DeveSession Read(TextReader reader)
     {
-        var session = new DeveSession();
-        string? previous = null;
-        var index = 0;
-        foreach (var line in Parse(content))
+        var cursor = new SessionReadCursor();
+        AppendLines(cursor, JsonLines.Parse(reader));
+        return cursor.Session;
+    }
+
+    public void AppendLines(SessionReadCursor cursor, IEnumerable<JsonObject> lines)
+    {
+        var session = cursor.Session;
+        string? previous = session.LeafId;
+        var index = cursor.LineCount;
+        foreach (var line in lines)
         {
             index++;
             var timestamp = Time(line["timestamp"]);
@@ -90,7 +99,7 @@ public sealed class CodexSessionFormat : ISessionFormat
 
         session.LeafId = previous;
         session.Title = session.FirstPrompt();
-        return session;
+        cursor.LineCount = index;
     }
 
     private static void ReadResponseItem(DeveEntry entry, JsonObject item)
