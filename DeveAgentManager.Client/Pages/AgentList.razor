@@ -1,6 +1,7 @@
 @page "/agents"
 @inherits LiveComponent
 @inject IDialogService Dialogs
+@inject SignedInUser Me
 
 <PageTitle>Agents · DeveAgentManager</PageTitle>
 
@@ -22,31 +23,29 @@
                     <MudChip Value="@("running")">Running @_agents.Count(a => a.State is AgentState.Running or AgentState.Starting)</MudChip>
                     <MudChip Value="@("stopped")">Not running @_agents.Count(a => a.State is not (AgentState.Running or AgentState.Starting))</MudChip>
                 </MudChipSet>
-                @if (_agents.Any(a => a.Access != AgentAccess.Owner))
-                {
-                    <MudChipSet T="string" @bind-SelectedValue="_whose" SelectionMode="SelectionMode.SingleSelection" CheckMark="false" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
-                        <MudChip Value="@("all")" Default="true">Everyone's</MudChip>
-                        <MudChip Value="@("mine")">Mine @_agents.Count(a => a.Access == AgentAccess.Owner)</MudChip>
-                        <MudChip Value="@("shared")">Shared with me @_agents.Count(a => a.Access is AgentAccess.Read or AgentAccess.Write)</MudChip>
-                        @if (_agents.Any(a => a.Access == AgentAccess.Listed))
-                        {
-                            <MudChip Value="@("runners")">Others' on my Runners @_agents.Count(a => a.Access == AgentAccess.Listed)</MudChip>
-                        }
-                    </MudChipSet>
-                }
             </div>
         }
         <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading agents">
             <Placeholder><SkeletonList Rows="5" /></Placeholder>
             <ChildContent>
-                <AgentTable Agents="Filtered" ShowRunner="true" EmptyText="@(_agents.Count == 0 ? "Start an agent to work on a repository." : "No agents match.")">
-                    <EmptyContent>
-                        @if (_agents.Count == 0)
-                        {
-                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
-                        }
-                    </EmptyContent>
-                </AgentTable>
+                @foreach (var own in new[] { true, false })
+                {
+                    var agents = Filtered.Where(a => (a.OwnerId == _userId) == own).ToList();
+                    @if (own || agents.Count > 0)
+                    {
+                        <section aria-label="@(own ? "Your agents" : "Other users’ agents")">
+                            <div class="session-group-heading"><h2 class="mud-typography mud-typography-h6">@(own ? "Your agents" : "Other users’ agents")</h2></div>
+                            <AgentTable Agents="agents" ShowRunner="true" ShowOwner="@(!own)" EmptyText="@(own ? "No agents of yours match." : "No agents match.")">
+                                <EmptyContent>
+                                    @if (_agents.Count == 0)
+                                    {
+                                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewAgentAsync">New agent</MudButton>
+                                    }
+                                </EmptyContent>
+                            </AgentTable>
+                        </section>
+                    }
+                }
             </ChildContent>
         </LoadingSection>
     </div>
@@ -57,20 +56,13 @@
     private List<AgentDto> _agents = [];
     private string? _search;
     private string? _filter = "all";
-    private string? _whose = "all";
+    private Guid _userId;
 
     private IReadOnlyList<AgentDto> Filtered => _agents
         .Where(a => _filter switch
         {
             "running" => a.State is AgentState.Running or AgentState.Starting,
             "stopped" => a.State is not (AgentState.Running or AgentState.Starting),
-            _ => true,
-        })
-        .Where(a => _whose switch
-        {
-            "mine" => a.Access == AgentAccess.Owner,
-            "shared" => a.Access is AgentAccess.Read or AgentAccess.Write,
-            "runners" => a.Access == AgentAccess.Listed,
             _ => true,
         })
         .Where(a => string.IsNullOrWhiteSpace(_search)
@@ -81,7 +73,11 @@
         .ByLastReply()
         .ToList();
 
-    protected override async Task LoadAsync() => _agents = await Api.ListAgentsAsync();
+    protected override async Task LoadAsync()
+    {
+        _userId = (await Me.GetAsync()).Id;
+        _agents = await Api.ListAgentsAsync();
+    }
 
     private Task NewAgentAsync() => Dialogs.ShowAsync<NewAgentDialog>();
 }

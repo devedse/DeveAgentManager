@@ -50,6 +50,44 @@ try {
     assert.deepEqual(await names('.activity-card-name h6'), expected, 'Agent activity');
     await page.goto(base + `/runners/${runnerId}`);
     assert.deepEqual(await names('.agent-table .agent-row .list-title'), expected, "the Runner's agents");
+    // Admin access is Owner for everyone: grouping must use identity, not permission.
+    const me = await (await context.request.get(base + '/api/me')).json();
+    agents[0].ownerId = "00000000-0000-0000-0000-000000000099";
+    agents[2].ownerId = agents[0].ownerId;
+    agents[1].ownerId = me.id;
+    agents[3].ownerId = me.id;
+    await page.goto(base + '/agents');
+    const own = page.getByRole('region', { name: 'Your agents', exact: true });
+    const others = page.getByRole('region', { name: 'Other users’ agents', exact: true });
+    await own.locator('.list-title').first().waitFor({ timeout: 60000 });
+    assert.deepEqual((await own.locator('.list-title').allInnerTexts()).map(text => expected.find(name => text.includes(name))), ['ten-minutes-ago', 'never-replied']);
+    assert.deepEqual((await others.locator('.list-title').allInnerTexts()).map(text => expected.find(name => text.includes(name))), ['just-now', 'an-hour-ago']);
+    assert.equal(await others.locator('.account-badge').count(), 2);
+    await page.getByPlaceholder('Search agents').fill('just-now');
+    await own.getByText('No agents of yours match.').waitFor();
+    assert.equal(await others.locator('.agent-row').count(), 1);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(500); // Allow the navigation drawer to settle after resizing.
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'ownership sections fit phones');
+
+    const sessions = agents.slice(0, 2).map((a, i) => ({
+        id: a.id, ownerId: a.ownerId, ownerName: i ? me.displayName : 'Another user', access: 'Owner',
+        title: i ? 'My saved conversation' : 'Another saved conversation', harnessId: 'claude',
+        messageCount: 2, createdAt: at(100), updatedAt: at(i), workspaceAccess: 'None',
+        sourceSize: 0, savedSize: 0, totalSize: 0
+    }));
+    await context.route('**/api/sessions', route => route.fulfill({ json: sessions }));
+    await page.goto(base + '/sessions');
+    const mySessions = page.getByRole('region', { name: 'Your sessions', exact: true });
+    const otherSessions = page.getByRole('region', { name: 'Other users’ sessions', exact: true });
+    await mySessions.getByText('My saved conversation', { exact: true }).waitFor({ timeout: 60000 });
+    await otherSessions.getByText('Another saved conversation', { exact: true }).waitFor();
+    await otherSessions.getByText('Another user', { exact: true }).waitFor();
+    assert.equal(await mySessions.locator('.agent-row').count(), 1);
+    assert.equal(await otherSessions.locator('.agent-row').count(), 1);
+    await page.getByPlaceholder('Search sessions').fill('My saved');
+    await otherSessions.waitFor({ state: 'detached' });
+    console.log('Passed: ownership sections use owner identity despite admin permissions, with search and phone layouts.');
     console.log(`Passed (${engine}): agents are listed by last reply on the Agents page, dashboard, Agent activity, a Runner's page and in the navigation.`);
 } finally {
     await browser.close();

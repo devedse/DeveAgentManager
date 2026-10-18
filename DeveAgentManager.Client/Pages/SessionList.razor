@@ -23,14 +23,6 @@
             <div class="filter-bar">
                 <MudTextField @bind-Value="_search" Immediate="true" Placeholder="Search sessions" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Rounded.Search"
                               Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Class="filter-search" />
-                @if (_sessions.Any(s => s.Access != SessionAccess.Owner))
-                {
-                    <MudChipSet T="string" @bind-SelectedValue="_whose" SelectionMode="SelectionMode.SingleSelection" CheckMark="false" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
-                        <MudChip Value="@("all")" Default="true">All @_sessions.Count</MudChip>
-                        <MudChip Value="@("mine")">Mine @_sessions.Count(s => s.Access == SessionAccess.Owner)</MudChip>
-                        <MudChip Value="@("shared")">Shared with me @_sessions.Count(s => s.Access != SessionAccess.Owner)</MudChip>
-                    </MudChipSet>
-                }
             </div>
         }
 
@@ -44,9 +36,20 @@
         }
         else
         {
+            @foreach (var own in new[] { true, false })
+            {
+                var sessions = Filtered.Where(s => (s.OwnerId == _userId) == own).ToList();
+                @if (own || sessions.Count > 0)
+                {
+                <section aria-label="@(own ? "Your sessions" : "Other users’ sessions")">
+                <div class="session-group-heading"><h2 class="mud-typography mud-typography-h6">@(own ? "Your sessions" : "Other users’ sessions")</h2></div>
+                @if (sessions.Count == 0)
+                {
+                    <p>No sessions of yours match.</p>
+                }
             <div class="agent-table">
                 @* Agents' workspaces like agents everywhere: the one that replied last first (AgentOrder). *@
-                @foreach (var group in Filtered.GroupBy(s => s.WorkspaceAgentId?.ToString() ?? s.RepositoryUrl ?? "Imported")
+                @foreach (var group in sessions.GroupBy(s => s.WorkspaceAgentId?.ToString() ?? s.RepositoryUrl ?? "Imported")
                     .OrderByDescending(g => g.Max(s => s.Agent?.LastAssistantMessageAt ?? s.UpdatedAt)))
                 {
                     var first = group.First();
@@ -76,9 +79,9 @@
                                 <div class="list-title">@session.Title@(session.AgentId is not null ? " · Active" : "")</div>
                                 <div class="list-subtitle">
                                     @* Before the size, so a long title can't push it out of sight. *@
-                                    @if (session.Access != SessionAccess.Owner)
+                                    @if (session.OwnerId != _userId)
                                     {
-                                        <span class="account-badge account-badge-lead" title="@($"{session.OwnerName}'s conversation, shared with you read-only")">@session.OwnerName</span>
+                                        <span class="account-badge account-badge-lead" title="@($"Conversation owned by {session.OwnerName}")">@session.OwnerName</span>
                                     }
                                     @SessionSize.Text(session)
                                 </div>
@@ -136,6 +139,9 @@
                 }
                 }
             </div>
+                </section>
+                }
+            }
         }
         </ChildContent>
         </LoadingSection>
@@ -145,16 +151,10 @@
 @code {
     private List<SessionDto> _sessions = [];
     private string? _search;
-    private string? _whose = "all";
+    private Guid _userId;
     private bool _importing;
 
     private IEnumerable<SessionDto> Filtered => _sessions
-        .Where(s => _whose switch
-        {
-            "mine" => s.Access == SessionAccess.Owner,
-            "shared" => s.Access != SessionAccess.Owner,
-            _ => true,
-        })
         .Where(s => string.IsNullOrWhiteSpace(_search)
                     || s.Title.Contains(_search, StringComparison.OrdinalIgnoreCase)
                     || (s.RepositoryUrl?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
@@ -173,7 +173,11 @@
 
     protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.Kind is ManagerEventKind.SessionChanged or ManagerEventKind.SessionRemoved or ManagerEventKind.AgentChanged or ManagerEventKind.AgentRemoved;
 
-    protected override async Task LoadAsync() => _sessions = await Api.ListSessionsAsync();
+    protected override async Task LoadAsync()
+    {
+        _userId = (await Me.GetAsync()).Id;
+        _sessions = await Api.ListSessionsAsync();
+    }
 
     private async Task ImportAsync(IBrowserFile? file)
     {

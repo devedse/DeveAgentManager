@@ -23,7 +23,7 @@ else
                     <div class="list-main">
                         <div class="list-title">
                             @agent.Name
-                            @if (agent.Access != AgentAccess.Owner)
+                            @if (ShowOwner || agent.Access != AgentAccess.Owner)
                             {
                                 <span class="account-badge" title="@ShareText(agent)">@agent.OwnerName</span>
                             }
@@ -111,6 +111,9 @@ else
     public bool ShowRunner { get; set; }
 
     [Parameter]
+    public bool ShowOwner { get; set; }
+
+    [Parameter]
     public string EmptyText { get; set; } = "Start an agent to work on a repository.";
 
     [Parameter]
@@ -119,6 +122,7 @@ else
     /// <summary>Whose agent it is and what the signed-in user may do with it.</summary>
     public static string ShareText(AgentDto agent) => agent.Access switch
     {
+        AgentAccess.Owner => $"Agent owned by {agent.OwnerName}",
         AgentAccess.Write => $"{agent.OwnerName}'s agent, shared with you read-write (it runs with the login it is switched to)",
         AgentAccess.Read => $"{agent.OwnerName}'s agent, shared with you read-only",
         _ => $"{agent.OwnerName}'s agent, on a Runner you manage",
