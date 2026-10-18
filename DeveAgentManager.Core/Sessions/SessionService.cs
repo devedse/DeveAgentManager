@@ -26,13 +26,15 @@ public sealed class SessionService(
     SessionFileStore files,
     ManagerOptions options,
     ManagerEvents events,
-    ILogger<SessionService> logger)
+    ILogger<SessionService> logger,
+    DeveAgentManager.Core.Diagnostics.MemoryDiagnostics? memory = null)
 {
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly Dictionary<Guid, (DateTime UpdatedAt, string Text)> _previews = new();
     /// <summary>The latest reply of each agent whose conversations <paramref name="user"/> can read.</summary>
     public async Task<List<DeveAgentManager.Contracts.AgentReplyPreviewDto>> ReplyPreviewsAsync(CurrentUser user, CancellationToken ct)
     {
+        using var observation = memory?.Begin("reply-previews");
         await _previewGate.WaitAsync(ct);
         try
         {
@@ -57,6 +59,7 @@ public sealed class SessionService(
                 }
                 if (cached.Text.Length > 0) result.Add(new(session.AgentId!.Value, cached.Text));
             }
+            observation?.Complete();
             return result;
         }
         finally { _previewGate.Release(); }
@@ -125,7 +128,10 @@ public sealed class SessionService(
     public async Task<DeveSession> LoadAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         var path = PathFor(sessionId);
-        return File.Exists(path) ? DeveSession.FromJson(await File.ReadAllTextAsync(path, cancellationToken)) : new DeveSession();
+        using var observation = memory?.BeginFile("saved-history-load", sessionId, path);
+        var result = File.Exists(path) ? DeveSession.FromJson(await File.ReadAllTextAsync(path, cancellationToken)) : new DeveSession();
+        observation?.Complete();
+        return result;
     }
 
     /// <summary>
@@ -310,10 +316,20 @@ public sealed class SessionService(
 
             try
             {
-                var content = await shell.DownloadAsync(runner, file.Path, cancellationToken);
-                if (content is null) throw new IOException("Could not download the current conversation.");
-
-                var deve = _formats[session.HarnessId].Read(content);
+                using var observation = memory?.Begin("session-sync", session.Id, file.Size, session.HarnessId);
+                string content;
+                using (var download = memory?.Begin("history-download", session.Id, file.Size, session.HarnessId))
+                {
+                    content = await shell.DownloadAsync(runner, file.Path, cancellationToken)
+                        ?? throw new IOException("Could not download the current conversation.");
+                    download?.Complete();
+                }
+                DeveSession deve;
+                using (var parse = memory?.Begin("native-history-parse", session.Id, file.Size, session.HarnessId))
+                {
+                    deve = _formats[session.HarnessId].Read(content);
+                    parse?.Complete();
+                }
                 await SaveAsync(session.Id, deve, cancellationToken);
                 Apply(session, deve, session.Agent?.Name);
                 if (session.Agent is { } agent) UpdateLastAssistantMessage(agent, deve);
@@ -323,6 +339,7 @@ public sealed class SessionService(
                 session.LastSyncedAt = DateTime.UtcNow;
                 await db.SaveChangesAsync(cancellationToken);
                 events.SessionChanged(session.Id, session.AgentId);
+                observation?.Complete();
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -563,6 +580,7 @@ public sealed class SessionService(
     /// <summary>Populate existing agents from local saved conversations, including stopped/offline runners.</summary>
     public async Task BackfillMessageTimesAsync(CancellationToken ct = default)
     {
+        using var observation = memory?.Begin("startup-message-backfill");
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var existing = await db.Sessions.Include(s => s.Agent).Where(s => s.Agent != null && s.Agent.LastAssistantMessageAt == null).ToListAsync(ct);
         foreach (var saved in existing)
@@ -572,6 +590,7 @@ public sealed class SessionService(
             { logger.LogWarning(ex, "Could not read saved message timestamps for session {Session}", saved.Id); }
         }
         await db.SaveChangesAsync(ct);
+        observation?.Complete();
     }
 
     internal static void Apply(StoredSession stored, DeveSession session, string? agentName)
@@ -590,14 +609,22 @@ public sealed class SessionService(
 
     private async Task SaveAsync(Guid sessionId, DeveSession session, CancellationToken cancellationToken)
     {
+        using var observation = memory?.Begin("saved-history-write", sessionId);
         Directory.CreateDirectory(options.SessionsDirectory);
         var path = PathFor(sessionId);
         await _writeLock.WaitAsync(cancellationToken);
         try
         {
             // Write next to it and move, so a reader never sees half a file.
-            await File.WriteAllTextAsync(path + ".tmp", session.ToJson(), cancellationToken);
+            string json;
+            using (var serialize = memory?.Begin("history-serialize", sessionId))
+            {
+                json = session.ToJson();
+                serialize?.Complete();
+            }
+            await File.WriteAllTextAsync(path + ".tmp", json, cancellationToken);
             File.Move(path + ".tmp", path, overwrite: true);
+            observation?.Complete();
         }
         finally
         {

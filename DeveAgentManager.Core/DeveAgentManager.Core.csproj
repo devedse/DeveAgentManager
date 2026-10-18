@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.Extensions" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.750501" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.13" />
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="10.0.13" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.13" />
