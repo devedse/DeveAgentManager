@@ -26,16 +26,14 @@ public sealed class SessionService(
     SessionFileStore files,
     ManagerOptions options,
     ManagerEvents events,
-    ILogger<SessionService> logger,
-    DeveAgentManager.Core.Diagnostics.MemoryDiagnostics? memory = null)
+    ILogger<SessionService> logger)
 {
-    private readonly NativeHistoryStore _native = new(options.SessionsDirectory, memory);
+    private readonly NativeHistoryStore _native = new(options.SessionsDirectory);
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly Dictionary<Guid, (DateTime Version, string Text)> _previews = new();
     /// <summary>The latest reply of each agent whose conversations <paramref name="user"/> can read.</summary>
     public async Task<List<DeveAgentManager.Contracts.AgentReplyPreviewDto>> ReplyPreviewsAsync(CurrentUser user, CancellationToken ct)
     {
-        using var observation = memory?.Begin("reply-previews");
         await _previewGate.WaitAsync(ct);
         try
         {
@@ -62,7 +60,6 @@ public sealed class SessionService(
                 }
                 if (cached.Text.Length > 0) result.Add(new(session.AgentId!.Value, cached.Text));
             }
-            observation?.Complete();
             return result;
         }
         finally { _previewGate.Release(); }
@@ -131,7 +128,6 @@ public sealed class SessionService(
     public async Task<DeveSession> LoadAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         var path = PathFor(sessionId);
-        using var observation = memory?.BeginFile("saved-history-load", sessionId, path);
         var result = await _native.LoadAsync(sessionId, _formats, cancellationToken);
         if (result is null)
         {
@@ -142,7 +138,6 @@ public sealed class SessionService(
             }
             else result = new DeveSession();
         }
-        observation?.Complete();
         return result;
     }
 
@@ -341,19 +336,16 @@ public sealed class SessionService(
                 var incremental = _formats[session.HarnessId].SupportsIncrementalRead && stamp is not null;
                 if (incremental && session.SourceSize == file.Size && session.SourcePath == file.Path
                     && await _native.IsCurrentAsync(session.Id, session.HarnessId, file.Path, file.Size, stamp!, cancellationToken)) continue;
-                using var observation = memory?.Begin("session-sync", session.Id, file.Size, session.HarnessId);
                 DeveSession deve;
                 if (incremental)
                 {
                     var sync = await _native.SyncAsync(session.Id, _formats[session.HarnessId], file.Path, file.Size, stamp!,
                         async (offset, hash, output, ct) =>
                         {
-                            using var download = memory?.Begin("history-download", session.Id, file.Size - offset, session.HarnessId);
                             var ok = await shell.DownloadHistoryRangeAsync(runner, file.Path, offset, file.Size, hash, output, ct);
-                            download?.Complete();
                             return new NativeHistoryTransfer(ok is not null, ok);
                         }, cancellationToken);
-                    if (!sync.Changed && session.SourceSize == file.Size && session.SourcePath == file.Path) { observation?.Complete(); continue; }
+                    if (!sync.Changed && session.SourceSize == file.Size && session.SourcePath == file.Path) continue;
                     deve = sync.Metadata;
                     File.Delete(PathFor(session.Id)); // The verified native copy is now the authoritative full history.
                 }
@@ -372,7 +364,6 @@ public sealed class SessionService(
                 session.LastSyncedAt = DateTime.UtcNow;
                 await db.SaveChangesAsync(cancellationToken);
                 events.SessionChanged(session.Id, session.AgentId);
-                observation?.Complete();
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -626,7 +617,6 @@ public sealed class SessionService(
     /// <summary>Populate existing agents from local saved conversations, including stopped/offline runners.</summary>
     public async Task BackfillMessageTimesAsync(CancellationToken ct = default)
     {
-        using var observation = memory?.Begin("startup-message-backfill");
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var existing = await db.Sessions.Include(s => s.Agent).Where(s => s.Agent != null && s.Agent.LastAssistantMessageAt == null).ToListAsync(ct);
         foreach (var saved in existing)
@@ -641,7 +631,6 @@ public sealed class SessionService(
             { logger.LogWarning(ex, "Could not read saved message timestamps for session {Session}", saved.Id); }
         }
         await db.SaveChangesAsync(ct);
-        observation?.Complete();
     }
 
     internal static void Apply(StoredSession stored, DeveSession session, string? agentName)
@@ -660,22 +649,16 @@ public sealed class SessionService(
 
     private async Task SaveAsync(Guid sessionId, DeveSession session, CancellationToken cancellationToken)
     {
-        using var observation = memory?.Begin("saved-history-write", sessionId);
         Directory.CreateDirectory(options.SessionsDirectory);
         var path = PathFor(sessionId);
         await _writeLock.WaitAsync(cancellationToken);
         try
         {
             // Write next to it and move, so a reader never sees half a file.
-            using (var serialize = memory?.Begin("history-serialize", sessionId))
-            {
-                await using var stream = new FileStream(path + ".tmp", FileMode.Create, FileAccess.Write, FileShare.None, 65536, true);
+            await using (var stream = new FileStream(path + ".tmp", FileMode.Create, FileAccess.Write, FileShare.None, 65536, true))
                 await session.WriteAsync(stream, cancellationToken);
-                serialize?.Complete();
-            }
             File.Move(path + ".tmp", path, overwrite: true);
             await _native.DeleteAsync(sessionId, cancellationToken);
-            observation?.Complete();
         }
         finally
         {

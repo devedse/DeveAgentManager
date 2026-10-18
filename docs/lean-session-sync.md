@@ -86,10 +86,13 @@ preserved statuses/rules and reduced measured allocations from approximately
 instead of repeatedly rebuilding expressions through the small global regex cache.
 Polling frequency, matching timeouts and status rules are preserved.
 
-Automatic memory evidence remains enabled as before. Compare the deployed
-`latest.zip` with earlier evidence: download markers now describe suffix bytes,
-and native-parse markers describe the bytes actually reparsed. Full loads should
-correspond to explicit history operations or one-time legacy migration, rather
-than list refreshes. Compare CPU outside trace collection windows, allocations,
-RSS and GC activity. Local tests and measurements do not establish the live
-Manager's deployed footprint; record that result separately after rollout.
+The temporary automatic memory collector has been removed after deployment
+verification. There are no background memory samples, EventPipe captures or ZIP
+refreshes. Existing files under `/data/diagnostics/memory/` remain available and
+may be deleted when no longer needed; normal application logs remain enabled.
+
+The deployed 1.0.187 capture confirmed suffix transfers and successful syncs.
+Full-history reads still allocate proportionally to the conversation size, and
+a short capture does not prove that all retained memory has been reclaimed.
+Future investigations can use external .NET diagnostic tools when needed,
+rather than leaving an automatic production collector running.

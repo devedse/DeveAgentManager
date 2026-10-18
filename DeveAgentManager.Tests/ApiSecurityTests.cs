@@ -30,7 +30,6 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
         protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
         {
             builder.UseSetting("DATA_DIR", _data);
-            builder.UseSetting("MEMORY_DIAGNOSTICS_ENABLED", "false");
             builder.UseSetting("ADMIN_USERNAME", "admin");
             builder.UseSetting("ADMIN_PASSWORD", Password);
             builder.UseSetting("PROXMOX_URL", "");

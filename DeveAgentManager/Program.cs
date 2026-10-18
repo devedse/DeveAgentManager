@@ -48,8 +48,6 @@ builder.Services.AddSingleton(new DeveAgentManager.Logging.ManagerLogStore(manag
 builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider, DeveAgentManager.Logging.ManagerLogProvider>();
 
 var app = builder.Build();
-// Start observation before migrations/backfill; the hosted-service start is idempotent.
-await app.Services.GetRequiredService<DeveAgentManager.Core.Diagnostics.MemoryDiagnostics>().StartAsync(app.Lifetime.ApplicationStopping);
 
 await using (var db = await app.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync())
 {

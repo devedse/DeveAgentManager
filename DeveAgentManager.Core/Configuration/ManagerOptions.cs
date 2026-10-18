@@ -53,8 +53,6 @@ public sealed class ManagerOptions
 
     public string SshDirectory => Path.Combine(DataDirectory, "ssh");
 
-    public bool MemoryDiagnosticsEnabled { get; init; }
-
     public string LogsDirectory => Path.Combine(DataDirectory, "logs");
 
     public string SessionsDirectory => Path.Combine(DataDirectory, "sessions");
@@ -71,9 +69,6 @@ public sealed class ManagerOptions
         return new ManagerOptions
         {
             DataDirectory = Path.GetFullPath(dataDirectory),
-            MemoryDiagnosticsEnabled = Value(configuration, "MEMORY_DIAGNOSTICS_ENABLED") is { } memorySetting
-                ? string.Equals(memorySetting, "true", StringComparison.OrdinalIgnoreCase)
-                : string.Equals(configuration["DOTNET_RUNNING_IN_CONTAINER"], "true", StringComparison.OrdinalIgnoreCase),
             AdminUsername = Value(configuration, "ADMIN_USERNAME") ?? "admin",
             AdminPassword = Value(configuration, "ADMIN_PASSWORD") ?? DefaultAdminPassword,
             ResetAdminPassword = string.Equals(Value(configuration, "RESET_ADMIN_PASSWORD"), "true", StringComparison.OrdinalIgnoreCase),

@@ -56,8 +56,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AgentQuickCommands>();
         services.AddSingleton<RunnerSetupService>();
         services.AddSingleton<RunnerDesktop>();
-        services.AddSingleton<DeveAgentManager.Core.Diagnostics.MemoryDiagnostics>();
-        services.AddHostedService(sp => sp.GetRequiredService<DeveAgentManager.Core.Diagnostics.MemoryDiagnostics>());
         services.AddSingleton<SessionService>();
         services.AddSingleton<SessionImageStore>();
         services.AddHostedService<AgentJobCompletions>();

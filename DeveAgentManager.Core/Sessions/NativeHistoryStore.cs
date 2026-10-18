@@ -9,7 +9,7 @@ namespace DeveAgentManager.Core.Sessions;
 internal sealed record NativeHistoryTransfer(bool PrefixMatches, string? SnapshotSha256 = null);
 
 /// <summary>Verified native history on disk; ordinary syncs parse only appended records into compact metadata.</summary>
-internal sealed class NativeHistoryStore(string root, DeveAgentManager.Core.Diagnostics.MemoryDiagnostics? memory = null)
+internal sealed class NativeHistoryStore(string root)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     internal sealed class State
@@ -137,7 +137,6 @@ internal sealed class NativeHistoryStore(string root, DeveAgentManager.Core.Diag
             // An unterminated last line must be reparsed when more bytes arrive, even if it used to be valid JSON.
             var parseOffset = reusable && state.EndsWithNewline ? offset : 0;
             if (parseOffset == 0) state.Cursor = new();
-            using (var parse = memory?.Begin("native-history-parse", id, size - parseOffset, format.HarnessId))
             using (var input = File.OpenRead(path))
             {
                 input.Position = parseOffset;
@@ -149,7 +148,6 @@ internal sealed class NativeHistoryStore(string root, DeveAgentManager.Core.Diag
                     format.AppendLines(state.Cursor, [line]);
                     state.Cursor.Compact(start);
                 }
-                parse?.Complete();
             }
             await using (var input = File.OpenRead(path))
             {
