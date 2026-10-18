@@ -39,6 +39,10 @@
             </ChildContent>
         </LoadingSection>
     </div>
+    @if (Loaded)
+    {
+        <GroupedAgentTable Agents="Filtered" User="_user" ShowRunner="true" AdministrativeOnly="true" />
+    }
 </MudContainer>
 
 @code {

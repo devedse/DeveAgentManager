@@ -1,25 +1,40 @@
-@foreach (var section in new[] { "Your agents", "Shared with you", "Other users’ agents" })
-{
-    var own = section == "Your agents";
+@{
     var agents = Agents.ForAgentList(User)
-        .Where(a => (a.OwnerId == User?.Id ? "Your agents" : a.SharedWithMe ? "Shared with you" : "Other users’ agents") == section)
+        .Where(a => AdministrativeOnly == (a.OwnerId != User?.Id && !a.SharedWithMe))
         .ByLastReply().Take(LimitPerSection).ToList();
-    @if (own || agents.Count > 0)
+}
+@if (AdministrativeOnly)
+{
+    @if (agents.Count > 0)
     {
-        <section aria-label="@section">
-            <div class="session-group-heading"><h2 class="mud-typography mud-typography-h6">@section</h2></div>
-            <AgentTable Agents="agents" ShowRunner="ShowRunner" ShowOwner="@(!own)" EmptyText="@EmptyText">
-                <EmptyContent>@EmptyContent</EmptyContent>
-            </AgentTable>
+        <section class="panel mt-4" aria-label="Other users’ agents">
+            <div class="panel-header">
+                <div class="help-heading"><MudText Typo="Typo.h6">Other users’ agents</MudText>
+                <HelpTip Label="Other users’ agents"><p>Agents visible through your management permissions. Agents shared with you appear with your own agents above.</p></HelpTip></div>
+            </div>
+            <AgentTable Agents="agents" ShowRunner="ShowRunner" ShowOwner="true" />
         </section>
     }
+}
+else
+{
+    <section aria-label="Your agents">
+        <div class="session-group-heading help-heading">
+            <MudText Typo="Typo.h6">Your agents</MudText>
+            <HelpTip Label="Your agents"><p>Your own agents and agents shared with you, ordered by their latest reply.</p></HelpTip>
+        </div>
+        <AgentTable Agents="agents" ShowRunner="ShowRunner" EmptyText="@EmptyText">
+            <EmptyContent>@EmptyContent</EmptyContent>
+        </AgentTable>
+    </section>
 }
 
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<AgentDto> Agents { get; set; } = [];
     [Parameter, EditorRequired] public CurrentUserDto? User { get; set; }
+    [Parameter] public bool AdministrativeOnly { get; set; }
     [Parameter] public bool ShowRunner { get; set; }
     [Parameter] public int LimitPerSection { get; set; } = int.MaxValue;
-    [Parameter] public string EmptyText { get; set; } = "No agents of yours match.";
+    [Parameter] public string EmptyText { get; set; } = "No agents match.";
     [Parameter] public RenderFragment? EmptyContent { get; set; }
 }

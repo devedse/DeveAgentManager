@@ -68,34 +68,46 @@ try {
     const own = page.getByRole('region', { name: 'Your agents', exact: true });
     const others = page.getByRole('region', { name: 'Other users’ agents', exact: true });
     await own.locator('.list-title').first().waitFor({ timeout: 60000 });
-    assert.deepEqual((await own.locator('.list-title').allInnerTexts()).map(text => expected.find(name => text.includes(name))), ['ten-minutes-ago', 'never-replied']);
+    assert.deepEqual((await own.locator('.list-title').allInnerTexts()).map(text => expected.find(name => text.includes(name))), ['just-now', 'ten-minutes-ago', 'never-replied']);
     assert.deepEqual((await others.locator('.list-title').allInnerTexts()).map(text => expected.find(name => text.includes(name))), ['an-hour-ago']);
-    const shared = page.getByRole('region', { name: 'Shared with you', exact: true });
-    await shared.locator('.list-title').filter({ hasText: 'just-now' }).waitFor();
-    assert.equal(await shared.locator('.agent-row').count(), 1);
+    assert.equal(await page.getByRole('region', { name: 'Shared with you', exact: true }).count(), 0, 'shared agents are in the normal list');
     assert.equal(await others.locator('.account-badge').count(), 1);
+    assert.equal(await own.locator('.agent-row').filter({ hasText: 'just-now' }).locator('.account-badge').count(), 1, 'shared owner remains visible to an admin');
     assert.deepEqual(await names('.app-nav .nav-agent-name'), ['just-now', 'ten-minutes-ago', 'never-replied'], 'sidebar excludes agents visible only through administration');
     for (const path of ['/', `/runners/${runnerId}`]) {
         await page.goto(base + path);
         await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.list-title').first().waitFor({ timeout: 60000 });
-        assert.deepEqual((await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.list-title').allInnerTexts()).map(text => expected.find(name => text.includes(name))), ['ten-minutes-ago', 'never-replied'], `${path}: own order`);
-        assert.equal(await page.getByRole('region', { name: 'Shared with you', exact: true }).locator('.agent-row').count(), 1);
+        assert.deepEqual((await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.list-title').allInnerTexts()).map(text => expected.find(name => text.includes(name))), ['just-now', 'ten-minutes-ago', 'never-replied'], `${path}: own order`);
+        assert.equal(await page.getByRole('region', { name: 'Shared with you', exact: true }).count(), 0);
         assert.equal(await page.getByRole('region', { name: 'Other users’ agents', exact: true }).locator('.agent-row').count(), 1);
+    }
+    for (const path of ['/agents', '/', `/runners/${runnerId}`]) {
+        await page.goto(base + path);
+        await others.locator('.list-title').first().waitFor({ timeout: 60000 });
+        assert.ok(await page.evaluate(() => {
+            const primary = document.querySelector('section[aria-label="Your agents"]');
+            const admin = document.querySelector('section[aria-label="Other users’ agents"]');
+            return admin.classList.contains('panel') && primary.closest('.panel') !== admin.closest('.panel')
+                && !primary.closest('.panel').contains(admin);
+        }), `${path}: administrative agents have a separate panel`);
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.waitForTimeout(500);
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${path}: both panels fit phones`);
+        await page.setViewportSize({ width: 1400, height: 1000 });
     }
     const originalAgents = [...agents];
     for (let n = 0; n < 9; n++) agents.push({ ...agents[0], id: `00000000-0000-0000-0000-0000000002${n}0`, name: `recent-other-${n}`, lastAssistantMessageAt: at(0) });
     await page.goto(base + '/');
     await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.list-title').first().waitFor({ timeout: 60000 });
-    assert.equal(await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.agent-row').count(), 2, 'dashboard cap cannot hide own agents behind administrative agents');
-    assert.equal(await page.getByRole('region', { name: 'Shared with you', exact: true }).locator('.agent-row').count(), 1);
+    assert.equal(await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.agent-row').count(), 3, 'dashboard cap cannot hide own agents behind administrative agents');
     assert.equal(await page.getByRole('region', { name: 'Other users’ agents', exact: true }).locator('.agent-row').count(), 8);
     agents.splice(0, agents.length, ...originalAgents);
     await page.goto(base + '/agents');
     await own.locator('.list-title').first().waitFor({ timeout: 60000 });
     await page.getByPlaceholder('Search agents').fill('just-now');
-    await own.getByText('No agents of yours match.').waitFor();
+    await own.locator('.list-title').filter({ hasText: 'just-now' }).waitFor();
     await others.waitFor({ state: 'detached' });
-    assert.equal(await shared.locator('.agent-row').count(), 1);
+    assert.equal(await own.locator('.agent-row').count(), 1);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(500); // Allow the navigation drawer to settle after resizing.
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'ownership sections fit phones');
@@ -166,7 +178,7 @@ try {
     await page.goto(base + '/agents');
     await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.list-title').first().waitFor({ timeout: 60000 });
     assert.equal(await page.getByRole('region', { name: 'Other users’ agents', exact: true }).count(), 0, 'ordinary users have no administrative section');
-    assert.equal(await page.getByRole('region', { name: 'Shared with you', exact: true }).locator('.agent-row').count(), 1);
+    assert.equal(await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.agent-row').count(), 3);
     assert.equal(await page.locator('.agent-table .agent-row').count(), 3, 'administrative-only agents are excluded from the page');
     for (const path of ['/', `/runners/${runnerId}`]) {
         await page.goto(base + path);

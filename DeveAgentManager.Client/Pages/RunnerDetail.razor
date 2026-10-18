@@ -107,6 +107,10 @@
                         </MudTabPanel>
                     </MudTabs>
                 </div>
+                @if (_tab == 0)
+                {
+                    <GroupedAgentTable Agents="VisibleAgents" User="_user" AdministrativeOnly="true" />
+                }
             </MudItem>
             <MudItem xs="12" lg="4">
                 @if (_runner.Kind == RunnerKind.Desktop)

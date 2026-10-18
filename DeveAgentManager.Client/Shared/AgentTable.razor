@@ -23,7 +23,7 @@ else
                     <div class="list-main">
                         <div class="list-title">
                             @agent.Name
-                            @if (ShowOwner || agent.Access != AgentAccess.Owner)
+                            @if (ShowOwner || agent.SharedWithMe || agent.Access != AgentAccess.Owner)
                             {
                                 <span class="account-badge" title="@ShareText(agent)">@agent.OwnerName</span>
                             }
