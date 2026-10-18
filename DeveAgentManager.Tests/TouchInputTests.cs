@@ -6,6 +6,18 @@ namespace DeveAgentManager.Tests;
 public sealed class TouchInputTests
 {
     [Fact]
+    public async Task NotificationSoundsOnlyPlayForNewEnabledEvents()
+    {
+        var folder = Path.Combine(AppContext.BaseDirectory, "Js");
+        using var process = Process.Start(new ProcessStartInfo("node", [Path.Combine(folder, "notification-sounds.test.cjs"), Path.Combine(folder, "notification-sounds.js")])
+            { RedirectStandardOutput = true, RedirectStandardError = true })!;
+        var output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var error = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+        await process.WaitForExitAsync(TestContext.Current.CancellationToken);
+        Assert.True(process.ExitCode == 0, await output + await error);
+    }
+
+    [Fact]
     public async Task SchedulerUsesLocalTimezoneAndRejectsAmbiguousClockChanges()
     {
         var folder = Path.Combine(AppContext.BaseDirectory, "Js");

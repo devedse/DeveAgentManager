@@ -1,4 +1,6 @@
 @inherits LiveComponent
+@inject IJSRuntime JS
+@inject SignedInUser Me
 <MudMenu PopoverClass="agent-attention-popover" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
     <ActivatorContent>
         <MudBadge Content="@_items.Count" Visible="@(_items.Count > 0)" Color="Color.Warning" Overlap="true">
@@ -7,6 +9,20 @@
     </ActivatorContent>
     <ChildContent>
         <MudMenuItem Href="activity" Icon="@Icons.Material.Rounded.MonitorHeart">View all agent statuses</MudMenuItem>
+        <MudDivider />
+        <div class="help-heading">
+            <span>Sound effects</span>
+            <HelpTip Label="notification sounds"><p>Play a gentle sound when your agent or an agent shared with you finishes or reaches a usage limit, including a limit with automatic continuation. Each switch previews its sound when enabled. Saved for your account in this browser. Keep a Manager tab open and interact with it after opening to allow audio. Existing statuses do not play again on reload.</p></HelpTip>
+        </div>
+        @if (!_soundReady)
+        {
+            <MenuLoading Label="Loading sound preferences" />
+        }
+        else
+        {
+            <MudMenuItem Icon="@(_sounds.Finished ? Icons.Material.Rounded.VolumeUp : Icons.Material.Rounded.VolumeOff)" OnClick='() => ToggleSoundAsync("finished")' AutoClose="false">Finished sounds: @(_sounds.Finished ? "On" : "Off")</MudMenuItem>
+            <MudMenuItem Icon="@(_sounds.Limit ? Icons.Material.Rounded.VolumeUp : Icons.Material.Rounded.VolumeOff)" OnClick='() => ToggleSoundAsync("limit")' AutoClose="false">Usage-limit sounds: @(_sounds.Limit ? "On" : "Off")</MudMenuItem>
+        }
         <MudDivider />
         @if (!Loaded)
         {
@@ -53,7 +69,51 @@
     }
     private readonly CancellationTokenSource _stop = new();
     protected override async Task OnInitializedAsync() { await base.OnInitializedAsync(); _ = TickAsync(); }
-    protected override async Task LoadAsync() => _items = await Api.ListAttentionAsync();
+    private Guid _userId;
+    private bool _soundReady;
+    private SoundPreferences _sounds = new();
+    public sealed class SoundPreferences
+    {
+        public bool Finished { get; set; }
+        public bool Limit { get; set; }
+    }
+    private object[]? _soundStates;
+    protected override async Task LoadAsync()
+    {
+        _userId = (await Me.GetAsync()).Id;
+        _items = await Api.ListAttentionAsync();
+        try
+        {
+            var agents = await Api.ListAgentsAsync();
+            _soundStates = agents.Where(a => a.OwnerId == _userId || a.SharedWithMe).Select(a => (object)new
+            {
+                id = a.Id,
+                limit = a.State == AgentState.Running && a.Activity?.Status == AgentActivityStatus.UsageLimited
+                    ? $"{a.Activity.Since:O}:{a.Activity.Evidence}" : null,
+                finished = a.State == AgentState.Running && a.Activity is
+                    { Status: AgentActivityStatus.Ready, CurrentTurnCompleted: true, CompletedAt: not null, BackgroundTaskCount: not > 0 }
+                    ? a.Activity.CompletionSequence.ToString() : null
+            }).ToArray();
+        }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException) { }
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_userId == Guid.Empty) return;
+        if (!_soundReady)
+        {
+            _sounds = await JS.InvokeAsync<SoundPreferences>("damNotificationSounds.init", _userId.ToString());
+            _soundReady = true;
+            StateHasChanged();
+        }
+        if (_soundStates is { } states)
+        {
+            _soundStates = null;
+            await JS.InvokeVoidAsync("damNotificationSounds.observe", (object)states);
+        }
+    }
+    private async Task ToggleSoundAsync(string kind) =>
+        _sounds = await JS.InvokeAsync<SoundPreferences>("damNotificationSounds.toggle", kind);
     private async Task TickAsync()
     {
         try { using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15)); while (await timer.WaitForNextTickAsync(_stop.Token)) await ReloadAsync(); }

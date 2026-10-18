@@ -145,6 +145,15 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         var things = await SeedAsync(User.BootstrapId);
         var (reader, readerId) = await SignedInAsNewUserWithIdAsync(roles);
         Assert.Equal(AgentAccess.Owner, (await AgentAsync(reader, things.AgentId)).Access);
+        Assert.False((await AgentAsync(reader, things.AgentId)).SharedWithMe);
+        var explicitSharing = manager.Services.GetRequiredService<Sharing>();
+        await explicitSharing.ShareAgentAsync(TestUsers.Admin, things.AgentId, readerId, AgentAccess.Read);
+        Assert.True((await AgentAsync(reader, things.AgentId)).SharedWithMe);
+        Assert.True((await reader.GetFromJsonAsync<List<AgentDto>>("/api/agents", ApiJson.Options))!.Single(a => a.Id == things.AgentId).SharedWithMe);
+        if (roles == UserRoles.Admin)
+            Assert.True((await reader.GetFromJsonAsync<RunnerDto>($"/api/runners/{things.RunnerId}", ApiJson.Options))!.Agents.Single(a => a.Id == things.AgentId).SharedWithMe);
+        await explicitSharing.UnshareAgentAsync(TestUsers.Admin, things.AgentId, readerId);
+        Assert.False((await AgentAsync(reader, things.AgentId)).SharedWithMe);
         Assert.Contains(things.AgentId.ToString(), await reader.GetStringAsync("/api/agents"));
         Assert.Equal(HttpStatusCode.OK, (await reader.GetAsync($"/api/agents/{things.AgentId}/session")).StatusCode);
         foreach (var id in new[] { things.SessionId, things.ImportedSessionId })

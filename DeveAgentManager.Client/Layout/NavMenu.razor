@@ -111,6 +111,7 @@
         var runners = await Api.ListRunnersAsync();
         _readyRunners = runners.Count(r => r.State == RunnerState.Ready);
         _liveAgents = runners.SelectMany(r => r.Agents)
+            .Where(a => a.OwnerId == _user.Id || a.SharedWithMe)
             .Where(a => a.State is AgentState.Running or AgentState.Starting)
             .ByLastReply()
             .ToList();

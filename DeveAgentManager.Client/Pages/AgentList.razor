@@ -28,13 +28,14 @@
         <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading agents">
             <Placeholder><SkeletonList Rows="5" /></Placeholder>
             <ChildContent>
-                @foreach (var own in new[] { true, false })
+                @foreach (var section in new[] { "Your agents", "Shared with you", "Other users’ agents" })
                 {
-                    var agents = Filtered.Where(a => (a.OwnerId == _userId) == own).ToList();
+                    var own = section == "Your agents";
+                    var agents = Filtered.Where(a => Section(a) == section).ToList();
                     @if (own || agents.Count > 0)
                     {
-                        <section aria-label="@(own ? "Your agents" : "Other users’ agents")">
-                            <div class="session-group-heading"><h2 class="mud-typography mud-typography-h6">@(own ? "Your agents" : "Other users’ agents")</h2></div>
+                        <section aria-label="@section">
+                            <div class="session-group-heading"><h2 class="mud-typography mud-typography-h6">@section</h2></div>
                             <AgentTable Agents="agents" ShowRunner="true" ShowOwner="@(!own)" EmptyText="@(own ? "No agents of yours match." : "No agents match.")">
                                 <EmptyContent>
                                     @if (_agents.Count == 0)
@@ -58,6 +59,9 @@
     private string? _filter = "all";
     private Guid _userId;
 
+    private string Section(AgentDto agent) => agent.OwnerId == _userId ? "Your agents"
+        : agent.SharedWithMe ? "Shared with you" : "Other users’ agents";
+
     private IReadOnlyList<AgentDto> Filtered => _agents
         .Where(a => _filter switch
         {
@@ -75,8 +79,11 @@
 
     protected override async Task LoadAsync()
     {
-        _userId = (await Me.GetAsync()).Id;
-        _agents = await Api.ListAgentsAsync();
+        var user = await Me.GetAsync();
+        _userId = user.Id;
+        var canBrowseOthers = user.Has(UserRoles.ConversationManager) || user.Has(UserRoles.RunnerManager);
+        _agents = (await Api.ListAgentsAsync())
+            .Where(a => a.OwnerId == _userId || a.SharedWithMe || canBrowseOthers).ToList();
     }
 
     private Task NewAgentAsync() => Dialogs.ShowAsync<NewAgentDialog>();

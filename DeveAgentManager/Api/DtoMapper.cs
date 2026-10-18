@@ -101,17 +101,17 @@ public sealed class DtoMapper(
             statuses.Get(runner.Id),
             runner.Agents.Select(a => (Agent: a, Access: AccessControl.ForAgent(user, a.OwnerId, a.Shares, access)))
                 .Where(a => a.Access >= AgentAccess.Listed).OrderByDescending(a => a.Agent.CreatedAt)
-                .Select(a => Agent(a.Agent, runner, a.Access)).ToList());
+                .Select(a => Agent(a.Agent, runner, a.Access, a.Agent.Shares.Any(s => s.UserId == user.Id))).ToList());
     }
 
     /// <summary>An agent loaded with its Runner (and the Runner's members), owner, shares and harness login.</summary>
     public static AgentDto Agent(Agent agent, CurrentUser user)
     {
         var runner = agent.Runner ?? throw new InvalidOperationException("Load the agent with its Runner.");
-        return Agent(agent, runner, AccessControl.ForAgent(user, agent.OwnerId, agent.Shares, AccessControl.ForRunner(user, runner.OwnerId, runner.Members)));
+        return Agent(agent, runner, AccessControl.ForAgent(user, agent.OwnerId, agent.Shares, AccessControl.ForRunner(user, runner.OwnerId, runner.Members)), agent.Shares.Any(s => s.UserId == user.Id));
     }
 
-    private static AgentDto Agent(Agent agent, Runner runner, AgentAccess access) => new(
+    private static AgentDto Agent(Agent agent, Runner runner, AgentAccess access, bool sharedWithMe) => new(
         agent.Id,
         runner.Id,
         agent.OwnerId,
@@ -139,7 +139,7 @@ public sealed class DtoMapper(
         agent.State == AgentState.Running && agent.Working,
         AgentActivityTracker.GetDto(agent, runnerState: runner.State),
         agent.LastAssistantMessageAt,
-        runner.Kind, agent.RunningAccountId);
+        runner.Kind, agent.RunningAccountId, sharedWithMe);
 
     /// <summary>A conversation loaded with its owner, shares, agent and workspace agent (see SessionService).</summary>
     public static SessionDto Session(StoredSession session, CurrentUser user)

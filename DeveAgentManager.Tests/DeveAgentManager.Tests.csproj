@@ -14,6 +14,7 @@
     <None Include="Desktop\*.py" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\DeveAgentManager.Core\Scripts\desktop.py" Link="Desktop\desktop.py" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\DeveAgentManager.Core\Scripts\dam-tools.py" Link="Desktop\dam-tools.py" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\DeveAgentManager\wwwroot\js\notification-sounds.js" Link="Js\notification-sounds.js" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\DeveAgentManager\wwwroot\js\schedule-time.js" Link="Js\schedule-time.js" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\DeveAgentManager\wwwroot\js\desktop-view.js" Link="Js\desktop-view.js" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\DeveAgentManager\wwwroot\js\terminal-touch-input.js" Link="Js\terminal-touch-input.js" CopyToOutputDirectory="PreserveNewest" />

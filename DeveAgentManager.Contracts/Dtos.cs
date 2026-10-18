@@ -179,7 +179,8 @@ public sealed record AgentDto(
     AgentActivityDto? Activity = null,
     DateTime? LastAssistantMessageAt = null,
     RunnerKind? RunnerKind = null,
-    Guid? RunningAccountId = null);
+    Guid? RunningAccountId = null,
+    bool SharedWithMe = false);
 
 /// <summary>An image in an agent's folder, for the icon picker. <paramref name="Path"/> is relative to the folder.</summary>
 /// <param name="Automatic">What the Manager would pick by itself.</param>
