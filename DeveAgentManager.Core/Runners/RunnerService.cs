@@ -75,13 +75,17 @@ public sealed partial class RunnerService(
     public async Task<List<Runner>> ListVisibleAsync(CurrentUser user, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await WithAccess(AccessControl.VisibleRunners(db, user)).OrderBy(r => r.Name).ToListAsync(cancellationToken);
+        var runners = await WithAccess(AccessControl.VisibleRunners(db, user)).OrderBy(r => r.Name).ToListAsync(cancellationToken);
+        await DeveAgentManager.Core.Agents.AgentAccountNames.LoadAsync(db, runners.SelectMany(r => r.Agents), cancellationToken);
+        return runners;
     }
 
     public async Task<Runner?> GetAsync(Guid runnerId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await WithAccess(db.Runners).FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken);
+        var runner = await WithAccess(db.Runners).FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken);
+        if (runner is not null) await DeveAgentManager.Core.Agents.AgentAccountNames.LoadAsync(db, runner.Agents, cancellationToken);
+        return runner;
     }
 
     private static IQueryable<Runner> WithAccess(IQueryable<Runner> runners) => runners.AsNoTracking().AsSplitQuery()

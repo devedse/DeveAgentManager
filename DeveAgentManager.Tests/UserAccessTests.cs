@@ -31,6 +31,44 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     private const string Password = "ketty-password-1";
 
     [Fact]
+    public async Task AgentRowsExposeTheRunningAccountNameRatherThanTheNextSelection()
+    {
+        // Keep this extra sign-in separate from the shared fixture's authentication rate-limit window.
+        using var isolatedManager = new ApiSecurityTests.Manager();
+        var requests = new UserAccessTests(isolatedManager);
+        var (client, owner) = await requests.SignedInAsNewUserWithIdAsync();
+        var fixture = await requests.SeedAsync(owner);
+        await using (var db = await requests.DbAsync())
+        {
+            var running = await db.Accounts.SingleAsync(a => a.Id == fixture.AccountId);
+            running.Name = "Active subscription";
+            var next = new Account { Id = Guid.NewGuid(), CreatedById = owner, HarnessId = "claude", Name = "Next selection", Kind = AccountKind.ApiKey };
+            db.Accounts.Add(next);
+            var agent = await db.Agents.SingleAsync(a => a.Id == fixture.AgentId);
+            agent.State = AgentState.Running;
+            agent.RunningAccountId = running.Id;
+            agent.AccountId = next.Id;
+            await db.SaveChangesAsync();
+        }
+        var detail = await requests.AgentAsync(client, fixture.AgentId);
+        Assert.Equal("Active subscription", detail.RunningAccountName);
+        Assert.Equal("Next selection", detail.AccountName);
+        var list = await client.GetFromJsonAsync<List<AgentDto>>("/api/agents", ApiJson.Options);
+        Assert.Equal("Active subscription", list!.Single(a => a.Id == fixture.AgentId).RunningAccountName);
+        var runner = await client.GetFromJsonAsync<RunnerDto>($"/api/runners/{fixture.RunnerId}", ApiJson.Options);
+        Assert.Equal("Active subscription", runner!.Agents.Single().RunningAccountName);
+        var runners = await client.GetFromJsonAsync<List<RunnerDto>>("/api/runners", ApiJson.Options);
+        Assert.Equal("Active subscription", runners!.Single(r => r.Id == fixture.RunnerId).Agents.Single().RunningAccountName);
+        await using (var db = await requests.DbAsync())
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == fixture.AgentId);
+            agent.AccountId = null; // A default selection must still describe the actual running account.
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal("Active subscription", (await requests.AgentAsync(client, fixture.AgentId)).RunningAccountName);
+    }
+
+    [Fact]
     public async Task BuildCheck_IsAvailableToAnySignedInUser_AndCannotBeCached()
     {
         var client = await SignedInAsNewUserAsync();

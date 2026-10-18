@@ -181,6 +181,8 @@ public class Agent
     public Guid? AccountId { get; set; }
     /// <summary>The login actually used by the current harness, including default selections.</summary>
     public Guid? RunningAccountId { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? RunningAccountName { get; set; }
     /// <summary>Persisted before remote enforcement. Blocks launch until an explicit permitted selection.</summary>
     public bool LoginBlocked { get; set; }
     public bool LoginStopPending { get; set; }

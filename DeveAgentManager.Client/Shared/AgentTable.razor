@@ -35,6 +35,16 @@ else
                             }
                             <span class="mono">@(agent.RepositoryUrl ?? agent.WorkingDirectory)</span>
                         </div>
+                        <div class="list-subtitle agent-account">
+                            @if (agent.State is AgentState.Running or AgentState.Starting)
+                            {
+                                <span>Account: @(agent.RunningAccountName ?? "Unknown")</span>
+                            }
+                            else
+                            {
+                                <span>Account on start: @(agent.AccountName ?? "Default")</span>
+                            }
+                        </div>
                     </div>
                 </a>
                 <div class="agent-row-state">

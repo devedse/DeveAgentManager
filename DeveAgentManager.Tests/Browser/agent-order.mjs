@@ -18,7 +18,7 @@ try {
     const at = minutesAgo => new Date(Date.now() - minutesAgo * 60000).toISOString();
     const agent = (n, name, lastReply, createdMinutesAgo) => ({ id: `00000000-0000-0000-0000-00000000001${n}`, runnerId, ownerId: runnerId, ownerName: 'Test user', access: 'Owner',
         runnerName: 'runner-01', runnerState: 'Ready', runnerHarnessIds: ['claude'], runnerToolIds: [], name, harnessId: 'claude', workingDirectory: `/work/${name}`,
-        state: 'Running', loginOwnerId: runnerId, loginOwnerName: 'Test user', createdAt: at(createdMinutesAgo), updatedAt: at(1), lastAssistantMessageAt: lastReply });
+        state: 'Running', runningAccountName: 'Active subscription', accountName: 'Next selection', loginOwnerId: runnerId, loginOwnerName: 'Test user', createdAt: at(createdMinutesAgo), updatedAt: at(1), lastAssistantMessageAt: lastReply });
     // Listed in the API in another order on purpose.
     const agents = [
         agent(1, 'an-hour-ago', at(60), 5000),
@@ -50,6 +50,13 @@ try {
     assert.deepEqual(await names('.activity-card-name h6'), expected, 'Agent activity');
     await page.goto(base + `/runners/${runnerId}`);
     assert.deepEqual(await names('.agent-table .agent-row .list-title'), expected, "the Runner's agents");
+    for (const path of ['/agents', '/', `/runners/${runnerId}`]) {
+        await page.goto(base + path);
+        const accountLabels = page.locator('.agent-table .agent-account');
+        await accountLabels.first().waitFor({ timeout: 60000 });
+        assert.equal(await accountLabels.count(), 4);
+        assert.ok((await accountLabels.allInnerTexts()).every(text => text.trim() === 'Account: Active subscription'), `${path}: active subscription labels`);
+    }
     // Admin access is Owner for everyone: grouping must use identity, not permission.
     const me = await (await context.request.get(base + '/api/me')).json();
     agents[0].ownerId = "00000000-0000-0000-0000-000000000099";

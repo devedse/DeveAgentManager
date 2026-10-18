@@ -40,13 +40,17 @@ public sealed partial class AgentService(
     public async Task<List<Agent>> ListVisibleAsync(CurrentUser user, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await WithAccess(AccessControl.VisibleAgents(db, user)).OrderByDescending(a => a.CreatedAt).ToListAsync(cancellationToken);
+        var agents = await WithAccess(AccessControl.VisibleAgents(db, user)).OrderByDescending(a => a.CreatedAt).ToListAsync(cancellationToken);
+        await AgentAccountNames.LoadAsync(db, agents, cancellationToken);
+        return agents;
     }
 
     public async Task<Agent?> GetAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await WithAccess(db.Agents).FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken);
+        var agent = await WithAccess(db.Agents).FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken);
+        if (agent is not null) await AgentAccountNames.LoadAsync(db, [agent], cancellationToken);
+        return agent;
     }
 
     private static IQueryable<Agent> WithAccess(IQueryable<Agent> agents) => agents.AsNoTracking().AsSplitQuery()
