@@ -10,6 +10,7 @@ using DeveAgentManager.Core.Ssh;
 using DeveAgentManager.Harnesses.Claude;
 using DeveAgentManager.Harnesses.Codex;
 using DeveAgentManager.Harnesses.Pi;
+using DeveAgentManager.Harnesses.Grok;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -19,6 +20,57 @@ namespace DeveAgentManager.Tests;
 public class NativeHistoryTransportTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact(Timeout = 60_000)]
+    public async Task GrokCompanionOnlyChangesSyncAuditAndExportWithTheAuthoritativeLog()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipWhen(!OperatingSystem.IsLinux() || !File.Exists("/usr/sbin/sshd"), "Requires isolated OpenSSH fixture.");
+        await using var fixture = await RunnerShellIntegrationTests.Fixture.StartAsync();
+        var options = new ManagerOptions { DataDirectory = fixture.Root + "/data" };
+        Directory.CreateDirectory(options.DataDirectory);
+        var factory = new Factory(options.DatabasePath);
+        var runner = fixture.Runner; runner.OwnerId = User.BootstrapId; runner.State = RunnerState.Ready;
+        var agent = new Agent { Id = Guid.NewGuid(), OwnerId = User.BootstrapId, Name = "Grok test", Runner = runner,
+            RunnerId = runner.Id, HarnessId = "grok", HarnessSessionId = GrokTests.Id, State = AgentState.Running, Working = true };
+        await using (var db = factory.CreateDbContext())
+        {
+            await db.Database.EnsureCreatedAsync(Ct); db.Agents.Add(agent); await db.SaveChangesAsync(Ct);
+        }
+        var nativeFormat = new GrokSessionFormat();
+        ISessionFormat format = new RootedFormat(nativeFormat, fixture.Root + "/home");
+        var service = new SessionService(factory, fixture.Shell, [format], [new GrokHarness()], new SessionImageStore(options), new SessionFileStore(options),
+            options, new ManagerEvents(), NullLogger<SessionService>.Instance);
+        await service.AttachToAgentAsync(runner, agent, null, Ct);
+        var saved = (await service.GetForAgentAsync(agent.Id, Ct))!;
+        var remote = format.GetPath(GrokTests.Id, "/workspace", DateTime.UtcNow);
+        var folder = Path.GetDirectoryName(remote)!; Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(remote, GrokTests.History + "\n", Ct);
+        var cache = "{\"type\":\"user\",\"testOnly\":\"" + new string('x', 200_000) + "\"}\n";
+        await File.WriteAllTextAsync(folder + "/chat_history.jsonl", cache, Ct);
+        await service.SyncRunnerAsync(runner, Ct);
+        const string suffix = "{\"type\":\"assistant\",\"content\":\"test-only later cache write\"}\n";
+        await File.AppendAllTextAsync(folder + "/chat_history.jsonl", suffix, Ct);
+        await service.SyncRunnerAsync(runner, Ct);
+        var log = new NativeHistoryStore(options.SessionsDirectory);
+        var companions = new SessionCompanionStore(options.SessionsDirectory);
+        var state = (await log.SummaryAsync(saved.Id, Ct))!;
+        Assert.True(await companions.HasPendingVerificationAsync(saved.Id, state.CompanionManifest, Ct));
+        var export = await service.ExportAsync(saved.Id, "grok", Ct);
+        Assert.EndsWith(".grok.json", export.FileName);
+        var restored = nativeFormat.Read(export.Content);
+        Assert.Equal(cache + suffix, nativeFormat.WriteCompanionFiles(restored, GrokTests.Id, "/workspace")["chat_history.jsonl"]);
+        state = (await log.SummaryAsync(saved.Id, Ct))!;
+        Assert.False(await companions.HasPendingVerificationAsync(saved.Id, state.CompanionManifest, Ct));
+        var other = new User { Id = Guid.NewGuid(), Username = "grok-copy-owner", DisplayName = "Copy owner" };
+        var copyAgent = new Agent { Id = Guid.NewGuid(), OwnerId = other.Id, Name = "Copy", RunnerId = runner.Id, HarnessId = "grok",
+            HarnessSessionId = Guid.NewGuid().ToString(), WorkingDirectory = "/new-workspace" };
+        await using (var db = factory.CreateDbContext()) { db.Users.Add(other); db.Agents.Add(copyAgent); await db.SaveChangesAsync(Ct); }
+        await service.AttachToAgentAsync(runner, copyAgent, saved.Id, Ct);
+        var copied = format.GetPath(copyAgent.HarnessSessionId, copyAgent.WorkingDirectory, DateTime.UtcNow);
+        Assert.Equal(cache + suffix, await File.ReadAllTextAsync(Path.GetDirectoryName(copied)! + "/chat_history.jsonl", Ct));
+        Assert.Equal(copyAgent.HarnessSessionId, nativeFormat.Read(await File.ReadAllTextAsync(copied, Ct)).Sources[0].SessionId);
+    }
 
     [Fact(Timeout = 60_000)]
     public async Task SftpTransfersOnlySuffixVerifiesWholePrefixAndAllowsGrowthPastRequestedSnapshot()
@@ -238,7 +290,7 @@ public class NativeHistoryTransportTests
             await service.MoveToHarnessAsync(runner, agent, "codex", "moved-session", Ct);
         Assert.Equal(2, Directory.GetFiles(options.SessionsDirectory, $"{saved.Id:N}.*.json").Length);
         var moved = (await service.GetAsync(saved.Id, Ct))!;
-        var movedPath = formats.Single(f => f.HarnessId == "codex").GetPath("moved-session", agent.WorkingDirectory, DateTime.UtcNow);
+        var movedPath = Directory.EnumerateFiles(fixture.Root + "/home/.codex/sessions", "rollout-*-moved-session.jsonl", SearchOption.AllDirectories).Single();
         var migrated = new CodexSessionFormat().Read(await File.ReadAllTextAsync(movedPath, Ct));
         Assert.Single(migrated.ActivePath().SelectMany(e => e.Content ?? []), b => b.Type == "toolCall");
         Assert.Equal("codex", moved.HarnessId);
@@ -379,6 +431,13 @@ public class NativeHistoryTransportTests
         public DeveSession Read(TextReader reader) => inner.Read(reader);
         public string Write(DeveSession session, string id, string cwd) => inner.Write(session, id, cwd);
         public bool SupportsIncrementalRead => inner.SupportsIncrementalRead;
+        public bool HasCompanionFiles => inner.HasCompanionFiles;
+        public IReadOnlyList<SessionCompanionFile> CompanionFiles(DeveSession session) => inner.CompanionFiles(session);
+        public IReadOnlyDictionary<string, string> WriteCompanionFiles(DeveSession session, string id, string cwd) => inner.WriteCompanionFiles(session, id, cwd);
+        public void ApplyCompanionFiles(DeveSession session, IReadOnlyDictionary<string, string> files) => inner.ApplyCompanionFiles(session, files);
+        public string Export(DeveSession session, string id, string cwd) => inner.Export(session, id, cwd);
+        public string ExportExtension => inner.ExportExtension;
+        public string ExportContentType => inner.ExportContentType;
         public void AppendLines(SessionReadCursor cursor, IEnumerable<System.Text.Json.Nodes.JsonObject> lines) => inner.AppendLines(cursor, lines);
     }
 

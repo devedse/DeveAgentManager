@@ -23,7 +23,7 @@ public static class SessionMigration
     public static DeveSession Prepare(DeveSession source, string from, string to, string targetHarness,
         int maxCharacters = DefaultMaxCharacters, int maxImages = DefaultMaxImages)
     {
-        if (targetHarness is not ("claude" or "codex" or "pi"))
+        if (targetHarness is not ("claude" or "codex" or "pi" or "grok"))
             throw new NotSupportedException($"Structured conversation migration to '{targetHarness}' is not supported.");
         if (maxCharacters < 2_000 || maxImages < 0) throw new ArgumentOutOfRangeException(nameof(maxCharacters));
         var report = new SessionMigrationReport { CreatedAt = DateTime.UtcNow, From = from, To = to, BudgetCharacters = maxCharacters };

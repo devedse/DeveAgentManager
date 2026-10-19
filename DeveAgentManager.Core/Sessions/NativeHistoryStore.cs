@@ -13,7 +13,7 @@ internal sealed record NativeHistorySample(long Offset, byte[] Bytes);
 internal sealed record NativeHistorySyncPolicy(HistorySyncMode Mode, bool Force = false, bool Idle = false);
 
 /// <summary>Native history with sampled appends and full-audit checkpoints; indexes contain compact metadata only.</summary>
-internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider = null, ILogger? logger = null)
+internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider = null, ILogger? logger = null, bool keepGenerations = false)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
@@ -33,6 +33,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
         public string CursorFile { get; set; } = "";
         public long IndexBytes { get; set; }
         public string ReplyPreview { get; set; } = "";
+        public string? CompanionManifest { get; set; }
         public DateTime? LastAssistantMessageAt { get; set; }
         [JsonIgnore] public SessionReadCursor Cursor { get; set; } = new();
     }
@@ -78,7 +79,8 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
             && new FileInfo(Path.Combine(Folder(id), state.File)).Length >= size;
     }
 
-    public async Task<DeveSession?> LoadAsync(Guid id, IReadOnlyDictionary<string, ISessionFormat> formats, CancellationToken ct)
+    public async Task<DeveSession?> LoadAsync(Guid id, IReadOnlyDictionary<string, ISessionFormat> formats, CancellationToken ct,
+        Func<DeveSession, string?, CancellationToken, Task>? loadCompanions = null)
     {
         await gate.WaitAsync(ct);
         try
@@ -91,7 +93,9 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
             // Uncommitted suffixes after a failed sync are never exposed to readers.
             using var bounded = new PrefixStream(stream, state.Bytes);
             using var reader = new StreamReader(bounded, Encoding.UTF8);
-            return formats[state.Harness].Read(reader);
+            var session = formats[state.Harness].Read(reader);
+            if (loadCompanions is not null) await loadCompanions(session, state.CompanionManifest, ct);
+            return session;
         }
         finally { gate.Release(); }
     }
@@ -100,7 +104,8 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
     public async Task<(DeveSession Metadata, bool Changed)> SyncAsync(Guid id, ISessionFormat format, string sourcePath,
         long size, string stamp, Func<long, string?, Stream, CancellationToken, Task<NativeHistoryTransfer>> transfer, CancellationToken ct,
         NativeHistorySyncPolicy? policy = null,
-        Func<long, IReadOnlyList<NativeHistorySample>, Stream, CancellationToken, Task<bool>>? append = null)
+        Func<long, IReadOnlyList<NativeHistorySample>, Stream, CancellationToken, Task<bool>>? append = null,
+        Func<DeveSession, CancellationToken, Task<string?>>? beforeCommit = null)
     {
         using var queueTiming = Diagnostics.CaptureOperations.Start("history.gate", session: id, bytes: size);
         await gate.WaitAsync(ct);
@@ -114,7 +119,8 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
             var folder = Folder(id);
             Directory.CreateDirectory(folder);
             var old = await ReadState(id, ct);
-            foreach (var stale in Directory.EnumerateFiles(folder, "*.jsonl").Where(p => Path.GetFileName(p) != old?.File)) File.Delete(stale);
+            if (!keepGenerations)
+                foreach (var stale in Directory.EnumerateFiles(folder, "*.jsonl").Where(p => Path.GetFileName(p) != old?.File)) File.Delete(stale);
             foreach (var stale in Directory.EnumerateFiles(folder, "*.index.json").Where(p => Path.GetFileName(p) != old?.CursorFile)) File.Delete(stale);
             var reusable = old is not null && old.Harness == format.HarnessId && old.SourcePath == sourcePath
                 && old.Bytes <= size && File.Exists(Path.Combine(folder, old.File))
@@ -134,7 +140,21 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
                 }
             }
             if (reusable && old!.Bytes == size && old.Stamp == stamp && stamp.Length > 0 && !AuditDue(id, old, policy))
+            {
+                if (beforeCommit is not null && format.HasCompanionFiles)
+                {
+                    var generation = await beforeCommit(old.Cursor.Session, ct);
+                    if (generation != old.CompanionManifest)
+                    {
+                        old.CompanionManifest = generation;
+                        await using (var output = new FileStream(Manifest(id) + ".tmp", FileMode.Create, FileAccess.Write, FileShare.None, 4096, true))
+                            await JsonSerializer.SerializeAsync(output, old, DeveSession.JsonOptions, ct);
+                        File.Move(Manifest(id) + ".tmp", Manifest(id), true);
+                        return (old.Cursor.Session, true);
+                    }
+                }
                 return (old.Cursor.Session, false);
+            }
             var offset = reusable ? old!.Bytes : 0;
             incoming = Path.Combine(folder, "incoming.tmp");
             NativeHistoryTransfer received;
@@ -206,12 +226,13 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
             // An unterminated last line must be reparsed when more bytes arrive, even if it used to be valid JSON.
             var parseOffset = reusable && state.EndsWithNewline ? offset : 0;
             if (parseOffset == 0) state.Cursor = new();
+            state.Cursor.MetadataOnly = true;
             using (var input = File.OpenRead(path))
             {
                 using var timing = Diagnostics.CaptureOperations.Start("history.parse", session: id, bytes: size - parseOffset);
                 input.Position = parseOffset;
                 using var reader = new StreamReader(input, Encoding.UTF8);
-                foreach (var line in JsonLines.Parse(reader))
+                foreach (var line in format.IndexNativeRecords ? JsonLines.Parse(reader) : [])
                 {
                     ct.ThrowIfCancellationRequested();
                     var start = state.Cursor.Session.Entries.Count;
@@ -245,12 +266,15 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
             var agent = new DeveAgentManager.Core.Data.Agent();
             SessionService.UpdateLastAssistantMessage(agent, state.Cursor.Session);
             state.LastAssistantMessageAt = agent.LastAssistantMessageAt;
+            // A log referencing a new replay checkpoint is not committed until that checkpoint is durable locally.
+            if (beforeCommit is not null) state.CompanionManifest = await beforeCommit(state.Cursor.Session, ct);
             await using (var output = new FileStream(Manifest(id) + ".tmp", FileMode.Create, FileAccess.Write, FileShare.None, 65536, true))
                 await JsonSerializer.SerializeAsync(output, state, DeveSession.JsonOptions, ct);
             File.Move(Manifest(id) + ".tmp", Manifest(id), true);
             if (received.FullyVerified) verifiedThisProcess[id] = state.File;
             pendingRaw = null; pendingIndex = null;
-            foreach (var stale in Directory.EnumerateFiles(folder, "*.jsonl").Where(p => p != path)) File.Delete(stale);
+            if (!keepGenerations)
+                foreach (var stale in Directory.EnumerateFiles(folder, "*.jsonl").Where(p => p != path)) File.Delete(stale);
             foreach (var stale in Directory.EnumerateFiles(folder, "*.index.json").Where(p => Path.GetFileName(p) != state.CursorFile)) File.Delete(stale);
             return (state.Cursor.Session, true);
         }

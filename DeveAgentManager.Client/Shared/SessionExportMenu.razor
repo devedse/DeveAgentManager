@@ -7,7 +7,7 @@
     <MudMenuItem OnClick="() => DownloadAsync(DeveFormat)">DeveSession (.deve.json)</MudMenuItem>
     @foreach (var harness in _formats)
     {
-        <MudMenuItem OnClick="@(() => DownloadAsync(harness.Id))">@harness.DisplayName session (.jsonl)</MudMenuItem>
+        <MudMenuItem OnClick="@(() => DownloadAsync(harness.Id))">@harness.DisplayName session</MudMenuItem>
     }
 </MudMenu>
 

@@ -37,6 +37,7 @@ public sealed class SessionService(
     internal Task ArtifactsChangedAsync(Guid sessionId, CancellationToken ct) => _artifacts.NotifyAsync(sessionId, ct);
 
     private readonly NativeHistoryStore _native = new(options.SessionsDirectory, logger: logger);
+    private readonly SessionCompanionStore _companions = new(options.SessionsDirectory);
     private readonly HistorySyncSettingsStore _historySettings = historySettings ?? new(dbFactory, events);
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly Dictionary<Guid, (DateTime Version, string Text)> _previews = new();
@@ -137,7 +138,9 @@ public sealed class SessionService(
     public async Task<DeveSession> LoadAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         var path = PathFor(sessionId);
-        var result = await _native.LoadAsync(sessionId, _formats, cancellationToken);
+        var result = await _native.LoadAsync(sessionId, _formats, cancellationToken, (session, manifest, token) =>
+            _formats.GetValueOrDefault(session.Sources.FirstOrDefault()?.Harness ?? "") is { } format
+                ? _companions.ApplyAsync(sessionId, format, session, token, manifest) : Task.CompletedTask);
         if (result is null)
         {
             if (File.Exists(path))
@@ -259,6 +262,8 @@ public sealed class SessionService(
             var content = format.Write(session, harnessSessionId, workingDirectory);
             if (session.Migration is not null && from != harnessId)
                 SessionMigration.ValidateWritten(session, format.Read(content));
+            foreach (var (name, companion) in format.WriteCompanionFiles(session, harnessSessionId, workingDirectory))
+                await shell.UploadAtomicAsync(runner, path[..path.LastIndexOf('/')] + "/" + SessionCompanionStore.ValidatePath(name), companion, cancellationToken);
             await shell.UploadAtomicAsync(runner, path, content, cancellationToken);
             if (session.Migration is { } report)
             {
@@ -380,7 +385,7 @@ public sealed class SessionService(
                     Force: forceVerification || session.AgentId == strictAgentId,
                     Idle: session.Agent is { Working: false });
                 var incremental = _formats[session.HarnessId].SupportsIncrementalRead && stamp is not null;
-                if (incremental && session.SourceSize == file.Size && session.SourcePath == file.Path
+                if (incremental && !_formats[session.HarnessId].HasCompanionFiles && session.SourceSize == file.Size && session.SourcePath == file.Path
                     && await _native.IsCurrentAsync(session.Id, session.HarnessId, file.Path, file.Size, stamp!, cancellationToken, policy)) continue;
                 DeveSession deve;
                 if (incremental)
@@ -391,9 +396,21 @@ public sealed class SessionService(
                             var ok = await shell.DownloadHistoryRangeAsync(runner, file.Path, offset, file.Size, hash, output, ct);
                             return new NativeHistoryTransfer(ok is not null, ok);
                         }, cancellationToken, policy, (offset, samples, output, ct) =>
-                            shell.DownloadHistoryAppendAsync(runner, file.Path, offset, file.Size, stamp!, samples, output, ct));
+                            shell.DownloadHistoryAppendAsync(runner, file.Path, offset, file.Size, stamp!, samples, output, ct),
+                        async (metadata, ct) =>
+                        {
+                            var generation = await _companions.SyncAsync(shell, runner, session.Id, _formats[session.HarnessId], file.Path, metadata, ct, policy);
+                            if (generation is not null)
+                            {
+                                var current = await shell.RunAsync(runner, "stat -L -c '%d:%i:%y:%z' -- " + ShellQuote.Quote(file.Path), cancellationToken: ct);
+                                current.EnsureSuccess("Checking native session snapshot");
+                                if (current.Output.TrimEnd('\r', '\n') != stamp) throw new IOException("The native log changed while its replay files were saved; synchronization will retry.");
+                            }
+                            return generation;
+                        });
                     if (!sync.Changed && session.SourceSize == file.Size && session.SourcePath == file.Path) continue;
                     deve = sync.Metadata;
+                    await _companions.PruneAsync(session.Id, (await _native.SummaryAsync(session.Id, cancellationToken))?.CompanionManifest, cancellationToken);
                     File.Delete(PathFor(session.Id)); // The verified native copy is now the authoritative full history.
                 }
                 else
@@ -473,23 +490,24 @@ public sealed class SessionService(
         var from = session.Sources.LastOrDefault()?.Harness ?? stored.HarnessId;
         if (from != format && session.Entries.Count > 0)
             session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(format), format);
-        var content = harnessFormat.Write(session, harnessSessionId, cwd);
+        var content = harnessFormat.Export(session, harnessSessionId, cwd);
         if (from != format) SessionMigration.ValidateWritten(session, harnessFormat.Read(content));
-        return new SessionExport($"{name}.{format}.jsonl", "application/x-ndjson", content);
+        return new SessionExport($"{name}.{format}.{harnessFormat.ExportExtension}", harnessFormat.ExportContentType, content);
     }
 
     // Caller holds the operation lock. Never export/continue a sampled checkpoint while its source is unavailable.
     private async Task EnsureVerifiedLockedAsync(Guid id, CancellationToken ct)
     {
         var state = await _native.SummaryAsync(id, ct);
-        if (state is null || state.Sha256.Length > 0) return;
+        if (state is null || state.Sha256.Length > 0 && !await _companions.HasPendingVerificationAsync(id, state.CompanionManifest, ct)) return;
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var stored = await db.Sessions.Include(s => s.Agent).ThenInclude(a => a!.Runner)
             .SingleAsync(s => s.Id == id, ct);
         if (stored.Agent?.Runner is not { State: RunnerState.Ready } runner)
             throw new IOException("This history has pending verification. Reconnect its Runner and synchronize before exporting or continuing it.");
         await SyncRunnerLockedAsync(runner, ct, stored.Agent.Id, onlySessionId: id);
-        if ((await _native.SummaryAsync(id, ct))?.Sha256 is not { Length: > 0 })
+        var verified = await _native.SummaryAsync(id, ct);
+        if (verified?.Sha256 is not { Length: > 0 } || await _companions.HasPendingVerificationAsync(id, verified.CompanionManifest, ct))
             throw new IOException("The current history could not be fully verified. Try again after synchronization succeeds.");
     }
 
@@ -504,6 +522,7 @@ public sealed class SessionService(
         File.Delete(PathFor(sessionId));
         if (File.Exists(MigrationPathFor(sessionId))) File.Delete(MigrationPathFor(sessionId));
         await _native.DeleteAsync(sessionId, cancellationToken);
+        _companions.Delete(sessionId);
         if (Directory.Exists(options.SessionsDirectory))
             foreach (var backup in Directory.EnumerateFiles(options.SessionsDirectory, $"{sessionId:N}.*.json")) File.Delete(backup);
         events.Publish(new ManagerEvent(ManagerEventKind.SessionRemoved, SessionId: sessionId));
@@ -569,6 +588,7 @@ public sealed class SessionService(
     private void UpdateSizes(StoredSession stored)
     {
         stored.SavedSize = _native.Exists(stored.Id) ? _native.Size(stored.Id) : File.Exists(PathFor(stored.Id)) ? new FileInfo(PathFor(stored.Id)).Length : 0;
+        stored.SavedSize += _companions.Size(stored.Id);
         stored.TotalSize = stored.SavedSize + (Directory.Exists(options.SessionsDirectory)
             ? Directory.EnumerateFiles(options.SessionsDirectory, $"{stored.Id:N}.*.json").Sum(p => new FileInfo(p).Length) : 0);
         if (File.Exists(MigrationPathFor(stored.Id))) stored.TotalSize += new FileInfo(MigrationPathFor(stored.Id)).Length;

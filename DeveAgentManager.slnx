@@ -4,6 +4,7 @@
   <Project Path="DeveAgentManager.Core/DeveAgentManager.Core.csproj" />
   <Project Path="DeveAgentManager.Harnesses.Claude/DeveAgentManager.Harnesses.Claude.csproj" />
   <Project Path="DeveAgentManager.Harnesses.Codex/DeveAgentManager.Harnesses.Codex.csproj" />
+  <Project Path="DeveAgentManager.Harnesses.Grok/DeveAgentManager.Harnesses.Grok.csproj" />
   <Project Path="DeveAgentManager.Harnesses.Pi/DeveAgentManager.Harnesses.Pi.csproj" />
   <Project Path="DeveAgentManager.Providers.Proxmox/DeveAgentManager.Providers.Proxmox.csproj" />
   <Project Path="DeveAgentManager.Tests/DeveAgentManager.Tests.csproj" />

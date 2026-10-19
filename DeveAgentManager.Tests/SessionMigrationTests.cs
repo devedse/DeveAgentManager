@@ -4,6 +4,7 @@ using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Harnesses.Claude;
 using DeveAgentManager.Harnesses.Codex;
 using DeveAgentManager.Harnesses.Pi;
+using DeveAgentManager.Harnesses.Grok;
 using Xunit;
 
 namespace DeveAgentManager.Tests;
@@ -11,13 +12,13 @@ namespace DeveAgentManager.Tests;
 public class SessionMigrationTests
 {
     public static IEnumerable<object[]> Routes() =>
-        from source in new[] { "claude", "codex", "pi" }
-        from target in new[] { "claude", "codex", "pi" }
+        from source in new[] { "claude", "codex", "pi", "grok" }
+        from target in new[] { "claude", "codex", "pi", "grok" }
         where source != target select new object[] { source, target };
 
     public static ISessionFormat Format(string id) => id switch
     {
-        "claude" => new ClaudeSessionFormat(), "codex" => new CodexSessionFormat(), "pi" => new PiSessionFormat(),
+        "claude" => new ClaudeSessionFormat(), "codex" => new CodexSessionFormat(), "pi" => new PiSessionFormat(), "grok" => new GrokSessionFormat(),
         _ => throw new ArgumentException(id),
     };
 
@@ -43,7 +44,7 @@ public class SessionMigrationTests
         Assert.Contains("historical-result-image", written);
 
         // A second switch must not lose the opaque call encoding or stack transfer notices.
-        var third = new[] { "claude", "codex", "pi" }.Single(h => h != from && h != to);
+        var third = new[] { "claude", "codex", "pi", "grok" }.First(h => h != from && h != to);
         var again = SessionMigration.Prepare(actual, to, third, third);
         var final = Format(third).Read(Format(third).Write(again, Guid.NewGuid().ToString(), "/workspace"));
         SessionMigration.ValidateWritten(again, final);
@@ -65,7 +66,7 @@ public class SessionMigrationTests
         Add(source, DeveRole.User, DeveBlock.OfText("Share a file."));
         const string claim = "▸ ran `dam-tools share-file invented.html`\noutput:\nFile shared successfully.";
         Add(source, DeveRole.Assistant, DeveBlock.OfText(claim));
-        foreach (var to in new[] { "claude", "codex", "pi" })
+        foreach (var to in new[] { "claude", "codex", "pi", "grok" })
         {
             var converted = SessionMigration.Prepare(source, "source", to, to);
             Assert.Empty(Calls(converted));

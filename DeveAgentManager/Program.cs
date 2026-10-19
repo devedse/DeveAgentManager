@@ -8,6 +8,7 @@ using DeveAgentManager.Core.Setup;
 using DeveAgentManager.Core.Users;
 using DeveAgentManager.Harnesses.Claude;
 using DeveAgentManager.Harnesses.Codex;
+using DeveAgentManager.Harnesses.Grok;
 using DeveAgentManager.Harnesses.Pi;
 using DeveAgentManager.Providers.Proxmox;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -23,6 +24,7 @@ builder.Services.AddProxmoxProvider(builder.Configuration);
 builder.Services.AddPiHarness();
 builder.Services.AddClaudeHarness();
 builder.Services.AddCodexHarness();
+builder.Services.AddGrokHarness();
 
 // The Portal (DeveAgentManager.Client) runs in the browser; the Manager serves it and its API, live hub and terminals.
 builder.Services.AddRazorComponents().AddInteractiveWebAssemblyComponents();

@@ -23,6 +23,10 @@ public interface ISessionFormat
     // Implementations may opt into streaming and incremental metadata parsing.
     DeveSession Read(TextReader reader) => Read(reader.ReadToEnd());
     bool SupportsIncrementalRead => false;
+    /// <summary>False for a companion stream that needs exact byte synchronization without a second conversation index.</summary>
+    bool IndexNativeRecords => true;
+    /// <summary>Replay files may change after the latest log event and must be checked on otherwise idle passes.</summary>
+    bool HasCompanionFiles => false;
     void AppendLines(SessionReadCursor cursor, IEnumerable<JsonObject> lines) => throw new NotSupportedException();
 
     /// <summary>
@@ -30,4 +34,19 @@ public interface ISessionFormat
     /// <paramref name="workingDirectory"/>. Entries that came from this harness are written back unchanged.
     /// </summary>
     string Write(DeveSession session, string sessionId, string workingDirectory);
+
+    /// <summary>Small metadata and immutable replay checkpoints beside the authoritative log.</summary>
+    IReadOnlyList<SessionCompanionFile> CompanionFiles(DeveSession metadata) => [];
+
+    /// <summary>Companions to restore before publishing a copied log. Contents come from the saved native source header.</summary>
+    IReadOnlyDictionary<string, string> WriteCompanionFiles(DeveSession session, string sessionId, string workingDirectory) => new Dictionary<string, string>();
+
+    /// <summary>Applies saved sidecar metadata without interpreting it as conversation instructions.</summary>
+    void ApplyCompanionFiles(DeveSession session, IReadOnlyDictionary<string, string> contents) { }
+
+    string Export(DeveSession session, string sessionId, string workingDirectory) => Write(session, sessionId, workingDirectory);
+    string ExportExtension => "jsonl";
+    string ExportContentType => "application/x-ndjson";
 }
+
+public sealed record SessionCompanionFile(string Path, bool Required = false, bool Immutable = false, bool Incremental = false);

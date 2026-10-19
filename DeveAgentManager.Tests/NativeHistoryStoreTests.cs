@@ -7,6 +7,7 @@ using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Harnesses.Claude;
 using DeveAgentManager.Harnesses.Codex;
 using DeveAgentManager.Harnesses.Pi;
+using DeveAgentManager.Harnesses.Grok;
 using Xunit;
 
 namespace DeveAgentManager.Tests;
@@ -14,13 +15,14 @@ namespace DeveAgentManager.Tests;
 public class NativeHistoryStoreTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
-    internal static ISessionFormat Format(string harness) => harness switch { "claude" => new ClaudeSessionFormat(), "codex" => new CodexSessionFormat(), _ => new PiSessionFormat() };
-    internal static string Sample(string harness) => harness switch { "claude" => HarnessFormatTests.ClaudeSession, "codex" => HarnessFormatTests.CodexSession, _ => SessionTests.PiSession };
+    internal static ISessionFormat Format(string harness) => harness switch { "claude" => new ClaudeSessionFormat(), "codex" => new CodexSessionFormat(), "grok" => new GrokSessionFormat(), _ => new PiSessionFormat() };
+    internal static string Sample(string harness) => harness switch { "claude" => HarnessFormatTests.ClaudeSession, "codex" => HarnessFormatTests.CodexSession, "grok" => GrokTests.History, _ => SessionTests.PiSession };
 
     [Theory]
     [InlineData("claude")]
     [InlineData("codex")]
     [InlineData("pi")]
+    [InlineData("grok")]
     public async Task EveryAppendAndRestartPreservesFullNativeRecordsAndMetadata(string harness)
     {
         using var rig = new Rig(harness);
@@ -45,6 +47,7 @@ public class NativeHistoryStoreTests
     [InlineData("claude")]
     [InlineData("codex")]
     [InlineData("pi")]
+    [InlineData("grok")]
     public async Task RewritesTruncationAndPathChangesRebuildWithoutCombiningUnrelatedHistories(string harness)
     {
         using var rig = new Rig(harness);
@@ -236,7 +239,8 @@ public class NativeHistoryStoreTests
         var a = new Agent(); var b = new Agent();
         SessionService.UpdateLastAssistantMessage(a, expected); SessionService.UpdateLastAssistantMessage(b, actual);
         Assert.Equal(a.LastAssistantMessageAt, b.LastAssistantMessageAt);
-        Assert.Equal(expected.ActivePath().Select(e => e.Id), actual.ActivePath().Select(e => e.Id));
+        Assert.Equal(expected.ActivePath().Where(e => e.Kind != DeveEntryKind.Native).Select(e => e.Id),
+            actual.ActivePath().Where(e => e.Kind != DeveEntryKind.Native).Select(e => e.Id));
     }
 
     private sealed class Rig(string harness) : IDisposable

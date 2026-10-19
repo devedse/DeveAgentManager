@@ -3,6 +3,7 @@ using DeveAgentManager.Core.Data;
 using DeveAgentManager.Harnesses.Claude;
 using DeveAgentManager.Harnesses.Codex;
 using DeveAgentManager.Harnesses.Pi;
+using DeveAgentManager.Harnesses.Grok;
 using DeveAgentManager.Core.Abstractions;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
@@ -22,7 +23,7 @@ public sealed class HarnessScriptTests : IDisposable
 
     public HarnessScriptTests()
     {
-        foreach (var tool in new[] { "npm", "claude", "codex" })
+        foreach (var tool in new[] { "npm", "claude", "codex", "grok" })
         {
             var stub = Path.Combine(_bin, tool);
             File.WriteAllText(stub, "#!/bin/sh\necho \"stub $*\"\n");
@@ -93,11 +94,13 @@ public sealed class HarnessScriptTests : IDisposable
     [InlineData("claude", "--append-system-prompt")]
     [InlineData("codex", "-c")]
     [InlineData("pi", "--append-system-prompt")]
+    [InlineData("grok", "--rules")]
     public void Launch_PassesInstructionsUnchanged(string harnessId, string flag)
     {
         if (!HasTools() || !Which("python3")) return;
         const string hint = "Run `dam-tools share-image <file> --caption \"x\"`; it's $(touch injected) C:\\tmp\nsecond line";
-        IHarness harness = harnessId switch { "claude" => new ClaudeHarness(), "codex" => new CodexHarness(), _ => new PiHarness() };
+        IHarness harness = harnessId switch { "claude" => new ClaudeHarness(), "codex" => new CodexHarness(), "grok" => new GrokHarness(), _ => new PiHarness() };
+        if (harnessId == "grok") Run(harness.InstallScript);
         var stub = Path.Combine(_bin, harnessId);
         // NUL-separated, so arguments with newlines stay whole. Codex's version check runs it with --help first.
         File.WriteAllText(stub, "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nprintf '%s\\0' \"$@\" > \"$HOME/launch-args\"\n");

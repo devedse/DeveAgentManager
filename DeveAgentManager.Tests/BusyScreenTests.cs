@@ -3,6 +3,7 @@ using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Harnesses.Claude;
 using DeveAgentManager.Harnesses.Codex;
 using DeveAgentManager.Harnesses.Pi;
+using DeveAgentManager.Harnesses.Grok;
 using Xunit;
 
 namespace DeveAgentManager.Tests;
@@ -27,6 +28,8 @@ public sealed class BusyScreenTests : IDisposable
     [InlineData("codex-background-wait-narrow", true)]
     [InlineData("codex-compacting", true)]
     [InlineData("codex-idle", false)]
+    [InlineData("grok-working", true)]
+    [InlineData("grok-idle", false)]
     public void BusyPattern_IsOnTheScreen_OnlyWhileTheHarnessWorks(string screen, bool working)
         => AssertBusy(screen.Split('-')[0], File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", screen + ".txt")), working);
 
@@ -71,6 +74,7 @@ public sealed class BusyScreenTests : IDisposable
         {
             "pi" => new PiHarness().BusyPattern,
             "claude" => new ClaudeHarness().BusyPattern,
+            "grok" => new GrokHarness().BusyPattern,
             _ => new CodexHarness().BusyPattern,
         };
 

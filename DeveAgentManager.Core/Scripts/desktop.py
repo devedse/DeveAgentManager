@@ -245,7 +245,7 @@ def configure(root, user):
 
 
 def remove_instructions(home):
-    paths = [home / relative for relative in (".codex/AGENTS.md", ".claude/CLAUDE.md", ".pi/agent/AGENTS.md")]
+    paths = [home / relative for relative in (".grok/AGENTS.md", ".codex/AGENTS.md", ".claude/CLAUDE.md", ".pi/agent/AGENTS.md")]
     for account in (home / ".deveagentmanager/accounts").glob("*/codex"):
         path = account / "AGENTS.md"
         if not path.is_symlink():
