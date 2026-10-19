@@ -36,6 +36,8 @@ try {
             sha256: createHash('sha256').update(bytes).digest('hex'), createdAt: new Date().toISOString() }));
         return id;
     }
+    // Keep the streaming coverage above 10 MiB without making Chromium lay out a single 10 MiB source line.
+    const padding = (' '.repeat(1024) + '\n').repeat(11000);
     const html = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="assets/site.css"></head><body>
         <h1>HTML website preview</h1><img id="embedded" src="data:image/png;base64,${png.toString('base64')}">
         <img id="relative" src="assets/picture.png"><img id="external" src="http://127.0.0.1:${external.address().port}/picture.png">
@@ -46,7 +48,8 @@ try {
         try { localStorage.getItem('anything'); } catch { document.body.dataset.storageBlocked='yes'; }
         fetch('/api/me', {credentials:'include'}).then(r=>r.text()).then(()=>document.body.dataset.apiReadable='yes').catch(()=>document.body.dataset.apiBlocked='yes');
         fetch('assets/config.json').then(r=>r.json()).then(value=>document.body.dataset.assetValue=value.message);
-        </script><!--${'large HTML content '.repeat(600000)}--></body></html>`;
+        </script><!--${padding}--></body></html>`;
+    assert.ok(Buffer.byteLength(html) > 10 * 1024 * 1024, 'Exercise HTML streaming above 10 MiB');
     const id = await share('website.html', html);
     await share('site.css', 'h1 { color: rgb(0, 128, 0); } body { margin: 12px; }');
     await share('site.js', "document.body.dataset.scriptLoaded='yes'");
@@ -61,7 +64,16 @@ try {
     await page.getByRole('button', { name: 'View website.html', exact: true }).click();
     console.log('Checking HTML rendering and asset loading');
     const dialog = page.locator('.file-preview-dialog');
-    const frame = page.frameLocator('iframe[title="HTML preview of website.html"]');
+    async function previewFrame(title) {
+        const iframe = dialog.getByTitle(title, { exact: true });
+        // Inner-frame locators can resolve while the host is still loading or the dialog is moving.
+        // Wait for the actual preview to be exposed before sending pointer input into it.
+        await iframe.waitFor({ state: 'visible' });
+        await dialog.locator('.file-preview-frame-loading').waitFor({ state: 'detached' });
+        await dialog.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
+        return iframe.contentFrame();
+    }
+    const frame = await previewFrame('HTML preview of website.html');
     await frame.getByRole('heading', { name: 'HTML website preview' }).waitFor({ timeout: 30000 });
     await frame.locator('body[data-script-loaded=yes][data-parent-blocked=yes][data-cookie-blocked=yes][data-storage-blocked=yes][data-api-blocked=yes]').waitFor();
     await frame.locator('body[data-asset-value="scoped asset loaded"]').waitFor();
@@ -80,11 +92,13 @@ try {
         await page.screenshot({ path: `/tmp/dam-html-viewer-${width}.png` });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${width}: ${JSON.stringify(overflow)}`);
     }
+    await page.setViewportSize({ width: 1280, height: 900 });
     await dialog.getByRole('button', { name: 'Text', exact: true }).click();
     console.log('Checking streamed HTML source');
-    const sourceFrame = page.frameLocator('iframe[title="Source of website.html"]');
+    const sourceFrame = await previewFrame('Source of website.html');
     await sourceFrame.locator('pre').waitFor();
     assert.equal(await sourceFrame.locator('pre').evaluate(e => e.textContent.startsWith('<!doctype html>')), true);
+    assert.equal(await sourceFrame.locator('pre').evaluate(e => e.textContent.length), html.length);
     assert.equal(await sourceFrame.locator('script').count(), 0);
     await dialog.getByRole('button', { name: 'Rendered', exact: true }).click();
     console.log('Checking isolated new-tab view');
@@ -96,11 +110,12 @@ try {
     await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
     console.log('Checking large text and Markdown');
     await page.getByRole('button', { name: 'View large.log', exact: true }).click();
-    await page.frameLocator('iframe[title="Source of large.log"]').locator('pre').waitFor();
-    assert.equal(await page.frameLocator('iframe[title="Source of large.log"]').locator('pre').evaluate(e => e.textContent.startsWith('A long log file')), true);
+    const logFrame = await previewFrame('Source of large.log');
+    await logFrame.locator('pre').waitFor();
+    assert.equal(await logFrame.locator('pre').evaluate(e => e.textContent.startsWith('A long log file')), true);
     await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
     await page.getByRole('button', { name: 'View large.md', exact: true }).click();
-    await page.locator('iframe[title="Source of large.md"]').waitFor();
+    await (await previewFrame('Source of large.md')).locator('pre').waitFor();
     await dialog.getByRole('button', { name: 'Rendered', exact: true }).click();
     await dialog.getByRole('heading', { name: 'Large Markdown', exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.body.dataset.compromised), undefined);
