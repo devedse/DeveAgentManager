@@ -28,6 +28,9 @@ builder.Services.ConfigureHttpJsonOptions(json => ApiJson.Configure(json.Seriali
 builder.Services.AddSignalR().AddJsonProtocol(json => ApiJson.Configure(json.PayloadSerializerOptions));
 builder.Services.AddSingleton<DtoMapper>();
 builder.Services.AddSingleton<SharedFilePreviews>();
+builder.Services.AddSingleton<DeveAgentManager.Diagnostics.ICpuTraceRecorder, DeveAgentManager.Diagnostics.CpuTraceRecorder>();
+builder.Services.AddSingleton<DeveAgentManager.Diagnostics.ManagerCpuTraces>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DeveAgentManager.Diagnostics.ManagerCpuTraces>());
 builder.Services.AddSingleton<OperationNotifier>();
 builder.Services.AddHttpForwarder();
 builder.Services.AddHostedService<LiveUpdatesBridge>();

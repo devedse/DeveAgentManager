@@ -180,6 +180,10 @@
                 </MudTabPanel>
             }
 
+            <MudTabPanel Text="Diagnostics" Icon="@Icons.Material.Rounded.Speed">
+                @if (_allowed == true) { <ManagerCpuTracePanel /> }
+            </MudTabPanel>
+
             <MudTabPanel Text="Manager" Icon="@Icons.Material.Rounded.Info">
                 <LoadingSection Loaded="@(_info is not null)" Error="@_loadError" Retry="LoadAsync" Label="Loading the Manager's details">
                 <Placeholder><SkeletonForm Fields="2" /></Placeholder>

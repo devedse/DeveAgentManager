@@ -3,6 +3,7 @@ namespace DeveAgentManager.Core.Data;
 /// <summary>The actions the audit log records, and how the Portal says them.</summary>
 public static class AuditActions
 {
+    public const string ManagerCpuTraceStarted = "manager.cpu-trace.started";
     public const string AccountSecurityChanged = "account-security-changed";
     public const string IdentityConfirmed = "identity-confirmed";
     public const string SignedIn = "signed-in";
@@ -52,6 +53,7 @@ public static class AuditActions
         AgentUnshared => "Ended an agent's share",
         SessionShared => "Shared a conversation",
         SessionUnshared => "Ended a conversation's share",
+        ManagerCpuTraceStarted => "Started a Manager CPU trace",
         _ => action,
     };
 }

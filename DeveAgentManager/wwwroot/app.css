@@ -3086,6 +3086,8 @@ body:has(.terminal-layout) .agent-attention-popover {
 .session-file-caption { font-size: .875rem; overflow-wrap: anywhere; }
 .session-file-meta { color: var(--dam-muted); font-size: .75rem; overflow-wrap: anywhere; }
 .session-file-actions { display: flex; align-items: center; gap: 4px; }
+.cpu-capture-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 16px 0; border-top: 1px solid var(--dam-border); }
+.cpu-capture-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .file-preview-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
 .file-preview-title { min-width: 0; }
 .file-preview-title .mud-typography { overflow-wrap: anywhere; }

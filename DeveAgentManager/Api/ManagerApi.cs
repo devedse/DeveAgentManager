@@ -85,6 +85,7 @@ public static class ManagerApi
         api.MapSessionEndpoints();
         api.MapAccountEndpoints();
         api.MapSettingsEndpoints();
+        api.MapCpuTraceEndpoints();
     }
 
     /// <summary>Starts a Runner operation whose result is reported through <see cref="OperationNotifier"/>.</summary>

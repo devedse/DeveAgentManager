@@ -84,6 +84,11 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task<List<AuditEventDto>> ListAuditAsync(int skip, int take) => GetAsync<List<AuditEventDto>>($"api/audit?skip={skip}&take={take}");
 
+    public Task<ManagerCpuTraceStatus> GetCpuTracesAsync() => GetAsync<ManagerCpuTraceStatus>("api/diagnostics/cpu");
+    public Task<ManagerCpuTrace> StartCpuTraceAsync() => SendAsync<ManagerCpuTrace>(HttpMethod.Post, "api/diagnostics/cpu");
+    public Task CancelCpuTraceAsync(Guid id) => SendAsync(HttpMethod.Post, $"api/diagnostics/cpu/{id}/cancel");
+    public Task DeleteCpuTraceAsync(Guid id) => SendAsync(HttpMethod.Delete, $"api/diagnostics/cpu/{id}");
+
     // Runners
     public Task<List<SessionImageDto>> GetSessionImagesAsync(Guid sessionId) => GetAsync<List<SessionImageDto>>($"api/sessions/{sessionId}/images");
     public Task<List<SessionFileDto>> GetSessionFilesAsync(Guid sessionId) => GetAsync<List<SessionFileDto>>($"api/sessions/{sessionId}/files");

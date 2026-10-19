@@ -1,0 +1,105 @@
+@implements IDisposable
+@inject ManagerApi Api
+
+<div class="settings-section">
+    <div class="help-heading">
+        <MudText Typo="Typo.h6">Manager CPU trace</MudText>
+        <HelpTip Label="Manager CPU trace">
+            <p>Record 60 seconds while the Manager is busy, then download the ZIP for analysis. It contains managed thread samples and time-stamped CPU, allocation and garbage-collection measurements from the Manager process. Agents keep running; you can close this page while recording.</p>
+            <p>Only one capture runs at a time. The latest three are kept under the data directory in diagnostics/cpu and survive restarts. A restart interrupts an unfinished capture. Delete removes that capture for every settings manager.</p>
+            <p>Recording adds some overhead. Managed samples include waiting threads, so they must be read alongside the CPU measurements. Traces can contain method names and file paths; share them only with someone you trust. No heap dump, conversation export or environment-variable export is collected.</p>
+        </HelpTip>
+    </div>
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">Capture the Manager's CPU activity and download it for analysis.</MudText>
+    <LoadingSection Loaded="_loaded" Error="@_loadError" Retry="LoadAsync" Label="Loading CPU captures">
+        <Placeholder><SkeletonList Rows="2" /></Placeholder>
+        <ChildContent>
+            <div class="settings-actions mb-3">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.FiberManualRecord" OnClick="StartAsync" Disabled="@(_busy || _status?.Active is not null)">Capture 60-second CPU trace</MudButton>
+                <MudButton StartIcon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" Disabled="_busy">Refresh captures</MudButton>
+                @if (_status?.Active is { } active)
+                {
+                    <MudButton OnClick="() => CancelAsync(active.Id)" Disabled="_busy">Cancel capture</MudButton>
+                    <span role="status">@(active.State == "finishing" ? "Preparing download…" : "Recording… You can leave this page.")</span>
+                }
+            </div>
+            @if (_actionError is not null) { <MudAlert Severity="Severity.Warning" Class="mb-3">@_actionError</MudAlert> }
+            @if (_status?.Captures.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">No CPU captures yet.</MudText>
+            }
+            @foreach (var capture in _status?.Captures ?? [])
+            {
+                <div class="cpu-capture-row">
+                    <div>
+                        <MudText Typo="Typo.subtitle2">@capture.StartedAt.ToLocalTime().ToString("g") · @Label(capture.State)</MudText>
+                        @if (capture.Error is { } error) { <MudText Typo="Typo.body2">@error</MudText> }
+                        @if (capture.State == "ready") { <MudText Typo="Typo.caption">@((capture.Bytes / 1024d / 1024d).ToString("0.0")) MiB</MudText> }
+                    </div>
+                    <div class="cpu-capture-actions">
+                        @if (capture.State == "ready")
+                        {
+                            <MudButton Href="@($"api/diagnostics/cpu/{capture.Id}/download")" download StartIcon="@Icons.Material.Rounded.Download">Download capture</MudButton>
+                        }
+                        @if (_status?.Active?.Id != capture.Id)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" OnClick="() => DeleteAsync(capture.Id)" Disabled="_busy" aria-label="Delete CPU capture" />
+                        }
+                    </div>
+                </div>
+            }
+        </ChildContent>
+    </LoadingSection>
+</div>
+
+@code {
+    private ManagerCpuTraceStatus? _status;
+    private bool _loaded, _busy, _following;
+    private string? _loadError, _actionError;
+    private readonly CancellationTokenSource _lifetime = new();
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _status = await Api.GetCpuTracesAsync(); _loaded = true; _loadError = null; _actionError = null;
+            if (_status.Active is not null && !_following) _ = FollowAsync();
+        }
+        catch (ApiException ex) { Error(ex.Message); }
+        catch (HttpRequestException) { Error(LoadingSection.Unreachable); }
+    }
+    private async Task StartAsync() => await ActAsync(async () => { await Api.StartCpuTraceAsync(); });
+    private Task CancelAsync(Guid id) => ActAsync(() => Api.CancelCpuTraceAsync(id));
+    private Task DeleteAsync(Guid id) => ActAsync(() => Api.DeleteCpuTraceAsync(id));
+    private async Task ActAsync(Func<Task> action)
+    {
+        _busy = true; _actionError = null;
+        try { await action(); await LoadAsync(); }
+        catch (ApiException ex) { _actionError = ex.Message; }
+        catch (HttpRequestException) { _actionError = "Couldn't reach the Manager. Refresh captures to check whether the action completed."; }
+        finally { _busy = false; }
+    }
+    private async Task FollowAsync()
+    {
+        _following = true;
+        try
+        {
+            while (_status?.Active is not null && !_lifetime.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), _lifetime.Token);
+                await InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+                if (_actionError is not null) break;
+            }
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        finally { _following = false; }
+    }
+    private void Error(string message) { if (_loaded) _actionError = message; else _loadError = message; }
+    private static string Label(string state) => state switch
+    {
+        "recording" => "Recording", "finishing" => "Preparing download", "ready" => "Ready to download",
+        "canceled" => "Canceled", "interrupted" => "Interrupted", _ => "Failed"
+    };
+    public void Dispose() { _lifetime.Cancel(); }
+}
