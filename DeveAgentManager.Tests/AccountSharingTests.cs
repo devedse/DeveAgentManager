@@ -51,6 +51,7 @@ public sealed class AccountSharingTests : IClassFixture<ApiSecurityTests.Manager
         await _accounts.SetGrantAsync(admin, a.Id, admin.Id, AccountAccess.Use, Ct);
         await _accounts.SetDefaultAsync(admin, a.Id, Ct);
         var dto = (await _accounts.ListVisibleAsync(admin, false, Ct)).Single();
+        Assert.Equal(alice.Username, dto.CreatedByUsername);
         Assert.DoesNotContain("test-only-secret", System.Text.Json.JsonSerializer.Serialize(dto));
         Assert.DoesNotContain("ProtectedSecret", System.Text.Json.JsonSerializer.Serialize(dto));
     }

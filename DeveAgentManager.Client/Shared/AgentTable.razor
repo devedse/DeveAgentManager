@@ -14,7 +14,7 @@ else
     <div class="agent-table">
         @foreach (var agent in Agents.ByLastReply())
         {
-            var busy = _busy.Contains(agent.Id);
+            var busy = _busy.Contains(agent.Id) || agent.State == AgentState.Moving;
             var write = agent.Access >= AgentAccess.Write;
             @* People who manage the Runner see other people's agents there, but can't open them. *@
             <div class="agent-row">
@@ -101,7 +101,15 @@ else
                             </MudMenuItem>
                             @if (agent.Access == AgentAccess.Owner)
                             {
-                                <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem>
+                                @if (agent.MovePending)
+                                {
+                                    <MudMenuItem Icon="@Icons.Material.Rounded.Restore" Disabled="agent.State == AgentState.Moving" OnClick="() => RecoverMoveAsync(agent)">Recover move / finish cleanup</MudMenuItem>
+                                }
+                                else
+                                {
+                                    <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, agent)">Move to another runner…</MudMenuItem>
+                                }
+                                <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="agent.MovePending" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem>
                             }
                         </MudMenu>
                     }
@@ -161,6 +169,8 @@ else
     private async Task ShareAsync(AgentDto agent) => await ShareDialog.ShowAsync(Dialogs, agent, await Me.GetAsync());
 
     private Task StopAsync(AgentDto agent) => RunAsync(agent, () => Api.StopAgentAsync(agent.Id), $"Stopped '{agent.Name}'");
+
+    private Task RecoverMoveAsync(AgentDto agent) => RunAsync(agent, () => Api.RecoverAgentMoveAsync(agent.Id), "Move recovery queued");
 
     private async Task RunAsync(AgentDto agent, Func<Task> action, string success)
     {

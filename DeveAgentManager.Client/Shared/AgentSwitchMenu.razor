@@ -4,7 +4,7 @@
 @inject SignedInUser Me
 
 @* The agent's harness and login, and switching to another one (e.g. when a subscription ran out). Everyone with
-   read-write access can switch it, but only to their own logins: the owner's default is the owner's to pick. *@
+   read-write access can switch it, but only to logins they and the owner have permission to use. *@
 <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" @bind-Open="_open" @bind-Open:after="OnOpenChangedAsync">
     <ActivatorContent>
         <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Rounded.SwapHoriz" OnClick="@context.ToggleAsync"
@@ -30,19 +30,23 @@
                     <MenuLoading Label="Loading harnesses and logins" />
                 }
             }
-            @foreach (var harness in _harnesses.Where(h => Agent.RunnerHarnessIds.Contains(h.Id)))
+            @foreach (var harness in _harnesses)
             {
                 <div class="switch-harness harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</div>
+                @if (!Agent.RunnerHarnessIds.Contains(harness.Id))
+                {
+                    <a class="switch-unavailable" href="@($"runners/{Agent.RunnerId}")">Install @harness.DisplayName on @Agent.RunnerName</a>
+                }
                 @if (harness.AccountSupport is null)
                 {
-                    @Option(harness, null, harness.DisplayName)
+                    @Option(harness, null, $"{_me?.Username ?? Agent.OwnerName} · {harness.DisplayName}")
                 }
                 else
                 {
-                    var accounts = _accounts.Where(a => a.HarnessId == harness.Id && a.Enabled && a.Access >= AccountAccess.Use).ToList();
+                    var accounts = _accounts.Where(a => a.HarnessId == harness.Id && a.Enabled).OrderBy(a => a.CreatedByUsername).ThenBy(a => a.Name).ToList();
                     @foreach (var account in accounts)
                     {
-                        @Option(harness, account, account.Name + " · " + account.Id.ToString("N")[..6] + (account.IsDefault ? " (your default)" : ""))
+                        @Option(harness, account, AccountLabel.Name(account) + " · " + account.Id.ToString("N")[..6] + (account.IsDefault ? " (your default)" : ""))
                     }
 
                     @if (accounts.Count == 0)
@@ -82,7 +86,8 @@
                 return name;
             }
 
-            var login = CurrentAccount?.Name ?? Agent.AccountName ?? (Agent.RunningAccountId is not null ? "configured login" : "default");
+            var login = CurrentAccount is { } current ? AccountLabel.Name(current) : null;
+            login ??= Agent.AccountName ?? (Agent.RunningAccountId is not null ? "configured login" : "default");
             return $"{name} · {login}";
         }
     }
@@ -103,8 +108,8 @@
         try
         {
             _harnesses = (await Api.InfoAsync()).Harnesses.ToList();
-            _accounts = await Api.ListAccountsAsync();
             _me = await Me.GetAsync();
+            _accounts = await Api.ListAccountsAsync(_me.Has(UserRoles.HarnessLoginManager));
             _loaded = true;
         }
         catch (ApiException ex)
@@ -121,16 +126,18 @@
     {
         if (_open)
         {
-            _accounts = await Api.ListAccountsAsync();
+            await LoadAsync();
         }
     }
 
     private RenderFragment Option(HarnessDto harness, AccountDto? account, string label) => __builder =>
     {
         var current = Agent.State == AgentState.Running && harness.Id == Agent.HarnessId && (account is null || account.Id == CurrentAccount?.Id);
-        <button type="button" class="switch-option @(current ? "switch-current" : "")" disabled="@current" @onclick="() => SwitchAsync(harness, account)">
+        <button type="button" class="switch-option @(current ? "switch-current" : "")" disabled="@(current || !Agent.RunnerHarnessIds.Contains(harness.Id) || account is { Access: < AccountAccess.Use })" @onclick="() => SwitchAsync(harness, account)">
             <MudIcon Icon="@(current ? Icons.Material.Rounded.CheckCircle : Icons.Material.Rounded.ArrowForward)" Size="Size.Small" />
-            <span>@label</span>
+            <span class="switch-option-label">@label
+                @if (account is { Access: < AccountAccess.Use }) { <span class="switch-option-detail">Use access required</span> }
+            </span>
             @if (current)
             {
                 <span class="switch-note">now</span>
@@ -142,10 +149,10 @@
     {
         _open = false;
         var changesHarness = harness.Id != Agent.HarnessId;
-        var target = account is null ? harness.DisplayName : $"{harness.DisplayName} ({account.Name})";
+        var target = account is null ? harness.DisplayName : $"{harness.DisplayName} ({AccountLabel.Name(account)})";
         var message = changesHarness
             ? $"Continue the conversation with {harness.DisplayName} in the same folder, preserving completed tool history and a backup of the original?"
-            : $"{harness.DisplayName} restarts with the account '{account?.Name}' and resumes the conversation.";
+            : $"{harness.DisplayName} restarts with the account '{(account is null ? harness.DisplayName : AccountLabel.Name(account))}' and resumes the conversation.";
         if (!IsOwner && account is not null)
         {
             message += $" {Agent.OwnerName} must also have Use access to this login.";

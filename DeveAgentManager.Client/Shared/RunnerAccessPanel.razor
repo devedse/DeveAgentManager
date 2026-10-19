@@ -6,58 +6,31 @@
 
 @* A Runner's people (owner and members) and how to log in to it yourself (its password, keys only, SSH keys). *@
 <div class="panel mb-4">
-    <div class="panel-header">
-        <div class="help-heading"><MudText Typo="Typo.h6">Who has access</MudText>
-            <HelpTip Label="Who has access">Use: their own agents, the shell, VS Code and the desktop. Manage: also start, stop, set up, its password and who has access.
-            Everyone with access uses the same account on the Runner, so they can reach everything on it: share a Runner only with people you trust with your keys.</HelpTip></div>
-        @if (CanManage)
-        {
-            <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Rounded.PersonAdd" OnClick="AddAsync">Add</MudButton>
-        }
-    </div>
-    <div class="list">
-        <div class="list-row">
-            <div class="list-avatar list-avatar-icon"><MudIcon Icon="@Icons.Material.Rounded.Star" Size="Size.Small" /></div>
-            <div class="list-main">
-                <div class="list-title">@Runner.OwnerName @(Runner.OwnerId == UserId ? "(you)" : "")</div>
-                <div class="list-subtitle">Owner</div>
-            </div>
-            @if (CanChangeOwner)
+    <AccessList People="People" UserId="UserId" Loaded="_membersLoaded" Error="_membersError" Retry="LoadMembersAsync" CanAdd="CanManage" Busy="_busy" Add="AddAsync">
+        <Help>
+            <p>Use permits running agents, the shell, VS Code and the desktop. Manage also permits setup, power controls, passwords and access changes.</p>
+            <p>Everyone uses the same account on the runner and can reach its files and credentials. Removing access removes that person's agents from this runner; their saved conversations remain.</p>
+        </Help>
+        <Actions Context="person">
+            @if (person.Owner && CanChangeOwner)
             {
-                <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" aria-label="Owner actions">
+                <AccessMenu Disabled="_busy" Label="Owner actions">
                     <MudMenuItem Icon="@Icons.Material.Rounded.SwapHoriz" OnClick="ChangeOwnerAsync">Give to someone else…</MudMenuItem>
-                </MudMenu>
+                </AccessMenu>
             }
-        </div>
-        <LoadingSection Loaded="_membersLoaded" Label="Loading who has access">
-        <Placeholder><SkeletonList Rows="1" /></Placeholder>
-        <ChildContent>
-        @foreach (var member in _members)
-        {
-            <div class="list-row">
-                <div class="list-avatar list-avatar-icon"><MudIcon Icon="@Icons.Material.Rounded.Person" Size="Size.Small" /></div>
-                <div class="list-main">
-                    <div class="list-title">@member.DisplayName @(member.UserId == UserId ? "(you)" : "")</div>
-                    <div class="list-subtitle">@(member.Access == RunnerAccess.Manage ? "Manage" : "Use") · since @member.GrantedAt.Humanize()</div>
-                </div>
-                @if (CanManage || member.UserId == UserId)
-                {
-                    <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true"
-                             aria-label="@($"Access of {member.Username}")">
-                        @if (CanManage)
-                        {
-                            <MudMenuItem Icon="@Icons.Material.Rounded.Tune" OnClick="() => SetAsync(member.UserId, member.Access == RunnerAccess.Manage ? RunnerAccess.Use : RunnerAccess.Manage)">
-                                @(member.Access == RunnerAccess.Manage ? "Change to Use" : "Change to Manage")
-                            </MudMenuItem>
-                        }
-                        <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => RemoveAsync(member)">@(member.UserId == UserId ? "Leave this Runner…" : "Take access away…")</MudMenuItem>
-                    </MudMenu>
-                }
-            </div>
-        }
-        </ChildContent>
-        </LoadingSection>
-    </div>
+            else if (!person.Owner && (CanManage || person.Id == UserId))
+            {
+                var member = _members.Single(m => m.UserId == person.Id);
+                <AccessMenu Disabled="_busy" Label="@($"Access for {person.Username}")">
+                    @if (CanManage)
+                    {
+                        <MudMenuItem Icon="@Icons.Material.Rounded.Tune" OnClick="() => SetAsync(member.UserId, member.Access == RunnerAccess.Manage ? RunnerAccess.Use : RunnerAccess.Manage)">Change to @(member.Access == RunnerAccess.Manage ? "Use" : "Manage")</MudMenuItem>
+                    }
+                    <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => RemoveAsync(member)">@(member.UserId == UserId ? "Leave access…" : "Remove access…")</MudMenuItem>
+                </AccessMenu>
+            }
+        </Actions>
+    </AccessList>
 </div>
 
 <div class="panel mb-4">
@@ -109,6 +82,9 @@
     private List<RunnerMemberDto> _members = [];
     private string? _password;
     private bool _membersLoaded;
+    private string? _membersError;
+    private IReadOnlyList<AccessPerson> People => new[] { new AccessPerson(Runner.OwnerId, "", Runner.OwnerName, "Owner", Owner: true) }
+        .Concat(_members.Select(m => new AccessPerson(m.UserId, m.Username, m.DisplayName, m.Access.ToString(), GrantedAt: m.GrantedAt))).ToList();
     private bool _busy;
 
     [Parameter, EditorRequired]
@@ -126,17 +102,21 @@
 
     private bool Ready => Runner.State == RunnerState.Ready && Runner.Operation is null;
 
-    protected override async Task OnParametersSetAsync()
+    protected override Task OnParametersSetAsync() => LoadMembersAsync();
+
+    private async Task LoadMembersAsync()
     {
         try
         {
+            _membersError = null;
             _members = await Api.ListRunnerMembersAsync(Runner.Id);
             _membersLoaded = true;
         }
         catch (ApiException ex)
         {
-            Snackbar.Add(ex.Message, Severity.Error);
+            _membersError = ex.Message;
         }
+        catch (HttpRequestException) { _membersError = LoadingSection.Unreachable; }
     }
 
     private static readonly IReadOnlyList<(int, string, string)> Levels =
@@ -152,7 +132,7 @@
             { d => d.Exclude, _members.Select(m => m.UserId).Append(Runner.OwnerId).ToList() },
             { d => d.Levels, Levels },
             { d => d.Level, (int)RunnerAccess.Use },
-            { d => d.Confirm, "Give access" },
+            { d => d.Confirm, "Add" },
             { d => d.Warning, "Everyone with access uses the same account on the Runner and can reach everything on it: other people's agents, files, harness logins and GitHub tokens on it. Share it only with people you trust with your keys." },
         });
         if (await dialog.Result is { Canceled: false, Data: ChooseUserDialog.ChosenUser chosen })
@@ -261,14 +241,19 @@
 
     private async Task RunAsync(Func<Task> action)
     {
+        if (_busy) return;
+        _busy = true;
         try
         {
             await action();
+            _membersError = null;
             _members = await Api.ListRunnerMembersAsync(Runner.Id);
         }
         catch (ApiException ex)
         {
             Snackbar.Add(ex.Message, Severity.Error);
         }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _busy = false; }
     }
 }

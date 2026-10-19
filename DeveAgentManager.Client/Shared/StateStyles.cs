@@ -38,6 +38,7 @@ public static class StateStyles
     public static StateStyle For(AgentState state) => state switch
     {
         AgentState.Starting => new("Starting", Tone.Info, true),
+        AgentState.Moving => new("Moving", Tone.Info, true),
         AgentState.Running => new("Running", Tone.Success, true),
         AgentState.Exited => new("Exited", Tone.Warning),
         AgentState.Stopped => new("Stopped", Tone.Neutral),

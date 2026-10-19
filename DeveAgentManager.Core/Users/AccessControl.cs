@@ -104,7 +104,8 @@ public sealed class AccessControl(IDbContextFactory<ManagerDbContext> dbFactory)
     public async Task<bool> CanPromptAgentAsync(Guid id, CancellationToken ct)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        return await db.Agents.AnyAsync(a => a.Id == id && !a.LoginBlocked && !a.LoginStopPending, ct);
+        var agent = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == id && !a.LoginBlocked && !a.LoginStopPending, ct);
+        return agent is not null && !Agents.AgentService.MoveBlocksActions(agent);
     }
 
     public async Task<AccountAccess> AccountAsync(CurrentUser user, Guid id, bool management = false, CancellationToken cancellationToken = default)

@@ -55,7 +55,7 @@
                                    HelperText="You can switch the account later, from the agent's terminal.">
                             @foreach (var account in _harnessAccounts)
                             {
-                                <MudSelectItem T="Guid?" Value="account.Id">@account.Name · @(account.Id.ToString("N")[..6])@(account.IsDefault ? " (default)" : "")</MudSelectItem>
+                                <MudSelectItem T="Guid?" Value="account.Id">@AccountLabel.Name(account) · @(account.Id.ToString("N")[..6])@(account.IsDefault ? " (your default)" : "")</MudSelectItem>
                             }
                         </MudSelect>
                     }

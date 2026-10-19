@@ -1,0 +1,47 @@
+<div class="access-list">
+    <div class="panel-header">
+        <div class="help-heading">
+            <MudText Typo="Typo.subtitle1">People with access</MudText>
+            <HelpTip Label="Access permissions">@Help</HelpTip>
+        </div>
+        @if (CanAdd)
+        {
+            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.PersonAdd" Disabled="@(!Loaded || Busy)" OnClick="Add">Add user</MudButton>
+        }
+    </div>
+    <LoadingSection Loaded="Loaded" Error="Error" Retry="Retry" Label="Loading access">
+        <Placeholder><SkeletonList Rows="3" /></Placeholder>
+        <ChildContent>
+            <div class="list">
+                @foreach (var person in People)
+                {
+                    <div class="list-row access-person" @key="(person.Id, person.Key)">
+                        <div class="list-avatar list-avatar-icon"><MudIcon Icon="@(person.Owner ? Icons.Material.Rounded.Star : Icons.Material.Rounded.Person)" Size="Size.Small" /></div>
+                        <div class="list-main">
+                            <div class="list-title">@(person.DisplayName == person.Username || string.IsNullOrWhiteSpace(person.Username) ? person.DisplayName : $"{person.DisplayName} ({person.Username})") @(person.Id == UserId ? "(you)" : "")</div>
+                            <div class="list-subtitle">@person.Level@(person.Disabled ? " · disabled" : "")@if (person.GrantedAt is { } since) { <span> · since @since.Humanize()</span> }</div>
+                        </div>
+                        @Actions?.Invoke(person)
+                    </div>
+                }
+                @if (People.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">No additional access.</MudText>
+                }
+            </div>
+        </ChildContent>
+    </LoadingSection>
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<AccessPerson> People { get; set; } = [];
+    [Parameter] public Guid UserId { get; set; }
+    [Parameter] public bool Loaded { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool CanAdd { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public EventCallback Retry { get; set; }
+    [Parameter] public EventCallback Add { get; set; }
+    [Parameter] public RenderFragment? Help { get; set; }
+    [Parameter] public RenderFragment<AccessPerson>? Actions { get; set; }
+}

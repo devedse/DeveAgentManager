@@ -181,7 +181,8 @@ public sealed record AgentDto(
     RunnerKind? RunnerKind = null,
     Guid? RunningAccountId = null,
     bool SharedWithMe = false,
-    string? RunningAccountName = null);
+    string? RunningAccountName = null,
+    bool MovePending = false);
 
 /// <summary>An image in an agent's folder, for the icon picker. <paramref name="Path"/> is relative to the folder.</summary>
 /// <param name="Automatic">What the Manager would pick by itself.</param>
@@ -238,10 +239,12 @@ public sealed record AccountDto(
     bool Enabled = true,
     int PendingCleanup = 0,
     IReadOnlyList<string>? Managers = null,
-    int PeopleCount = 0);
+    int PeopleCount = 0,
+    string? CreatedByUsername = null);
 
 public sealed record AccountGrantDto(Guid UserId, string Username, string DisplayName, AccountAccess Access, bool Disabled, Guid? AgentId = null);
 public sealed record AccountGrantRequest(AccountAccess Access);
+public sealed record MoveAgentRequest(Guid RunnerId);
 public sealed record AccountEnabledRequest(bool Enabled);
 public sealed record AccountUsageDto(Guid? AgentId, string? AgentName, string User, string Runner, bool Running, bool PendingStop);
 public sealed record AccountImpactDto(List<AccountUsageDto> Agents, int PendingCleanup);

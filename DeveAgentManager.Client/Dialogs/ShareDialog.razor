@@ -1,81 +1,47 @@
-@inject ManagerApi Api
-@inject ISnackbar Snackbar
+@inherits LiveComponent
 @inject IDialogService Dialogs
 
 @* Who an agent or a conversation is shared with. Its owner adds people, changes how and ends shares; others can leave. *@
 <MudDialog>
     <DialogContent>
-        @if (!IsOwner)
-        {
-            <MudText Typo="Typo.body2" Class="mb-3">@OwnerName shared this with you@(Agent is not null ? (Agent.Access >= AgentAccess.Write ? " read-write: you can prompt it, with the harness login it runs with" : " read-only: you can watch it and read its conversations") : " read-only").</MudText>
-        }
-        else
-        {
-            <MudText Typo="Typo.body2" Class="mb-3">
+        <AccessList People="People" UserId="Me.Id" Loaded="Loaded" Error="LoadError" Retry="RetryAsync" CanAdd="IsOwner" Busy="_busy" Add="AddAsync">
+            <Help>
                 @if (Agent is not null)
                 {
-                    <span>Read-only: they watch the terminal and read the conversations. Read-write: they also prompt it, with the harness login it runs with (yours, unless someone switches it to theirs); that needs access to its Runner too.</span>
+                    <p>Read-only permits watching the terminal and reading conversations. Read-write also permits prompting the agent with its current login and requires access to its runner.</p>
                 }
                 else
                 {
-                    <span>They can read the conversation and its images, export it, and continue a copy of it in an agent of their own.</span>
+                    <p>Read-only permits reading the conversation and its images, exporting it, and continuing a copy in another agent.</p>
                 }
-            </MudText>
-        }
-
-        <LoadingSection Loaded="@(_shares is not null)" Label="Loading who has access">
-        <Placeholder><SkeletonList Rows="2" /></Placeholder>
-        <ChildContent>
-        @if (_shares.Count == 0)
-        {
-            <MudText Typo="Typo.body2" Class="mud-text-secondary">Not shared with anyone.</MudText>
-        }
-        else
-        {
-            <div class="list">
-                @foreach (var share in _shares)
+                <p>The owner manages access. Removing access ends that person's share; other permissions remain unchanged.</p>
+            </Help>
+            <Actions Context="person">
+                @if (!person.Owner && (IsOwner || person.Id == Me.Id))
                 {
-                    <div class="list-row">
-                        <div class="list-avatar list-avatar-icon"><MudIcon Icon="@Icons.Material.Rounded.Person" Size="Size.Small" /></div>
-                        <div class="list-main">
-                            <div class="list-title">@share.DisplayName @(share.UserId == Me.Id ? "(you)" : "")</div>
-                            <div class="list-subtitle">@(share.Access == AgentAccess.Write ? "Read-write" : "Read-only") · since @share.GrantedAt.Humanize()</div>
-                        </div>
-                        @if (IsOwner)
+                    var share = _shares.Single(s => s.UserId == person.Id);
+                    <AccessMenu Disabled="_busy" Label="@($"Access for {person.Username}")">
+                        @if (IsOwner && Agent is not null)
                         {
-                            <MudMenu Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true"
-                                     aria-label="@($"Share with {share.Username}")">
-                                @if (Agent is not null)
-                                {
-                                    <MudMenuItem Icon="@Icons.Material.Rounded.Tune" OnClick="() => ShareAsync(share.UserId, share.Access == AgentAccess.Write ? AgentAccess.Read : AgentAccess.Write)">
-                                        @(share.Access == AgentAccess.Write ? "Change to read-only" : "Change to read-write")
-                                    </MudMenuItem>
-                                }
-                                <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => UnshareAsync(share.UserId)">Stop sharing</MudMenuItem>
-                            </MudMenu>
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Tune" OnClick="() => ShareAsync(share.UserId, share.Access == AgentAccess.Write ? AgentAccess.Read : AgentAccess.Write)">Change to @(share.Access == AgentAccess.Write ? "Read-only" : "Read-write")</MudMenuItem>
                         }
-                    </div>
+                        <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => RemoveAsync(share)">@(share.UserId == Me.Id ? "Leave access…" : "Remove access…")</MudMenuItem>
+                    </AccessMenu>
                 }
-            </div>
-        }
-        </ChildContent>
-        </LoadingSection>
+            </Actions>
+        </AccessList>
     </DialogContent>
     <DialogActions>
-        @if (IsOwner)
-        {
-            <MudButton StartIcon="@Icons.Material.Rounded.PersonAdd" OnClick="AddAsync">Share with someone</MudButton>
-        }
-        else if (_shares?.Any(s => s.UserId == Me.Id) == true)
-        {
-            <MudButton Color="Color.Error" OnClick="LeaveAsync">Leave</MudButton>
-        }
         <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => MudDialog.Close()">Done</MudButton>
     </DialogActions>
 </MudDialog>
 
 @code {
-    private List<ShareRow>? _shares;
+    private List<ShareRow> _shares = [];
+    private bool _busy;
+    private IReadOnlyList<AccessPerson> People => new[] { new AccessPerson(OwnerId, "", OwnerName, "Owner", Owner: true) }
+        .Concat(_shares.Select(s => new AccessPerson(s.UserId, s.Username, s.DisplayName,
+            s.Access == AgentAccess.Write ? "Read-write" : "Read-only", GrantedAt: s.GrantedAt))).ToList();
 
     [CascadingParameter]
     private IMudDialogInstance MudDialog { get; set; } = default!;
@@ -92,12 +58,12 @@
 
     /// <summary>Shows who the agent is shared with; true when the user left the share (so it is gone for them).</summary>
     public static Task<bool> ShowAsync(IDialogService dialogs, AgentDto agent, CurrentUserDto me) =>
-        ShowAsync(dialogs, agent.Access == AgentAccess.Owner ? $"Share {agent.Name}" : $"{agent.OwnerName}'s {agent.Name}",
+        ShowAsync(dialogs, agent.Access == AgentAccess.Owner ? $"Access to {agent.Name}" : $"{agent.OwnerName}'s {agent.Name}",
             new DialogParameters<ShareDialog> { { d => d.Agent, agent }, { d => d.Me, me } });
 
     /// <summary>Shows who the conversation is shared with; true when the user left the share.</summary>
     public static Task<bool> ShowAsync(IDialogService dialogs, SessionDto session, CurrentUserDto me) =>
-        ShowAsync(dialogs, session.Access == SessionAccess.Owner ? $"Share {session.Title}" : $"{session.OwnerName}'s {session.Title}",
+        ShowAsync(dialogs, session.Access == SessionAccess.Owner ? $"Access to {session.Title}" : $"{session.OwnerName}'s {session.Title}",
             new DialogParameters<ShareDialog> { { d => d.Session, session }, { d => d.Me, me } });
 
     private static async Task<bool> ShowAsync(IDialogService dialogs, string title, DialogParameters<ShareDialog> parameters)
@@ -112,29 +78,19 @@
 
     private string OwnerName => Agent?.OwnerName ?? Session!.OwnerName;
 
-    protected override Task OnInitializedAsync() => LoadAsync();
-
-    private async Task LoadAsync()
+    protected override async Task LoadAsync()
     {
-        try
-        {
-            _shares = Agent is not null
-                ? (await Api.ListAgentSharesAsync(Agent.Id)).Select(s => new ShareRow(s.UserId, s.Username, s.DisplayName, s.Access, s.GrantedAt)).ToList()
-                : (await Api.ListSessionSharesAsync(Session!.Id)).Select(s => new ShareRow(s.UserId, s.Username, s.DisplayName, AgentAccess.Read, s.GrantedAt)).ToList();
-        }
-        catch (ApiException ex)
-        {
-            _shares = [];
-            Snackbar.Add(ex.Message, Severity.Error);
-        }
+        _shares = Agent is not null
+            ? (await Api.ListAgentSharesAsync(Agent.Id)).Select(s => new ShareRow(s.UserId, s.Username, s.DisplayName, s.Access, s.GrantedAt)).ToList()
+            : (await Api.ListSessionSharesAsync(Session!.Id)).Select(s => new ShareRow(s.UserId, s.Username, s.DisplayName, AgentAccess.Read, s.GrantedAt)).ToList();
     }
 
     private async Task AddAsync()
     {
         var parameters = new DialogParameters<ChooseUserDialog>
         {
-            { d => d.Exclude, (_shares ?? []).Select(s => s.UserId).Append(OwnerId).ToList() },
-            { d => d.Confirm, "Share" },
+            { d => d.Exclude, _shares.Select(s => s.UserId).Append(OwnerId).ToList() },
+            { d => d.Confirm, "Add" },
         };
         if (Agent is not null)
         {
@@ -156,33 +112,40 @@
     private Task ShareAsync(Guid userId, AgentAccess access) =>
         RunAsync(() => Agent is not null ? Api.ShareAgentAsync(Agent.Id, userId, access) : Api.ShareSessionAsync(Session!.Id, userId));
 
-    private Task UnshareAsync(Guid userId) =>
-        RunAsync(() => Agent is not null ? Api.UnshareAgentAsync(Agent.Id, userId) : Api.UnshareSessionAsync(Session!.Id, userId));
-
-    private async Task LeaveAsync()
+    private async Task RemoveAsync(ShareRow share)
     {
+        var leaving = share.UserId == Me.Id;
+        if (await Dialogs.ShowMessageBoxAsync(leaving ? "Leave access?" : $"Remove {share.DisplayName}'s access?",
+            "This share ends. Other runner, login and agent permissions remain unchanged.", yesText: leaving ? "Leave" : "Remove", cancelText: "Cancel") != true) return;
+        if (!leaving)
+        {
+            await RunAsync(() => Agent is not null ? Api.UnshareAgentAsync(Agent.Id, share.UserId) : Api.UnshareSessionAsync(Session!.Id, share.UserId));
+            return;
+        }
         try
         {
             await (Agent is not null ? Api.UnshareAgentAsync(Agent.Id, Me.Id) : Api.UnshareSessionAsync(Session!.Id, Me.Id));
             MudDialog.Close(DialogResult.Ok(true));
         }
-        catch (ApiException ex)
-        {
-            Snackbar.Add(ex.Message, Severity.Error);
-        }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
     }
 
     private async Task RunAsync(Func<Task> action)
     {
+        if (_busy) return;
+        _busy = true;
         try
         {
             await action();
-            await LoadAsync();
+            await ReloadAsync();
         }
         catch (ApiException ex)
         {
             Snackbar.Add(ex.Message, Severity.Error);
         }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _busy = false; }
     }
 
     private sealed record ShareRow(Guid UserId, string Username, string DisplayName, AgentAccess Access, DateTime GrantedAt);

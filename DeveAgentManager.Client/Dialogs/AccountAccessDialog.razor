@@ -4,58 +4,54 @@
 
 <MudDialog>
     <DialogContent>
-        <div class="help-heading">
-            <MudText Typo="Typo.subtitle1">People with access</MudText>
-            <HelpTip Label="Login access">
+        <AccessList People="People" UserId="_userId" Loaded="Loaded" Error="LoadError" Retry="RetryAsync" CanAdd="true" Busy="_busy" Add="AddAsync">
+            <Help>
                 <p>Use permits choosing this login and making it a personal default. Manage also permits reconnecting, granting access and removing the login. At least one enabled manager must remain.</p>
-                <p>Removing Use stops affected agents. Separate permission to prompt another person's shared agent is unchanged; remove that agent share separately if needed.</p>
-            </HelpTip>
-        </div>
-        <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading login access">
-            <Placeholder><SkeletonList Rows="3" /></Placeholder>
-            <ChildContent>
-                @if (_grants.Count == 0) { <MudText Class="mt-3">No grants. Add a manager to recover this login.</MudText> }
-                @foreach (var grant in _grants)
-                {
-                    <div class="list-row">
-                        <div class="list-main">
-                            <div class="list-title">@grant.DisplayName (@grant.Username)</div>
-                            <div class="list-subtitle">@(grant.AgentId is null ? grant.Access.ToString() : "Use · existing agent only") @(grant.Disabled ? "· disabled" : "")</div>
-                        </div>
-                        <MudMenu Dense="true">
-                            <ActivatorContent><MudIconButton Icon="@Icons.Material.Rounded.MoreVert" OnClick="@context.ToggleAsync" aria-label="@($"Access for {grant.Username}")" /></ActivatorContent>
-                            <ChildContent>
-                            @if (grant.AgentId is null)
-                            {
-                            <MudMenuItem OnClick="() => SetAsync(grant.UserId, grant.Access == AccountAccess.Use ? AccountAccess.Manage : AccountAccess.Use)">Change to @(grant.Access == AccountAccess.Use ? "Manage" : "Use")</MudMenuItem>
-                            }
-                            <MudMenuItem IconColor="Color.Error" OnClick="() => RemoveAsync(grant)">Remove access…</MudMenuItem>
-                            </ChildContent>
-                        </MudMenu>
-                    </div>
-                }
-            </ChildContent>
-        </LoadingSection>
+                <p>Removing Use stops affected agents. Permission to prompt another person's shared agent is separate.</p>
+            </Help>
+            <Actions Context="person">
+                @{ var grant = _grants.Single(g => g.UserId == person.Id && g.AgentId?.ToString() == person.Key); }
+                <AccessMenu Disabled="_busy" Label="@($"Access for {person.Username}")">
+                    @if (grant.AgentId is null)
+                    {
+                        <MudMenuItem Icon="@Icons.Material.Rounded.Tune" OnClick="() => SetAsync(grant.UserId, grant.Access == AccountAccess.Use ? AccountAccess.Manage : AccountAccess.Use)">Change to @(grant.Access == AccountAccess.Use ? "Manage" : "Use")</MudMenuItem>
+                    }
+                    <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => RemoveAsync(grant)">@(grant.UserId == _userId ? "Leave access…" : "Remove access…")</MudMenuItem>
+                </AccessMenu>
+            </Actions>
+        </AccessList>
     </DialogContent>
     <DialogActions>
-        <MudButton StartIcon="@Icons.Material.Rounded.PersonAdd" Disabled="!Loaded" OnClick="AddAsync">Add user</MudButton>
-        <MudButton OnClick="() => Dialog.Close()">Done</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => Dialog.Close()">Done</MudButton>
     </DialogActions>
 </MudDialog>
 @code {
     [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
     [Parameter, EditorRequired] public AccountDto Account { get; set; } = default!;
     private List<AccountGrantDto> _grants = [];
-    protected override async Task LoadAsync() => _grants = await Api.ListAccountGrantsAsync(Account.Id);
+    private Guid _userId;
+    private bool _busy;
+    private IReadOnlyList<AccessPerson> People => _grants.Select(g => new AccessPerson(g.UserId, g.Username, g.DisplayName,
+        g.AgentId is null ? g.Access.ToString() : "Use · existing agent only", Disabled: g.Disabled, Key: g.AgentId?.ToString())).ToList();
+    protected override async Task LoadAsync()
+    {
+        _userId = (await Me.GetAsync()).Id;
+        _grants = await Api.ListAccountGrantsAsync(Account.Id);
+    }
     private async Task SetAsync(Guid userId, AccountAccess level)
     {
+        if (_busy) return;
+        _busy = true;
         try { await Api.SetAccountGrantAsync(Account.Id, userId, level); await ReloadAsync(); }
         catch (ApiException e) { Snackbar.Add(e.Message, Severity.Error); }
         catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _busy = false; }
     }
     private async Task RemoveAsync(AccountGrantDto grant)
     {
+        if (_busy) return;
         if (!await AccountImpactDialog.ConfirmAsync(Dialogs, Account, grant.UserId, $"Remove {grant.DisplayName}'s access", "Remove")) return;
+        _busy = true;
         try
         {
             if (grant.AgentId is { } agentId) await Api.RemoveLegacyLoginGrantAsync(Account.Id, agentId);
@@ -65,6 +61,7 @@
         }
         catch (ApiException e) { Snackbar.Add(e.Message, Severity.Error); }
         catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _busy = false; }
     }
     private async Task AddAsync()
     {

@@ -1,0 +1,65 @@
+@inherits LiveComponent
+
+<MudDialog>
+    <DialogContent>
+        <div class="help-heading">
+            <MudText Typo="Typo.subtitle1">Destination runner</MudText>
+            <HelpTip Label="Moving an agent">
+                <p>The agent stops, then its working folder, native history, pasted uploads and runner-local attachments transfer to the destination. Saved screenshots, shared documents, conversations and sharing keep the same agent identity.</p>
+                <p>The working path stays the same. Existing destination folders are never overwritten. Choose a ready runner with the same SSH username, the required harness and permission to use it.</p>
+                <p>A running agent resumes after file verification. A failed transfer falls back to the source. If the Manager cannot establish whether a process stopped or started, it retains the source and offers recovery instead of starting a second copy.</p>
+                <p>Linked Git worktrees and folders shared with other agents must be separated first. Finish background commands before moving. Source files are removed after the destination starts successfully.</p>
+            </HelpTip>
+        </div>
+        <LoadingSection Loaded="Loaded" Error="LoadError" Retry="RetryAsync" Label="Loading destination runners">
+            <Placeholder><SkeletonForm Fields="1" /></Placeholder>
+            <ChildContent>
+                @if (_runners.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No eligible runner. Give this agent's owner access to a ready runner with @Agent.HarnessId installed.</MudText>
+                }
+                else
+                {
+                    <MudSelect T="Guid?" @bind-Value="_target" Label="Runner" Variant="Variant.Outlined" AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
+                        @foreach (var runner in _runners)
+                        {
+                            <MudSelectItem T="Guid?" Value="runner.Id">@runner.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudText Typo="Typo.caption" Class="mt-2">@Agent.WorkingDirectory</MudText>
+                }
+            </ChildContent>
+        </LoadingSection>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Disabled="_busy" OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || _target is null)" OnClick="MoveAsync">@(_busy ? "Starting move…" : "Move agent")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
+    private List<RunnerDto> _runners = [];
+    private Guid? _target;
+    private bool _busy;
+    protected override async Task LoadAsync()
+    {
+        var runners = await Api.ListRunnersAsync();
+        var current = runners.FirstOrDefault(r => r.Id == Agent.RunnerId);
+        _runners = runners.Where(r => r.Id != Agent.RunnerId && r.State == RunnerState.Ready && r.Operation is null
+            && r.Access >= RunnerAccess.Use && r.Username == current?.Username && r.HarnessIds.Contains(Agent.HarnessId))
+            .OrderBy(r => r.Name).ToList();
+    }
+    private async Task MoveAsync()
+    {
+        _busy = true;
+        try { await Api.MoveAgentAsync(Agent.Id, _target!.Value); Dialog.Close(DialogResult.Ok(true)); }
+        catch (ApiException e) { Snackbar.Add(e.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _busy = false; }
+    }
+    public static async Task ShowAsync(IDialogService dialogs, AgentDto agent) =>
+        await (await dialogs.ShowAsync<MoveAgentDialog>($"Move {agent.Name}", new DialogParameters<MoveAgentDialog> { { d => d.Agent, agent } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small })).Result;
+}

@@ -197,6 +197,14 @@ public sealed class RunnerShell(
         (await RunAsync(runner, $"chmod 600 {ShellQuote.Path(remotePath)}", cancellationToken: ct)).EnsureSuccess("Protecting artifact download");
     }
 
+    internal Task DownloadToAsync(Runner runner, string remotePath, Stream destination, CancellationToken ct) =>
+        WithSftpAsync(runner, async (sftp, token) =>
+        {
+            using var input = sftp.OpenRead(ToSftpPath(sftp, remotePath));
+            await input.CopyToAsync(destination, 1024 * 1024, token);
+            return true;
+        }, ct);
+
     /// <summary>A file's bytes, or null when it doesn't exist or is larger than <paramref name="maxBytes"/>.</summary>
     public async Task<byte[]?> DownloadBytesAsync(Runner runner, string remotePath, long maxBytes, CancellationToken cancellationToken = default)
     {

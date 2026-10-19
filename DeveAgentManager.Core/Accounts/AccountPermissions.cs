@@ -65,7 +65,7 @@ public sealed partial class AccountService
         var admin = (user.Roles & UserRoles.HarnessLoginManager) != 0;
         if (all && !admin) throw new UnauthorizedAccessException("Harness login manager role required.");
         var defaults = await db.UserHarnessDefaults.Where(p => p.UserId == actor.Id).Select(p => p.AccountId).ToListAsync(ct);
-        var accounts = await db.Accounts.AsNoTracking().Include(a => a.Grants).ThenInclude(g => g.User)
+        var accounts = await db.Accounts.AsNoTracking().Include(a => a.CreatedBy).Include(a => a.Grants).ThenInclude(g => g.User)
             .Where(a => all || a.Grants.Any(g => g.UserId == actor.Id)).OrderBy(a => a.HarnessId).ThenBy(a => a.Name).ToListAsync(ct);
         var result = new List<AccountDto>();
         foreach (var a in accounts)
@@ -79,7 +79,7 @@ public sealed partial class AccountService
                     ? "Reconnect so the Manager keeps it signed in" : null), grant, manages, a.Enabled,
                 manages ? await db.AccountCleanups.CountAsync(c => c.AccountId == a.Id, ct) + await usage.CountAsync(x => x.LoginStopPending, ct) : 0,
                 manages ? a.Grants.Where(g => g.Access == AccountAccess.Manage).Select(g => g.User.DisplayName + (g.User.Disabled ? " (disabled)" : "")).ToList() : null,
-                manages ? a.Grants.Count : 0));
+                manages ? a.Grants.Count : 0, a.CreatedBy?.Username));
         }
         return result;
     }

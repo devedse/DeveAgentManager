@@ -113,6 +113,17 @@
                             <MudMenuItem Icon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{conversationId}")">Conversation</MudMenuItem>
                         }
                         <MudMenuItem Icon="@(_agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="ShareAsync">Sharing</MudMenuItem>
+                        @if (_agent.Access == AgentAccess.Owner)
+                        {
+                            @if (_agent.MovePending)
+                            {
+                                <MudMenuItem Icon="@Icons.Material.Rounded.Restore" Disabled="_agent.State == AgentState.Moving" OnClick="() => RunAsync(() => Api.RecoverAgentMoveAsync(_agent.Id), reconnect: false)">Recover move / finish cleanup</MudMenuItem>
+                            }
+                            else
+                            {
+                                <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="_agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, _agent)">Move to another runner…</MudMenuItem>
+                            }
+                        }
                         @if (write && _agent.RunnerKind == RunnerKind.Desktop)
                         {
                             <MudMenuItem Icon="@Icons.Material.Rounded.DesktopWindows" Href="@($"runners/{_agent.RunnerId}/desktop?agent={AgentId}")">Runner desktop</MudMenuItem>
@@ -152,8 +163,19 @@
             </EmptyState>
         </div>
     }
+    else if (_agent.State == AgentState.Moving)
+    {
+        <div class="terminal-stopped" role="status" aria-busy="true">
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Medium" />
+            <MudText Typo="Typo.subtitle1">@(_agent.StateMessage ?? "Moving agent…")</MudText>
+        </div>
+    }
     else if (_agent.State is AgentState.Running or AgentState.Starting)
     {
+        @if (_agent.StateMessage is { } moveMessage)
+        {
+            <div class="terminal-readonly-banner" role="status"><MudIcon Icon="@Icons.Material.Rounded.Info" Size="Size.Small" /><span>@moveMessage</span></div>
+        }
         @if (_agent.Access < AgentAccess.Write)
         {
             <div class="terminal-readonly-banner">
@@ -161,7 +183,7 @@
                 <span>@AgentTable.ShareText(_agent). You can watch; typing goes nowhere.</span>
             </div>
         }
-        <TerminalView @ref="_terminal" @key="(_agent.Id, _connectionKey)" AgentId="_agent.Id" HarnessId="@_agent.HarnessId" ReadOnly="@(_agent.Access < AgentAccess.Write)"
+        <TerminalView @ref="_terminal" @key="(_agent.Id, _agent.RunnerId, _connectionKey)" AgentId="_agent.Id" HarnessId="@_agent.HarnessId" ReadOnly="@(_agent.Access < AgentAccess.Write || _agent.State == AgentState.Moving)"
                       Disconnected="OnDisconnectedAsync" Connected="StateHasChanged" />
     }
     else

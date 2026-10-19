@@ -2015,7 +2015,7 @@ html:has(.terminal-layout) body {
 }
 
 .switch-menu {
-    width: min(340px, 90vw);
+    width: min(420px, 90vw);
     padding: 8px 12px;
 }
 
@@ -2028,12 +2028,14 @@ html:has(.terminal-layout) body {
     text-transform: uppercase;
 }
 
-.switch-option {
-    display: flex;
+.switch-menu .switch-option {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    justify-content: start;
     align-items: center;
     gap: 8px;
     width: 100%;
-    padding: 8px;
+    padding: 10px 8px 10px 24px;
     border: 0;
     border-radius: 8px;
     background: transparent;
@@ -2043,6 +2045,13 @@ html:has(.terminal-layout) body {
     text-decoration: none;
     cursor: pointer;
 }
+
+.switch-option-label { min-width: 0; overflow-wrap: anywhere; }
+.switch-menu .switch-connect { display: block; padding-left: 52px; white-space: normal; }
+.switch-option-detail, .switch-unavailable { display: block; color: var(--dam-muted); font-size: .75rem; }
+.switch-unavailable { margin: 4px 8px 4px 24px; }
+.switch-menu .switch-option:disabled:not(.switch-current) { color: var(--dam-muted); cursor: default; }
+.access-person .list-main { overflow-wrap: anywhere; }
 
     .switch-option:hover:not(:disabled) {
         background: var(--dam-surface-2);

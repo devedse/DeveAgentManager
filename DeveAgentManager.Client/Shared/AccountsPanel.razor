@@ -43,7 +43,7 @@
             <div class="account-row" @key="account.Id">
                 <MudIcon Icon="@(account.Kind == AccountKind.Subscription ? Icons.Material.Rounded.WorkspacePremium : Icons.Material.Rounded.Key)" Class="account-icon" />
                 <div class="account-text">
-                    <div class="account-name">@account.Name
+                    <div class="account-name">@AccountLabel.Name(account)
                         @if (account.IsDefault) { <span class="account-badge">your default</span> }
                         @if (!account.Enabled) { <span class="account-badge">disabled</span> }
                     </div>
@@ -112,7 +112,7 @@
         if (Administration) _pending = await Api.PendingLoginCleanupAsync();
     }
     private bool Matches(AccountDto a, HarnessDto h) => string.IsNullOrWhiteSpace(_search)
-        || (a.Name + " " + a.Id.ToString("N") + " " + h.DisplayName + " " + string.Join(" ", a.Managers ?? [])).Contains(_search, StringComparison.OrdinalIgnoreCase);
+        || (AccountLabel.Name(a) + " " + a.Id.ToString("N") + " " + h.DisplayName + " " + string.Join(" ", a.Managers ?? [])).Contains(_search, StringComparison.OrdinalIgnoreCase);
     private async Task CallAsync(Func<Task> action)
     {
         try { await action(); }

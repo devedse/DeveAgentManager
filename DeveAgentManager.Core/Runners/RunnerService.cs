@@ -507,6 +507,7 @@ public sealed partial class RunnerService(
             // A Runner that is being deleted takes its activity list with it.
             var activity = deleting ? null : await StartActivityAsync(runnerId, name);
             var outcome = RunnerActivityOutcome.Succeeded;
+            var ownsMaintenance = false;
             try
             {
                 if (previous?.Completion is { } running)
@@ -517,6 +518,14 @@ public sealed partial class RunnerService(
                 await using var db = await dbFactory.CreateDbContextAsync(cancellation);
                 var runner = await db.Runners.Include(r => r.Agents).FirstOrDefaultAsync(r => r.Id == runnerId, cancellation)
                     ?? throw new InvalidOperationException("The Runner no longer exists.");
+                await AgentMoveCoordination.Gate.WaitAsync(cancellation);
+                try
+                {
+                    await agents.EnsureRunnerNotMovingAsync(runnerId, cancellation, deleting);
+                    AgentMoveCoordination.OperatingRunners.Add(runnerId);
+                    ownsMaintenance = true;
+                }
+                finally { AgentMoveCoordination.Gate.Release(); }
                 await work(new RunnerOperation(db, runner, log, events), cancellation);
             }
             catch (OperationCanceledException) when (lifetime.ApplicationStopping.IsCancellationRequested)
@@ -535,6 +544,12 @@ public sealed partial class RunnerService(
                     await MarkFailedAsync(runnerId, operation.Error);
                 }
             }
+            catch (AgentMoveBusyException ex)
+            {
+                log.Warning(ex.Message);
+                operation.Error = ex.Message;
+                outcome = RunnerActivityOutcome.Failed;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "{Operation} failed for runner {RunnerId}", name, runnerId);
@@ -548,6 +563,12 @@ public sealed partial class RunnerService(
             }
             finally
             {
+                if (ownsMaintenance)
+                {
+                    await AgentMoveCoordination.Gate.WaitAsync(CancellationToken.None);
+                    try { AgentMoveCoordination.OperatingRunners.Remove(runnerId); }
+                    finally { AgentMoveCoordination.Gate.Release(); }
+                }
                 if (activity is not null)
                 {
                     await FinishActivityAsync(activity.Value, outcome, operation.Error);

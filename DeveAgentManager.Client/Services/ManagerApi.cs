@@ -258,6 +258,9 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     // Accounts
 
+    public Task MoveAgentAsync(Guid agentId, Guid runnerId) => SendAsync(HttpMethod.Post, $"api/agents/{agentId}/move", new MoveAgentRequest(runnerId));
+    public Task RecoverAgentMoveAsync(Guid agentId) => SendAsync(HttpMethod.Post, $"api/agents/{agentId}/move/recover");
+
     public Task<List<AccountDto>> ListAccountsAsync(bool all = false) => GetAsync<List<AccountDto>>(all ? "api/accounts/all" : "api/accounts");
     public Task<List<LoginCleanupDto>> PendingLoginCleanupAsync() => GetAsync<List<LoginCleanupDto>>("api/accounts/pending");
     public Task<List<AccountGrantDto>> ListAccountGrantsAsync(Guid id) => GetAsync<List<AccountGrantDto>>($"api/accounts/{id}/grants");

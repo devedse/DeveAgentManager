@@ -153,6 +153,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<bool>("LoginStopPending")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("MoveJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");

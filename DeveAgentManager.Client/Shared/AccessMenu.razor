@@ -1,0 +1,12 @@
+<MudMenu Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Disabled="Disabled">
+    <ActivatorContent>
+        <MudIconButton Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" Disabled="Disabled" OnClick="@context.ToggleAsync" aria-label="@Label" />
+    </ActivatorContent>
+    <ChildContent>@ChildContent</ChildContent>
+</MudMenu>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "Access actions";
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

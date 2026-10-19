@@ -137,7 +137,9 @@ public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactor
         Runner? runner;
         if (agentId is { } id)
         {
-            runner = (await db.Agents.AsNoTracking().Include(a => a.Runner).FirstOrDefaultAsync(a => a.Id == id, cancellationToken))?.Runner;
+            var agent = await db.Agents.AsNoTracking().Include(a => a.Runner).FirstOrDefaultAsync(a => a.Id == id, cancellationToken);
+            if (agent is not null && Agents.AgentService.MoveBlocksActions(agent)) throw new InvalidOperationException("Wait for the agent move to finish before uploading a file.");
+            runner = agent?.Runner;
         }
         else
         {

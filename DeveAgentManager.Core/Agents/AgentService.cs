@@ -110,6 +110,8 @@ public sealed partial class AgentService(
             _ => $"{home}/work/{actor.Username}/{name}",
         };
 
+        using var workspaceLease = await ReserveWorkspaceAsync(runner.Id, name, workingDirectory, cancellationToken);
+
         var agentId = Guid.NewGuid();
         var now = DateTime.UtcNow;
         var agent = new Agent
@@ -181,6 +183,7 @@ public sealed partial class AgentService(
         using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
+        RequireNotMoving(agent);
         var runner = RequireReady(agent.Runner!);
         await LaunchAsync(runner, agent, restart, cancellationToken);
         if (restart || agent.State != AgentState.Running) AgentActivityTracker.Reset(agent);
@@ -207,6 +210,7 @@ public sealed partial class AgentService(
         using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
+        RequireNotMoving(agent);
         var runner = RequireReady(agent.Runner!);
         if (!runner.HarnessIds.Contains(harnessId))
         {
@@ -292,6 +296,7 @@ public sealed partial class AgentService(
         using var lease = await sessions.LockAsync(ct);
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var agent = await db.Agents.Include(a => a.Runner).SingleAsync(a => a.Id == agentId, ct);
+        RequireNotMoving(agent);
         var runner = RequireReady(agent.Runner!);
         var targetHarnessId = agent.HarnessId;
         if (sessionId is { } id)
@@ -367,6 +372,7 @@ public sealed partial class AgentService(
         using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
+        RequireNotMoving(agent);
         var runner = RequireReady(agent.Runner!);
         await shell.RunAsync(runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: cancellationToken);
         await sessions.SyncRunnerLockedAsync(runner, cancellationToken, agent.Id);
@@ -385,6 +391,7 @@ public sealed partial class AgentService(
         using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
+        if (agent.MoveJson is not null) throw new InvalidOperationException("Finish the agent move before deleting it.");
         if (agent.Runner!.State == RunnerState.Ready)
         {
             // Keep the latest conversation: the session stays in the Manager after the agent is gone.
@@ -406,6 +413,7 @@ public sealed partial class AgentService(
     public async Task<(Runner Runner, string Command)> GetAttachCommandAsync(Guid agentId, bool readOnly, CancellationToken cancellationToken = default)
     {
         var agent = await GetAsync(agentId, cancellationToken) ?? throw new ArgumentException("Agent not found.");
+        RequireNotMoving(agent);
         var runner = RequireReady(agent.Runner!);
         var check = await shell.RunAsync(runner, $"tmux has-session -t {ShellQuote.Quote("=" + agent.TmuxSession)}", cancellationToken: cancellationToken);
         if (!check.Succeeded)
@@ -568,7 +576,8 @@ public sealed partial class AgentService(
     {
         using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var agents = await db.Agents.Where(a => a.RunnerId == runner.Id).ToListAsync(cancellationToken);
+        var agents = await db.Agents.Where(a => a.RunnerId == runner.Id && a.State != AgentState.Moving).ToListAsync(cancellationToken);
+        agents.RemoveAll(MoveBlocksActions);
 
         var result = (await shell.RunAsync(runner, BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern)), captureScreens: true,
             nativeSessions: agents.ToDictionary(a => a.TmuxSession, a => new NativeActivityTarget(a.HarnessId, a.HarnessSessionId))),

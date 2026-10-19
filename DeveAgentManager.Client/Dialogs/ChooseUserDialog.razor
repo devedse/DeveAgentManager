@@ -8,10 +8,10 @@
         {
             <MudText Typo="Typo.body2" Class="mb-3">@Intro</MudText>
         }
-        <LoadingSection Loaded="@(_users is not null)" Label="Loading users">
+        <LoadingSection Loaded="@(_users is not null)" Error="_loadError" Retry="LoadAsync" Label="Loading users">
         <Placeholder><SkeletonForm Fields="1" /></Placeholder>
         <ChildContent>
-        @if (_users.Count == 0)
+        @if (_users!.Count == 0)
         {
             <MudText Typo="Typo.body2" Class="mud-text-secondary">There is nobody else to choose. A user manager can add people under Users.</MudText>
         }
@@ -54,6 +54,7 @@
     private List<UserSummaryDto>? _users;
     private Guid? _userId;
     private int _level;
+    private string? _loadError;
 
     [CascadingParameter]
     private IMudDialogInstance MudDialog { get; set; } = default!;
@@ -82,15 +83,21 @@
     protected override async Task OnInitializedAsync()
     {
         _level = Levels.Count > 0 && Levels.All(l => l.Value != Level) ? Levels[0].Value : Level;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loadError = null;
         try
         {
             _users = (await Api.ListUserDirectoryAsync()).Where(u => !Exclude.Contains(u.Id)).OrderBy(u => u.DisplayName).ToList();
         }
         catch (ApiException ex)
         {
-            _users = [];
-            Snackbar.Add(ex.Message, Severity.Error);
+            _loadError = ex.Message;
         }
+        catch (HttpRequestException) { _loadError = LoadingSection.Unreachable; }
     }
 
     private void Choose() => MudDialog.Close(DialogResult.Ok(new ChosenUser(_userId!.Value, _level)));

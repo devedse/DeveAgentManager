@@ -39,7 +39,9 @@
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" OnClick="ContinueAsync">@continueText</MudButton>
                 }
                 <SessionExportMenu SessionId="_stored.Id" />
-                <MudMenu Icon="@Icons.Material.Rounded.MoreVert" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+                <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+                    <ActivatorContent><MudIconButton Icon="@Icons.Material.Rounded.MoreVert" OnClick="@context.ToggleAsync" aria-label="More actions" /></ActivatorContent>
+                    <ChildContent>
                     <MudMenuItem Icon="@Icons.Material.Rounded.ContentCopy" Disabled="@(ConversationCopy.LastReply(_session).Length == 0)" OnClick="CopyLastReplyAsync">Copy last reply</MudMenuItem>
                     <MudMenuItem Icon="@(_stored.Access == SessionAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="ShareAsync">Sharing</MudMenuItem>
                     @if (_stored.Access == SessionAccess.Owner)
@@ -47,6 +49,7 @@
                         <MudMenuItem Icon="@Icons.Material.Rounded.Edit" OnClick="RenameAsync">Rename session</MudMenuItem>
                         <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="@(_stored.AgentId != null)" OnClick="DeleteAsync">Delete session</MudMenuItem>
                     }
+                    </ChildContent>
                 </MudMenu>
             </Actions>
         </PageHeader>

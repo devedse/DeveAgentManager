@@ -51,6 +51,17 @@ internal static class AgentEndpoints
             return Results.NoContent();
         }).RequireAgent(AgentAccess.Write);
 
+        agents.MapPost("/{agentId:guid}/move", async (Guid agentId, MoveAgentRequest request, CurrentUser user, AgentService service, CancellationToken ct) =>
+        {
+            await service.RequestMoveAsync(user, agentId, request.RunnerId, ct);
+            return Results.Accepted();
+        }).RequireAgent(AgentAccess.Owner);
+        agents.MapPost("/{agentId:guid}/move/recover", async (Guid agentId, CurrentUser user, AgentService service, CancellationToken ct) =>
+        {
+            await service.RecoverMoveAsync(user, agentId, ct);
+            return Results.Accepted();
+        }).RequireAgent(AgentAccess.Owner);
+
         agents.MapGet("/reply-previews", (CurrentUser user, SessionService sessions, CancellationToken ct) => sessions.ReplyPreviewsAsync(user, ct)).ForAnyUser();
         agents.MapGet("/attention", (CurrentUser user, AgentAttentionService attention, CancellationToken ct) => attention.ListAsync(user, ct)).ForAnyUser();
         agents.MapPost("/{agentId:guid}/attention/dismiss", async (Guid agentId, DismissAgentAttentionRequest request, AgentAttentionService attention, CancellationToken ct) =>

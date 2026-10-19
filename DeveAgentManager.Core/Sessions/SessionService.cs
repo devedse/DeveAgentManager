@@ -346,7 +346,7 @@ public sealed class SessionService(
         }
 
         var sessions = await db.Sessions.Include(s => s.Agent)
-            .Where(s => s.Agent != null && s.Agent.RunnerId == runner.Id && s.HarnessSessionId != null && (onlySessionId == null || s.Id == onlySessionId))
+            .Where(s => s.Agent != null && s.Agent.RunnerId == runner.Id && (s.Agent.State != AgentState.Moving || s.Agent.Id == strictAgentId) && s.HarnessSessionId != null && (onlySessionId == null || s.Id == onlySessionId))
             .ToListAsync(cancellationToken);
         sessions = sessions.Where(s => _formats.ContainsKey(s.HarnessId)).ToList();
         if (sessions.Count == 0)

@@ -21,6 +21,7 @@ public enum AgentState
     Stopped,
     Unknown,
     Error,
+    Moving,
 }
 
 /// <summary>How an account logs in.</summary>
