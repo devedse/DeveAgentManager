@@ -1,9 +1,11 @@
 #!/bin/sh
 set -eu
-# ARM64's experimental native unwinder has not passed CPU attribution validation.
-# Use portable traces there unless explicitly testing the native engine.
+# Keep ARM64's experimental native unwinder opt-in.
 case "$(uname -m)" in aarch64) CPU_PROFILER_DEFAULT=false ;; *) CPU_PROFILER_DEFAULT=true ;; esac
 if [ "${CPU_PROFILER_ENABLED:-$CPU_PROFILER_DEFAULT}" = true ]; then
+    # The pinned ARM64 code cache misses OSR loop bodies. Compile loops optimized
+    # immediately, avoiding that path while retaining tiered JIT for other methods.
+    case "$(uname -m)" in aarch64) export DOTNET_TC_QuickJitForLoops=0 ;; esac
     CPU_PROFILER_TOKEN=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
     export CPU_PROFILER_TOKEN CPU_PROFILER_ENABLED=true
     export CORECLR_ENABLE_PROFILING=1

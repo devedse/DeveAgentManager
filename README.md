@@ -191,7 +191,7 @@ Startup and connection settings use environment variables in the compose file.
 | `RUNNER_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` | `4` / `8192` / `64` | Default size in the New Runner dialog. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |
 | `CPU_TRACE_STARTUP` | `false` | Record one five-minute startup CPU capture. Manual captures remain available under Manager settings → Diagnostics. |
-| `CPU_PROFILER_ENABLED` | `true` in Docker | Load the native CPU profiler for on-demand captures; `false` uses portable thread samples. See [CPU captures](docs/manager-cpu-traces.md). |
+| `CPU_PROFILER_ENABLED` | Docker: `true` on AMD64, `false` on ARM64 | Load the native CPU profiler for on-demand captures; `false` uses portable thread samples. See [CPU captures](docs/manager-cpu-traces.md). |
 | `EDITOR_PORT` | `8081` | Optional editor-only port for direct local IP access. Public editors use hostname routing on the Portal port. |
 | `EDITOR_URL` | Local Portal host on `EDITOR_PORT` | Public mode requires `{runner}` within the first hostname label: `https://{runner}.code.{host}`, or flat names such as `https://dam-vscode-{runner}.example.com` (one level deep, so a free `*.example.com` certificate such as Cloudflare's covers them). `{host}` is derived only from an allowlisted public Portal origin. |
 | `PUBLIC_ORIGINS` | empty | Semicolon-separated HTTPS Portal origins, e.g. `https://dam.example.com;https://dam.example.org`. Unknown public origins are rejected; editor hosts never serve the Portal. |
@@ -383,6 +383,6 @@ and `beta_<branch>`, with application version `1.0.<build>-beta`. Non-Dependabot
 Security checks run within the build workflow on pushes, and independently on pull requests and the weekly schedule.
 Portal browser tests and the real five-minute startup capture run in separate jobs so neither waits for the other.
 The detailed native profiler probe is a separate manual workflow for runtime or profiler changes. ARM64 uses the
-portable recorder by default until native CPU attribution is validated.
+portable recorder by default; its experimental native engine remains opt-in.
 No secrets are needed; the workflow uses the built-in `GITHUB_TOKEN`. Run it manually (`workflow_dispatch`) to pick
 self-hosted .NET and AMD64 runners. ARM64 builds always run on native GitHub hardware.

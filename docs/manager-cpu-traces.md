@@ -134,9 +134,15 @@ Each probe runs with a read-only root filesystem, no extra capabilities and a pr
 capture files as workflow artifacts. Run this diagnostic after runtime, base-image or profiler changes. Normal
 release builds build production images directly and do not run the detailed profiler probe.
 
-ARM64 currently defaults to portable thread samples: its experimental native unwinder failed method CPU attribution.
-The manual diagnostic explicitly enables that engine to investigate it. Do not treat an ARM64 portable trace as
-on-CPU attribution. AMD64 defaults to the validated native engine.
+ARM64 defaults to portable thread samples; `CPU_PROFILER_ENABLED=true` opts into its experimental native unwinder.
+The pinned engine misses CPU samples from on-stack replacement (OSR) loop bodies. When native ARM64 profiling is
+enabled, the entrypoint sets `DOTNET_TC_QuickJitForLoops=0`: loop methods compile optimized immediately, avoiding
+that path while retaining tiered compilation for other methods. Loop methods also bypass dynamic PGO. This changes
+their startup and optimization behavior to obtain usable CPU attribution; portable ARM64 and AMD64 keep their JIT defaults. See the runtime's
+[OSR description](https://github.com/dotnet/runtime/blob/main/docs/design/features/OsrDetailsAndDebugging.md).
+The native diagnostic passes CPU attribution, cancellation and idle timer checks on both architectures with this
+workaround. The probe reports managed failures with a nonzero exit code and normal cleanup rather than triggering
+an unhandled-exception abort. Do not treat an ARM64 portable trace as on-CPU attribution.
 
 The isolated `manager-cpu-trace.mjs` browser check covers the real startup capture, global indicator, phases,
 navigation, downloads, manual cancellation and phone layouts. Local/container verification and the actual
