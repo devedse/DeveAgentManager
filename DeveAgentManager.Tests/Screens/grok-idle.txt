@@ -37,4 +37,3 @@
   ╰────────────────────────────────────────────────────────────────────────────────────── dam-test · always-approve ─╯
 
   Enter:send  │  Alt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts
-
