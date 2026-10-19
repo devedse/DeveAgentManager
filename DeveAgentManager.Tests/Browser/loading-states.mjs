@@ -9,13 +9,6 @@ const browser = await playwright[engine].launch();
 const base = process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
 const now = new Date().toISOString();
 const id = n => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
-const runner = { id: id(1), name: 'runner-01', ownerId: id(9), ownerName: 'Test user', access: 'Owner', providerId: 'existing', kind: 'Headless', state: 'Ready',
-    host: 'runner.test', cores: 4, memoryMb: 8192, diskGb: 64, agents: [], harnessIds: ['claude'], toolIds: [], createdAt: now, updatedAt: now };
-// The navigation lists the running agents from the Runners.
-const agent = n => ({ id: id(10 + n), runnerId: id(1), ownerId: id(9), ownerName: 'Test user', access: 'Owner', runnerName: 'runner-01', runnerState: 'Ready',
-    runnerHarnessIds: ['claude'], runnerToolIds: [], name: `agent-${n}`, harnessId: 'claude', workingDirectory: `/work/agent-${n}`, state: 'Running',
-    loginOwnerId: id(9), loginOwnerName: 'Test user', createdAt: now, updatedAt: now });
-
 const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 // The highest opacity any placeholder reached, sampled every frame.
 // Every LoadingSection placeholder: how soon after it appeared in the page it became visible, and how long it then stayed.
@@ -57,6 +50,13 @@ await page.locator('input[name="username"]').fill('admin');
 await page.locator('input[name="password"]').fill(process.env.DAM_TEST_PASSWORD ?? 'preview-test-only');
 await Promise.all([page.waitForURL(base + '/'), page.locator('button[type="submit"]').click()]);
 const info = await (await context.request.get(base + '/api/info')).json();
+const me = await (await context.request.get(base + '/api/me')).json();
+const runner = { id: id(1), name: 'runner-01', ownerId: me.id, ownerName: 'Test user', access: 'Owner', providerId: 'existing', kind: 'Headless', state: 'Ready',
+    host: 'runner.test', cores: 4, memoryMb: 8192, diskGb: 64, agents: [], harnessIds: ['claude'], toolIds: [], createdAt: now, updatedAt: now };
+// The navigation lists the running agents from the Runners.
+const agent = n => ({ id: id(10 + n), runnerId: id(1), ownerId: me.id, ownerName: 'Test user', access: 'Owner', runnerName: 'runner-01', runnerState: 'Ready',
+    runnerHarnessIds: ['claude'], runnerToolIds: [], name: `agent-${n}`, harnessId: 'claude', workingDirectory: `/work/agent-${n}`, state: 'Running',
+    loginOwnerId: me.id, loginOwnerName: 'Test user', createdAt: now, updatedAt: now });
 
 let delay = 0;                 // ms for every mocked API answer
 const slow = new Set();        // paths answered after `delay`; others at once
@@ -65,7 +65,7 @@ let agents = [agent(1), agent(2)];
 let runners = [{ ...runner, agents: [agent(1)] }];
 await context.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
-    if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/build') return route.continue();
+    if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/build' || path === '/api/diagnostics/cpu') return route.continue();
     if (slow.has(path)) await new Promise(resolve => setTimeout(resolve, delay));
     if (failing.has(path)) return route.fulfill({ status: 500, json: { title: 'Test-only failure', detail: 'Test-only failure' } }).catch(() => { });
     const body = path === '/api/info' ? info : path === '/api/agents' ? agents : path === '/api/runners' ? runners

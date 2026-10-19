@@ -50,8 +50,38 @@ jobs:
     - name: dotnet test
       run: dotnet test --solution DeveAgentManager.slnx -c Release --no-build --verbosity normal
 
+  verify_arm64_cpu_profiler:
+    needs: generate_version_number
+    # CPU attribution must run on native hardware, rather than under QEMU.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v6
+    - name: Verify native ARM64 runner
+      run: test "$(uname -m)" = aarch64
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+    - name: Build ARM64 CPU profiler smoke image
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: Dockerfile
+        target: cpu-smoke
+        platforms: linux/arm64
+        load: true
+        push: false
+        tags: dam-cpu-smoke:arm64-validation
+        build-args: |
+          BUILD_VERSION=${{ needs.generate_version_number.outputs.version }}
+    - name: Verify CPU profiling in an ordinary ARM64 container
+      run: |
+        docker run --rm --platform linux/arm64 --cap-drop ALL --security-opt no-new-privileges --read-only \
+          --tmpfs /tmp:rw,size=256m --tmpfs /result:rw,mode=1777,size=512m dam-cpu-smoke:arm64-validation
+
   build_docker:
-    needs: [generate_version_number, build_and_test]
+    needs: [generate_version_number, build_and_test, verify_arm64_cpu_profiler]
     runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "xlarge"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
