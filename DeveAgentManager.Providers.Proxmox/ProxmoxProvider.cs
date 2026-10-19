@@ -453,6 +453,7 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
             // No package upgrade on first boot: it holds the apt lock and the Manager's setup updates packages anyway.
             ciupgrade: ciupgrade,
             agent: config.AgentEnabled ? null : "1",
+            vga: request.TemplateId == "desktop" ? "std,memory=64" : null,
             netN: networks,
             tags: tags,
             description: "Runner managed by DeveAgentManager");
