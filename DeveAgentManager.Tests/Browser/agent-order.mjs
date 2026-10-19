@@ -84,6 +84,8 @@ try {
     for (const path of ['/agents', '/', `/runners/${runnerId}`]) {
         await page.goto(base + path);
         await others.locator('.list-title').first().waitFor({ timeout: 60000 });
+        // The runner's own list is inside an asynchronously rendered tab; the admin panel can appear first.
+        await own.locator('.list-title').first().waitFor({ timeout: 60000 });
         assert.ok(await page.evaluate(() => {
             const primary = document.querySelector('section[aria-label="Your agents"]');
             const admin = document.querySelector('section[aria-label="Other users’ agents"]');

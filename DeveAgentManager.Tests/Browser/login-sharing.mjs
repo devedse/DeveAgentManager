@@ -49,7 +49,7 @@ try {
     await admin.page.getByLabel('Person', { exact: true }).click();
     await admin.page.getByRole('option').filter({ hasText: recipientName }).click();
     await admin.page.getByRole('button', { name: 'Add', exact: true }).click();
-    await admin.page.getByText(recipientName + ' (' + recipientName + ')', { exact: true }).waitFor();
+    await admin.page.getByRole('dialog').locator('.access-person').getByText(recipientName, { exact: true }).waitFor();
     await admin.page.getByRole('button', { name: 'Done', exact: true }).click();
     assert.equal(await admin.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     const user = await login(recipientName, password, true);
