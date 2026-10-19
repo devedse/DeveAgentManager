@@ -11,9 +11,10 @@ public static class CpuTraceDisplay
         {
             "baseline-before" => "Baseline before profiling",
             "profiler-starting" => "Starting profiler",
-            "profiling" => "Sampling stacks",
+            "profiling" => capture.Method == "cpu-timer" ? "Sampling CPU" : "Sampling stacks",
             "profiler-stopping" => "Stopping profiler",
             "baseline-after" => "Baseline after profiling",
+            "complete" => "Preparing download",
             _ => "Recording"
         },
         "finishing" => "Preparing download", "ready" => "Ready to download",

@@ -25,7 +25,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(options);
         services.AddMemoryCache();
-        services.AddDbContextFactory<ManagerDbContext>(db => db.UseSqlite($"Data Source={options.DatabasePath}"));
+        services.AddDbContextFactory<ManagerDbContext>(db => db.UseSqlite($"Data Source={options.DatabasePath}").AddInterceptors(new Diagnostics.CaptureCommandInterceptor()));
         services.AddDataProtection()
             .SetApplicationName("DeveAgentManager")
             .PersistKeysToFileSystem(new DirectoryInfo(options.KeysDirectory));

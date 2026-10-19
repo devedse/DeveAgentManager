@@ -1,0 +1,9 @@
+// Wire-compatible subset of the Apache-2.0 Grafana Pyroscope push API.
+// https://github.com/grafana/pyroscope/blob/main/api/push/v1/push.proto
+syntax = "proto3";
+package push.v1;
+option csharp_namespace = "DeveAgentManager.Diagnostics.Profiles";
+message PushRequest { repeated RawProfileSeries series = 1; }
+message RawProfileSeries { repeated LabelPair labels = 1; repeated RawSample samples = 2; }
+message LabelPair { string name = 1; string value = 2; }
+message RawSample { bytes raw_profile = 1; string ID = 2; }

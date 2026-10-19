@@ -6,10 +6,14 @@
     <div class="help-heading">
         <MudText Typo="Typo.h6">Manager CPU trace</MudText>
         <HelpTip Label="Manager CPU trace">
-            <p>The diagnostic container automatically captures about five minutes at startup: a 30-second baseline, four minutes of stack sampling, then a 30-second baseline. Measurements begin before database migration and history backfill. Manual captures take about one minute: 15 seconds before, 30 seconds of sampling, then 15 seconds after.</p>
+            <p>The diagnostic container automatically captures about five minutes at startup: CPU sampling starts immediately for four and a half minutes, followed by a 30-second baseline. Manual CPU captures start sampling immediately for 45 seconds, then measure a 15-second baseline. There is no initial baseline delay that could miss a short spike. Measurements begin before database migration and history backfill.</p>
             <p>Baselines measure the process without this collector's stack profiler. The ZIP labels each phase and includes its CPU and allocation summary. Profiler startup and shutdown take extra time and are measured separately. Agents keep running; you can close this page while recording.</p>
             <p>Only one capture runs at a time. The latest three are kept under the data directory in diagnostics/cpu and survive restarts. A restart interrupts an unfinished capture. Delete removes that capture for every settings manager.</p>
-            <p>The diagnostic container uses a 50 ms sampling interval. Recording adds overhead, and startup workloads change over time: differences between phases are investigation leads, not exact overhead calculations. Managed samples include waiting threads. Traces can contain method names and file paths; share them only with someone you trust. No heap dump, conversation export or environment-variable export is collected.</p>
+            <p>The diagnostic container uses CPU-clock sampling: a sample represents 19 milliseconds of a thread's CPU time. Sleeping threads do not accrue CPU samples. The ZIP includes a method ranking, raw pprof files, process and thread CPU counters, operation timings and module mappings. Timings show elapsed time, not CPU time. Native threads outside the CLR and discarded samples can leave gaps; compare the method total with process CPU. The profiler retains managed caller frames: native and syscall work can be charged to their managed caller. Native/kernel call stacks are not retained.</p>
+            <p>The native sampler is disabled outside captures and during baselines. Loading the profiler and recording measurements still add overhead. If the native profiler is unavailable, the mode changes visibly to portable thread samples, which include waiting threads and cannot supply a CPU ranking. Matching symbols for the current image are a separate download; each capture includes their manifest.</p>
+            <p>Lightweight loader/JIT events identify methods being compiled, including compiler-thread work outside managed CPU samples. Their availability is recorded separately; they do not enable the blocked-thread sampler.</p>
+            <p>The portable fallback retains its original phases: a 30-second baseline before four minutes of startup sampling, or a 15-second baseline before 30 seconds of manual sampling, then a baseline afterwards.</p>
+            <p>Traces can contain method names, session identifiers and file paths; share them only with someone you trust. No heap dump, conversation export, environment variables, SQL text, request URLs or payloads are collected.</p>
         </HelpTip>
     </div>
     <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">Capture the Manager's CPU activity and download it for analysis.</MudText>
@@ -19,11 +23,17 @@
             <div class="settings-actions cpu-capture-controls mb-3">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.FiberManualRecord" OnClick="StartAsync" Disabled="@(_busy || _status?.Active is not null)">Capture 60-second CPU trace</MudButton>
                 <MudButton StartIcon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" Disabled="_busy">Refresh captures</MudButton>
+                @if (_status?.SymbolsAvailable == true)
+                {
+                    <MudButton Href="api/diagnostics/cpu/symbols/download" download StartIcon="@Icons.Material.Rounded.Download">Download current image symbols</MudButton>
+                }
                 @if (_status?.Active is { } active)
                 {
                     <MudButton OnClick="() => CancelAsync(active.Id)" Disabled="_busy">Cancel capture</MudButton>
                 }
             </div>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">@(_status?.Method == "cpu-timer" ? "CPU-clock samples · method CPU estimates" : "Portable thread samples · includes waiting threads")</MudText>
+            @if (_status?.RecorderWarning is { } recorderWarning) { <MudAlert Severity="Severity.Warning" Class="mb-3">@recorderWarning</MudAlert> }
             @if (_status?.Active is { } current)
             {
                 <div class="cpu-capture-progress mb-3" role="status" aria-live="polite">
@@ -42,7 +52,7 @@
             {
                 <div class="cpu-capture-row">
                     <div>
-                        <MudText Typo="Typo.subtitle2">@capture.StartedAt.ToLocalTime().ToString("g") · @CpuTraceDisplay.Name(capture) · @CpuTraceDisplay.Label(capture)</MudText>
+                        <MudText Typo="Typo.subtitle2">@capture.StartedAt.ToLocalTime().ToString("g") · @CpuTraceDisplay.Name(capture) · @CpuTraceDisplay.Label(capture) · @(capture.Method == "cpu-timer" ? "CPU samples" : "Thread samples")</MudText>
                         @if (capture.Error is { } error) { <MudText Typo="Typo.body2">@error</MudText> }
                         @if (capture.State == "ready") { <MudText Typo="Typo.caption">@((capture.Bytes / 1024d / 1024d).ToString("0.0")) MiB</MudText> }
                     </div>

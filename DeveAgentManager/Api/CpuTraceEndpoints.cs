@@ -18,7 +18,7 @@ internal static class CpuTraceEndpoints
         captures.MapPost("/", async (ManagerCpuTraces traces, CurrentUser user, AuditLog audit) =>
         {
             var capture = traces.Start();
-            await audit.RecordAsync(user, AuditActions.ManagerCpuTraceStarted, capture.Id.ToString(), "60-second Manager capture with baselines");
+            await audit.RecordAsync(user, AuditActions.ManagerCpuTraceStarted, capture.Id.ToString(), $"60-second Manager capture ({capture.Method})");
             return Results.Accepted($"/api/diagnostics/cpu/{capture.Id}/download", capture);
         }).RequireRole(UserRoles.SettingsManager);
         captures.MapPost("/{id:guid}/cancel", (Guid id, ManagerCpuTraces traces) =>
@@ -36,6 +36,12 @@ internal static class CpuTraceEndpoints
             context.Response.Headers.CacheControl = "private, no-store";
             context.Response.Headers.XContentTypeOptions = "nosniff";
             return Results.Stream(traces.Download(id), "application/zip", $"manager-cpu-{id:N}.zip", enableRangeProcessing: true);
+        }).RequireRole(UserRoles.SettingsManager);
+        captures.MapGet("/symbols/download", (HttpContext context, ManagerCpuTraces traces) =>
+        {
+            context.Response.Headers.CacheControl = "private, no-store";
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+            return Results.Stream(traces.DownloadSymbols(), "application/zip", "manager-cpu-symbols.zip", enableRangeProcessing: true);
         }).RequireRole(UserRoles.SettingsManager);
     }
 }

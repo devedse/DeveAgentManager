@@ -78,7 +78,10 @@ internal sealed class NativeHistoryStore(string root)
     public async Task<(DeveSession Metadata, bool Changed)> SyncAsync(Guid id, ISessionFormat format, string sourcePath,
         long size, string stamp, Func<long, string?, Stream, CancellationToken, Task<NativeHistoryTransfer>> transfer, CancellationToken ct)
     {
+        using var queueTiming = Diagnostics.CaptureOperations.Start("history.gate", session: id, bytes: size);
         await gate.WaitAsync(ct);
+        queueTiming?.Stop();
+        using var syncTiming = Diagnostics.CaptureOperations.Start("history.sync", session: id, bytes: size);
         string? incoming = null;
         string? pendingRaw = null;
         string? pendingIndex = null;
@@ -113,6 +116,7 @@ internal sealed class NativeHistoryStore(string root)
             NativeHistoryTransfer received;
             await using (var output = new FileStream(incoming, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 65536, true))
             {
+                using var timing = Diagnostics.CaptureOperations.Start("history.transfer", session: id, bytes: size - offset);
                 received = await transfer(offset, reusable ? old!.Sha256 : null, output, ct);
                 if (!received.PrefixMatches)
                 {
@@ -139,6 +143,7 @@ internal sealed class NativeHistoryStore(string root)
             if (parseOffset == 0) state.Cursor = new();
             using (var input = File.OpenRead(path))
             {
+                using var timing = Diagnostics.CaptureOperations.Start("history.parse", session: id, bytes: size - parseOffset);
                 input.Position = parseOffset;
                 using var reader = new StreamReader(input, Encoding.UTF8);
                 foreach (var line in JsonLines.Parse(reader))
@@ -151,6 +156,7 @@ internal sealed class NativeHistoryStore(string root)
             }
             await using (var input = File.OpenRead(path))
             {
+                using var timing = Diagnostics.CaptureOperations.Start("history.hash", session: id, bytes: size);
                 state.Sha256 = Convert.ToHexString(await SHA256.HashDataAsync(input, ct));
                 if (received.SnapshotSha256 is not null && !string.Equals(received.SnapshotSha256, state.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new IOException("Native history changed during transfer; synchronization will retry.");

@@ -39,15 +39,18 @@ public sealed class ManagerCpuTraceApiTests
         await using var manager = new CaptureManager();
         using var anonymous = manager.CreateClient(new() { AllowAutoRedirect = false });
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/diagnostics/cpu")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/diagnostics/cpu/symbols/download")).StatusCode);
         using var viewer = await LoginAsync(manager, UserRoles.LogViewer);
         var missing = Guid.NewGuid();
         Assert.Equal(HttpStatusCode.Forbidden, (await viewer.GetAsync("/api/diagnostics/cpu")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.GetAsync("/api/diagnostics/cpu/symbols/download")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PostAsync("/api/diagnostics/cpu", null)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await viewer.GetAsync($"/api/diagnostics/cpu/{missing}/download")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PostAsync($"/api/diagnostics/cpu/{missing}/cancel", null)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await viewer.DeleteAsync($"/api/diagnostics/cpu/{missing}")).StatusCode);
 
         using var admin = await LoginAsync(manager, UserRoles.SettingsManager);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/api/diagnostics/cpu/symbols/download")).StatusCode);
         admin.DefaultRequestHeaders.Remove(ApiHeaders.Request);
         Assert.Equal(HttpStatusCode.Forbidden, (await admin.PostAsync("/api/diagnostics/cpu", null)).StatusCode);
         admin.DefaultRequestHeaders.Add(ApiHeaders.Request, "1");

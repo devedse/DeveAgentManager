@@ -89,11 +89,29 @@ jobs:
           org.opencontainers.image.description=DeveAgentManager - run coding agents on Proxmox VMs from your browser
       env:
         DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+    # Native loading must pass before publication; the final image excludes the test workload.
+    - name: Build CPU profiler smoke image
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: Dockerfile
+        target: cpu-smoke
+        platforms: linux/amd64
+        load: true
+        push: false
+        tags: dam-cpu-smoke:validation
+        build-args: |
+          BUILD_VERSION=${{ needs.generate_version_number.outputs.version }}
+    - name: Verify CPU profiling in an ordinary container
+      run: |
+        docker run --rm --cap-drop ALL --security-opt no-new-privileges --read-only \
+          --tmpfs /tmp:rw,size=256m --tmpfs /result:rw,mode=1777,size=512m dam-cpu-smoke:validation
     - name: Build and push Docker image
       uses: docker/build-push-action@v7
       with:
         context: .
         file: Dockerfile
+        target: final
         platforms: linux/amd64,linux/arm64
         push: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         tags: ${{ steps.meta.outputs.tags }}

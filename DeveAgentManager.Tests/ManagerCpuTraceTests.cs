@@ -12,6 +12,30 @@ namespace DeveAgentManager.Tests;
 public sealed class ManagerCpuTraceTests
 {
     [Fact]
+    public async Task NativeCapturesHaveNoBaselineDelayBeforeSamplingAShortSpike()
+    {
+        var folder = Directory.CreateTempSubdirectory("dam-native-plan-").FullName;
+        var recorder = new ControlledCpuRecorder { Method = "cpu-timer" };
+        using var service = new ManagerCpuTraces(new ManagerOptions { DataDirectory = folder }, recorder,
+            NullLogger<ManagerCpuTraces>.Instance, new(CaptureOnStartup: true));
+        try
+        {
+            await service.StartAsync(TestContext.Current.CancellationToken);
+            await WaitAsync(() => recorder.Plans.Count == 1);
+            Assert.Equal(TimeSpan.Zero, recorder.Plans.Single().Before);
+            Assert.Equal(300, recorder.Plans.Single().DurationSeconds);
+            Assert.Equal("cpu-timer", service.Status().Active!.Method);
+            service.Cancel(service.Status().Active!.Id);
+            await WaitAsync(() => service.Status().Active is null);
+            var manual = service.Start();
+            await WaitAsync(() => recorder.Plans.Count == 2);
+            Assert.Equal(TimeSpan.Zero, recorder.Plans.Last().Before);
+            Assert.Equal(60, manual.DurationSeconds);
+        }
+        finally { await service.StopAsync(CancellationToken.None); Directory.Delete(folder, true); }
+    }
+
+    [Fact]
     public async Task RealCaptureHasReadableManagedSamplesAndProcessMeasurements()
     {
         var folder = Directory.CreateTempSubdirectory("dam-cpu-real-").FullName;
@@ -35,7 +59,9 @@ public sealed class ManagerCpuTraceTests
             using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(folder, "capture.json"), TestContext.Current.CancellationToken));
             Assert.Equal(Environment.ProcessId, manifest.RootElement.GetProperty("processId").GetInt32());
             Assert.Contains("waiting threads", manifest.RootElement.GetProperty("interpretation").GetString());
-            Assert.Equal(2, manifest.RootElement.GetProperty("version").GetInt32());
+            Assert.Equal(3, manifest.RootElement.GetProperty("version").GetInt32());
+            Assert.Equal("thread-samples", manifest.RootElement.GetProperty("recorder").GetString());
+            Assert.True(File.Exists(Path.Combine(folder, "operations.jsonl")));
             var phases = manifest.RootElement.GetProperty("phases").EnumerateArray().ToArray();
             Assert.Equal(observed.Take(5), phases.Select(p => p.GetProperty("name").GetString()));
             Assert.All(phases, phase => Assert.True(phase.GetProperty("elapsedSeconds").GetDouble() > 0));
@@ -161,6 +187,7 @@ public sealed class ManagerCpuTraceTests
 
 internal sealed class ControlledCpuRecorder : ICpuTraceRecorder
 {
+    public string Method { get; init; } = "thread-samples";
     public SemaphoreSlim Release { get; } = new(0);
     public bool Fail { get; set; }
     public System.Collections.Concurrent.ConcurrentQueue<CpuTracePlan> Plans { get; } = new();

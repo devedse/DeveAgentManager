@@ -30,6 +30,7 @@ builder.Services.ConfigureHttpJsonOptions(json => ApiJson.Configure(json.Seriali
 builder.Services.AddSignalR().AddJsonProtocol(json => ApiJson.Configure(json.PayloadSerializerOptions));
 builder.Services.AddSingleton<DtoMapper>();
 builder.Services.AddSingleton<SharedFilePreviews>();
+builder.Services.AddSingleton<DeveAgentManager.Diagnostics.NativeCpuProfiler>();
 builder.Services.AddSingleton<DeveAgentManager.Diagnostics.ICpuTraceRecorder, DeveAgentManager.Diagnostics.CpuTraceRecorder>();
 builder.Services.AddSingleton<DeveAgentManager.Diagnostics.ManagerCpuTraces>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DeveAgentManager.Diagnostics.ManagerCpuTraces>());
@@ -54,6 +55,8 @@ builder.Services.AddSingleton(new DeveAgentManager.Logging.ManagerLogStore(manag
 builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider, DeveAgentManager.Logging.ManagerLogProvider>();
 
 var app = builder.Build();
+// The diagnostic image loads the native profiler before Main. Disable sampling until a capture owns it.
+_ = app.Services.GetRequiredService<DeveAgentManager.Diagnostics.NativeCpuProfiler>();
 
 // Start measurements before migrations and history backfill, not after the HTTP server becomes ready.
 // ManagerCpuTraces.StartAsync is idempotent: the host subsequently owns the same worker and shutdown.
@@ -108,6 +111,14 @@ app.UseWhen(context => !RequestSecurity.IsMachinePath(context.Request.Path), pag
     pages.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 });
 
+app.Use(async (context, next) =>
+{
+    using var timing = DeveAgentManager.Core.Diagnostics.CaptureOperations.Start("http.request");
+    // Route templates identify endpoints without retaining URLs, IDs, query strings, headers or payloads.
+    timing?.SetTag("endpoint", (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "unmatched");
+    try { await next(context); }
+    finally { timing?.SetTag("status", context.Response.StatusCode); }
+});
 app.UseAuthentication();
 app.UsePasswordChangeFirst();
 app.UseAuthorization();

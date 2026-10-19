@@ -29,8 +29,36 @@ ARG BUILD_VERSION
 ARG VER=${BUILD_VERSION:-1.0.0}
 RUN dotnet publish "DeveAgentManager/DeveAgentManager.csproj" -c Release -o /app/publish /p:Version=$VER /p:UseAppHost=false
 
-FROM base AS final
+# Only build-time tools; match native symbols to the target runtime, including arm64 builds.
+FROM base AS cpu-diagnostics
+ARG TARGETARCH
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3 binutils && rm -rf /var/lib/apt/lists/*
+COPY tools/cpu-profiler/download-profiler.py tools/cpu-profiler/download-symbols.py /cpu-tools/
+RUN python3 /cpu-tools/download-profiler.py
+RUN python3 /cpu-tools/download-symbols.py
+COPY --from=build /app/publish /publish
+COPY tools/cpu-profiler/package-symbols.py /cpu-tools/
+RUN python3 /cpu-tools/package-symbols.py
+
+FROM base AS cpu-runtime
 WORKDIR /app
 COPY --from=build /app/publish .
+COPY --from=cpu-diagnostics /cpu-profiler /app/cpu-profiler
+COPY --from=cpu-diagnostics /diagnostics-symbols /app/diagnostics-symbols
+COPY --from=cpu-diagnostics /runtime-symbols/ /usr/share/dotnet/shared/Microsoft.NETCore.App/
+COPY tools/cpu-profiler/LICENSE /app/cpu-profiler/LICENSE
+COPY tools/cpu-profiler/NOTICE /app/cpu-profiler/NOTICE
+COPY tools/cpu-profiler/entrypoint.sh /app/cpu-profiler/entrypoint.sh
 USER app
-ENTRYPOINT ["dotnet", "DeveAgentManager.dll"]
+ENTRYPOINT ["sh", "/app/cpu-profiler/entrypoint.sh"]
+
+FROM build AS cpu-test-build
+RUN dotnet publish tools/cpu-profiler/probe/Probe.csproj -c Release -o /probe /p:Version=$VER /p:UseAppHost=false
+
+# Executed by CI without root, extra capabilities, writable root filesystem or host perf access.
+FROM cpu-runtime AS cpu-smoke
+COPY --from=cpu-test-build /probe /probe
+CMD ["dotnet", "/probe/Probe.dll"]
+
+FROM cpu-runtime AS final

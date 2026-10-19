@@ -42,6 +42,7 @@ public sealed class SignInSessions(IDbContextFactory<ManagerDbContext> factory, 
 
     public async Task<SignInSession?> ValidateAsync(Guid id, Guid user, string? stamp, bool? local = null, bool touch = false, CancellationToken ct = default)
     {
+        using var timing = Diagnostics.CaptureOperations.Start("signin.validate");
         await using var db = await factory.CreateDbContextAsync(ct);
         var now = Now;
         var session = await db.SignInSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == id && s.UserId == user
@@ -49,6 +50,7 @@ public sealed class SignInSessions(IDbContextFactory<ManagerDbContext> factory, 
             && (local == null || s.Local == local), ct);
         if (session is not null && touch && session.LastSeenAt < now.AddMinutes(-1))
         {
+            using var touchTiming = Diagnostics.CaptureOperations.Start("signin.touch");
             var expires = new[] { now + IdleLifetime, session.AbsoluteExpiresAt }.Min();
             await db.SignInSessions.Where(s => s.Id == id && s.RevokedAt == null).ExecuteUpdateAsync(u => u
                 .SetProperty(s => s.LastSeenAt, now).SetProperty(s => s.ExpiresAt, expires), ct);

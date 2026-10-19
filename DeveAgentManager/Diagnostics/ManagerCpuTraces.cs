@@ -59,10 +59,10 @@ public sealed class ManagerCpuTraces : BackgroundService
 
     public ManagerCpuTraceStatus Status()
     {
-        lock (_gate) return new(_active, _captures.ToArray(), DateTimeOffset.UtcNow, _startupError);
+        lock (_gate) return new(_active, _captures.ToArray(), DateTimeOffset.UtcNow, _startupError, _recorder.Method, _recorder.Warning, File.Exists(SymbolsPath));
     }
 
-    public ManagerCpuTrace Start() => Start(CpuTracePlan.Manual, "manual");
+    public ManagerCpuTrace Start() => Start(_recorder.Method == "cpu-timer" ? CpuTracePlan.ManualCpu : CpuTracePlan.Manual, "manual");
 
     private ManagerCpuTrace Start(CpuTracePlan plan, string trigger)
     {
@@ -71,12 +71,12 @@ public sealed class ManagerCpuTraces : BackgroundService
             if (_stopping) throw new InvalidOperationException("The Manager is shutting down.");
             if (_active is not null) throw new InvalidOperationException("A CPU capture is already running.");
             var drive = new DriveInfo(OperatingSystem.IsWindows() ? Path.GetPathRoot(Path.GetFullPath(_root))! : _root);
-            if (drive.AvailableFreeSpace < 2 * CpuTraceRecorder.MaxTraceBytes + 1024 * 1024)
-                throw new InvalidOperationException("CPU capture needs at least 257 MiB of free disk space.");
+            if (drive.AvailableFreeSpace < 512L * 1024 * 1024)
+                throw new InvalidOperationException("CPU capture needs at least 512 MiB of free disk space.");
             Prune(Retained - 1);
             var now = DateTimeOffset.UtcNow;
             var capture = new ManagerCpuTrace(Guid.NewGuid(), now, plan.DurationSeconds, "recording",
-                Trigger: trigger, Phase: "baseline-before", PhaseStartedAt: now, PhaseSeconds: (int)plan.Before.TotalSeconds);
+                Trigger: trigger, Phase: "baseline-before", PhaseStartedAt: now, PhaseSeconds: (int)plan.Before.TotalSeconds, Method: _recorder.Method);
             Directory.CreateDirectory(Folder(capture.Id));
             Persist(capture);
             _active = capture; _captures.Insert(0, capture); _cancel = new();
@@ -125,7 +125,7 @@ public sealed class ManagerCpuTraces : BackgroundService
             _started = true;
             if (_options.CaptureOnStartup)
             {
-                try { Start(CpuTracePlan.Startup, "startup"); }
+                try { Start(_recorder.Method == "cpu-timer" ? CpuTracePlan.StartupCpu : CpuTracePlan.Startup, "startup"); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
                 {
                     _startupError = "The startup CPU capture could not start. Check the Manager log.";
@@ -153,7 +153,13 @@ public sealed class ManagerCpuTraces : BackgroundService
                     {
                         using var zip = new ZipArchive(file, ZipArchiveMode.Create, leaveOpen: true);
                         // Packaging happens after sampling; fastest compression keeps the added CPU cost short.
-                        foreach (var name in new[] { "manager.nettrace", "process.jsonl", "capture.json" })
+                        var names = new[] { "manager.nettrace", "process.jsonl", "capture.json", "operations.jsonl", "thread-cpu.jsonl",
+                            "maps-before.txt", "maps-after.txt", "cpu-methods.json", "cpu-methods.csv", "symbols-manifest.json",
+                            "runtime.nettrace", "runtime-events.json" }
+                            .Where(name => File.Exists(Path.Combine(Folder(id), name)));
+                        var profiles = Path.Combine(Folder(id), "profiles");
+                        if (Directory.Exists(profiles)) names = names.Concat(Directory.EnumerateFiles(profiles, "*.pprof").Select(path => "profiles/" + Path.GetFileName(path)));
+                        foreach (var name in names)
                         {
                             linked.Token.ThrowIfCancellationRequested();
                             await using var input = File.OpenRead(Path.Combine(Folder(id), name));
@@ -170,9 +176,12 @@ public sealed class ManagerCpuTraces : BackgroundService
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "CPU capture {Capture} failed", id);
-                    Update(id, "failed", error: ex is Microsoft.Diagnostics.NETCore.Client.ServerNotAvailableException
-                        ? "Runtime diagnostics are unavailable. Check that .NET diagnostics are enabled and its temporary directory is writable."
-                        : "Capture failed or reached its size/time limit. Check the Manager log.");
+                    Update(id, "failed", error: ex switch
+                    {
+                        IOException when ex.Message == NativeCpuProfiler.NoSamplesMessage => "No CPU-clock samples were received. Capture while the Manager is busy, or check native profiler initialization in the Manager log.",
+                        Microsoft.Diagnostics.NETCore.Client.ServerNotAvailableException => "Runtime diagnostics are unavailable. Check that .NET diagnostics are enabled and its temporary directory is writable.",
+                        _ => "Capture failed or reached its size/time limit. Check the Manager log."
+                    });
                 }
                 finally
                 {
@@ -232,6 +241,9 @@ public sealed class ManagerCpuTraces : BackgroundService
     }
     private string Folder(Guid id) => Path.Combine(_root, id.ToString("N"));
     private string BundlePath(Guid id) => Path.Combine(Folder(id), "capture.zip");
+    private static string SymbolsPath => Path.Combine(AppContext.BaseDirectory, "diagnostics-symbols", "symbols.zip");
+    public FileStream DownloadSymbols() => File.Exists(SymbolsPath)
+        ? new(SymbolsPath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, true) : throw new KeyNotFoundException("The current image has no symbols bundle.");
     private void Persist(ManagerCpuTrace capture)
     {
         var path = Path.Combine(Folder(capture.Id), "state.json");
@@ -239,7 +251,9 @@ public sealed class ManagerCpuTraces : BackgroundService
     }
     private void CleanupWorking(Guid id)
     {
-        foreach (var name in new[] { "manager.nettrace", "process.jsonl", "capture.json", "capture.zip.tmp", "state.json.tmp" })
-            File.Delete(Path.Combine(Folder(id), name));
+        foreach (var path in Directory.EnumerateFiles(Folder(id)))
+            if (Path.GetFileName(path) is not ("state.json" or "capture.zip")) File.Delete(path);
+        var profiles = Path.Combine(Folder(id), "profiles");
+        if (Directory.Exists(profiles)) Directory.Delete(profiles, true);
     }
 }

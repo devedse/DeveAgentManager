@@ -304,6 +304,7 @@ public sealed class SessionService(
 
     internal async Task SyncRunnerLockedAsync(Runner runner, CancellationToken cancellationToken, Guid? strictAgentId = null)
     {
+        using var timing = Diagnostics.CaptureOperations.Start("runner.history-sync", runner: runner.Id);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
 
         // Agents created before sessions were stored (or whose registration failed) get a session now.

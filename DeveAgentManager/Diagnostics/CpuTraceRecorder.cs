@@ -9,14 +9,18 @@ namespace DeveAgentManager.Diagnostics;
 
 public interface ICpuTraceRecorder
 {
+    string Method => "thread-samples";
+    string? Warning => null;
     Task RecordAsync(string folder, CpuTracePlan plan, Action<string, int> phaseChanged, CancellationToken ct);
 }
 
-/// <summary>EventPipe sampling bracketed by process measurements with no profiler attached.</summary>
-public sealed class CpuTraceRecorder : ICpuTraceRecorder
+/// <summary>CPU-clock sampling in the diagnostic image, with an explicit portable EventPipe fallback.</summary>
+public sealed class CpuTraceRecorder(NativeCpuProfiler? profiler = null) : ICpuTraceRecorder
 {
     internal const long MaxTraceBytes = 128L * 1024 * 1024;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    public string Method => profiler?.Available == true ? "cpu-timer" : "thread-samples";
+    public string? Warning => profiler?.UnavailableReason;
 
     public async Task RecordAsync(string folder, CpuTracePlan plan, Action<string, int> phaseChanged, CancellationToken ct)
     {
@@ -28,6 +32,7 @@ public sealed class CpuTraceRecorder : ICpuTraceRecorder
         var phases = new List<object>();
         Measurement? phaseStart = null;
         using var metricsStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        await using var operations = new CaptureOperationWriter(Path.Combine(folder, "operations.jsonl"));
 
         void ChangePhase(string name, int seconds)
         {
@@ -53,6 +58,7 @@ public sealed class CpuTraceRecorder : ICpuTraceRecorder
 
         ChangePhase("baseline-before", (int)plan.Before.TotalSeconds);
         var metrics = SampleAsync(Path.Combine(folder, "process.jsonl"), processStartedAt, clock, () => Volatile.Read(ref phase), metricsStop.Token);
+        var threads = LinuxCpuMeasurements.RecordThreadsAsync(Path.Combine(folder, "thread-cpu.jsonl"), () => Volatile.Read(ref phase), metricsStop.Token);
         // GC, loader, JIT, threading and method maps; excludes exception messages and HTTP payloads.
         EventPipeProvider[] providers = [
             new("Microsoft-DotNETCore-SampleProfiler", EventLevel.Informational),
@@ -60,41 +66,64 @@ public sealed class CpuTraceRecorder : ICpuTraceRecorder
         ];
         try
         {
+            await LinuxCpuMeasurements.SaveMapsAsync(Path.Combine(folder, "maps-before.txt"), ct);
             await Task.Delay(plan.Before, ct);
             ChangePhase("profiler-starting", 10);
-            using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            connectTimeout.CancelAfter(TimeSpan.FromSeconds(10));
-            using (var session = await new DiagnosticsClient(Environment.ProcessId)
-                .StartEventPipeSessionAsync(providers, requestRundown: true, circularBufferMB: 16, connectTimeout.Token))
+            if (profiler?.Available == true)
             {
-                using var drain = new CancellationTokenSource(plan.Profiling + TimeSpan.FromSeconds(30));
-                var copy = CopyBoundedAsync(session.EventStream, Path.Combine(folder, "manager.nettrace"), drain.Token);
+                profiler.Begin(folder);
+                RuntimeContextTrace? runtimeEvents = null;
                 try
                 {
+                    var sampling = Stopwatch.StartNew();
                     ChangePhase("profiling", (int)plan.Profiling.TotalSeconds);
-                    var delay = Task.Delay(plan.Profiling, ct);
-                    if (await Task.WhenAny(copy, delay) == copy)
-                    {
-                        await copy;
-                        throw new IOException("The runtime ended the trace before the requested duration.");
-                    }
-                    await delay;
+                    runtimeEvents = await RuntimeContextTrace.StartAsync(folder, plan.Profiling, ct);
+                    var remaining = plan.Profiling - sampling.Elapsed;
+                    if (remaining > TimeSpan.Zero) await Task.Delay(remaining, ct);
                 }
                 finally
                 {
-                    ChangePhase("profiler-stopping", 8);
+                    ChangePhase("profiler-stopping", NativeCpuProfiler.FlushSeconds + 8);
+                    try { await profiler.EndAsync(ct); }
+                    finally { if (runtimeEvents is not null) await runtimeEvents.DisposeAsync(); }
+                }
+            }
+            else
+            {
+                using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                connectTimeout.CancelAfter(TimeSpan.FromSeconds(10));
+                using (var session = await new DiagnosticsClient(Environment.ProcessId)
+                    .StartEventPipeSessionAsync(providers, requestRundown: true, circularBufferMB: 16, connectTimeout.Token))
+                {
+                    using var drain = new CancellationTokenSource(plan.Profiling + TimeSpan.FromSeconds(30));
+                    var copy = CopyBoundedAsync(session.EventStream, Path.Combine(folder, "manager.nettrace"), drain.Token);
                     try
                     {
-                        using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-                        await session.StopAsync(stopTimeout.Token);
-                        await copy.WaitAsync(stopTimeout.Token);
+                        ChangePhase("profiling", (int)plan.Profiling.TotalSeconds);
+                        var delay = Task.Delay(plan.Profiling, ct);
+                        if (await Task.WhenAny(copy, delay) == copy)
+                        {
+                            await copy;
+                            throw new IOException("The runtime ended the trace before the requested duration.");
+                        }
+                        await delay;
                     }
                     finally
                     {
-                        session.Dispose();
-                        await drain.CancelAsync();
-                        // Closing the session interrupts pending IPC reads, including failed/cancelled captures.
-                        try { await copy; } catch { }
+                        ChangePhase("profiler-stopping", 8);
+                        try
+                        {
+                            using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                            await session.StopAsync(stopTimeout.Token);
+                            await copy.WaitAsync(stopTimeout.Token);
+                        }
+                        finally
+                        {
+                            session.Dispose();
+                            await drain.CancelAsync();
+                            // Closing the session interrupts pending IPC reads, including failed/cancelled captures.
+                            try { await copy; } catch { }
+                        }
                     }
                 }
             }
@@ -103,25 +132,45 @@ public sealed class CpuTraceRecorder : ICpuTraceRecorder
             ChangePhase("baseline-after", (int)plan.After.TotalSeconds);
             await Task.Delay(plan.After, ct);
             ChangePhase("complete", 0);
+            await LinuxCpuMeasurements.SaveMapsAsync(Path.Combine(folder, "maps-after.txt"), ct);
         }
         finally
         {
             await metricsStop.CancelAsync();
             await metrics;
+            try { await threads; } catch (OperationCanceledException) when (metricsStop.IsCancellationRequested) { }
         }
         ct.ThrowIfCancellationRequested();
+        if (profiler?.Available == true) await NativeCpuProfiler.WriteSummaryAsync(folder, ct);
+        long? sampledCpuNanoseconds = null;
+        long? unresolvedSelfNanoseconds = null;
+        if (profiler?.Available == true)
+        {
+            using var cpuSummary = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(folder, "cpu-methods.json"), ct));
+            sampledCpuNanoseconds = cpuSummary.RootElement.GetProperty("sampledCpuNanoseconds").GetInt64();
+            unresolvedSelfNanoseconds = cpuSummary.RootElement.GetProperty("unresolvedSelfNanoseconds").GetInt64();
+        }
+        var symbolsManifest = Path.Combine(AppContext.BaseDirectory, "diagnostics-symbols", "manifest.json");
+        if (File.Exists(symbolsManifest)) File.Copy(symbolsManifest, Path.Combine(folder, "symbols-manifest.json"));
         await File.WriteAllTextAsync(Path.Combine(folder, "capture.json"), JsonSerializer.Serialize(new
         {
-            version = 2, startedAt = started, finishedAt = DateTimeOffset.UtcNow, processStartedAt,
+            version = 3, startedAt = started, finishedAt = DateTimeOffset.UtcNow, processStartedAt,
             requestedSeconds = plan.DurationSeconds, profilingSeconds = plan.Profiling.TotalSeconds,
             baselineBeforeSeconds = plan.Before.TotalSeconds, baselineAfterSeconds = plan.After.TotalSeconds,
             processId = Environment.ProcessId, processorCount = Environment.ProcessorCount,
             runtime = RuntimeInformation.FrameworkDescription, architecture = RuntimeInformation.ProcessArchitecture.ToString(),
             managerVersion = typeof(CpuTraceRecorder).Assembly.GetName().Version?.ToString(),
             configuredSamplingIntervalMilliseconds = ConfiguredSamplingInterval(),
-            method = "Unprofiled baselines before and after EventPipe managed thread samples, with runtime events and method rundown",
-            interpretation = "Thread samples include waiting threads and are not exact on-CPU percentages. Compare process CPU-time deltas and phase summaries. Baselines exclude this collector's profiler; other workloads and external profilers can still affect them. Capture and rundown overhead are labeled separately. Startup workloads change over time, so phase differences are not pure overhead measurements.",
-            phases, providers = providers.Select(p => new { p.Name, p.Keywords, level = p.EventLevel.ToString() })
+            recorder = Method, profilerVersion = profiler?.Version,
+            cpuSamplingIntervalMilliseconds = profiler?.Available == true ? NativeCpuProfiler.SamplingIntervalMilliseconds : (int?)null,
+            warning = Warning,
+            sampledCpuNanoseconds, unresolvedSelfNanoseconds,
+            method = profiler?.Available == true ? "Per-thread CPU-clock samples with managed caller stacks, bounded local pprof export, operation timings and thread CPU counters"
+                : "Unprofiled baselines before and after EventPipe managed thread samples, with runtime events and method rundown",
+            interpretation = profiler?.Available == true
+                ? "CPU-time estimates from 19 ms per-thread CPU timers, not wall-clock samples of waiting threads. Managed caller frames are retained; native and kernel frames are omitted, so native/syscall CPU can be charged to the nearest retained managed caller. Compare sampled CPU with process/thread counters to assess missing native threads and discarded samples. Baselines exclude the sampler, not the loaded native profiler and other capture instrumentation. Inclusive method times overlap; sampled CPU percentages are not fractions of total VM capacity. Operation timings measure elapsed time, not CPU time."
+                : "Thread samples include waiting threads and are not exact on-CPU percentages. Compare process CPU-time deltas and phase summaries. Baselines exclude this collector's profiler; other workloads and external profilers can still affect them. Capture and rundown overhead are labeled separately. Startup workloads change over time, so phase differences are not pure overhead measurements.",
+            phases, providers = profiler?.Available == true ? [] : providers.Select(p => new { p.Name, p.Keywords, level = p.EventLevel.ToString() }).ToArray()
         }, new JsonSerializerOptions { WriteIndented = true }), ct);
     }
 
@@ -136,7 +185,7 @@ public sealed class CpuTraceRecorder : ICpuTraceRecorder
             ? milliseconds : null;
     }
 
-    internal static async Task CopyBoundedAsync(Stream source, string path, CancellationToken ct)
+    internal static async Task CopyBoundedAsync(Stream source, string path, CancellationToken ct, long maxBytes = MaxTraceBytes)
     {
         await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 65536, true);
         var buffer = new byte[65536];
@@ -145,7 +194,7 @@ public sealed class CpuTraceRecorder : ICpuTraceRecorder
         while ((read = await source.ReadAsync(buffer, ct)) > 0)
         {
             total += read;
-            if (total > MaxTraceBytes) throw new IOException("The trace exceeded its 128 MiB limit.");
+            if (total > maxBytes) throw new IOException($"The trace exceeded its {maxBytes / 1024 / 1024} MiB limit.");
             await output.WriteAsync(buffer.AsMemory(0, read), ct);
         }
         await output.FlushAsync(ct);
