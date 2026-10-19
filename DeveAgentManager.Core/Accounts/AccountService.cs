@@ -195,7 +195,7 @@ public sealed partial class AccountService(
             }
             catch (Exception ex) when (ex is AccountRenewalException or HttpRequestException or TaskCanceledException)
             {
-                var problem = ex is AccountRenewalException ? ex.Message : "ChatGPT couldn't be reached to renew this login. The Manager tries again in a few minutes.";
+                var problem = ex is AccountRenewalException ? ex.Message : $"{GetHarness(current.HarnessId).DisplayName} couldn't be reached to renew this login. The Manager tries again in a few minutes.";
                 await SaveIfUnchangedAsync(db, current, s => s.SetProperty(a => a.RenewalProblem, problem));
                 logger.LogWarning("Renewing account {Account} failed: {Problem}", current.Name, problem);
                 if (ex is AccountRenewalException { Permanent: true })

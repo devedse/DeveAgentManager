@@ -1,0 +1,39 @@
+
+  ~/workspace                                                                                                33 / 128K
+
+
+     ❯ First message                                                                                         9:10 PM
+
+
+     Hello world 🌱                                                                                          9:10 PM
+
+     ◆ Ran printf test-only
+
+
+     ❯ Continue the imported conversation                                                                    9:10 PM
+
+
+     Verified test reply.                                                                                    9:10 PM
+
+     Worked for 2.0s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   Run /doctor for details and fixes.
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ❯ Test the composer                                                                                              │
+  ╰────────────────────────────────────────────────────────────────────────────────────── dam-test · always-approve ─╯
+
+  Enter:send  │  Alt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts

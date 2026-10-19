@@ -267,11 +267,11 @@ public static class ToolKinds
     /// <summary>Tool names of pi, Claude Code and Codex mapped to a kind (see docs/session-formats.md).</summary>
     public static string For(string? name) => name?.ToLowerInvariant() switch
     {
-        "bash" or "powershell" or "exec" or "exec_command" or "shell" or "local_shell" => Shell,
-        "read" => Read,
+        "bash" or "powershell" or "exec" or "exec_command" or "shell" or "local_shell" or "run_terminal_command" => Shell,
+        "read" or "read_file" => Read,
         "write" => Write,
-        "edit" or "multiedit" or "apply_patch" => Edit,
-        "grep" or "glob" or "find" or "ls" => Search,
+        "edit" or "multiedit" or "apply_patch" or "search_replace" => Edit,
+        "grep" or "glob" or "find" or "ls" or "list_dir" => Search,
         "web_search" or "websearch" or "webfetch" or "fetch_content" => Web,
         _ => Other,
     };

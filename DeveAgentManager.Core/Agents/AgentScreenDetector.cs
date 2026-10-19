@@ -30,13 +30,21 @@ public static class AgentScreenDetector
             ? new(AgentActivityStatus.Unknown, "Codex is showing conversation history; this view does not establish live activity.", "") : null),
         new("usage-limit", 100, "current error", c => Limit(c)),
         new("live-input-controls", 90, "below current prompt / modal controls", Blocked),
+        new("grok-input-controls", 90, "live selection controls", c => c.Harness == "grok"
+            && Has(c.Tail, @"Enter:(?:submit|select|confirm)\b") && Has(c.Tail, @"(?:Esc|Ctrl\+c):cancel\b")
+            ? new(AgentActivityStatus.NeedsInput, "Grok is waiting for a selection or answer.", "", Evidence(c.Tail), QuestionWaiting: Has(c.Tail, "Enter:submit")) : null),
         new("codex-live-activity", 80, "last activity above current prompt", CodexWorking),
         new("claude-live-activity", 80, "live footer", ClaudeWorking),
         new("pi-live-activity", 80, "live footer", c => c.Harness == "pi" && Find(c.Tail, @"^\s*─+\s+[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working[^\n]*") is { } line
             ? new(AgentActivityStatus.Working, "Pi is working.", "", Evidence(line)) : null),
+        new("grok-live-activity", 80, "status above boxed composer", GrokWorking),
         new("codex-ready-prompt", 50, "composer and latest response", CodexReady),
         new("claude-ready-prompt", 50, "prompt box and completion footer", ClaudeReady),
         new("pi-ready-prompt", 50, "empty prompt box and usage footer", PiReady),
+        new("grok-ready-prompt", 50, "boxed composer and shortcuts", c => GrokComposer(c)
+            && Has(c.After, @"Ctrl\+x:shortcuts\b") && Has(c.After, @"Shift\+Tab:mode\b")
+            && !Has(c.After, @"Ctrl\+c:cancel\b|Enter:(?:queue|send now)\b")
+            ? new(AgentActivityStatus.Ready, "Grok's prompt is ready for input.", "", Evidence(c.Lines[c.Prompt].Trim())) : null),
     ];
 
     private static readonly Rule[] OrderedRules = Rules.OrderByDescending(r => r.Priority).ToArray();
@@ -61,7 +69,7 @@ public static class AgentScreenDetector
     private static AgentScreenDetection DetectScreen(string harness, string screen, DateTime now)
     {
         var lines = screen.Replace('\u00a0', ' ').Split('\n').TakeLast(100).ToArray();
-        var prompt = Array.FindLastIndex(lines, l => Has(l, PromptPattern));
+        var prompt = Array.FindLastIndex(lines, l => Has(l, harness == "grok" ? @"^\s*│\s*❯(?:\s|$)" : PromptPattern));
         var before = string.Join('\n', prompt >= 0 ? lines.Take(prompt) : lines);
         var after = prompt >= 0 ? string.Join('\n', lines.Skip(prompt + 1)) : "";
         var tail = string.Join('\n', lines.Where(l => !string.IsNullOrWhiteSpace(l)).TakeLast(15));
@@ -133,6 +141,19 @@ public static class AgentScreenDetector
         return new(AgentActivityStatus.Working, line.Contains("Compacting context") ? "Codex is compacting context."
             : line.Contains("Waiting for background terminal") ? "Codex is waiting for a background command." : "Codex is working.", "", Evidence(line), waiting,
             CompletionEvidence: CodexCompletion(c.Before));
+    }
+
+    private static bool GrokComposer(Context c) => c.Harness == "grok" && c.Prompt >= 0
+        && Has(c.After, @"^\s*╰─+.*─╯\s*$");
+
+    private static AgentScreenDetection? GrokWorking(Context c)
+    {
+        if (!GrokComposer(c)) return null;
+        var live = string.Join('\n', c.Before.Split('\n').TakeLast(8));
+        var line = Find(live, @"^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏][^\n]+\[stop\]\s*$");
+        if (!Has(c.After, @"Ctrl\+c:cancel\b")) line = null;
+        if (line is null) line = Find(live, @"^\s*[^\n]*still running · send a message to interrupt\s*$");
+        return line is null ? null : new(AgentActivityStatus.Working, "Grok is working.", "", Evidence(line));
     }
 
     private static AgentScreenDetection? ClaudeWorking(Context c)

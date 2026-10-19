@@ -2,9 +2,9 @@
 
 DeveAgentManager exposes every conversation in one harness-neutral format, the **DeveSession**, so a session can be
 viewed in the Portal, survive its Runner, be resumed on another Runner and later be continued in another harness.
-This document describes the native formats of pi, Claude Code and Codex, the DeveSession format, and how they map.
+This document describes the native formats of pi, Claude Code, Codex and Grok, the DeveSession format, and how they map.
 
-Status: pi, Claude Code and Codex support reading and writing. Native histories are synchronized incrementally; see
+Status: pi, Claude Code, Codex and Grok support reading and writing. Native histories are synchronized incrementally; see
 [lean conversation synchronization](lean-session-sync.md) for storage, recovery and regression checks.
 
 ## Native formats
@@ -239,3 +239,7 @@ from the transcript ahead of `settings.json`; model fields inserted for compatib
 must not choose the new session's model. This applies to explicit harness switches
 and continuing an imported conversation on a new agent. Ordinary restarts and saved-session selection keep
 the conversation's model choice. See https://code.claude.com/docs/en/model-config.
+
+## Grok Build
+
+Grok uses an ACP event log plus native replay files. See [Grok setup and session backups](grok-harness.md) for the stream mapping, compaction cache requirement, incremental synchronization and export bundle.

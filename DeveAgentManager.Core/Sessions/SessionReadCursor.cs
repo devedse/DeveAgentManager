@@ -9,6 +9,10 @@ public sealed class SessionReadCursor
     public int LineCount { get; set; }
     public string? CustomTitle { get; set; }
     public string? AutoTitle { get; set; }
+    /// <summary>Small adapter state (for example the current streamed message index), never payloads.</summary>
+    public Dictionary<string, string> ParserState { get; set; } = [];
+    /// <summary>Adapters may omit streaming-only records from this disposable index. Raw records remain on disk.</summary>
+    public bool MetadataOnly { get; set; }
 
     public void Compact(int from)
     {
@@ -29,7 +33,7 @@ public sealed class SessionReadCursor
         }
     }
 
-    internal static string Snippet(IEnumerable<string?> parts, int limit)
+    public static string Snippet(IEnumerable<string?> parts, int limit)
     {
         var result = new StringBuilder(limit + 1);
         var space = false;

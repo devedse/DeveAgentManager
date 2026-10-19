@@ -38,6 +38,7 @@
     <ProjectReference Include="..\DeveAgentManager.Harnesses.Pi\DeveAgentManager.Harnesses.Pi.csproj" />
     <ProjectReference Include="..\DeveAgentManager.Harnesses.Claude\DeveAgentManager.Harnesses.Claude.csproj" />
     <ProjectReference Include="..\DeveAgentManager.Harnesses.Codex\DeveAgentManager.Harnesses.Codex.csproj" />
+    <ProjectReference Include="..\DeveAgentManager.Harnesses.Grok\DeveAgentManager.Harnesses.Grok.csproj" />
     <ProjectReference Include="..\DeveAgentManager\DeveAgentManager.csproj" />
   </ItemGroup>
 

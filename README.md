@@ -6,8 +6,8 @@ when you close the tab.
 
 - **Manager**: this app, one Docker container with the web portal.
 - **Runner**: a machine that hosts agents. Proxmox Runners are full clones of a template VM.
-- **Agent**: a harness ([pi](https://pi.dev), [Claude Code](https://code.claude.com) or
-  [Codex](https://github.com/openai/codex)) running in its own tmux session and working folder on a Runner.
+- **Agent**: a harness ([pi](https://pi.dev), [Claude Code](https://code.claude.com),
+  [Codex](https://github.com/openai/codex) or [Grok Build](https://docs.x.ai/build/overview)) running in its own tmux session and working folder on a Runner.
 - **Users**: everyone signs in with a username and password of their own and has personal or shared harness logins, a GitHub
   token, git identity, environment variables and SSH keys (**My settings**). Roles: *settings manager*, *user
   manager*, *runner creator*, *runner manager*, *conversation manager*, *log viewer* and *harness login manager*; *Admin* is all of them. A Runner has an owner and people with *Use*
@@ -15,7 +15,7 @@ when you close the tab.
   read-only or read-write, conversations read-only. Conversation managers (including admins) can open, prompt and manage every agent
   and read, export, rename, share or delete every conversation. Existing admins receive
   this role on upgrade and must sign in again. See [docs/users-plan.md](docs/users-plan.md).
-- **Account** (**My settings → Harness logins**): a Claude or ChatGPT subscription, or an API key, connected once in the
+- **Account** (**My settings → Harness logins**): a Claude, ChatGPT or Grok login, or an API key, connected once in the
   Manager and used on the Runners where authorized agents run. Logins have **Use** and **Manage** grants rather than a permanent owner. Use **Manage access** on a login row to share it; each person chooses their own default. **Manage → Harness logins** administers all logins with the *Harness login manager* role. Claude logs in with `claude setup-token` (a token valid for a year). Codex logs in
   with `codex login --device-auth` (a code you enter on any device); the Manager renews that login itself and Runners
   only get its access token, so agents on several Runners can share it ([details](docs/codex-central-auth-plan.md)).
@@ -23,6 +23,8 @@ when you close the tab.
   harnesses; offline stops and credential cleanup are retried and shown as pending. Affected agents need a permitted
   login selected explicitly. Before deleting a user, give their logins another manager or explicitly remove them.
   See [the login sharing design](docs/harness-login-sharing-plan.md) for migration and Runner trust details.
+  Grok uses device authentication or `XAI_API_KEY`; the Manager renews its login centrally and isolates each agent's history.
+  See [Grok setup and session backups](docs/grok-harness.md).
 - **Continue with…**: the switch button in an agent's terminal continues the conversation with another account or in
   another harness, in the same folder, e.g. when a subscription ran out. Another harness gets the conversation as
   text: messages, answers and what the tools did carry over, and the model's hidden thinking stays behind.
@@ -33,7 +35,7 @@ when you close the tab.
   Per harness (**Manager settings → pi**): packages (pi extensions, skills, themes, e.g. `npm:pi-web-access`), the default
   model and thinking level, and extra settings merged into `~/.pi/agent/settings.json`. **Save and apply to Runners**
   updates the ready Runners right away. Packages removed from the list are removed from the Runners.
-  **Manager settings → Claude Code / Codex**: the default model and effort for new agents. Empty (the default) lets the
+  **Manager settings → Claude Code / Codex / Grok**: the default model and effort for new agents. Empty (the default) lets the
   harness choose, which follows new models by itself. Claude takes aliases like `opus`, and Codex lists the models its
   catalog offers on your Runner.
 - **VS Code** (opt-in per Runner: tick it in **New Runner**, or **Install VS Code** on the Runner page): VS Code in the

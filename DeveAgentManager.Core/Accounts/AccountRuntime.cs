@@ -10,11 +10,10 @@ public sealed partial class AccountService
 
     public async Task<string> PrepareRuntimeAsync(Runner runner, Agent agent, Account account, CancellationToken ct)
     {
-        if (agent.HarnessId is not ("claude" or "codex")) return "";
+        if (agent.HarnessId is not ("claude" or "codex" or "grok")) return "";
         (await shell.RunAsync(runner, $". \"{EnvironmentFile(account.Id)}\"\n" + RuntimeScript(agent, account.Id), TimeSpan.FromSeconds(30), ct)).EnsureSuccess("Preparing private harness runtime");
-        return agent.HarnessId == "codex"
-            ? $"export CODEX_HOME=\"{RuntimeFolder(agent)}\"; "
-            : $"export CLAUDE_CONFIG_DIR=\"{RuntimeFolder(agent)}\"; ";
+        var variable = agent.HarnessId switch { "codex" => "CODEX_HOME", "grok" => "GROK_HOME", _ => "CLAUDE_CONFIG_DIR" };
+        return $"export {variable}=\"{RuntimeFolder(agent)}\"; ";
     }
 
     internal static string RuntimeScript(Agent agent, Guid accountId)
@@ -30,9 +29,9 @@ public sealed partial class AccountService
             root=base/d['Owner']/d['Agent']/d['Harness']
             root.mkdir(parents=True,exist_ok=True,mode=0o700)
             os.chmod(root,0o700)
-            shared=home/('.codex' if d['Harness']=='codex' else '.claude')
+            shared=home/('.'+d['Harness'])
             # Only shared settings/packages, never another user's history or mutable state databases.
-            names=['config.toml','skills','AGENTS.md','packages'] if d['Harness']=='codex' else ['settings.json','CLAUDE.md','commands','skills','plugins']
+            names=['config.toml','skills','AGENTS.md','packages'] if d['Harness']=='codex' else (['config.toml','AGENTS.md','skills'] if d['Harness']=='grok' else ['settings.json','CLAUDE.md','commands','skills','plugins'])
             for name in names:
                 src=shared/name
                 dst=root/name
@@ -42,6 +41,19 @@ public sealed partial class AccountService
                 if auth.is_symlink() or auth.exists(): auth.unlink()
                 auth.symlink_to(home/'.deveagentmanager'/'accounts'/d['Account']/'codex'/'auth.json')
                 pattern='sessions/*/*/*/rollout-*-'+d['Session']+'.jsonl'
+            elif d['Harness']=='grok':
+                # Login is read from GROK_AUTH_PATH, outside the agent's private history directory.
+                # Only this authorized session is restored; checkpoint files are part of its replay state.
+                for src in shared.glob('sessions/*/'+d['Session']):
+                    dst=root/src.relative_to(shared)
+                    for original in src.rglob('*'):
+                        if not original.is_file(): continue
+                        target=dst/original.relative_to(src)
+                        target.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+                        if not target.exists() or original.stat().st_mtime_ns>target.stat().st_mtime_ns:
+                            shutil.copy2(original,target)
+                            os.chmod(target,0o600)
+                pattern='__none__'
             else:
                 # CLAUDE_CONFIG_DIR has its own onboarding/trust state. Never copy another user's
                 # global account state, OAuth credentials or project history into this runtime.
