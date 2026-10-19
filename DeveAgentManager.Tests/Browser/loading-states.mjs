@@ -61,12 +61,14 @@ const agent = n => ({ id: id(10 + n), runnerId: id(1), ownerId: me.id, ownerName
 let delay = 0;                 // ms for every mocked API answer
 const slow = new Set();        // paths answered after `delay`; others at once
 let failing = new Set();       // paths answered with a 500
+let agentResponseGate = null;  // hold recovery while exercising Retry alongside the dashboard's poll
 let agents = [agent(1), agent(2)];
 let runners = [{ ...runner, agents: [agent(1)] }];
 await context.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/build' || path === '/api/diagnostics/cpu') return route.continue();
     if (slow.has(path)) await new Promise(resolve => setTimeout(resolve, delay));
+    if (path === '/api/agents' && agentResponseGate) await agentResponseGate;
     if (failing.has(path)) return route.fulfill({ status: 500, json: { title: 'Test-only failure', detail: 'Test-only failure' } }).catch(() => { });
     const body = path === '/api/info' ? info : path === '/api/agents' ? agents : path === '/api/runners' ? runners
         : path === '/api/agents/attention' ? [] : path === '/api/sessions' ? [] : path === '/api/accounts' ? [] : [];
@@ -130,13 +132,27 @@ try {
     // 4. A failed load says so, with Retry, instead of an empty dashboard.
     failing = new Set(['/api/agents']);
     await startPage('/');
-    const retry = page.getByRole('button', { name: 'Retry' }).first();
+    const retry = page.locator('.mud-main-content').getByRole('button', { name: 'Retry', exact: true });
     await retry.waitFor({ timeout: 30000 });
     assert.ok(await page.getByText('Test-only failure').first().isVisible());
     assert.equal(await page.getByText('No agents', { exact: true }).count(), 0);
     assert.equal(await page.locator('.stat-value .skeleton').count(), 0, 'a failed load stops pretending to load');
+    // Recovery must not let the five-second poll remove Retry between locating and
+    // clicking it. Keep successful responses pending through a poll tick and the click.
+    let releaseAgents;
+    agentResponseGate = new Promise(resolve => { releaseAgents = resolve; });
     failing = new Set();
-    await retry.click();
+    try {
+        await settle(5600);
+        assert.ok(await retry.isVisible(), 'pending automatic recovery keeps Retry available');
+        await Promise.all([
+            page.waitForRequest(request => new URL(request.url()).pathname === '/api/agents'),
+            retry.click()
+        ]);
+    } finally {
+        agentResponseGate = null;
+        releaseAgents();
+    }
     await page.getByText('agent-1', { exact: true }).first().waitFor({ timeout: 10000 });
 
     // 5. Agents, Runners and Sessions pages: their own placeholders, then content or the empty state.
