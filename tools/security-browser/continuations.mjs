@@ -6,6 +6,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 const dll = resolve(process.env.DAM_DLL || '.validation/publish/DeveAgentManager.dll');
 const base = 'http://127.0.0.1:19081';
+const suite = process.argv[2] ?? 'all';
+if (process.argv.length > 3 || !['all', 'portal', 'cpu-startup'].includes(suite)) {
+    throw new Error('Usage: node tools/security-browser/continuations.mjs [all|portal|cpu-startup]');
+}
 async function runSuite(scripts, capture = false) {
     const scratch = mkdtempSync(join(tmpdir(), 'dam-continuation-browser-'));
     const password = `test-only-${randomUUID()}`;
@@ -49,8 +53,12 @@ async function runSuite(scripts, capture = false) {
     }
 }
 
-await runSuite(['auto-continue-dialog.mjs', 'agent-activity.mjs', 'session-migration.mjs',
-    'workspace-sessions.mjs', 'file-viewer.mjs', 'html-viewer.mjs', 'history-sync-settings.mjs',
-    'loading-states.mjs', 'agent-order.mjs', 'grok.mjs']);
+if (suite === 'all' || suite === 'portal') {
+    await runSuite(['auto-continue-dialog.mjs', 'agent-activity.mjs', 'session-migration.mjs',
+        'workspace-sessions.mjs', 'file-viewer.mjs', 'html-viewer.mjs', 'history-sync-settings.mjs',
+        'loading-states.mjs', 'agent-order.mjs', 'grok.mjs']);
+}
 // Its startup/uptime assertions require a fresh host, not the shared host after earlier regressions.
-await runSuite(['manager-cpu-trace.mjs'], true);
+if (suite === 'all' || suite === 'cpu-startup') {
+    await runSuite(['manager-cpu-trace.mjs'], true);
+}

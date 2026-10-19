@@ -38,7 +38,13 @@ jobs:
           ignore-unfixed: false
           scanners: vuln
   browser:
+    name: browser (${{ matrix.suite }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [portal, cpu-startup]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
@@ -52,8 +58,11 @@ jobs:
       - run: npx --prefix tools/security-browser playwright install --with-deps chromium
       - run: dotnet publish DeveAgentManager/DeveAgentManager.csproj -c Release -o .validation/publish
       - run: node tools/security-browser/check.mjs
-      - name: Check conversation and notification UI
-        run: node tools/security-browser/continuations.mjs
+        if: matrix.suite == 'portal'
+      - name: Check browser suite
+        env:
+          BROWSER_SUITE: ${{ matrix.suite }}
+        run: node tools/security-browser/continuations.mjs "$BROWSER_SUITE"
   passive-scan:
     runs-on: ubuntu-latest
     steps:

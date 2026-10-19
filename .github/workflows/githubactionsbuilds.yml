@@ -100,6 +100,7 @@ jobs:
     runs-on: ${{ matrix.arch == 'amd64' && inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "xlarge"]') || matrix.runner }}
     timeout-minutes: 20
     permissions:
+      actions: read
       contents: read
       packages: write
     steps:
@@ -120,8 +121,7 @@ jobs:
         tags: dam-cpu-smoke:validation
         build-args: |
           BUILD_VERSION=${{ needs.prepare.outputs.version }}
-        cache-from: type=gha,scope=image-${{ matrix.arch }}
-        cache-to: type=gha,scope=image-${{ matrix.arch }},mode=max
+        cache-from: type=gha,scope=image-${{ matrix.arch }},timeout=30s
     - name: Verify CPU profiler in a restricted container
       run: tools/cpu-profiler/verify-container.sh dam-cpu-smoke:validation "$RUNNER_TEMP/cpu-profiler"
     - name: Login to GitHub Container Registry
@@ -143,6 +143,7 @@ jobs:
         outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
         build-args: |
           BUILD_VERSION=${{ needs.prepare.outputs.version }}
+        cache-to: type=gha,scope=image-${{ matrix.arch }},mode=max,timeout=2m,ignore-error=true
         provenance: false
         sbom: false
     - name: Export checked image digest

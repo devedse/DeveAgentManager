@@ -380,5 +380,6 @@ The GitHub release points to the tested commit. Newer pushes cancel older builds
 Images at `ghcr.io/devedse/deveagentmanager` get `latest` and `1.0.<build>` from `master`; other branches get `beta`
 and `beta_<branch>`, with application version `1.0.<build>-beta`. Non-Dependabot builds also update `beta_nightly`.
 Security checks run within the build workflow on pushes, and independently on pull requests and the weekly schedule.
+Portal browser tests and the real five-minute startup capture run in separate jobs so neither waits for the other.
 No secrets are needed; the workflow uses the built-in `GITHUB_TOKEN`. Run it manually (`workflow_dispatch`) to pick
 self-hosted .NET and AMD64 runners. ARM64 verification always runs on native GitHub hardware.
