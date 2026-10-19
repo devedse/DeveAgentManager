@@ -76,7 +76,7 @@ pveum pool add deveagents --comment "DeveAgentManager runners"
 
 # A role with only what the Manager needs (Proxmox VE 9)
 pveum role add DeveAgentManager --privs "VM.Allocate VM.Clone VM.Audit VM.PowerMgmt \
-VM.Config.CPU VM.Config.Memory VM.Config.Disk VM.Config.Network VM.Config.Options VM.Config.Cloudinit \
+VM.Config.CPU VM.Config.Memory VM.Config.Disk VM.Config.HWType VM.Config.Network VM.Config.Options VM.Config.Cloudinit \
 VM.GuestAgent.Audit Datastore.AllocateSpace Datastore.Audit SDN.Use Sys.Audit Pool.Audit"
 #   Proxmox VE 8: use VM.Monitor instead of VM.GuestAgent.Audit (needed to read the Runner's IP).
 
@@ -96,6 +96,18 @@ Put the token in the compose file: `PROXMOX_TOKEN_ID=deveagentmanager@pve!manage
 Adjust the storage and SDN zone names to yours. Without `SDN.Use` on the zone, cloning fails with a 403 on
 `/sdn/zones/...`.
 
+Desktop Runners set the virtual display to standard VGA with 64 MiB of video memory. Proxmox requires
+`VM.Config.HWType` for this change. For an existing `DeveAgentManager` role, append the privilege on a Proxmox node:
+
+```bash
+pveum role modify DeveAgentManager --append --privs VM.Config.HWType
+```
+
+Use your role's name if it differs. With Privilege Separation enabled, the user and token must both have this
+privilege on the Runner pool or VM. **Test connection** checks it, and desktop creation checks before cloning.
+If a new Runner already failed at **Configuring VM**, remove that failed Runner including its cloned VM and create
+it again after updating the role. **Start** and **Re-run setup** do not repeat the VM configuration or cloud-init step.
+
 #### The same in the web UI
 
 Everything is under **Datacenter → Permissions**. Click the ▸ arrow next to *Permissions* to expand it: Users,
@@ -105,7 +117,7 @@ role have to exist before you can pick them.
 1. **Pools** → **Create**. Name `deveagents`, comment `DeveAgentManager runners`.
 2. **Roles** → **Create**. Name `DeveAgentManager`. In *Privileges*, type to filter and tick each of these:
    `VM.Allocate`, `VM.Clone`, `VM.Audit`, `VM.PowerMgmt`, `VM.Config.CPU`, `VM.Config.Memory`, `VM.Config.Disk`,
-   `VM.Config.Network`, `VM.Config.Options`, `VM.Config.Cloudinit`, `VM.GuestAgent.Audit`, `Datastore.AllocateSpace`,
+   `VM.Config.HWType`, `VM.Config.Network`, `VM.Config.Options`, `VM.Config.Cloudinit`, `VM.GuestAgent.Audit`, `Datastore.AllocateSpace`,
    `Datastore.Audit`, `SDN.Use`, `Sys.Audit`, `Pool.Audit`.
    On Proxmox VE 8, pick `VM.Monitor` instead of `VM.GuestAgent.Audit`.
 3. **Users** → **Add**. User name `deveagentmanager`, Realm *Proxmox VE authentication server*. The UI asks for a

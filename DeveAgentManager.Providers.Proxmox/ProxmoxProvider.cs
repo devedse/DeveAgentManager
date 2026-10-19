@@ -145,14 +145,31 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
             }
         }
 
+        int? freeVmId = null;
         try
         {
             var free = await FindFreeVmIdAsync(client, vms, reserve: false);
+            freeVmId = free;
             checks.Add(new ProviderCheck("VMID range", CheckStatus.Ok, $"Next free VMID in {options.VmIdStart}-{options.VmIdEnd}: {free}."));
         }
         catch (Exception ex)
         {
             checks.Add(new ProviderCheck("VMID range", CheckStatus.Failed, ex.Message));
+        }
+
+        if (options.DesktopTemplateVmId is not null && freeVmId is { } desktopVmId)
+        {
+            const string name = "Desktop display permission";
+            try
+            {
+                checks.Add(await HasDesktopHardwarePermissionAsync(client, desktopVmId)
+                    ? new ProviderCheck(name, CheckStatus.Ok, "VM.Config.HWType is granted for new desktop Runners.")
+                    : new ProviderCheck(name, CheckStatus.Failed, DesktopHardwarePermissionHint));
+            }
+            catch (Exception ex)
+            {
+                checks.Add(new ProviderCheck(name, CheckStatus.Warning, ex.Message));
+            }
         }
 
         return checks;
@@ -181,6 +198,10 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
         try
         {
             vmId = await FindFreeVmIdAsync(client, vms, reserve: true);
+            if (request.TemplateId == "desktop" && !await HasDesktopHardwarePermissionAsync(client, vmId))
+            {
+                throw new InvalidOperationException(DesktopHardwarePermissionHint);
+            }
             log.Info($"{(options.FullClone ? "Full" : "Linked")} clone of template {templateVmId} ({template.Name}) on {template.Node} to VM {vmId} on {targetNode}");
             var clone = await client.Nodes[template.Node].Qemu[templateVmId].Clone.CloneVm(
                 newid: vmId,
@@ -500,6 +521,30 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
     private const string PrivilegeSeparationHint =
         "Most likely Privilege Separation is on for the token (Datacenter > Permissions > API Tokens > Edit > untick it), " +
         "or the permissions for the user are missing (Datacenter > Permissions should list /pool/..., /vms/<template>, /storage/... and /sdn/zones/...).";
+
+    private const string DesktopHardwarePermissionHint =
+        "Desktop Runners need VM.Config.HWType on their pool or VM to set the display. " +
+        "Add it to the Manager's Proxmox role under Datacenter > Permissions > Roles.";
+
+    private async Task<bool> HasDesktopHardwarePermissionAsync(PveClient client, int vmId)
+    {
+        string[] paths = options.Pool is { } pool ? [$"/pool/{pool}", $"/vms/{vmId}"] : [$"/vms/{vmId}"];
+        foreach (var path in paths)
+        {
+            var result = await client.Access.Permissions.Permissions(path: path);
+            EnsureSuccess(result, "Reading desktop display permissions");
+            if (result.ToData() is IDictionary<string, object> data
+                && data.TryGetValue(path, out var privileges)
+                && privileges is IDictionary<string, object> map
+                // Values say whether a privilege propagates; zero still grants it on this exact path.
+                && map.ContainsKey("VM.Config.HWType"))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>Shows which paths the token has privileges on, which is the quickest way to spot a permission mistake.</summary>
     private static async Task<ProviderCheck> CheckPermissionsAsync(PveClient client)
