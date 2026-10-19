@@ -16,7 +16,8 @@ Newly synchronized conversations use `/data/sessions/native/<session-id>/`:
 - A disposable `.index.json` file containing parser state, tree topology and
   bounded text snippets, without native payloads, images or tool data.
 - A small `state.json` checkpoint naming those files, the committed byte count,
-  SHA-256, source fingerprint, reply preview and last assistant timestamp.
+  SHA-256 (empty while sampled appends await verification), last full-verification time,
+  source fingerprint, reply preview and last assistant timestamp.
 
 The Portal's list previews read the small checkpoint, not the full conversation
 or index. Import, copy and harness-switch backups still use the DeveSession JSON
@@ -34,20 +35,64 @@ An unchanged checkpoint skips download and parsing. Changed files use bounded
 SFTP reads into a temporary disk file, without a growing MemoryStream or complete
 UTF-16 history string.
 
-Before fetching a suffix, the Runner hashes the entire committed prefix and DAM
-compares it with the previous checkpoint. This detects edits anywhere in the
-prefix, including same-size rewrites. A mismatch, truncation or different source
-path/harness rebuilds from a full snapshot. After transfer, the Runner hashes the
-requested snapshot prefix and DAM compares that with the assembled local copy.
-A mismatch retries on the normal next pass, preserving the last good checkpoint.
-Appends beyond the requested snapshot are allowed and picked up on the next pass;
-a busy agent does not have to stop writing. The running harness is not paused.
+A growing file with the same path, device and inode normally uses bounded SFTP reads:
+DAM compares the first 4 KiB and the last 64 KiB of its committed prefix with the
+Runner, then transfers the new bytes. Overlapping sample ranges are read only
+once. The located size and nanosecond fingerprint must match before and after
+transfer; a moving source falls back to the full verifier. This path performs no
+whole-history hashing on either machine. Protocol buffering can read ahead by a
+bounded amount; the requested sample budget is at most 68 KiB plus the new bytes.
 
-Prefix and snapshot verification read the requested bytes on the Runner, and
-computing the checkpoint hash reads the local native copy. These are sequential disk/hash costs;
-they do not transfer or parse the old history again. This is deliberately stronger
-than checking only the last few kilobytes. Opening/exporting a complete history
-still costs work proportional to its size.
+This is a deliberate integrity trade-off: an edit outside the sampled ranges,
+combined with growth of the same file, can temporarily leave the Manager's copy
+with an older middle section. A successful sampled append clears the checkpoint
+SHA-256; it is **pending verification**, not a fully verified backup. Normal
+history views and previews may show this provisional copy. DAM never merges
+histories: after detecting a prefix edit, the verified Runner snapshot replaces
+the local generation, and the previous generation is removed after commitment.
+
+Full verification runs on the first sync of each history after a Manager restart,
+at least every 30 minutes when sync is available, and when idle/stopped with pending
+appends. Idle histories that change are fully verified immediately. Unchanged,
+already audited idle histories do not trigger repeated full reads. Explicit
+stop/delete/Runner lifecycle syncs and outgoing session/harness changes also
+request full verification. These are bounded snapshots; live harnesses need not
+stop writing, and bytes appended beyond the requested boundary are picked up on
+the next pass. The 30-minute interval is checked by normal synchronization, not a
+separate timer; offline Runners are audited when they reconnect.
+
+Same-size timestamp changes, shrinkage, changed identity/path/harness, failed
+sample checks and missing local files use full verification/rebuild. Full
+verification hashes the entire local committed prefix and compares it with the
+Runner's prefix, then verifies the requested Runner snapshot against the assembled
+local file. A mismatch retries or rebuilds, preserving the last good checkpoint.
+The checkpoint SHA-256 is repopulated only after full verification succeeds.
+
+Export, shared copies, and session/harness continuation require verification of
+any pending checkpoint under the session operation lock. If the source Runner is
+unavailable, the operation fails instead of exporting or replaying a provisional
+history. Already verified archives remain readable/exportable offline. A failed
+best-effort final sync can leave a provisional archive requiring source recovery;
+removing a Runner is not evidence that its final verification succeeded.
+
+`HISTORY_SYNC_MODE` controls rollout and rollback:
+
+| Value | Behavior |
+| --- | --- |
+| `sampled` (default) | Bounded append checks and the full-audit policy above. |
+| `shadow` | Run eligible sample checks, then use the full verifier before every changed checkpoint; warn if sampling accepts an edited prefix. |
+| `full` | Full verification for every changed checkpoint, without sample checks. |
+
+Use `shadow` on a test Runner when collecting compatibility evidence; synthetic
+regressions are not evidence of a completed live shadow rollout. `full` is the
+conservative rollback. Both modes audit existing pending checkpoints before
+skipping unchanged files. Old checkpoints without an audit time are audited on
+their next sync; no database migration or native-format conversion is required.
+Before downgrading the application to an older build, use `HISTORY_SYNC_MODE=full`
+until all pending histories have been verified. Older builds do not understand
+provisional checkpoints: they can skip unchanged files, although a subsequent
+changed sync rebuilds through their checksum-mismatch path. Do not downgrade while
+an offline provisional archive still needs source recovery.
 
 The checkpoint is replaced atomically only after the raw copy and new index have
 been closed successfully. Readers see only committed bytes; an interrupted append
@@ -61,13 +106,18 @@ arrive, so partial JSON or UTF-8 cannot duplicate or lose a record.
 
 `NativeHistoryStoreTests` compares every appended prefix against the full format
 reader for Claude, Codex and pi, including restarts and replay/conversion output.
-It checks metadata/active-branch parity, native title precedence, same-size edits,
+`SampledHistoryTests` checks bounded reads and the absence of whole-history hash
+operations, audit deadlines/restarts/idle, head/tail edits, identity changes,
+delayed detection of middle edits, rollback/shadow modes and interrupted appends.
+The store regressions also check metadata/active-branch parity, native title precedence, same-size edits,
 truncation, path changes, partial final lines, interrupted transfers, uncommitted
 suffixes, index recovery, parsing failures, bounded image-free indexes and readable
 summaries during transfers.
 
 `NativeHistoryTransportTests` uses an isolated real SSH/SFTP server. It verifies
-suffix transfer, whole-prefix verification, growth during a snapshot and checksum rejection, plus
+suffix transfer, sampled reads without remote hash commands, fingerprint/sample rejection,
+whole-prefix verification, growth during a snapshot and checksum rejection. It also
+checks pending-history export/copy audits and unavailable-source rejection, plus
 legacy migration, previews, exports, copying histories and attachments, switching
 harnesses with backups and deleting the original without affecting its copy.
 Existing API/access and format tests continue to run.

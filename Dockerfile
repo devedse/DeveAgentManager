@@ -7,7 +7,7 @@ EXPOSE 8080 8081
 RUN mkdir -p /data && chown app:app /data
 ENV DATA_DIR=/data \
     ASPNETCORE_HTTP_PORTS=8080;8081 \
-    CPU_TRACE_STARTUP=true \
+    CPU_TRACE_STARTUP=false \
     DOTNET_EventPipeThreadSamplingRate=0x32
 # CoreCLR reads this hexadecimal DWORD before Main: 0x32 is a 50 ms sampling interval.
 

@@ -3,6 +3,7 @@ using System.Text;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Security;
+using DeveAgentManager.Core.Sessions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Renci.SshNet;
@@ -210,6 +211,43 @@ public sealed class RunnerShell(
         }, cancellationToken);
     }
 
+    /// <summary>Cheap append check: bounded known ranges and the suffix, with the located fingerprint checked on both sides.</summary>
+    internal async Task<bool> DownloadHistoryAppendAsync(Runner runner, string remotePath, long offset, long size,
+        string stamp, IReadOnlyList<NativeHistorySample> samples, Stream destination, CancellationToken ct)
+    {
+        async Task<bool> Unchanged()
+        {
+            var result = await RunAsync(runner,
+                $"stat -L -c '%s %d:%i:%y:%z' -- {ShellQuote.Path(remotePath)}", cancellationToken: ct);
+            return result.Succeeded && result.Output.TrimEnd('\r', '\n') == $"{size} {stamp}";
+        }
+        if (offset < 0 || size <= offset || !await Unchanged()) return false;
+        var matched = await WithSftpAsync(runner, async (sftp, token) =>
+        {
+            using var input = sftp.OpenRead(ToSftpPath(sftp, remotePath));
+            foreach (var sample in samples)
+            {
+                input.Position = sample.Offset;
+                var actual = new byte[sample.Bytes.Length];
+                await input.ReadExactlyAsync(actual, token);
+                if (!actual.AsSpan().SequenceEqual(sample.Bytes)) return false;
+            }
+            input.Position = offset;
+            var buffer = new byte[65536];
+            var remaining = size - offset;
+            while (remaining > 0)
+            {
+                var count = await input.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, remaining)), token);
+                if (count == 0) return false;
+                await destination.WriteAsync(buffer.AsMemory(0, count), token);
+                remaining -= count;
+            }
+            return true;
+        }, ct);
+        // A moving source falls back to whole-prefix verification, which permits growth past the snapshot boundary.
+        return matched && await Unchanged();
+    }
+
     /// <summary>Transfers a stable, bounded snapshot suffix. Hash verification catches edits anywhere in the old prefix.</summary>
     internal async Task<string?> DownloadHistoryRangeAsync(Runner runner, string remotePath, long offset, long size,
         string? prefixHash, Stream destination, CancellationToken ct)
@@ -217,6 +255,7 @@ public sealed class RunnerShell(
         var path = ShellQuote.Path(remotePath);
         if (prefixHash is not null)
         {
+            using var timing = Diagnostics.CaptureOperations.Start("history.remote-prefix-hash", runner: runner.Id, bytes: offset);
             var check = await RunAsync(runner, $"set -o pipefail; head -c {offset} -- {path} | sha256sum", cancellationToken: ct);
             check.EnsureSuccess("Verifying native history prefix");
             if (!check.Output.StartsWith(prefixHash, StringComparison.OrdinalIgnoreCase)) return null;
@@ -237,6 +276,7 @@ public sealed class RunnerShell(
             return true;
         }, ct);
         // Validate exactly the requested prefix, not the whole growing file. Appends after size are harmless.
+        using var snapshotTiming = Diagnostics.CaptureOperations.Start("history.remote-snapshot-hash", runner: runner.Id, bytes: size);
         var snapshot = await RunAsync(runner, $"set -o pipefail; head -c {size} -- {path} | sha256sum", cancellationToken: ct);
         snapshot.EnsureSuccess("Verifying native history snapshot");
         var hash = snapshot.Output.Trim().Split(' ', 2)[0];

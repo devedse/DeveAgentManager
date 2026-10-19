@@ -369,6 +369,7 @@ public sealed partial class AgentService(
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         var runner = RequireReady(agent.Runner!);
         await shell.RunAsync(runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: cancellationToken);
+        await sessions.SyncRunnerLockedAsync(runner, cancellationToken, agent.Id);
         agent.State = AgentState.Stopped;
         agent.StateMessage = null;
         agent.ExitCode = null;
@@ -387,9 +388,9 @@ public sealed partial class AgentService(
         if (agent.Runner!.State == RunnerState.Ready)
         {
             // Keep the latest conversation: the session stays in the Manager after the agent is gone.
-            try { await sessions.SyncRunnerLockedAsync(agent.Runner, cancellationToken); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Final session sync failed for {Agent}", agentId); }
             await shell.RunAsync(agent.Runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: cancellationToken);
+            try { await sessions.SyncRunnerLockedAsync(agent.Runner, cancellationToken, agent.Id); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Final session sync failed for {Agent}", agentId); }
         }
 
         await sessions.PreserveArtifactsAsync(agentId, cancellationToken);

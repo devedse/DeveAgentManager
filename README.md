@@ -174,6 +174,9 @@ Everything is set with environment variables in the compose file.
 | `RUNNER_USERNAME` | `remoteman` | Account created on new VMs by cloud-init. Each Runner gets a random password of its own, which whoever manages the Runner sees on its page. (`RUNNER_PASSWORD` is no longer used.) |
 | `RUNNER_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` | `4` / `8192` / `64` | Default size in the New Runner dialog. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |
+| `HISTORY_SYNC_MODE` | `sampled` | Bounded append checks with full audits; `shadow` compares against full verification, `full` restores conservative checking. See [conversation sync](docs/lean-session-sync.md). |
+| `CPU_TRACE_STARTUP` | `false` | Record one five-minute startup CPU capture. Manual captures remain available under Manager settings → Diagnostics. |
+| `CPU_PROFILER_ENABLED` | `true` in Docker | Load the native CPU profiler for on-demand captures; `false` uses portable thread samples. See [CPU captures](docs/manager-cpu-traces.md). |
 | `EDITOR_PORT` | `8081` | Optional editor-only port for direct local IP access. Public editors use hostname routing on the Portal port. |
 | `EDITOR_URL` | Local Portal host on `EDITOR_PORT` | Public mode requires `{runner}` within the first hostname label: `https://{runner}.code.{host}`, or flat names such as `https://dam-vscode-{runner}.example.com` (one level deep, so a free `*.example.com` certificate such as Cloudflare's covers them). `{host}` is derived only from an allowlisted public Portal origin. |
 | `PUBLIC_ORIGINS` | empty | Semicolon-separated HTTPS Portal origins, e.g. `https://dam.example.com;https://dam.example.org`. Unknown public origins are rejected; editor hosts never serve the Portal. |

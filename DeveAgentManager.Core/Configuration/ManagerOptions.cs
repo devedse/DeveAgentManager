@@ -2,6 +2,8 @@ using Microsoft.Extensions.Configuration;
 
 namespace DeveAgentManager.Core.Configuration;
 
+public enum HistorySyncMode { Sampled, Full, Shadow }
+
 /// <summary>
 /// Manager-wide settings. They come from environment variables (the compose file), using the same names as the
 /// documentation, e.g. ADMIN_USERNAME or RUNNER_USERNAME.
@@ -23,6 +25,9 @@ public sealed class ManagerOptions
     /// again (a way back in). ADMIN_USERNAME and ADMIN_PASSWORD otherwise only matter for the very first start.
     /// </summary>
     public bool ResetAdminPassword { get; init; }
+
+    /// <summary>Sampled appends with full audits; Full is the conservative rollback, Shadow compares both.</summary>
+    public HistorySyncMode HistorySyncMode { get; init; } = HistorySyncMode.Sampled;
 
     /// <summary>The Runner Account injected into new Runners (each gets a password of its own: see RunnerPasswords).</summary>
     public string RunnerUsername { get; init; } = "remoteman";
@@ -72,6 +77,9 @@ public sealed class ManagerOptions
             AdminUsername = Value(configuration, "ADMIN_USERNAME") ?? "admin",
             AdminPassword = Value(configuration, "ADMIN_PASSWORD") ?? DefaultAdminPassword,
             ResetAdminPassword = string.Equals(Value(configuration, "RESET_ADMIN_PASSWORD"), "true", StringComparison.OrdinalIgnoreCase),
+            HistorySyncMode = Value(configuration, "HISTORY_SYNC_MODE") is not { } mode ? HistorySyncMode.Sampled
+                : Enum.TryParse<HistorySyncMode>(mode, true, out var parsed) && Enum.IsDefined(parsed) ? parsed
+                : throw new ArgumentException("HISTORY_SYNC_MODE must be sampled, full or shadow."),
             RunnerUsername = Value(configuration, "RUNNER_USERNAME") ?? "remoteman",
             DefaultCores = Int(configuration, "RUNNER_DEFAULT_CORES", 4),
             DefaultMemoryMb = Int(configuration, "RUNNER_DEFAULT_MEMORY_MB", 8192),

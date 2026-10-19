@@ -48,6 +48,100 @@ public class NativeHistoryTransportTests
     }
 
     [Fact(Timeout = 60_000)]
+    public async Task SampledSftpReadsKnownRangesAndRejectsChangedFingerprintsAndSampleMismatches()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipWhen(!OperatingSystem.IsLinux() || !File.Exists("/usr/sbin/sshd"), "Requires isolated OpenSSH fixture.");
+        await using var fixture = await RunnerShellIntegrationTests.Fixture.StartAsync();
+        var path = fixture.Root + "/history with spaces.jsonl";
+        var prefix = Encoding.UTF8.GetBytes(new string('a', 256 * 1024));
+        await File.WriteAllBytesAsync(path, prefix, Ct);
+        await File.AppendAllTextAsync(path, "new bytes 🌱", Ct);
+        async Task<string> Stamp() => (await fixture.Shell.RunAsync(fixture.Runner,
+            $"stat -L -c '%d:%i:%y:%z' -- {ShellQuote.Quote(path)}", cancellationToken: Ct)).Output.TrimEnd('\r', '\n');
+        var stamp = await Stamp();
+        NativeHistorySample[] samples = [new(0, prefix[..4096]), new(prefix.Length - 65536, prefix[^65536..])];
+        using var output = new MemoryStream();
+        var commands = fixture.CommandSessions;
+        Assert.True(await fixture.Shell.DownloadHistoryAppendAsync(fixture.Runner, path, prefix.Length, new FileInfo(path).Length, stamp, samples, output, Ct));
+        Assert.Equal("new bytes 🌱", Encoding.UTF8.GetString(output.ToArray()));
+        Assert.Equal(commands + 2, fixture.CommandSessions); // Two stat commands; no prefix/snapshot hash commands.
+        using (var moving = new MutationStream(() => File.AppendAllTextAsync(path, "changed during transfer", Ct)))
+            Assert.False(await fixture.Shell.DownloadHistoryAppendAsync(fixture.Runner, path, prefix.Length, new FileInfo(path).Length, stamp, samples, moving, Ct));
+        using (var edit = File.OpenWrite(path)) edit.WriteByte((byte)'b');
+        output.SetLength(0);
+        Assert.False(await fixture.Shell.DownloadHistoryAppendAsync(fixture.Runner, path, prefix.Length, new FileInfo(path).Length, stamp, samples, output, Ct));
+        Assert.False(await fixture.Shell.DownloadHistoryAppendAsync(fixture.Runner, path, prefix.Length, new FileInfo(path).Length, await Stamp(), samples, output, Ct));
+        Assert.Equal(0, output.Length);
+        await File.WriteAllBytesAsync(path + ".new", prefix, Ct);
+        File.Move(path + ".new", path, true);
+        Assert.False(await fixture.Shell.DownloadHistoryAppendAsync(fixture.Runner, path, prefix.Length, prefix.Length + 1, stamp, samples, output, Ct));
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task SampledSessionExportsAndCopiesAuditMiddleEditsAndOfflineExportsCannotUsePendingHistory()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipWhen(!OperatingSystem.IsLinux() || !File.Exists("/usr/sbin/sshd"), "Requires isolated OpenSSH fixture.");
+        await using var fixture = await RunnerShellIntegrationTests.Fixture.StartAsync();
+        var options = new ManagerOptions { DataDirectory = fixture.Root + "/data" };
+        Directory.CreateDirectory(options.DataDirectory);
+        var factory = new Factory(options.DatabasePath);
+        var runner = fixture.Runner; runner.State = RunnerState.Ready; runner.OwnerId = User.BootstrapId;
+        var agent = new Agent { Id = Guid.NewGuid(), OwnerId = User.BootstrapId, Name = "agent", Runner = runner,
+            RunnerId = runner.Id, HarnessId = "claude", HarnessSessionId = "sampled-session", State = AgentState.Running, Working = true };
+        await using (var db = factory.CreateDbContext())
+        {
+            await db.Database.EnsureCreatedAsync(Ct); db.Agents.Add(agent); await db.SaveChangesAsync(Ct);
+        }
+        var formats = new[] { new RootedFormat(new ClaudeSessionFormat(), fixture.Root + "/home") };
+        var service = new SessionService(factory, fixture.Shell, formats, [], new SessionImageStore(options), new SessionFileStore(options),
+            options, new ManagerEvents(), NullLogger<SessionService>.Instance);
+        await service.AttachToAgentAsync(runner, agent, null, Ct);
+        var saved = (await service.GetForAgentAsync(agent.Id, Ct))!;
+        var folder = fixture.Root + "/home/.claude/projects/test";
+        Directory.CreateDirectory(folder);
+        var remote = folder + "/sampled-session.jsonl";
+        var original = NativeHistoryStoreTests.Sample("claude") + "\n{\"type\":\"padding\",\"data\":\"" + new string('A', 192 * 1024) + "\"}\n";
+        await File.WriteAllTextAsync(remote, original, Ct);
+        await service.SyncRunnerAsync(runner, Ct);
+        var native = new NativeHistoryStore(options.SessionsDirectory);
+        var appended = "{\"type\":\"queue-operation\",\"content\":\"next\"}\n";
+        var changed = original[..90000] + 'B' + original[90001..] + appended;
+        await File.WriteAllTextAsync(remote, changed, Ct); // Same inode, changed middle, matching sample ranges.
+        await service.SyncRunnerAsync(runner, Ct);
+        Assert.Empty((await native.SummaryAsync(saved.Id, Ct))!.Sha256);
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.Runners.SingleAsync(Ct)).State = RunnerState.Stopped; await db.SaveChangesAsync(Ct);
+        }
+        await Assert.ThrowsAsync<IOException>(() => service.ExportAsync(saved.Id, "deve", Ct));
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.Runners.SingleAsync(Ct)).State = RunnerState.Ready; await db.SaveChangesAsync(Ct);
+        }
+        var export = await service.ExportAsync(saved.Id, "deve", Ct);
+        Assert.Equal(new ClaudeSessionFormat().Read(changed).ToJson(), DeveSession.FromJson(export.Content).ToJson());
+        Assert.NotEmpty((await native.SummaryAsync(saved.Id, Ct))!.Sha256);
+        // A second unverified append must be audited before a shared conversation is copied.
+        changed = changed[..95000] + 'C' + changed[95001..] + appended;
+        await File.WriteAllTextAsync(remote, changed, Ct);
+        await service.SyncRunnerAsync(runner, Ct);
+        Assert.Empty((await native.SummaryAsync(saved.Id, Ct))!.Sha256);
+        var owner = new User { Id = Guid.NewGuid(), Username = "sampled-copy-owner", DisplayName = "Copy owner" };
+        var copyAgent = new Agent { Id = Guid.NewGuid(), OwnerId = owner.Id, Name = "copy", RunnerId = runner.Id,
+            HarnessId = "claude", HarnessSessionId = "sampled-copy", WorkingDirectory = "/workspace" };
+        await using (var db = factory.CreateDbContext())
+        {
+            db.Users.Add(owner); db.Agents.Add(copyAgent); await db.SaveChangesAsync(Ct);
+        }
+        await service.AttachToAgentAsync(runner, copyAgent, saved.Id, Ct);
+        var copy = (await service.GetForAgentAsync(copyAgent.Id, Ct))!;
+        Assert.Equal(new ClaudeSessionFormat().Read(changed).ToJson(), (await service.LoadAsync(copy.Id, Ct)).ToJson());
+        Assert.NotEmpty((await native.SummaryAsync(saved.Id, Ct))!.Sha256);
+    }
+
+    [Fact(Timeout = 60_000)]
     public async Task RealSessionSyncMigratesLegacyStorageDetectsSameSizeEditsAndSupportsExportCopySwitchAndDelete()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -250,6 +344,15 @@ public class NativeHistoryTransportTests
             var damaged = DeveSession.FromJson(session.ToJson());
             foreach (var entry in damaged.Entries) entry.Content?.RemoveAll(b => b.Type is "toolCall" or "toolResult");
             return inner.Write(damaged, id, cwd);
+        }
+    }
+
+    private sealed class MutationStream(Func<Task> mutate) : MemoryStream
+    {
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await base.WriteAsync(buffer, cancellationToken);
+            await mutate();
         }
     }
 

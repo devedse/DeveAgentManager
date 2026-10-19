@@ -87,7 +87,10 @@ remove it from Git history; report any exposed credential so its owner can rotat
 ## Conversation synchronization
 
 Keep periodic sync incremental and list metadata separate from full history reads. Preserve exact native records on
-disk, including images and replay data. Verify the entire committed prefix before accepting a suffix; same-size edits,
-truncation, replacement and interrupted sync must preserve the last good checkpoint or rebuild safely. Test format,
+disk, including images and replay data. Periodic growing-file sync checks source identity and bounded head/tail samples;
+older middle edits can remain undetected until a full audit. Audit after restart, when idle with pending appends, at
+least every 30 minutes, and at lifecycle checkpoints. Verify pending history before export, copy or harness switch;
+never treat a sampled checkpoint as fully verified. Same-size edits, truncation, replacement and interrupted sync
+must preserve the last good checkpoint or rebuild safely. Test bounded reads, delayed-edit recovery, format,
 metadata and active-branch parity plus real SSH transfer and copy/switch/export behavior. See
 [docs/lean-session-sync.md](docs/lean-session-sync.md).

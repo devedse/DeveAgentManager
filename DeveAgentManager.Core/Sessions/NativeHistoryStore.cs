@@ -3,15 +3,22 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DeveAgentManager.Core.Abstractions;
+using DeveAgentManager.Core.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace DeveAgentManager.Core.Sessions;
 
-internal sealed record NativeHistoryTransfer(bool PrefixMatches, string? SnapshotSha256 = null);
+internal sealed record NativeHistoryTransfer(bool PrefixMatches, string? SnapshotSha256 = null, bool FullyVerified = true);
+internal sealed record NativeHistorySample(long Offset, byte[] Bytes);
+internal sealed record NativeHistorySyncPolicy(HistorySyncMode Mode, bool Force = false, bool Idle = false);
 
-/// <summary>Verified native history on disk; ordinary syncs parse only appended records into compact metadata.</summary>
-internal sealed class NativeHistoryStore(string root)
+/// <summary>Native history with sampled appends and full-audit checkpoints; indexes contain compact metadata only.</summary>
+internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider = null, ILogger? logger = null)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, string> verifiedThisProcess = new();
+    internal static readonly TimeSpan AuditInterval = TimeSpan.FromMinutes(30);
     internal sealed class State
     {
         public string File { get; set; } = "";
@@ -20,6 +27,8 @@ internal sealed class NativeHistoryStore(string root)
         public string Stamp { get; set; } = "";
         public long Bytes { get; set; }
         public string Sha256 { get; set; } = "";
+        // Empty Sha256 means this checkpoint includes sampled appends awaiting a full audit.
+        public DateTimeOffset? VerifiedAt { get; set; }
         public bool EndsWithNewline { get; set; }
         public string CursorFile { get; set; } = "";
         public long IndexBytes { get; set; }
@@ -48,11 +57,24 @@ internal sealed class NativeHistoryStore(string root)
     // Checkpoints are replaced atomically. Lists can read the previous summary during an in-flight SSH transfer.
     public Task<State?> SummaryAsync(Guid id, CancellationToken ct) => ReadState(id, ct);
 
-    public async Task<bool> IsCurrentAsync(Guid id, string harness, string sourcePath, long size, string stamp, CancellationToken ct)
+    private bool AuditDue(Guid id, State state, NativeHistorySyncPolicy? policy) => policy?.Force == true
+        || !verifiedThisProcess.TryGetValue(id, out var generation) || generation != state.File
+        || state.VerifiedAt is not { } at || clock.GetUtcNow() - at >= AuditInterval
+        || state.Sha256.Length == 0 && (policy?.Idle == true || policy?.Mode is HistorySyncMode.Full or HistorySyncMode.Shadow);
+
+    internal static string? SourceIdentity(string stamp)
+    {
+        var fields = stamp.Split(':', 3);
+        return fields.Length == 3 && ulong.TryParse(fields[0], out _) && ulong.TryParse(fields[1], out _)
+            ? fields[0] + ":" + fields[1] : null;
+    }
+
+    public async Task<bool> IsCurrentAsync(Guid id, string harness, string sourcePath, long size, string stamp, CancellationToken ct,
+        NativeHistorySyncPolicy? policy = null)
     {
         var state = await SummaryAsync(id, ct);
         return state is not null && state.Harness == harness && state.SourcePath == sourcePath && state.Bytes == size
-            && state.Stamp == stamp && stamp.Length > 0 && File.Exists(Path.Combine(Folder(id), state.File))
+            && !AuditDue(id, state, policy) && state.Stamp == stamp && stamp.Length > 0 && File.Exists(Path.Combine(Folder(id), state.File))
             && new FileInfo(Path.Combine(Folder(id), state.File)).Length >= size;
     }
 
@@ -76,7 +98,9 @@ internal sealed class NativeHistoryStore(string root)
 
     // transfer validates the old prefix's SHA-256, then writes exactly size-offset bytes. False requests a full rebuild.
     public async Task<(DeveSession Metadata, bool Changed)> SyncAsync(Guid id, ISessionFormat format, string sourcePath,
-        long size, string stamp, Func<long, string?, Stream, CancellationToken, Task<NativeHistoryTransfer>> transfer, CancellationToken ct)
+        long size, string stamp, Func<long, string?, Stream, CancellationToken, Task<NativeHistoryTransfer>> transfer, CancellationToken ct,
+        NativeHistorySyncPolicy? policy = null,
+        Func<long, IReadOnlyList<NativeHistorySample>, Stream, CancellationToken, Task<bool>>? append = null)
     {
         using var queueTiming = Diagnostics.CaptureOperations.Start("history.gate", session: id, bytes: size);
         await gate.WaitAsync(ct);
@@ -109,7 +133,7 @@ internal sealed class NativeHistoryStore(string root)
                     old.EndsWithNewline = false; // Rebuild the disposable index from the verified raw copy.
                 }
             }
-            if (reusable && old!.Bytes == size && old.Stamp == stamp && stamp.Length > 0)
+            if (reusable && old!.Bytes == size && old.Stamp == stamp && stamp.Length > 0 && !AuditDue(id, old, policy))
                 return (old.Cursor.Session, false);
             var offset = reusable ? old!.Bytes : 0;
             incoming = Path.Combine(folder, "incoming.tmp");
@@ -117,7 +141,47 @@ internal sealed class NativeHistoryStore(string root)
             await using (var output = new FileStream(incoming, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 65536, true))
             {
                 using var timing = Diagnostics.CaptureOperations.Start("history.transfer", session: id, bytes: size - offset);
-                received = await transfer(offset, reusable ? old!.Sha256 : null, output, ct);
+                var canSample = reusable && size > offset && policy is { Mode: not HistorySyncMode.Full }
+                    && append is not null && !policy.Idle && !AuditDue(id, old!, policy)
+                    && SourceIdentity(stamp) is { } identity && identity == SourceIdentity(old!.Stamp);
+                var sampled = false;
+                if (canSample)
+                {
+                    var samples = new List<NativeHistorySample>();
+                    await using var local = File.OpenRead(Path.Combine(folder, old!.File));
+                    var head = (int)Math.Min(4096, offset);
+                    var tail = Math.Max(head, offset - 65536);
+                    foreach (var (start, count) in new[] { (0L, head), (tail, (int)(offset - tail)) })
+                    {
+                        if (count == 0) continue;
+                        local.Position = start;
+                        var bytes = new byte[count];
+                        await local.ReadExactlyAsync(bytes, ct);
+                        samples.Add(new(start, bytes));
+                    }
+                    using var sampleTiming = Diagnostics.CaptureOperations.Start("history.sample", session: id,
+                        bytes: samples.Sum(s => s.Bytes.LongLength));
+                    sampled = await append!(offset, samples, output, ct);
+                    sampleTiming?.SetTag("matched", sampled);
+                }
+                if (sampled && policy!.Mode == HistorySyncMode.Sampled)
+                    received = new(true, FullyVerified: false);
+                else
+                {
+                    output.SetLength(0); output.Position = 0;
+                    string? hash = null;
+                    if (reusable)
+                    {
+                        // Sampled appends have no whole-file fingerprint. Compute one only for the audit.
+                        await using var input = File.OpenRead(Path.Combine(folder, old!.File));
+                        using var bounded = new PrefixStream(input, offset);
+                        using var hashTiming = Diagnostics.CaptureOperations.Start("history.hash-prefix", session: id, bytes: offset);
+                        hash = Convert.ToHexString(await SHA256.HashDataAsync(bounded, ct));
+                    }
+                    received = await transfer(offset, hash, output, ct);
+                    if (sampled && !received.PrefixMatches)
+                        logger?.LogWarning("History sample check missed a prefix edit in session {Session}; full verification rebuilt it", id);
+                }
                 if (!received.PrefixMatches)
                 {
                     offset = 0; reusable = false;
@@ -127,6 +191,7 @@ internal sealed class NativeHistoryStore(string root)
                 }
                 if (output.Length != size - offset) throw new IOException("Native history changed during transfer; synchronization will retry.");
             }
+            syncTiming?.SetTag("verification", received.FullyVerified ? "full" : "sampled");
             var state = reusable ? old! : new State { File = Guid.NewGuid().ToString("N") + ".jsonl", Cursor = new() };
             var path = Path.Combine(folder, state.File);
             if (reusable)
@@ -154,12 +219,20 @@ internal sealed class NativeHistoryStore(string root)
                     state.Cursor.Compact(start);
                 }
             }
-            await using (var input = File.OpenRead(path))
+            if (received.FullyVerified)
             {
+                await using var input = File.OpenRead(path);
                 using var timing = Diagnostics.CaptureOperations.Start("history.hash", session: id, bytes: size);
                 state.Sha256 = Convert.ToHexString(await SHA256.HashDataAsync(input, ct));
                 if (received.SnapshotSha256 is not null && !string.Equals(received.SnapshotSha256, state.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new IOException("Native history changed during transfer; synchronization will retry.");
+                state.EndsWithNewline = size == 0 || (input.Seek(-1, SeekOrigin.End) >= 0 && input.ReadByte() == '\n');
+                state.VerifiedAt = clock.GetUtcNow();
+            }
+            else
+            {
+                state.Sha256 = "";
+                using var input = File.OpenRead(path);
                 state.EndsWithNewline = size == 0 || (input.Seek(-1, SeekOrigin.End) >= 0 && input.ReadByte() == '\n');
             }
             state.Harness = format.HarnessId; state.SourcePath = sourcePath; state.Bytes = size; state.Stamp = stamp;
@@ -175,6 +248,7 @@ internal sealed class NativeHistoryStore(string root)
             await using (var output = new FileStream(Manifest(id) + ".tmp", FileMode.Create, FileAccess.Write, FileShare.None, 65536, true))
                 await JsonSerializer.SerializeAsync(output, state, DeveSession.JsonOptions, ct);
             File.Move(Manifest(id) + ".tmp", Manifest(id), true);
+            if (received.FullyVerified) verifiedThisProcess[id] = state.File;
             pendingRaw = null; pendingIndex = null;
             foreach (var stale in Directory.EnumerateFiles(folder, "*.jsonl").Where(p => p != path)) File.Delete(stale);
             foreach (var stale in Directory.EnumerateFiles(folder, "*.index.json").Where(p => Path.GetFileName(p) != state.CursorFile)) File.Delete(stale);
@@ -195,7 +269,7 @@ internal sealed class NativeHistoryStore(string root)
     public async Task DeleteAsync(Guid id, CancellationToken ct)
     {
         await gate.WaitAsync(ct);
-        try { if (Directory.Exists(Folder(id))) Directory.Delete(Folder(id), true); }
+        try { verifiedThisProcess.TryRemove(id, out _); if (Directory.Exists(Folder(id))) Directory.Delete(Folder(id), true); }
         finally { gate.Release(); }
     }
 

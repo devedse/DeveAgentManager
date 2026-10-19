@@ -38,7 +38,7 @@ public class NativeHistoryStoreTests
             Assert.Equal(SessionService.ReplyPreview(expected), summary!.ReplyPreview);
             rig.Restart();
         }
-        Assert.True(await rig.Store.IsCurrentAsync(rig.Id, harness, "/history.jsonl", Encoding.UTF8.GetByteCount(full), rig.Stamp, Ct));
+        Assert.False(await rig.Store.IsCurrentAsync(rig.Id, harness, "/history.jsonl", Encoding.UTF8.GetByteCount(full), rig.Stamp, Ct)); // Restart requires an audit.
     }
 
     [Theory]

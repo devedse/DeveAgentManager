@@ -37,7 +37,8 @@ internal sealed class CaptureOperationWriter : IAsyncDisposable
                 elapsedMilliseconds = activity.GetTagItem("elapsed_ms") is double ms ? ms : activity.Duration.TotalMilliseconds,
                 trace = activity.TraceId.ToHexString(), span = activity.SpanId.ToHexString(), parent = activity.ParentSpanId.ToHexString(),
                 session = activity.GetTagItem("session"), runner = activity.GetTagItem("runner"), bytes = activity.GetTagItem("bytes"),
-                endpoint = activity.GetTagItem("endpoint"), status = activity.GetTagItem("status"), failed = activity.GetTagItem("failed")
+                endpoint = activity.GetTagItem("endpoint"), status = activity.GetTagItem("status"), failed = activity.GetTagItem("failed"),
+                verification = activity.GetTagItem("verification"), matched = activity.GetTagItem("matched")
             };
             if (Interlocked.Increment(ref _eventsSeen) > MaxEvents || !_events.Writer.TryWrite(row)) Interlocked.Increment(ref _dropped);
         }

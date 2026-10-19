@@ -1,7 +1,8 @@
 # Manager CPU captures
 
-The diagnostic image on `feat/manager-cpu-trace` includes a pinned native CPU profiler and matching runtime
-symbols. It automatically starts one five-minute capture on each process startup. A settings manager sees
+The Manager image includes a pinned native CPU profiler and matching runtime
+symbols. Captures start on demand. Set `CPU_TRACE_STARTUP=true` to record one five-minute capture on
+process startup. A settings manager sees
 **CPU capture** in the header and agent/runner/editor toolbars while recording. Selecting it opens
 **Manager settings → Diagnostics**, with the mode, current phase, progress, cancellation and downloads.
 The global indicator uses live notifications; it does not poll when idle.
@@ -54,8 +55,8 @@ the Manager; navigation, browser disconnection and sign-out do not cancel it. Th
 active capture every two seconds. **Cancel capture** disarms timers even during sampling. Canceled or failed
 captures are not offered as completed downloads.
 
-Set `CPU_TRACE_STARTUP=false` to disable automatic startup recording. Non-Docker hosts opt in with
-`CPU_TRACE_STARTUP=true`. Development/test hosts leave automatic capture off by default. Cancellation/failure
+Startup recording is off by default in Docker and development/test hosts; opt in with
+`CPU_TRACE_STARTUP=true`. Set it back to `false` after investigating startup. Cancellation/failure
 does not schedule a retry in the same process. The portable fallback retains the process-wide
 `DOTNET_EventPipeThreadSamplingRate=0x32` setting (50 ms, interpreted as a hexadecimal DWORD before Main).
 
@@ -80,7 +81,8 @@ does not schedule a retry in the same process. The portable fallback retains the
   sampled-CPU percentages and individual profile windows. The CSV uses milliseconds; JSON uses nanoseconds.
 - `operations.jsonl`: elapsed times, byte counts and opaque session/runner IDs for history synchronization,
   transfer, parsing and hashing; sign-in validation/touches; database command kinds; HTTP route templates and
-  status codes. Trace/span identifiers correlate child commands with their owning operation. These are
+  status codes. History operations also identify sampled versus full verification,
+  sample match results and the requested bytes for remote prefix/snapshot hashing. Trace/span identifiers correlate child commands with their owning operation. These are
   **elapsed operation times**, not per-operation CPU times. SQL, parameters, URLs, request bodies, authentication
   headers, arbitrary activity tags and baggage are not recorded. Up to 100,000 start/stop operation events are retained
   through a bounded queue; a final summary reports dropped observations. Operations begun before recording may
@@ -135,3 +137,25 @@ navigation, downloads, manual cancellation and phone layouts. Local/container ve
 deployment are separate. After deployment, check that Diagnostics reports **CPU-clock samples**, then inspect
 the new ZIP's measured/sample coverage and operation timings. Another portable EventPipe ZIP cannot supply the
 missing on-CPU attribution.
+
+## Merge review
+
+Keep the settings panel, access controls, capture/download lifecycle and capture-only
+operation timings as permanent debugging tools. Startup capture is now opt-in, so
+normal restarts do not automatically incur five minutes of collection. The native
+profiler stays loaded for on-demand CPU-clock captures but disarms sampling outside
+captures. `CPU_PROFILER_ENABLED=false` remains available when that resident overhead
+is undesirable; changing it requires a process restart.
+
+The Docker build intentionally retains matching runtime symbols and the pinned
+native profiler, which increases image/download size and build work. Keep the
+existing isolated native smoke gate, including the no-extra-capabilities check,
+before publishing either architecture. Local host tests do not establish that a
+new image loaded its native engine or that a deployed capture succeeded. The
+optional JIT context stream can fail independently and reports that explicitly;
+its absence must not be presented as compilation coverage.
+
+The sample-based history synchronization is a separate behavioral change from
+the diagnostic UI. Review its delayed-edit detection and rollout modes in
+[lean-session-sync.md](lean-session-sync.md) when merging this branch. No automatic
+merge or deployment is part of this review.
