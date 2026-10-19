@@ -2114,6 +2114,23 @@ html:has(.terminal-layout) body {
     font-weight: 600;
 }
 
+.runner-password {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+}
+
+.runner-password .operation-description {
+    overflow-wrap: anywhere;
+}
+
+.runner-password-actions {
+    grid-column: 2;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
 .operation-description {
     color: var(--dam-muted);
     font-size: 0.8rem;

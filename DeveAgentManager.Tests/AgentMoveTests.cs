@@ -17,6 +17,50 @@ public sealed class AgentMoveTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact(Timeout = 120_000)]
+    public async Task DetachedBackgroundProcessRefusesMoveBeforeStoppingSource()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var f = await Fixture.CreateAsync();
+        await f.Agents.StartAsync(f.Agent.Id, cancellationToken: Ct);
+        var move = f.Move with { Phase = "Queued", Resume = true, PreviousState = AgentState.Running, TmuxSession = f.Agent.TmuxSession };
+        // The live harness tree is expected before stopping, and is still blocked by the final check.
+        (await f.Ssh.Shell.RunAsync(f.Source, AgentService.MoveCommand("check-background", move), cancellationToken: Ct)).EnsureSuccess("live pane preflight");
+        var live = await f.Ssh.Shell.RunAsync(f.Source, AgentService.MoveCommand("quiesce", move), cancellationToken: Ct);
+        Assert.False(live.Succeeded);
+        var start = new System.Diagnostics.ProcessStartInfo("python3") { UseShellExecute = false };
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add("import time; private_argument = 'test-only-secret'; time.sleep(600)");
+        start.Environment["DAM_AGENT_ID"] = f.Agent.Id.ToString("N");
+        using var background = System.Diagnostics.Process.Start(start)!;
+        try
+        {
+            await using var db = await f.Factory.CreateDbContextAsync(Ct);
+            await db.Agents.Where(a => a.Id == f.Agent.Id).ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.MoveJson, JsonSerializer.Serialize(move)).SetProperty(a => a.State, AgentState.Moving), Ct);
+            await f.Agents.ExecuteMoveAsync(move, f.Ssh.Root + "/never-created-transport", Ct);
+            var agent = await db.Agents.AsNoTracking().SingleAsync(Ct);
+            Assert.Null(agent.MoveJson);
+            Assert.Equal(AgentState.Running, agent.State);
+            Assert.Equal(f.Source.Id, agent.RunnerId);
+            Assert.Contains($"PID {background.Id}", agent.StateMessage);
+            Assert.Contains("Stop them, then retry", agent.StateMessage);
+            Assert.DoesNotContain("Traceback", agent.StateMessage);
+            Assert.DoesNotContain("test-only-secret", agent.StateMessage);
+            Assert.Equal("launch\n", await File.ReadAllTextAsync(f.Ssh.Root + "/launches", Ct));
+            Assert.False(background.HasExited);
+            Assert.Equal("original workspace", await File.ReadAllTextAsync(f.Agent.WorkingDirectory + "/data.txt", Ct));
+            Assert.False(Directory.Exists(f.Ssh.Root + "/never-created-transport"));
+            // No transport folder exists when preflight fails; cleanup must remain silent and idempotent.
+            AgentMoves.DeleteLocalArchive(f.Ssh.Root + "/never-created-transport", move.Id);
+        }
+        finally
+        {
+            if (!background.HasExited) background.Kill();
+            await background.WaitForExitAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact(Timeout = 120_000)]
     public async Task QueueRequiresOwnershipDestinationUseAndExclusiveWorkspace_AndBlocksConcurrentActions()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();

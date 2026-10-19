@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import tarfile
 
@@ -119,6 +120,54 @@ def safe_parents(path):
         raise ValueError('Move paths cannot pass through symlinked directories: ' + str(path))
 
 
+def check_background(c, before_stop=False):
+    # Before stopping, exclude the live pane's tree. After stopping, every remaining
+    # marked process can still use the workspace, including detached dev servers.
+    pane_pid = None
+    if before_stop and c.get('TmuxSession'):
+        pane = subprocess.run(['tmux', 'display-message', '-p', '-t', '=' + c['TmuxSession'] + ':',
+                               '#{pane_dead} #{pane_pid}'], capture_output=True, text=True)
+        fields = pane.stdout.split()
+        if pane.returncode == 0 and len(fields) == 2 and fields[0] == '0':
+            pane_pid = int(fields[1])
+    processes = {}
+    for process in Path('/proc').iterdir():
+        if not process.name.isdigit():
+            continue
+        try:
+            fields = (process / 'stat').read_text().rsplit(') ', 1)[1].split()
+            processes[int(process.name)] = (process, fields[0], int(fields[1]))
+        except (OSError, ValueError, IndexError):
+            continue
+    marker = ('DAM_AGENT_ID=' + c['Agent']).encode()
+    blockers = []
+    for pid, (process, state, parent) in processes.items():
+        if pid == os.getpid() or state == 'Z':
+            continue
+        ancestor, seen = pid, set()
+        while pane_pid is not None and ancestor in processes and ancestor not in seen and ancestor != pane_pid:
+            seen.add(ancestor)
+            ancestor = processes[ancestor][2]
+        if pane_pid is not None and ancestor == pane_pid:
+            continue
+        try:
+            if marker not in (process / 'environ').read_bytes().split(b'\0'):
+                continue
+            # Never include arguments: command lines may contain credentials.
+            executable = Path(os.readlink(process / 'exe')).name
+            args = (process / 'cmdline').read_bytes().split(b'\0')
+            script = Path(os.fsdecode(args[1])).name if len(args) > 1 else ''
+            label = script + ' (' + executable + ')' if script.endswith(('.js', '.mjs', '.cjs', '.py')) else executable
+            blockers.append(f'{label}, PID {pid}')
+        except (OSError, ValueError):
+            continue
+    if blockers:
+        detail = '; '.join(blockers[:8])
+        if len(blockers) > 8:
+            detail += f'; and {len(blockers) - 8} more'
+        raise ValueError('Agent background processes are still running: ' + detail + '. Stop them, then retry the move.')
+
+
 def main(phase, c):
     os.umask(0o077)
     home = Path(c.get('Home') or Path.home())
@@ -147,17 +196,8 @@ def main(phase, c):
             raise ValueError('This workspace is a linked Git worktree. Move an independent checkout instead.')
         print(json.dumps(dict(home=str(home), workspace=str(workspace.resolve()))))
         return
-    if phase == 'quiesce':
-        marker = ('DAM_AGENT_ID=' + c['Agent']).encode()
-        for process in Path('/proc').iterdir():
-            if not process.name.isdigit() or int(process.name) == os.getpid():
-                continue
-            try:
-                environment = (process / 'environ').read_bytes().split(b'\0')
-            except (OSError, PermissionError):
-                continue
-            if marker in environment:
-                raise ValueError('Agent background commands are still running. Finish them before moving this agent.')
+    if phase in ('quiesce', 'check-background'):
+        check_background(c, before_stop=phase == 'check-background')
         return
     operation.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # A lost SSH connection must not let cleanup race an already submitted phase.
@@ -287,4 +327,8 @@ def main(phase, c):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1], json.loads(sys.argv[2]))
+    try:
+        main(sys.argv[1], json.loads(sys.argv[2]))
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(1)

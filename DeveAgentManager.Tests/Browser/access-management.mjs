@@ -46,6 +46,7 @@ try {
         const body = path === '/api/info' ? info : (path === '/api/accounts' || path === '/api/accounts/all') ? accounts
             : path.endsWith('/grants') ? grants : path.endsWith('/members') ? [{ ...shares[0], access: 'Use' }]
             : path.endsWith('/shares') ? shares : path === '/api/users/directory' ? [other]
+            : path === '/api/runners/' + runner.id + '/password' ? { password: 'test-only-long-runner-password-0123456789' }
             : path === '/api/runners' ? [runner, target] : path === '/api/runners/' + runner.id ? runner
             : path === '/api/agents' ? [agent] : path === '/api/agents/' + agent.id ? agent
             : path === '/api/sessions' ? [session] : path === '/api/sessions/' + session.id ? session
@@ -75,11 +76,24 @@ try {
     await dialog.locator('.access-person').filter({ hasText: 'Bob (bob)' }).getByText('Manage', { exact: true }).waitFor();
     assert.ok(mutations.some(m => m.path.endsWith('/grants/' + other.id) && m.body.access === 'Manage'));
     await dialog.getByRole('button', { name: 'Done', exact: true }).click();
-    for (const width of [1280, 390, 320]) {
+    for (const width of [1920, 1280, 390, 320]) {
         await page.setViewportSize({ width, height: 900 });
         await page.goto(base + '/runners/' + runner.id);
         await page.locator('.access-list').getByText('Bob (bob)', { exact: true }).waitFor();
         await page.locator('.access-list').getByRole('button', { name: 'Add user', exact: true }).waitFor();
+        const password = page.locator('.runner-password');
+        await password.getByRole('button', { name: 'Show', exact: true }).click();
+        await password.getByText('test-only-long-runner-password-0123456789', { exact: true }).waitFor();
+        const layout = await password.evaluate(row => {
+            const value = row.querySelector('.operation-description').getBoundingClientRect();
+            const buttons = [...row.querySelectorAll('button')].map(b => b.getBoundingClientRect());
+            const bounds = row.getBoundingClientRect();
+            return { fits: value.left >= bounds.left && value.right <= bounds.right,
+                overlaps: buttons.some(b => value.left < b.right && value.right > b.left && value.top < b.bottom && value.bottom > b.top) };
+        });
+        assert.ok(layout.fits && !layout.overlaps, `revealed runner password fits without overlapping controls at ${width}px`);
+        await password.getByRole('button', { name: 'Hide', exact: true }).click();
+        assert.equal(await password.getByText('test-only-long-runner-password-0123456789', { exact: true }).count(), 0);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `runner access fits ${width}px`);
         await page.goto(base + '/agents/' + agent.id);
         await page.getByLabel('More actions', { exact: true }).click();

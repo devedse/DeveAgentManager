@@ -15,7 +15,8 @@ internal sealed record AgentMoveState(string Id, Guid AgentId, Guid SourceRunner
     string Workspace, string Owner, string Agent, AgentState PreviousState, bool Resume,
     string Phase = "Queued", string? Home = null, bool Source = true, bool SourceStopped = false,
     bool TargetLaunchAttempted = false, bool FallbackLaunchAttempted = false, string? ArchiveSha256 = null,
-    IReadOnlyList<MoveHistory>? Histories = null, IReadOnlyList<string>? OtherSourceFolders = null, IReadOnlyList<string>? OtherTargetFolders = null);
+    IReadOnlyList<MoveHistory>? Histories = null, IReadOnlyList<string>? OtherSourceFolders = null, IReadOnlyList<string>? OtherTargetFolders = null,
+    string? TmuxSession = null);
 internal sealed record MoveHistory(string Path, string Harness);
 
 // Queueing a move and beginning runner maintenance must be mutually exclusive.
@@ -172,6 +173,7 @@ public sealed partial class AgentService
         var agent = await db.Agents.Include(a => a.Runner).SingleAsync(a => a.Id == move.AgentId, ct);
         var source = await db.Runners.SingleAsync(r => r.Id == move.SourceRunner, ct);
         var target = await db.Runners.SingleAsync(r => r.Id == move.TargetRunner, ct);
+        move = move with { TmuxSession = agent.TmuxSession };
         if (move.Phase != "Queued")
         {
             if (move.Phase == "Cleanup") { await FinishMoveCleanupAsync(move, source, ct); return; }
@@ -181,6 +183,7 @@ public sealed partial class AgentService
         try
         {
             var sourceCheck = await MovePhaseAsync(source, "preflight", move, ct);
+            await MovePhaseAsync(source, "check-background", move, ct);
             var targetCheck = await MovePhaseAsync(target, "preflight", move with { Source = false }, ct);
             using var first = JsonDocument.Parse(sourceCheck.Output); using var second = JsonDocument.Parse(targetCheck.Output);
             if (first.RootElement.GetProperty("home").GetString() != second.RootElement.GetProperty("home").GetString()
@@ -373,7 +376,7 @@ public sealed class AgentMoves(IDbContextFactory<ManagerDbContext> factory, Agen
                     }
                     finally
                     {
-                        try { File.Delete(Path.Combine(options.DataDirectory, "moves", move.Id + ".tar")); }
+                        try { DeleteLocalArchive(Path.Combine(options.DataDirectory, "moves"), move.Id); }
                         catch (IOException e) { logger.LogWarning(e, "Move archive {Move} needs local cleanup", move.Id); }
                     }
                 }
@@ -382,5 +385,11 @@ public sealed class AgentMoves(IDbContextFactory<ManagerDbContext> factory, Agen
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception e) { logger.LogWarning(e, "Agent move pass failed"); await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken); }
         }
+    }
+
+    internal static void DeleteLocalArchive(string folder, string moveId)
+    {
+        try { File.Delete(Path.Combine(folder, moveId + ".tar")); }
+        catch (DirectoryNotFoundException) { } // Preflight failures never create the transport folder.
     }
 }

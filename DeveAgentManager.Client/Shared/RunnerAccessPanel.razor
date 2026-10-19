@@ -45,22 +45,24 @@
     @if (CanManage)
     {
         <div class="operation-list">
-            <div class="operation">
+            <div class="operation runner-password">
                 <MudIcon Icon="@Icons.Material.Rounded.Password" Class="operation-icon" />
                 <div class="operation-text">
                     <div class="operation-name">Password</div>
                     <div class="operation-description mono">@(_password ?? "••••••••••••")</div>
                 </div>
-                @if (_password is null)
-                {
-                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy" OnClick="ShowPasswordAsync">Show</MudButton>
-                }
-                else
-                {
-                    <MudIconButton Icon="@Icons.Material.Rounded.ContentCopy" Size="Size.Small" OnClick="CopyPasswordAsync" aria-label="Copy password" />
-                    <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => _password = null">Hide</MudButton>
-                }
-                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy || !Ready" OnClick="ChangePasswordAsync">Change</MudButton>
+                <div class="runner-password-actions">
+                    @if (_password is null)
+                    {
+                        <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy" OnClick="ShowPasswordAsync">Show</MudButton>
+                    }
+                    else
+                    {
+                        <MudIconButton Icon="@Icons.Material.Rounded.ContentCopy" Size="Size.Small" OnClick="CopyPasswordAsync" aria-label="Copy password" />
+                        <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => _password = null">Hide</MudButton>
+                    }
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy || !Ready" OnClick="ChangePasswordAsync">Change</MudButton>
+                </div>
             </div>
             <div class="operation">
                 <MudIcon Icon="@Icons.Material.Rounded.Key" Class="operation-icon" />
