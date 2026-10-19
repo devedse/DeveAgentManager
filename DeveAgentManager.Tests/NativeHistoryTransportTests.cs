@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Configuration;
 using DeveAgentManager.Core.Data;
@@ -139,6 +140,18 @@ public class NativeHistoryTransportTests
         var copy = (await service.GetForAgentAsync(copyAgent.Id, Ct))!;
         Assert.Equal(new ClaudeSessionFormat().Read(changed).ToJson(), (await service.LoadAsync(copy.Id, Ct)).ToJson());
         Assert.NotEmpty((await native.SummaryAsync(saved.Id, Ct))!.Sha256);
+        // A saved mode affects the existing SessionService on its next pass; neither service nor Manager restarts.
+        var settings = new HistorySyncSettingsStore(factory, new ManagerEvents());
+        await settings.SaveAsync(new(HistorySyncMode.Full), Ct);
+        changed += appended;
+        await File.WriteAllTextAsync(remote, changed, Ct);
+        await service.SyncRunnerAsync(runner, Ct);
+        Assert.NotEmpty((await native.SummaryAsync(saved.Id, Ct))!.Sha256);
+        await settings.SaveAsync(new(HistorySyncMode.Sampled), Ct);
+        changed += appended;
+        await File.WriteAllTextAsync(remote, changed, Ct);
+        await service.SyncRunnerAsync(runner, Ct);
+        Assert.Empty((await native.SummaryAsync(saved.Id, Ct))!.Sha256);
     }
 
     [Fact(Timeout = 60_000)]

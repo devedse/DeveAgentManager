@@ -60,6 +60,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ArtifactTransfers>();
         services.AddSingleton<ArtifactTokens>();
         services.AddSingleton<SessionService>();
+        services.AddSingleton<HistorySyncSettingsStore>();
         services.AddSingleton<SessionImageStore>();
         services.AddHostedService<AgentJobCompletions>();
         services.AddSingleton<SessionImages>();

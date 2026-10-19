@@ -75,7 +75,18 @@ history. Already verified archives remain readable/exportable offline. A failed
 best-effort final sync can leave a provisional archive requiring source recovery;
 removing a Runner is not evidence that its final verification succeeded.
 
-`HISTORY_SYNC_MODE` controls rollout and rollback:
+**Manager settings → Diagnostics → Conversation sync → History verification**
+controls rollout and rollback. Settings managers choose a mode and select
+**Save conversation sync**. The choice is stored in the Manager database and read
+at the start of each sync pass, so it takes effect without restarting the Manager
+or agents. Existing in-flight passes finish using the mode they started with.
+`HISTORY_SYNC_MODE` has been replaced by this saved setting.
+
+The API is `GET`/`PUT /api/settings/history-sync`, with a JSON body such as
+`{"mode":"Full"}`. Both endpoints require the Settings manager role; writes retain
+the normal Portal request and origin checks.
+
+The modes are:
 
 | Value | Behavior |
 | --- | --- |
@@ -88,8 +99,8 @@ regressions are not evidence of a completed live shadow rollout. `full` is the
 conservative rollback. Both modes audit existing pending checkpoints before
 skipping unchanged files. Old checkpoints without an audit time are audited on
 their next sync; no database migration or native-format conversion is required.
-Before downgrading the application to an older build, use `HISTORY_SYNC_MODE=full`
-until all pending histories have been verified. Older builds do not understand
+Before downgrading the application to an older build, save **Full** verification
+and allow synchronization to verify all pending histories. Older builds do not understand
 provisional checkpoints: they can skip unchanged files, although a subsequent
 changed sync rebuilds through their checksum-mismatch path. Do not downgrade while
 an offline provisional archive still needs source recovery.
@@ -120,7 +131,12 @@ whole-prefix verification, growth during a snapshot and checksum rejection. It a
 checks pending-history export/copy audits and unavailable-source rejection, plus
 legacy migration, previews, exports, copying histories and attachments, switching
 harnesses with backups and deleting the original without affecting its copy.
-Existing API/access and format tests continue to run.
+`HistorySyncSettingsApiTests` covers role/origin checks, invalid modes, and saved
+choices across Manager restarts. The transport regression changes the saved mode
+without recreating SessionService and checks that the next sync uses it. The
+`history-sync-settings.mjs` browser check covers saving/reloading the selection,
+slow and failed loads with retry, failed saves, help and phone layouts. Existing
+API/access and format tests continue to run.
 
 ## Measurements and deployment verification
 

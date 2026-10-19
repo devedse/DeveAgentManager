@@ -9,7 +9,7 @@
 <PageTitle>Manager settings · DeveAgentManager</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.Large" Class="page">
-    <PageHeader Title="Manager settings" Help="The same for everyone, changed by settings managers. Values set in the compose file are shown read-only; everything else is stored encrypted in /data. Each person's own settings are under My settings." />
+    <PageHeader Title="Manager settings" Help="The same for everyone, changed by settings managers. Values set in the compose file are shown read-only. Other Manager settings are stored in /data; secrets are encrypted. Each person's own settings are under My settings." />
 
     @if (_allowed == false)
     {
@@ -181,7 +181,11 @@
             }
 
             <MudTabPanel @ref="_diagnosticsTab" Text="Diagnostics" Icon="@Icons.Material.Rounded.Speed">
-                @if (_allowed == true) { <ManagerCpuTracePanel /> }
+                @if (_allowed == true)
+                {
+                    <HistorySyncSettingsPanel />
+                    <ManagerCpuTracePanel />
+                }
             </MudTabPanel>
 
             <MudTabPanel Text="Manager" Icon="@Icons.Material.Rounded.Info">

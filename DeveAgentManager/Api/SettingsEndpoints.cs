@@ -2,6 +2,7 @@ using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Setup;
+using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Users;
 
 namespace DeveAgentManager.Api;
@@ -15,6 +16,14 @@ internal static class SettingsEndpoints
     public static void MapSettingsEndpoints(this RouteGroupBuilder api)
     {
         var settings = api.MapGroup("/settings");
+
+        settings.MapGet("/history-sync", (HistorySyncSettingsStore store, CancellationToken ct) => store.GetAsync(ct))
+            .RequireRole(UserRoles.SettingsManager);
+        settings.MapPut("/history-sync", async (HistorySyncSettings request, HistorySyncSettingsStore store, CancellationToken ct) =>
+        {
+            await store.SaveAsync(request, ct);
+            return request;
+        }).RequireRole(UserRoles.SettingsManager);
 
         settings.MapGet("/timezones", () => RunnerTimeZones.Ids).ForAnyUser();
         settings.MapGet("/timezone", (RunnerTimeZones zones, CancellationToken ct) => zones.GetAsync(null, ct)).ForAnyUser();

@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DeveAgentManager.Core.Abstractions;
-using DeveAgentManager.Core.Configuration;
+using DeveAgentManager.Contracts;
 using Microsoft.Extensions.Logging;
 
 namespace DeveAgentManager.Core.Sessions;

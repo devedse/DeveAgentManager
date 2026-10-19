@@ -27,7 +27,8 @@ public sealed class SessionService(
     ManagerOptions options,
     ManagerEvents events,
     ILogger<SessionService> logger,
-    AgentArtifacts? artifacts = null)
+    AgentArtifacts? artifacts = null,
+    HistorySyncSettingsStore? historySettings = null)
 {
     private readonly AgentArtifacts _artifacts = artifacts ?? new(dbFactory, options, files, images, new AccessControl(dbFactory), events);
     internal Task PreserveArtifactsAsync(Guid agentId, CancellationToken ct) => _artifacts.PreserveAsync(agentId, ct);
@@ -36,6 +37,7 @@ public sealed class SessionService(
     internal Task ArtifactsChangedAsync(Guid sessionId, CancellationToken ct) => _artifacts.NotifyAsync(sessionId, ct);
 
     private readonly NativeHistoryStore _native = new(options.SessionsDirectory, logger: logger);
+    private readonly HistorySyncSettingsStore _historySettings = historySettings ?? new(dbFactory, events);
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly Dictionary<Guid, (DateTime Version, string Text)> _previews = new();
     /// <summary>The latest reply of each agent whose conversations <paramref name="user"/> can read.</summary>
@@ -347,6 +349,7 @@ public sealed class SessionService(
             return;
         }
 
+        var historySettings = await _historySettings.GetAsync(cancellationToken);
         var script = new StringBuilder();
         foreach (var session in sessions)
         {
@@ -373,7 +376,7 @@ public sealed class SessionService(
             try
             {
                 stamps.TryGetValue(session.Id, out var stamp);
-                var policy = new NativeHistorySyncPolicy(options.HistorySyncMode,
+                var policy = new NativeHistorySyncPolicy(historySettings.Mode,
                     Force: forceVerification || session.AgentId == strictAgentId,
                     Idle: session.Agent is { Working: false });
                 var incremental = _formats[session.HarnessId].SupportsIncrementalRead && stamp is not null;

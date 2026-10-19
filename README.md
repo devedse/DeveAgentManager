@@ -155,7 +155,7 @@ the pool, the storage and the VMID range.
 
 ## Configuration
 
-Everything is set with environment variables in the compose file.
+Startup and connection settings use environment variables in the compose file.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -174,7 +174,6 @@ Everything is set with environment variables in the compose file.
 | `RUNNER_USERNAME` | `remoteman` | Account created on new VMs by cloud-init. Each Runner gets a random password of its own, which whoever manages the Runner sees on its page. (`RUNNER_PASSWORD` is no longer used.) |
 | `RUNNER_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` | `4` / `8192` / `64` | Default size in the New Runner dialog. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |
-| `HISTORY_SYNC_MODE` | `sampled` | Bounded append checks with full audits; `shadow` compares against full verification, `full` restores conservative checking. See [conversation sync](docs/lean-session-sync.md). |
 | `CPU_TRACE_STARTUP` | `false` | Record one five-minute startup CPU capture. Manual captures remain available under Manager settings → Diagnostics. |
 | `CPU_PROFILER_ENABLED` | `true` in Docker | Load the native CPU profiler for on-demand captures; `false` uses portable thread samples. See [CPU captures](docs/manager-cpu-traces.md). |
 | `EDITOR_PORT` | `8081` | Optional editor-only port for direct local IP access. Public editors use hostname routing on the Portal port. |
@@ -183,6 +182,10 @@ Everything is set with environment variables in the compose file.
 | `TRUSTED_PROXIES` | empty | Semicolon-separated exact proxy IP addresses (actual socket peers). Only these can set forwarded client IP and HTTPS scheme. Host is preserved directly; forwarded Host is never used. |
 | `ALLOW_LOCAL_ACCESS` | `true` | Allow direct private/loopback IP HTTP connections, with separate credentials. Proxy or forwarded traffic cannot activate this exception. |
 | `PROXY_IDENTITY_HEADERS` | empty | Extra semicolon-separated identity headers stripped before forwarding to a Runner. Authorization, Proxy-Authorization, forwarding and common authentication headers are always stripped. |
+
+Conversation history verification is configured under **Manager settings → Diagnostics → Conversation sync**.
+Choose Sampled, Shadow or Full and save; the choice is stored in the database and applies to subsequent syncs
+without restarting the Manager. See [conversation sync](docs/lean-session-sync.md).
 
 ### Running behind Nginx Proxy Manager
 

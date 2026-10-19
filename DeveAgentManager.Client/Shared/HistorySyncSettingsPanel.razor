@@ -1,0 +1,59 @@
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+
+<div class="settings-section" data-section="history-sync-settings">
+    <div class="help-heading">
+        <MudText Typo="Typo.h6">Conversation sync</MudText>
+        <HelpTip Label="Conversation sync">
+            <p>This setting applies to every Runner. Saving changes the verification mode for subsequent synchronization passes without restarting the Manager or agents.</p>
+            <p>Sampled compares the beginning and end of previously saved history before appending new records. Full checks run after restart, when idle with pending appends, at least every 30 minutes while connected, and at lifecycle checkpoints. An edit in the middle can remain undetected until a full check. Pending history must be verified before export, copy or switching harnesses.</p>
+            <p>Shadow runs the sample checks and then fully verifies changed history, logging any discrepancies. Use it to evaluate sampling; it uses more CPU. Full skips sampling and fully verifies every changed history.</p>
+            <p>Histories and their original records are preserved. Changing the mode does not delete history or merge rewritten versions.</p>
+        </HelpTip>
+    </div>
+    <LoadingSection Loaded="_loaded" Error="@_loadError" Retry="LoadAsync" Label="Loading conversation sync settings">
+        <Placeholder><SkeletonForm Fields="1" /></Placeholder>
+        <ChildContent>
+            <MudSelect T="HistorySyncMode" @bind-Value="_mode" Label="History verification" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_saving">
+                <MudSelectItem Value="HistorySyncMode.Sampled">Sampled (recommended)</MudSelectItem>
+                <MudSelectItem Value="HistorySyncMode.Shadow">Shadow</MudSelectItem>
+                <MudSelectItem Value="HistorySyncMode.Full">Full</MudSelectItem>
+            </MudSelect>
+            <MudButton Class="mt-3" Variant="Variant.Outlined" Disabled="@(_saving || _mode == _savedMode)" OnClick="SaveAsync">Save conversation sync</MudButton>
+            @if (_saveError is not null) { <MudAlert Severity="Severity.Error" Class="mt-3" role="alert">@_saveError</MudAlert> }
+        </ChildContent>
+    </LoadingSection>
+</div>
+
+@code {
+    private HistorySyncMode _mode, _savedMode;
+    private bool _loaded, _saving;
+    private string? _loadError, _saveError;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _mode = _savedMode = (await Api.GetHistorySyncSettingsAsync()).Mode;
+            _loaded = true;
+            _loadError = null;
+        }
+        catch (ApiException ex) { _loadError = ex.Message; }
+        catch (HttpRequestException) { _loadError = LoadingSection.Unreachable; }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true; _saveError = null;
+        try
+        {
+            _mode = _savedMode = (await Api.SaveHistorySyncSettingsAsync(new(_mode))).Mode;
+            Snackbar.Add("Conversation sync saved. Applies to the next synchronization pass.", Severity.Success);
+        }
+        catch (ApiException ex) { _saveError = ex.Message; }
+        catch (HttpRequestException) { _saveError = "Couldn't reach the Manager. Reload settings to check whether the change was saved."; }
+        finally { _saving = false; }
+    }
+}

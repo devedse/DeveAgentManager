@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using DeveAgentManager.Core.Configuration;
+using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Sessions;
 using Xunit;
 
