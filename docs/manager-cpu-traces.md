@@ -128,11 +128,15 @@ recursive inclusive counting, expansion bounds, timing privacy and named JIT eve
 validates the native engine in the built image: it runs a CPU-bound method beside a sleeping worker, checks the
 method CPU estimates, cancels another capture and verifies that no POSIX profiling timers remain armed.
 
-CI builds the `cpu-smoke` Docker target on separate native AMD64 and ARM64 runners, alongside the .NET and security
-checks. Each probe runs with a read-only root filesystem, no extra capabilities and writable temporary mounts.
-`tools/cpu-profiler/verify-container.sh` stops a stalled probe after two minutes and retains its console, native
-logs and partial capture as workflow artifacts. Each production image reuses the checked runtime layers and omits
-the test workload. Publication combines their digests only after every required check passes.
+The manual **CPU profiler diagnostics** workflow builds the `cpu-smoke` target on native AMD64 and ARM64 runners.
+Each probe runs with a read-only root filesystem, no extra capabilities and a private writable capture directory.
+`tools/cpu-profiler/verify-container.sh` stops a stalled probe after two minutes and retains console output and
+capture files as workflow artifacts. Run this diagnostic after runtime, base-image or profiler changes. Normal
+release builds build production images directly and do not run the detailed profiler probe.
+
+ARM64 currently defaults to portable thread samples: its experimental native unwinder failed method CPU attribution.
+The manual diagnostic explicitly enables that engine to investigate it. Do not treat an ARM64 portable trace as
+on-CPU attribution. AMD64 defaults to the validated native engine.
 
 The isolated `manager-cpu-trace.mjs` browser check covers the real startup capture, global indicator, phases,
 navigation, downloads, manual cancellation and phone layouts. Local/container verification and the actual
@@ -151,8 +155,8 @@ is undesirable; changing it requires a process restart.
 
 The Docker build intentionally retains matching runtime symbols and the pinned
 native profiler, which increases image/download size and build work. Keep the
-existing isolated native smoke gate, including the no-extra-capabilities check,
-before publishing either architecture. Local host tests do not establish that a
+manual native smoke diagnostic, including the no-extra-capabilities check,
+when changing the profiler or runtime. Local host tests do not establish that a
 new image loaded its native engine or that a deployed capture succeeded. The
 optional JIT context stream can fail independently and reports that explicitly;
 its absence must not be presented as compilation coverage.

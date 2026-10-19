@@ -28,7 +28,11 @@ var hot = methods.Where(x => x.GetProperty("method").GetString()!.Contains("Burn
     .Sum(x => x.GetProperty("selfNanoseconds").GetInt64());
 var asleep = methods.Where(x => x.GetProperty("method").GetString()!.Contains("SleepingWorker"))
     .Sum(x => x.GetProperty("selfNanoseconds").GetInt64());
-if (hot < 3_000_000_000 || asleep > 200_000_000) throw new Exception($"CPU attribution failed: busy={hot}, sleeping={asleep} ns.");
+if (hot < 3_000_000_000 || asleep > 200_000_000)
+{
+    Console.Error.WriteLine(JsonSerializer.Serialize(methods.Take(10).Select(x => x.Clone())));
+    throw new Exception($"CPU attribution failed: busy={hot}, sleeping={asleep} ns.");
+}
 // Repeated capture cancellation must stop timers and leave the receiver reusable.
 using var cancel = new CancellationTokenSource();
 var canceled = Directory.CreateDirectory("/result/canceled").FullName;

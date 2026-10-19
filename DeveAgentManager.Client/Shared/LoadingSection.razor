@@ -74,9 +74,12 @@ else
         }
 
         // Visible: keep it the minimum time, so it doesn't flash. Still invisible: the content comes straight away.
-        if (shownFor > 0 && shownFor < MinimumVisibleMs)
+        if (shownFor > 0)
         {
-            try { await Task.Delay(TimeSpan.FromMilliseconds(MinimumVisibleMs - shownFor), _lifetime.Token); }
+            // Animation time can advance before the first paint on a busy browser.
+            // Keep a complete visible window from this observation, rather than
+            // subtracting time during which the placeholder may not have painted.
+            try { await Task.Delay(TimeSpan.FromMilliseconds(MinimumVisibleMs), _lifetime.Token); }
             catch (OperationCanceledException) { return; }
         }
 

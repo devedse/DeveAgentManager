@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
-# The image enables this profiler; CPU_PROFILER_ENABLED=false restores the portable recorder.
-if [ "${CPU_PROFILER_ENABLED:-true}" = true ]; then
+# ARM64's experimental native unwinder has not passed CPU attribution validation.
+# Use portable traces there unless explicitly testing the native engine.
+case "$(uname -m)" in aarch64) CPU_PROFILER_DEFAULT=false ;; *) CPU_PROFILER_DEFAULT=true ;; esac
+if [ "${CPU_PROFILER_ENABLED:-$CPU_PROFILER_DEFAULT}" = true ]; then
     CPU_PROFILER_TOKEN=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
     export CPU_PROFILER_TOKEN CPU_PROFILER_ENABLED=true
     export CORECLR_ENABLE_PROFILING=1
@@ -28,6 +30,8 @@ if [ "${CPU_PROFILER_ENABLED:-true}" = true ]; then
     export DD_PROFILING_FRAMES_NATIVE_ENABLED=true
     export DD_TRACE_DEBUG=false
     export DD_TRACE_LOG_DIRECTORY=/tmp/dam-cpu-profiler
+else
+    export CPU_PROFILER_ENABLED=false
 fi
 if [ "$#" -gt 0 ] && [ "${1#-}" = "$1" ]; then exec "$@"; fi
 exec dotnet DeveAgentManager.dll "$@"
