@@ -128,9 +128,11 @@ recursive inclusive counting, expansion bounds, timing privacy and named JIT eve
 validates the native engine in the built image: it runs a CPU-bound method beside a sleeping worker, checks the
 method CPU estimates, cancels another capture and verifies that no POSIX profiling timers remain armed.
 
-CI builds the `cpu-smoke` Docker target and runs this probe with a read-only root filesystem, no extra
-capabilities and writable temporary mounts before publishing the final image. The production image does not
-include the test workload.
+CI builds the `cpu-smoke` Docker target on separate native AMD64 and ARM64 runners, alongside the .NET and security
+checks. Each probe runs with a read-only root filesystem, no extra capabilities and writable temporary mounts.
+`tools/cpu-profiler/verify-container.sh` stops a stalled probe after two minutes and retains its console, native
+logs and partial capture as workflow artifacts. Each production image reuses the checked runtime layers and omits
+the test workload. Publication combines their digests only after every required check passes.
 
 The isolated `manager-cpu-trace.mjs` browser check covers the real startup capture, global indicator, phases,
 navigation, downloads, manual cancellation and phone layouts. Local/container verification and the actual

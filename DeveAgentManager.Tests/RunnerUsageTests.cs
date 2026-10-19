@@ -7,6 +7,38 @@ namespace DeveAgentManager.Tests;
 public sealed class RunnerUsageTests
 {
     [Fact]
+    public void ProviderRefreshKeepsDiskUntilGuestProbeSucceedsOrFails()
+    {
+        var cache = new RunnerStatusCache();
+        var id = Guid.NewGuid();
+        cache.Set(id, new MachineStatus(MachinePowerState.Running, CpuUsage: 10, DiskUsedBytes: 30, DiskTotalBytes: 60));
+
+        cache.SetProviderStatus(id, new MachineStatus(MachinePowerState.Running, CpuUsage: 20));
+        Assert.Equal((30L, 60L, 20d), (cache.Get(id)!.DiskUsedBytes, cache.Get(id)!.DiskTotalBytes, cache.Get(id)!.CpuUsage));
+        Assert.Equal(50d, cache.History(id)[^1].DiskPercent);
+
+        cache.Set(id, cache.Get(id)! with { DiskUsedBytes = 40, DiskTotalBytes = 60 });
+        cache.SetProviderStatus(id, new MachineStatus(MachinePowerState.Running));
+        Assert.Equal(40L, cache.Get(id)!.DiskUsedBytes);
+
+        cache.Set(id, cache.Get(id)! with { DiskUsedBytes = null, DiskTotalBytes = null });
+        cache.SetProviderStatus(id, new MachineStatus(MachinePowerState.Running));
+        Assert.Null(cache.Get(id)!.DiskTotalBytes);
+    }
+
+    [Fact]
+    public void ProviderPowerTransitionDiscardsPreviousDiskReading()
+    {
+        var cache = new RunnerStatusCache();
+        var id = Guid.NewGuid();
+        cache.Set(id, new MachineStatus(MachinePowerState.Running, DiskUsedBytes: 30, DiskTotalBytes: 60));
+        cache.SetProviderStatus(id, new MachineStatus(MachinePowerState.Stopped));
+        Assert.Null(cache.Get(id)!.DiskTotalBytes);
+        cache.SetProviderStatus(id, new MachineStatus(MachinePowerState.Running));
+        Assert.Null(cache.Get(id)!.DiskTotalBytes);
+    }
+
+    [Fact]
     public void DiskHistoryUsesFilesystemBytesAndStaysInFastSamplesUntilNextProbe()
     {
         var cache = new RunnerStatusCache(); var id = Guid.NewGuid(); var now = DateTime.UtcNow;

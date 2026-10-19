@@ -372,8 +372,13 @@ docker run -d --name fake-runner -p 2222:22 debian:trixie bash -c "apt-get updat
 
 Then add it as an existing machine at `127.0.0.1`, port `2222` (from the Manager container: `host.docker.internal`).
 
-Every push builds and tests on GitHub Actions and publishes a multi-arch (amd64, arm64) image to
-`ghcr.io/devedse/deveagentmanager`: `latest` and `1.0.<build>` from `master`; other branches get `beta` (the newest
-branch build) and `beta_<branch>`, versioned `1.0.0-beta.<run>`, and never touch `latest`.
-No secrets are needed; the workflow uses the built-in `GITHUB_TOKEN`. Run it manually (workflow_dispatch) to pick a
-self-hosted runner.
+Every push runs .NET tests, native AMD64 and ARM64 image builds/profiler probes, and security/browser checks in
+parallel. Both image jobs reuse their checked runtime layers and upload immutable image digests. After all checks
+pass, a publication job combines those digests into the multi-architecture image without rebuilding or using QEMU.
+The GitHub release points to the tested commit. Newer pushes cancel older builds on the same branch.
+
+Images at `ghcr.io/devedse/deveagentmanager` get `latest` and `1.0.<build>` from `master`; other branches get `beta`
+and `beta_<branch>`, with application version `1.0.<build>-beta`. Non-Dependabot builds also update `beta_nightly`.
+Security checks run within the build workflow on pushes, and independently on pull requests and the weekly schedule.
+No secrets are needed; the workflow uses the built-in `GITHUB_TOKEN`. Run it manually (`workflow_dispatch`) to pick
+self-hosted .NET and AMD64 runners. ARM64 verification always runs on native GitHub hardware.

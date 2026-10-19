@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-# The diagnostic branch enables this profiler; CPU_PROFILER_ENABLED=false restores the portable recorder.
+# The image enables this profiler; CPU_PROFILER_ENABLED=false restores the portable recorder.
 if [ "${CPU_PROFILER_ENABLED:-true}" = true ]; then
     CPU_PROFILER_TOKEN=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
     export CPU_PROFILER_TOKEN CPU_PROFILER_ENABLED=true
@@ -13,6 +13,8 @@ if [ "${CPU_PROFILER_ENABLED:-true}" = true ]; then
     done
     export PYROSCOPE_PROFILING_ENABLED=1
     export PYROSCOPE_PROFILING_CPU_ENABLED=1
+    # The pinned engine requires this additional opt-in on native ARM64.
+    export DD_INTERNAL_PROFILING_ENABLED_ARM64=1
     # The contention setting is presence-sensitive in this engine: unset disabled types instead of "false".
     unset PYROSCOPE_PROFILING_WALLTIME_ENABLED PYROSCOPE_PROFILING_ALLOCATION_ENABLED PYROSCOPE_PROFILING_LOCK_ENABLED
     unset PYROSCOPE_PROFILING_EXCEPTION_ENABLED PYROSCOPE_PROFILING_HEAP_ENABLED PYROSCOPE_PROFILING_GC_ENABLED

@@ -48,6 +48,18 @@ public sealed class RunnerStatusCache
         RecordUsage(runnerId, status, at);
     }
 
+    // Provider status has no guest filesystem reading. Keep it while the next SSH
+    // probe is in flight; an actual probe failure still clears it through Set.
+    public void SetProviderStatus(Guid runnerId, MachineStatus status, DateTime? at = null)
+    {
+        var merged = _statuses.AddOrUpdate(runnerId, status, (_, previous) =>
+            status.PowerState == MachinePowerState.Running && previous.PowerState == MachinePowerState.Running
+                && status.DiskUsedBytes is null && status.DiskTotalBytes is null
+                ? status with { DiskUsedBytes = previous.DiskUsedBytes, DiskTotalBytes = previous.DiskTotalBytes }
+                : status);
+        RecordUsage(runnerId, merged, at);
+    }
+
     public void RecordUsage(Guid runnerId, MachineStatus status, DateTime? at = null)
     {
         var cpu = Valid(status.CpuUsage);
@@ -222,7 +234,7 @@ public sealed class RunnerMonitor(
                     try
                     {
                         var status = await provider.GetStatusAsync(runner.ToMachine(), ct);
-                        statusCache.Set(runner.Id, status);
+                        statusCache.SetProviderStatus(runner.Id, status);
                         await runners.ApplyObservedStatusAsync(runner.Id, status, ct);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)

@@ -1,11 +1,11 @@
-name: GitHubActionsBuilds
+name: Build and release
 
 on:
   push:
   workflow_dispatch:
     inputs:
       runner:
-        description: 'Runner to use'
+        description: 'Runner for .NET tests and the AMD64 image (ARM64 always uses a native GitHub runner)'
         required: false
         default: 'github-hosted'
         type: choice
@@ -13,103 +13,41 @@ on:
           - github-hosted
           - self-hosted
 
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY_IMAGE: ghcr.io/devedse/deveagentmanager
+
 jobs:
-  generate_version_number:
+  prepare:
+    name: Prepare version and image metadata
     permissions:
       contents: write
-    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "medium"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-24.04
     outputs:
-      build_number: ${{ steps.buildnumber.outputs.build_number }}
-      # One counter for every branch (the build-number-N tag): master 1.0.<N>, other branches 1.0.<N>-beta.
       version: ${{ github.ref == 'refs/heads/master' && format('1.0.{0}', steps.buildnumber.outputs.build_number) || format('1.0.{0}-beta', steps.buildnumber.outputs.build_number) }}
+      image_tags: ${{ steps.meta.outputs.tags }}
+      image_labels: ${{ steps.meta.outputs.labels }}
+      image_annotations: ${{ steps.meta.outputs.annotations }}
     steps:
+    - uses: actions/checkout@v6
     - name: Generate build number
       id: buildnumber
       uses: onyxmueller/build-tag-number@v1
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-
-  build_and_test:
-    needs: generate_version_number
-    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "medium"]') || 'ubuntu-latest' }}
-    steps:
-    - uses: actions/checkout@v6
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v5
-      with:
-        dotnet-version: 10.0.x
-    - name: dotnet restore
-      run: dotnet restore DeveAgentManager.slnx
-    - name: dotnet build
-      run: dotnet build DeveAgentManager.slnx -c Release --no-restore /p:Version=${{ needs.generate_version_number.outputs.version }}
-    - name: Install isolated SSH and tmux test tools
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y openssh-server tmux
-        sudo install -d -m 0755 /run/sshd
-    - name: dotnet test
-      run: dotnet test --solution DeveAgentManager.slnx -c Release --no-build --verbosity normal
-
-  verify_arm64_cpu_profiler:
-    needs: generate_version_number
-    # CPU attribution must run on native hardware, rather than under QEMU.
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-    - uses: actions/checkout@v6
-    - name: Verify native ARM64 runner
-      run: test "$(uname -m)" = aarch64
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v4
-    - name: Build ARM64 CPU profiler smoke image
-      uses: docker/build-push-action@v7
-      with:
-        context: .
-        file: Dockerfile
-        target: cpu-smoke
-        platforms: linux/arm64
-        load: true
-        push: false
-        tags: dam-cpu-smoke:arm64-validation
-        build-args: |
-          BUILD_VERSION=${{ needs.generate_version_number.outputs.version }}
-    - name: Verify CPU profiling in an ordinary ARM64 container
-      run: |
-        docker run --rm --platform linux/arm64 --cap-drop ALL --security-opt no-new-privileges --read-only \
-          --tmpfs /tmp:rw,size=256m --tmpfs /result:rw,mode=1777,size=512m dam-cpu-smoke:arm64-validation
-
-  build_docker:
-    needs: [generate_version_number, build_and_test, verify_arm64_cpu_profiler]
-    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "xlarge"]') || 'ubuntu-latest' }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-    - uses: actions/checkout@v6
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v4
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v4
-      with:
-        image: tonistiigi/binfmt:latest
-        platforms: all
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v4
-    - name: Extract Docker metadata
+    - name: Prepare Docker metadata
       id: meta
       uses: docker/metadata-action@v6
       with:
-        images: ghcr.io/devedse/deveagentmanager
-        # master: its version and latest (what the compose file runs). Other branches never touch those: they get
-        # "beta" (the newest branch build) and "beta_<branch>" (sanitized, so any branch name is a valid tag).
+        images: ${{ env.REGISTRY_IMAGE }}
         tags: |
-          type=raw,value=1.0.${{ needs.generate_version_number.outputs.build_number }},enable=${{ github.ref == 'refs/heads/master' }}
+          type=raw,value=1.0.${{ steps.buildnumber.outputs.build_number }},enable=${{ github.ref == 'refs/heads/master' }}
           type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
           type=raw,value=beta_nightly,enable=${{ github.actor != 'dependabot[bot]' }}
           type=raw,value=beta,enable=${{ github.ref != 'refs/heads/master' }}
@@ -118,57 +56,187 @@ jobs:
           maintainer=${{ github.actor }}
           org.opencontainers.image.description=DeveAgentManager - run coding agents on Proxmox VMs from your browser
       env:
-        DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
-    # Native loading must pass before publication; the final image excludes the test workload.
-    - name: Build CPU profiler smoke image
+        DOCKER_METADATA_ANNOTATIONS_LEVELS: index
+
+  build_and_test:
+    name: .NET build and tests
+    needs: prepare
+    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "medium"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v6
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: 10.0.x
+    - name: Restore
+      run: dotnet restore DeveAgentManager.slnx
+    - name: Build
+      env:
+        BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+      run: dotnet build DeveAgentManager.slnx -c Release --no-restore /p:Version="$BUILD_VERSION"
+    - name: Install isolated SSH and tmux test tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y openssh-server tmux
+        sudo install -d -m 0755 /run/sshd
+    - name: Test
+      run: dotnet test --solution DeveAgentManager.slnx -c Release --no-build --verbosity normal
+
+  build_images:
+    name: Build and verify ${{ matrix.arch }} image
+    needs: prepare
+    # Each architecture builds and executes its native profiler on matching hardware.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          machine: x86_64
+          runner: ubuntu-24.04
+        - arch: arm64
+          machine: aarch64
+          runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.arch == 'amd64' && inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "xlarge"]') || matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@v6
+    - name: Verify native runner architecture
+      env:
+        EXPECTED_MACHINE: ${{ matrix.machine }}
+      run: test "$(uname -m)" = "$EXPECTED_MACHINE"
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+    - name: Build CPU profiler probe and shared runtime
       uses: docker/build-push-action@v7
       with:
         context: .
-        file: Dockerfile
         target: cpu-smoke
-        platforms: linux/amd64
+        platforms: linux/${{ matrix.arch }}
         load: true
-        push: false
         tags: dam-cpu-smoke:validation
         build-args: |
-          BUILD_VERSION=${{ needs.generate_version_number.outputs.version }}
-    - name: Verify CPU profiling in an ordinary container
-      run: |
-        docker run --rm --cap-drop ALL --security-opt no-new-privileges --read-only \
-          --tmpfs /tmp:rw,size=256m --tmpfs /result:rw,mode=1777,size=512m dam-cpu-smoke:validation
-    - name: Build and push Docker image
+          BUILD_VERSION=${{ needs.prepare.outputs.version }}
+        cache-from: type=gha,scope=image-${{ matrix.arch }}
+        cache-to: type=gha,scope=image-${{ matrix.arch }},mode=max
+    - name: Verify CPU profiler in a restricted container
+      run: tools/cpu-profiler/verify-container.sh dam-cpu-smoke:validation "$RUNNER_TEMP/cpu-profiler"
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    # Reuses the checked cpu-runtime layers. Only immutable digests are uploaded here;
+    # user-facing tags are assigned after all image, .NET and security checks pass.
+    - name: Upload checked production image by digest
+      id: image
       uses: docker/build-push-action@v7
       with:
         context: .
-        file: Dockerfile
         target: final
-        platforms: linux/amd64,linux/arm64
-        push: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        annotations: ${{ steps.meta.outputs.annotations }}
+        platforms: linux/${{ matrix.arch }}
+        labels: ${{ needs.prepare.outputs.image_labels }}
+        outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
         build-args: |
-          BUILD_VERSION=${{ needs.generate_version_number.outputs.version }}
-        github-token: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_VERSION=${{ needs.prepare.outputs.version }}
         provenance: false
         sbom: false
+    - name: Export checked image digest
+      env:
+        IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        IMAGE_ARCH: ${{ matrix.arch }}
+      run: |
+        [[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+        mkdir -p "$RUNNER_TEMP/digests"
+        printf '%s\n' "$IMAGE_DIGEST" > "$RUNNER_TEMP/digests/$IMAGE_ARCH"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: image-digest-${{ matrix.arch }}
+        path: ${{ runner.temp }}/digests/*
+        if-no-files-found: error
+        overwrite: true
+        retention-days: 1
+    - name: Retain profiler diagnostics
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: cpu-profiler-${{ matrix.arch }}
+        path: ${{ runner.temp }}/cpu-profiler
+        if-no-files-found: ignore
+        overwrite: true
+        retention-days: 3
+
+  security:
+    name: Security and browser checks
+    uses: ./.github/workflows/security.yml
+
+  publish_image:
+    name: Publish checked multi-architecture image
+    needs: [prepare, build_and_test, build_images, security]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: image-digest-*
+        merge-multiple: true
+        path: ${{ runner.temp }}/digests
+    - uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - uses: docker/setup-buildx-action@v4
+    - name: Publish tags from the two checked digests
+      env:
+        IMAGE_TAGS: ${{ needs.prepare.outputs.image_tags }}
+        IMAGE_ANNOTATIONS: ${{ needs.prepare.outputs.image_annotations }}
+      run: |
+        sources=()
+        for arch in amd64 arm64; do
+          digest=$(cat "$RUNNER_TEMP/digests/$arch")
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          sources+=("$REGISTRY_IMAGE@$digest")
+        done
+        args=()
+        while IFS= read -r tag; do
+          [[ -z "$tag" ]] || args+=(--tag "$tag")
+        done <<< "$IMAGE_TAGS"
+        while IFS= read -r annotation; do
+          [[ -z "$annotation" ]] || args+=(--annotation "$annotation")
+        done <<< "$IMAGE_ANNOTATIONS"
+        docker buildx imagetools create "${args[@]}" "${sources[@]}"
+        first_tag=$(head -n 1 <<< "$IMAGE_TAGS")
+        docker buildx imagetools inspect "$first_tag" --raw | jq -e \
+          --arg amd64 "$(cat "$RUNNER_TEMP/digests/amd64")" \
+          --arg arm64 "$(cat "$RUNNER_TEMP/digests/arm64")" \
+          '.manifests | length == 2 and any(.[]; .platform.os == "linux" and .platform.architecture == "amd64" and .digest == $amd64) and any(.[]; .platform.os == "linux" and .platform.architecture == "arm64" and .digest == $arm64)'
 
   release_github:
+    name: Create GitHub release
     permissions:
       contents: write
-    needs: [generate_version_number, build_and_test, build_docker]
-    runs-on: ubuntu-latest
+    needs: [prepare, publish_image]
+    runs-on: ubuntu-24.04
     if: github.ref == 'refs/heads/master'
     steps:
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v3
       with:
-        tag_name: 1.0.${{ needs.generate_version_number.outputs.build_number }}
-        name: 1.0.${{ needs.generate_version_number.outputs.build_number }}
+        tag_name: ${{ needs.prepare.outputs.version }}
+        name: ${{ needs.prepare.outputs.version }}
+        target_commitish: ${{ github.sha }}
         body: |
           ${{ github.event.head_commit.message }}
 
-          Docker image: `ghcr.io/devedse/deveagentmanager:1.0.${{ needs.generate_version_number.outputs.build_number }}`
+          Docker image: `ghcr.io/devedse/deveagentmanager:${{ needs.prepare.outputs.version }}`
         make_latest: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
