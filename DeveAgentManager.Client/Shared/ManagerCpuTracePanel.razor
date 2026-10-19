@@ -1,28 +1,38 @@
 @implements IDisposable
 @inject ManagerApi Api
+@inject LiveUpdates Live
 
 <div class="settings-section">
     <div class="help-heading">
         <MudText Typo="Typo.h6">Manager CPU trace</MudText>
         <HelpTip Label="Manager CPU trace">
-            <p>Record 60 seconds while the Manager is busy, then download the ZIP for analysis. It contains managed thread samples and time-stamped CPU, allocation and garbage-collection measurements from the Manager process. Agents keep running; you can close this page while recording.</p>
+            <p>The diagnostic container automatically captures about five minutes at startup: a 30-second baseline, four minutes of stack sampling, then a 30-second baseline. Measurements begin before database migration and history backfill. Manual captures take about one minute: 15 seconds before, 30 seconds of sampling, then 15 seconds after.</p>
+            <p>Baselines measure the process without this collector's stack profiler. The ZIP labels each phase and includes its CPU and allocation summary. Profiler startup and shutdown take extra time and are measured separately. Agents keep running; you can close this page while recording.</p>
             <p>Only one capture runs at a time. The latest three are kept under the data directory in diagnostics/cpu and survive restarts. A restart interrupts an unfinished capture. Delete removes that capture for every settings manager.</p>
-            <p>Recording adds some overhead. Managed samples include waiting threads, so they must be read alongside the CPU measurements. Traces can contain method names and file paths; share them only with someone you trust. No heap dump, conversation export or environment-variable export is collected.</p>
+            <p>The diagnostic container uses a 50 ms sampling interval. Recording adds overhead, and startup workloads change over time: differences between phases are investigation leads, not exact overhead calculations. Managed samples include waiting threads. Traces can contain method names and file paths; share them only with someone you trust. No heap dump, conversation export or environment-variable export is collected.</p>
         </HelpTip>
     </div>
     <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">Capture the Manager's CPU activity and download it for analysis.</MudText>
     <LoadingSection Loaded="_loaded" Error="@_loadError" Retry="LoadAsync" Label="Loading CPU captures">
         <Placeholder><SkeletonList Rows="2" /></Placeholder>
         <ChildContent>
-            <div class="settings-actions mb-3">
+            <div class="settings-actions cpu-capture-controls mb-3">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.FiberManualRecord" OnClick="StartAsync" Disabled="@(_busy || _status?.Active is not null)">Capture 60-second CPU trace</MudButton>
                 <MudButton StartIcon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" Disabled="_busy">Refresh captures</MudButton>
                 @if (_status?.Active is { } active)
                 {
                     <MudButton OnClick="() => CancelAsync(active.Id)" Disabled="_busy">Cancel capture</MudButton>
-                    <span role="status">@(active.State == "finishing" ? "Preparing download…" : "Recording… You can leave this page.")</span>
                 }
             </div>
+            @if (_status?.Active is { } current)
+            {
+                <div class="cpu-capture-progress mb-3" role="status" aria-live="polite">
+                    <strong>@CpuTraceDisplay.Name(current) · @CpuTraceDisplay.Label(current)</strong>
+                    <span class="mud-text-secondary">Elapsed @CpuTraceDisplay.Time(Elapsed(current)) · about @CpuTraceDisplay.Time(current.DurationSeconds) total</span>
+                    <MudProgressLinear Color="Color.Warning" Value="@(Math.Clamp(Elapsed(current) / current.DurationSeconds * 100, 0, 100))" Indeterminate="@(current.State == "finishing")" aria-label="CPU capture progress" />
+                </div>
+            }
+            @if (_status?.StartupError is { } startupError) { <MudAlert Severity="Severity.Warning" Class="mb-3">@startupError</MudAlert> }
             @if (_actionError is not null) { <MudAlert Severity="Severity.Warning" Class="mb-3">@_actionError</MudAlert> }
             @if (_status?.Captures.Count == 0)
             {
@@ -32,7 +42,7 @@
             {
                 <div class="cpu-capture-row">
                     <div>
-                        <MudText Typo="Typo.subtitle2">@capture.StartedAt.ToLocalTime().ToString("g") · @Label(capture.State)</MudText>
+                        <MudText Typo="Typo.subtitle2">@capture.StartedAt.ToLocalTime().ToString("g") · @CpuTraceDisplay.Name(capture) · @CpuTraceDisplay.Label(capture)</MudText>
                         @if (capture.Error is { } error) { <MudText Typo="Typo.body2">@error</MudText> }
                         @if (capture.State == "ready") { <MudText Typo="Typo.caption">@((capture.Bytes / 1024d / 1024d).ToString("0.0")) MiB</MudText> }
                     </div>
@@ -57,7 +67,14 @@
     private bool _loaded, _busy, _following;
     private string? _loadError, _actionError;
     private readonly CancellationTokenSource _lifetime = new();
-    protected override Task OnInitializedAsync() => LoadAsync();
+    protected override Task OnInitializedAsync()
+    {
+        Live.CpuTraceChanged += OnChanged;
+        Live.Reconnected += OnChanged;
+        return LoadAsync();
+    }
+    private void OnChanged() { if (!_lifetime.IsCancellationRequested) _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); }); }
+    private double Elapsed(ManagerCpuTrace capture) => ((_status?.ServerTime ?? DateTimeOffset.UtcNow) - capture.StartedAt).TotalSeconds;
 
     private async Task LoadAsync()
     {
@@ -96,10 +113,10 @@
         finally { _following = false; }
     }
     private void Error(string message) { if (_loaded) _actionError = message; else _loadError = message; }
-    private static string Label(string state) => state switch
+    public void Dispose()
     {
-        "recording" => "Recording", "finishing" => "Preparing download", "ready" => "Ready to download",
-        "canceled" => "Canceled", "interrupted" => "Interrupted", _ => "Failed"
-    };
-    public void Dispose() { _lifetime.Cancel(); }
+        _lifetime.Cancel();
+        Live.CpuTraceChanged -= OnChanged;
+        Live.Reconnected -= OnChanged;
+    }
 }

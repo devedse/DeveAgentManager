@@ -3,10 +3,12 @@ using System.Text.Json;
 using System.Threading.Channels;
 using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Configuration;
+using DeveAgentManager.Api;
+using Microsoft.AspNetCore.SignalR;
 
 namespace DeveAgentManager.Diagnostics;
 
-/// <summary>Owns one manual capture at a time. Idle operation waits on a channel; no diagnostic polling runs.</summary>
+/// <summary>Owns startup and manual captures. Idle operation waits on a channel.</summary>
 public sealed class ManagerCpuTraces : BackgroundService
 {
     public const int DurationSeconds = 60;
@@ -14,17 +16,23 @@ public sealed class ManagerCpuTraces : BackgroundService
     private readonly string _root;
     private readonly ICpuTraceRecorder _recorder;
     private readonly ILogger<ManagerCpuTraces> _logger;
+    private readonly CpuTraceOptions _options;
+    private readonly IHubContext<LiveUpdatesHub>? _hub;
     private readonly object _gate = new();
     private readonly List<ManagerCpuTrace> _captures = [];
-    private readonly Channel<Guid> _queue = Channel.CreateBounded<Guid>(1);
+    private readonly Channel<(Guid Id, CpuTracePlan Plan)> _queue = Channel.CreateBounded<(Guid, CpuTracePlan)>(1);
     private ManagerCpuTrace? _active;
     private CancellationTokenSource? _cancel;
     private bool _stopping;
+    private bool _started;
+    private string? _startupError;
 
-    public ManagerCpuTraces(ManagerOptions options, ICpuTraceRecorder recorder, ILogger<ManagerCpuTraces> logger)
+    public ManagerCpuTraces(ManagerOptions options, ICpuTraceRecorder recorder, ILogger<ManagerCpuTraces> logger,
+        CpuTraceOptions? captureOptions = null, IHubContext<LiveUpdatesHub>? hub = null)
     {
         _root = Path.Combine(options.DataDirectory, "diagnostics", "cpu");
         _recorder = recorder; _logger = logger;
+        _options = captureOptions ?? new(); _hub = hub;
         Directory.CreateDirectory(_root);
         if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(_root, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         foreach (var folder in Directory.EnumerateDirectories(_root))
@@ -51,10 +59,12 @@ public sealed class ManagerCpuTraces : BackgroundService
 
     public ManagerCpuTraceStatus Status()
     {
-        lock (_gate) return new(_active, _captures.ToArray());
+        lock (_gate) return new(_active, _captures.ToArray(), DateTimeOffset.UtcNow, _startupError);
     }
 
-    public ManagerCpuTrace Start()
+    public ManagerCpuTrace Start() => Start(CpuTracePlan.Manual, "manual");
+
+    private ManagerCpuTrace Start(CpuTracePlan plan, string trigger)
     {
         lock (_gate)
         {
@@ -64,11 +74,15 @@ public sealed class ManagerCpuTraces : BackgroundService
             if (drive.AvailableFreeSpace < 2 * CpuTraceRecorder.MaxTraceBytes + 1024 * 1024)
                 throw new InvalidOperationException("CPU capture needs at least 257 MiB of free disk space.");
             Prune(Retained - 1);
-            var capture = new ManagerCpuTrace(Guid.NewGuid(), DateTimeOffset.UtcNow, DurationSeconds, "recording");
+            var now = DateTimeOffset.UtcNow;
+            var capture = new ManagerCpuTrace(Guid.NewGuid(), now, plan.DurationSeconds, "recording",
+                Trigger: trigger, Phase: "baseline-before", PhaseStartedAt: now, PhaseSeconds: (int)plan.Before.TotalSeconds);
             Directory.CreateDirectory(Folder(capture.Id));
             Persist(capture);
             _active = capture; _captures.Insert(0, capture); _cancel = new();
-            if (!_queue.Writer.TryWrite(capture.Id)) throw new InvalidOperationException("The capture queue is unavailable.");
+            if (!_queue.Writer.TryWrite((capture.Id, plan))) throw new InvalidOperationException("The capture queue is unavailable.");
+            _logger.LogInformation("Starting {Trigger} CPU capture {Capture} for {Seconds} seconds", trigger, capture.Id, plan.DurationSeconds);
+            Publish();
             return capture;
         }
     }
@@ -89,6 +103,7 @@ public sealed class ManagerCpuTraces : BackgroundService
             if (_active?.Id == id) throw new InvalidOperationException("Cancel the running capture before deleting it.");
             var capture = _captures.FirstOrDefault(c => c.Id == id) ?? throw new KeyNotFoundException("Capture not found.");
             Directory.Delete(Folder(id), true); _captures.Remove(capture);
+            Publish();
         }
     }
 
@@ -101,16 +116,36 @@ public sealed class ManagerCpuTraces : BackgroundService
         }
     }
 
+    // Program starts us before database migration/backfill. The host's later StartAsync must not start a second worker.
+    public override Task StartAsync(CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (_started) return Task.CompletedTask;
+            _started = true;
+            if (_options.CaptureOnStartup)
+            {
+                try { Start(CpuTracePlan.Startup, "startup"); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+                {
+                    _startupError = "The startup CPU capture could not start. Check the Manager log.";
+                    _logger.LogWarning(ex, "Could not start the automatic startup CPU capture");
+                }
+            }
+            return base.StartAsync(cancellationToken);
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            await foreach (var id in _queue.Reader.ReadAllAsync(stoppingToken))
+            await foreach (var (id, plan) in _queue.Reader.ReadAllAsync(stoppingToken))
             {
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, _cancel!.Token);
                 try
                 {
-                    await _recorder.RecordAsync(Folder(id), TimeSpan.FromSeconds(DurationSeconds), linked.Token);
+                    await _recorder.RecordAsync(Folder(id), plan, (phase, seconds) => UpdatePhase(id, phase, seconds), linked.Token);
                     linked.Token.ThrowIfCancellationRequested();
                     Update(id, "finishing");
                     var temporary = BundlePath(id) + ".tmp";
@@ -144,7 +179,7 @@ public sealed class ManagerCpuTraces : BackgroundService
                     try { CleanupWorking(id); }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                     { _logger.LogWarning(ex, "Could not remove temporary CPU capture files {Capture}", id); }
-                    finally { lock (_gate) { _active = null; _cancel?.Dispose(); _cancel = null; } }
+                    finally { lock (_gate) { _active = null; _cancel?.Dispose(); _cancel = null; Publish(); } }
                 }
             }
         }
@@ -167,7 +202,29 @@ public sealed class ManagerCpuTraces : BackgroundService
             try { Persist(updated); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             { _logger.LogWarning(ex, "Could not persist CPU capture status {Capture}", id); }
+            Publish();
         }
+    }
+    private void UpdatePhase(Guid id, string phase, int seconds)
+    {
+        lock (_gate)
+        {
+            var index = _captures.FindIndex(c => c.Id == id);
+            var updated = _captures[index] with { Phase = phase, PhaseStartedAt = DateTimeOffset.UtcNow, PhaseSeconds = seconds };
+            _captures[index] = updated; _active = updated;
+            // Persist phase boundaries only; progress comes from timestamps, without a server-side polling loop.
+            try { Persist(updated); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { _logger.LogWarning(ex, "Could not persist CPU capture phase {Capture}", id); }
+            _logger.LogInformation("CPU capture {Capture}: {Phase}", id, phase);
+            Publish();
+        }
+    }
+    private void Publish()
+    {
+        if (_hub is null) return;
+        _ = _hub.Clients.Group(LiveUpdatesHub.CpuCaptureGroup).SendAsync(LiveHub.CpuTraceChanged)
+            .ContinueWith(t => _logger.LogDebug(t.Exception, "Could not send CPU capture status"), TaskContinuationOptions.OnlyOnFaulted);
     }
     private void Prune(int keep)
     {

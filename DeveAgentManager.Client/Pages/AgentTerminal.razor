@@ -43,6 +43,7 @@
                     <MudIconButton Icon="@Icons.Material.Rounded.FolderOpen" Size="Size.Small" Class="session-picker-button" aria-label="Switch session" title="@(_sessionTitle ?? "Sessions")" OnClick="OpenSessionsAsync" />
                 </span>
             }
+            <CpuTraceIndicator />
             <AttentionMenu />
             <AgentSeenWatcher @key="(AgentId, nameof(AgentSeenWatcher))" Agent="_agent" />
             <span class="terminal-hint">Shift+drag selects · Ctrl+C copies a selection</span>

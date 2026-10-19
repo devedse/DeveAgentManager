@@ -3088,6 +3088,19 @@ body:has(.terminal-layout) .agent-attention-popover {
 .session-file-actions { display: flex; align-items: center; gap: 4px; }
 .cpu-capture-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 16px 0; border-top: 1px solid var(--dam-border); }
 .cpu-capture-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.cpu-capture-progress { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--dam-border); border-radius: 8px; background: var(--dam-surface-2); }
+.cpu-capture-controls { flex-wrap: wrap; }
+.cpu-capture-indicator { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid var(--dam-border); border-radius: 8px; color: var(--dam-warning); font-size: .8rem; white-space: nowrap; flex-shrink: 0; }
+.cpu-capture-indicator:hover { background: var(--dam-surface-2); }
+@media (max-width: 600px) {
+    .cpu-capture-indicator-text { display: none; }
+    .cpu-capture-indicator { padding: 5px; }
+    .app-bar .brand { min-width: 0; }
+    .app-bar .brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .app-bar .brand img { flex-shrink: 0; }
+    .cpu-capture-controls > .mud-button-root { flex: 1 1 auto; }
+    .cpu-capture-controls > .mud-button-root:first-child { flex-basis: 100%; }
+}
 .file-preview-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
 .file-preview-title { min-width: 0; }
 .file-preview-title .mud-typography { overflow-wrap: anywhere; }

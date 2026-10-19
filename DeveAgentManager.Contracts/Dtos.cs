@@ -303,6 +303,9 @@ public static class LiveHub
     /// <summary>Server to client: an <see cref="OperationFinished"/>.</summary>
     public const string OperationFinished = "operationFinished";
 
+    /// <summary>Server to settings managers: CPU capture status changed; reload the protected status endpoint.</summary>
+    public const string CpuTraceChanged = "cpuTraceChanged";
+
     /// <summary>Client to server: follow a Runner's log; returns its recent lines.</summary>
     public const string FollowLog = "FollowLog";
 

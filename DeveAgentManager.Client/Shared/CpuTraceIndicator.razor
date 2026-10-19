@@ -1,0 +1,56 @@
+@implements IDisposable
+@inject ManagerApi Api
+@inject SignedInUser Me
+@inject LiveUpdates Live
+
+@if (_allowed)
+{
+    @if (!_loaded && _error is null)
+    {
+        <Skeleton Width="32px" Height="20px" />
+    }
+    else if (_active is not null || _error is not null)
+    {
+        <a class="cpu-capture-indicator" href="manager-settings?tab=diagnostics"
+           title="@Description" aria-label="@Description">
+            <MudIcon Icon="@(_error is null ? Icons.Material.Rounded.FiberManualRecord : Icons.Material.Rounded.WarningAmber)" Size="Size.Small" />
+            <span class="cpu-capture-indicator-text">@(_error is null ? "CPU capture" : "CPU status unavailable")</span>
+        </a>
+    }
+}
+
+@code {
+    private bool _allowed, _loaded, _disposed;
+    private string? _error;
+    private ManagerCpuTrace? _active;
+    private string Description => _error ?? $"{CpuTraceDisplay.Name(_active!)}: {CpuTraceDisplay.Label(_active!)}. View CPU capture.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Live.CpuTraceChanged += Reload;
+        Live.Reconnected += Reload;
+        Me.Changed += Reload;
+        await LoadAsync();
+    }
+    private void Reload() { if (!_disposed) _ = InvokeAsync(LoadAsync); }
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _allowed = (await Me.GetAsync()).Has(UserRoles.SettingsManager);
+            if (_allowed) { _active = (await Api.GetCpuTracesAsync()).Active; _loaded = true; }
+            else _active = null;
+            _error = null;
+        }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
+        if (!_disposed) StateHasChanged();
+    }
+    public void Dispose()
+    {
+        _disposed = true;
+        Live.CpuTraceChanged -= Reload;
+        Live.Reconnected -= Reload;
+        Me.Changed -= Reload;
+    }
+}

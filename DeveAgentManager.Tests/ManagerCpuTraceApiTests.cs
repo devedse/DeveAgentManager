@@ -17,6 +17,23 @@ namespace DeveAgentManager.Tests;
 public sealed class ManagerCpuTraceApiTests
 {
     [Fact]
+    public async Task StartupCaptureIsAlreadyRunningWhenTheApiBecomesAvailable()
+    {
+        await using var manager = new CaptureManager(startup: true);
+        using var admin = await LoginAsync(manager, UserRoles.SettingsManager);
+        var status = (await admin.GetFromJsonAsync<ManagerCpuTraceStatus>("/api/diagnostics/cpu", ApiJson.Options))!;
+        Assert.Equal("startup", status.Active!.Trigger);
+        Assert.Equal(300, status.Active.DurationSeconds);
+        Assert.Equal("profiling", status.Active.Phase);
+        Assert.Single(manager.Recorder.Plans);
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync("/api/diagnostics/cpu", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync($"/api/diagnostics/cpu/{status.Active.Id}/cancel", null)).StatusCode);
+        var service = manager.Services.GetRequiredService<ManagerCpuTraces>();
+        await ManagerCpuTraceTests.WaitAsync(() => service.Status().Active is null);
+        Assert.Equal("canceled", service.Status().Captures[0].State);
+    }
+
+    [Fact]
     public async Task CaptureAndDownloadRequireSettingsRoleAndMutationsNeedPortalHeaderAndOrigin()
     {
         await using var manager = new CaptureManager();
@@ -55,13 +72,14 @@ public sealed class ManagerCpuTraceApiTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await admin.GetAsync($"/api/diagnostics/cpu/{capture.Id}/download")).StatusCode);
     }
 
-    private sealed class CaptureManager : WebApplicationFactory<DeveAgentManager.Api.DtoMapper>
+    private sealed class CaptureManager(bool startup = false) : WebApplicationFactory<DeveAgentManager.Api.DtoMapper>
     {
         private readonly string _folder = Directory.CreateTempSubdirectory("dam-cpu-api-").FullName;
         public ControlledCpuRecorder Recorder { get; } = new();
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseSetting("DATA_DIR", _folder).UseSetting("ADMIN_PASSWORD", "test-password-1234").UseSetting("PROXMOX_URL", "");
+            builder.UseSetting("CPU_TRACE_STARTUP", startup ? "true" : "false");
             builder.ConfigureServices(services => { services.RemoveAll<ICpuTraceRecorder>(); services.AddSingleton<ICpuTraceRecorder>(Recorder); });
         }
         public override async ValueTask DisposeAsync() { await base.DisposeAsync(); Directory.Delete(_folder, true); }

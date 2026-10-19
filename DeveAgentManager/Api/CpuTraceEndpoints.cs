@@ -18,7 +18,7 @@ internal static class CpuTraceEndpoints
         captures.MapPost("/", async (ManagerCpuTraces traces, CurrentUser user, AuditLog audit) =>
         {
             var capture = traces.Start();
-            await audit.RecordAsync(user, AuditActions.ManagerCpuTraceStarted, capture.Id.ToString(), "60-second Manager trace");
+            await audit.RecordAsync(user, AuditActions.ManagerCpuTraceStarted, capture.Id.ToString(), "60-second Manager capture with baselines");
             return Results.Accepted($"/api/diagnostics/cpu/{capture.Id}/download", capture);
         }).RequireRole(UserRoles.SettingsManager);
         captures.MapPost("/{id:guid}/cancel", (Guid id, ManagerCpuTraces traces) =>

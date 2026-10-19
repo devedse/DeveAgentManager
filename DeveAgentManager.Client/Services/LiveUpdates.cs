@@ -27,6 +27,7 @@ public sealed class LiveUpdates : IAsyncDisposable
         _connection.On<ManagerEvent>(LiveHub.Changed, e => Changed?.Invoke(e));
         _connection.On<Guid, RunnerLogLine>(LiveHub.Log, (runnerId, line) => Log?.Invoke(runnerId, line));
         _connection.On<OperationFinished>(LiveHub.OperationFinished, e => OperationFinished?.Invoke(e));
+        _connection.On(LiveHub.CpuTraceChanged, () => CpuTraceChanged?.Invoke());
         _connection.Reconnecting += _ =>
         {
             StateChanged?.Invoke();
@@ -64,6 +65,7 @@ public sealed class LiveUpdates : IAsyncDisposable
     public event Action? Reconnected;
 
     public event Action? StateChanged;
+    public event Action? CpuTraceChanged;
 
     public bool IsConnected => _connection.State == HubConnectionState.Connected;
 

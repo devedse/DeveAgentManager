@@ -18,20 +18,22 @@ namespace DeveAgentManager.Api;
 public sealed class LiveUpdatesHub(RunnerLogStore logs, AccessControl access, OpenConnections connections) : Hub
 {
     private const string RegistrationItem = "dam:registration";
+    public const string CpuCaptureGroup = "settings-managers:cpu-capture";
 
     public static string LogGroup(Guid runnerId) => $"log:{runnerId:N}";
 
-    public override Task OnConnectedAsync()
+    public override async Task OnConnectedAsync()
     {
         var http = Context.GetHttpContext();
         if (http is null || SignIn.UsableUser(http) is not { } user)
         {
             Context.Abort();
-            return Task.CompletedTask;
+            return;
         }
 
         Context.Items[RegistrationItem] = connections.Register(user, SignIn.SecurityStamp(http), (_, _) => Task.FromResult(true), Context.Abort, SignIn.SessionId(http));
-        return base.OnConnectedAsync();
+        if (user.Has(UserRoles.SettingsManager)) await Groups.AddToGroupAsync(Context.ConnectionId, CpuCaptureGroup);
+        await base.OnConnectedAsync();
     }
 
     public override Task OnDisconnectedAsync(Exception? exception)

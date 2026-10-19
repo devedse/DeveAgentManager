@@ -6,7 +6,10 @@ EXPOSE 8080 8081
 # so a named volume mounted there starts with the right permissions.
 RUN mkdir -p /data && chown app:app /data
 ENV DATA_DIR=/data \
-    ASPNETCORE_HTTP_PORTS=8080;8081
+    ASPNETCORE_HTTP_PORTS=8080;8081 \
+    CPU_TRACE_STARTUP=true \
+    DOTNET_EventPipeThreadSamplingRate=0x32
+# CoreCLR reads this hexadecimal DWORD before Main: 0x32 is a 50 ms sampling interval.
 
 # The app is platform independent, so build once on the build machine for every target platform.
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build

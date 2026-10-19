@@ -16,6 +16,8 @@ using Microsoft.EntityFrameworkCore;
 var builder = WebApplication.CreateBuilder(args);
 
 var managerOptions = ManagerOptions.FromConfiguration(builder.Configuration, builder.Environment.ContentRootPath);
+var cpuTraceOptions = new DeveAgentManager.Diagnostics.CpuTraceOptions(builder.Configuration.GetValue<bool>("CPU_TRACE_STARTUP"));
+builder.Services.AddSingleton(cpuTraceOptions);
 builder.Services.AddDeveAgentManagerCore(managerOptions);
 builder.Services.AddProxmoxProvider(builder.Configuration);
 builder.Services.AddPiHarness();
@@ -52,6 +54,11 @@ builder.Services.AddSingleton(new DeveAgentManager.Logging.ManagerLogStore(manag
 builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider, DeveAgentManager.Logging.ManagerLogProvider>();
 
 var app = builder.Build();
+
+// Start measurements before migrations and history backfill, not after the HTTP server becomes ready.
+// ManagerCpuTraces.StartAsync is idempotent: the host subsequently owns the same worker and shutdown.
+if (cpuTraceOptions.CaptureOnStartup)
+    await app.Services.GetRequiredService<DeveAgentManager.Diagnostics.ManagerCpuTraces>().StartAsync(app.Lifetime.ApplicationStopping);
 
 await using (var db = await app.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync())
 {

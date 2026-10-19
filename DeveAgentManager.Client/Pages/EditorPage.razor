@@ -27,6 +27,7 @@
                 <span class="terminal-context">VS Code · @_runner.Name@(_folder is null ? "" : " · ")<span class="mono">@_folder</span></span>
             }
         </div>
+        <CpuTraceIndicator />
         @if (_state == EditorState.Open)
         {
             <MudTooltip Text="Full screen">
