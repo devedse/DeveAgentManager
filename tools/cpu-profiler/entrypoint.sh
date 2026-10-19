@@ -4,6 +4,7 @@ set -eu
 # Use portable traces there unless explicitly testing the native engine.
 case "$(uname -m)" in aarch64) CPU_PROFILER_DEFAULT=false ;; *) CPU_PROFILER_DEFAULT=true ;; esac
 if [ "${CPU_PROFILER_ENABLED:-$CPU_PROFILER_DEFAULT}" = true ]; then
+    case "$(uname -m)" in aarch64) export DOTNET_TC_QuickJitForLoops=0 ;; esac
     CPU_PROFILER_TOKEN=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
     export CPU_PROFILER_TOKEN CPU_PROFILER_ENABLED=true
     export CORECLR_ENABLE_PROFILING=1
