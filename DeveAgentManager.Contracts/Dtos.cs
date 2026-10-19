@@ -244,7 +244,9 @@ public sealed record AccountDto(
 
 public sealed record AccountGrantDto(Guid UserId, string Username, string DisplayName, AccountAccess Access, bool Disabled, Guid? AgentId = null);
 public sealed record AccountGrantRequest(AccountAccess Access);
-public sealed record MoveAgentRequest(Guid RunnerId);
+public sealed record AgentProcessIdentity(int Pid, long StartTicks, string BootId);
+public sealed record AgentMoveProcessDto(AgentProcessIdentity Identity, string Name, string? WorkingDirectory);
+public sealed record MoveAgentRequest(Guid RunnerId, IReadOnlyList<AgentProcessIdentity>? StopProcesses = null);
 public sealed record AccountEnabledRequest(bool Enabled);
 public sealed record AccountUsageDto(Guid? AgentId, string? AgentName, string User, string Runner, bool Running, bool PendingStop);
 public sealed record AccountImpactDto(List<AccountUsageDto> Agents, int PendingCleanup);

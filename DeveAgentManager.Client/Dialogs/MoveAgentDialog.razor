@@ -1,4 +1,5 @@
-@inherits LiveComponent
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
 
 <MudDialog>
     <DialogContent>
@@ -8,10 +9,10 @@
                 <p>The agent stops, then its working folder, native history, pasted uploads and runner-local attachments transfer to the destination. Saved screenshots, shared documents, conversations and sharing keep the same agent identity.</p>
                 <p>The working path stays the same. Existing destination folders are never overwritten. Choose a ready runner with the same SSH username, the required harness and permission to use it.</p>
                 <p>A running agent resumes after file verification. A failed transfer falls back to the source. If the Manager cannot establish whether a process stopped or started, it retains the source and offers recovery instead of starting a second copy.</p>
-                <p>Linked Git worktrees and folders shared with other agents must be separated first. Finish background commands before moving. Source files are removed after the destination starts successfully.</p>
+                <p>Linked Git worktrees and folders shared with other agents must be separated first. Source files are removed after the destination starts successfully.</p>
             </HelpTip>
         </div>
-        <LoadingSection Loaded="Loaded" Error="LoadError" Retry="RetryAsync" Label="Loading destination runners">
+        <LoadingSection Loaded="_runnersLoaded" Error="@_runnersError" Retry="LoadRunnersAsync" Label="Loading destination runners">
             <Placeholder><SkeletonForm Fields="1" /></Placeholder>
             <ChildContent>
                 @if (_runners.Count == 0)
@@ -30,10 +31,48 @@
                 }
             </ChildContent>
         </LoadingSection>
+        <div class="help-heading mt-4">
+            <MudText Typo="Typo.subtitle1">Processes</MudText>
+            <HelpTip Label="Stopping processes for a move">
+                <p>These processes were started by this agent and are still running outside its current terminal. They may use the working folder, so they must stop before files can move.</p>
+                <p>Stop processes and move asks the listed processes to exit, waits ten seconds, then force-stops any that remain. In-memory work can be lost. Their files stay, but these background commands are not restarted on either runner if the move succeeds or falls back.</p>
+                <p>The Manager rechecks the process identities and ownership before stopping them. New processes require another review. The agent's live terminal and other agents' processes are excluded.</p>
+            </HelpTip>
+            <MudIconButton Icon="@Icons.Material.Rounded.Refresh" Size="Size.Small" Disabled="_busy || _checking" OnClick="RefreshProcessesAsync" aria-label="Refresh background processes" />
+        </div>
+        <LoadingSection Loaded="_processesLoaded" Error="@_processesError" Retry="RefreshProcessesAsync" Label="Checking background processes">
+            <Placeholder><SkeletonList Rows="2" /></Placeholder>
+            <ChildContent>
+                @if (_processesError is not null)
+                {
+                    <MudAlert Severity="Severity.Error" Dense="true">@_processesError</MudAlert>
+                }
+                @if (_processes.Count == 0 && _processesError is null)
+                {
+                    <MudText Typo="Typo.body2">No blocking processes.</MudText>
+                }
+                else if (_processes.Count > 0)
+                {
+                    <MudText Typo="Typo.body2">Stop these processes to move.</MudText>
+                    <div class="move-process-list">
+                        @foreach (var process in _processes)
+                        {
+                            <div class="move-process">
+                                <MudText Typo="Typo.body2"><strong>@process.Name</strong> · PID @process.Identity.Pid</MudText>
+                                @if (process.WorkingDirectory is not null)
+                                {
+                                    <MudText Typo="Typo.caption" Class="mono mud-text-secondary">@process.WorkingDirectory</MudText>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </ChildContent>
+        </LoadingSection>
     </DialogContent>
     <DialogActions>
         <MudButton Disabled="_busy" OnClick="() => Dialog.Cancel()">Cancel</MudButton>
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || _target is null)" OnClick="MoveAsync">@(_busy ? "Starting move…" : "Move agent")</MudButton>
+        <MudButton Variant="Variant.Filled" Color="@(_processes.Count > 0 ? Color.Error : Color.Primary)" Disabled="@(_busy || _checking || !_processesLoaded || _processesError is not null || _target is null)" OnClick="MoveAsync">@(_busy ? "Starting move…" : _processes.Count > 0 ? "Stop processes and move" : "Move agent")</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -43,19 +82,60 @@
     private List<RunnerDto> _runners = [];
     private Guid? _target;
     private bool _busy;
-    protected override async Task LoadAsync()
+    private bool _runnersLoaded, _processesLoaded, _checking;
+    private string? _runnersError, _processesError;
+    private List<AgentMoveProcessDto> _processes = [];
+
+    protected override Task OnInitializedAsync() => Task.WhenAll(LoadRunnersAsync(), RefreshProcessesAsync());
+
+    private async Task LoadRunnersAsync()
     {
-        var runners = await Api.ListRunnersAsync();
-        var current = runners.FirstOrDefault(r => r.Id == Agent.RunnerId);
-        _runners = runners.Where(r => r.Id != Agent.RunnerId && r.State == RunnerState.Ready && r.Operation is null
-            && r.Access >= RunnerAccess.Use && r.Username == current?.Username && r.HarnessIds.Contains(Agent.HarnessId))
-            .OrderBy(r => r.Name).ToList();
+        try
+        {
+            _runnersError = null;
+            var runners = await Api.ListRunnersAsync();
+            var current = runners.FirstOrDefault(r => r.Id == Agent.RunnerId);
+            _runners = runners.Where(r => r.Id != Agent.RunnerId && r.State == RunnerState.Ready && r.Operation is null
+                && r.Access >= RunnerAccess.Use && r.Username == current?.Username && r.HarnessIds.Contains(Agent.HarnessId))
+                .OrderBy(r => r.Name).ToList();
+            _runnersLoaded = true;
+        }
+        catch (ApiException e) { _runnersError = e.Message; }
+        catch (HttpRequestException) { _runnersError = LoadingSection.Unreachable; }
+        finally { await InvokeAsync(StateHasChanged); }
     }
+
+    private async Task RefreshProcessesAsync()
+    {
+        _checking = true;
+        try
+        {
+            _processesError = null;
+            _processes = await Api.ListMoveProcessesAsync(Agent.Id);
+            _processesLoaded = true;
+        }
+        catch (ApiException e) { _processesError = e.Message; }
+        catch (HttpRequestException) { _processesError = LoadingSection.Unreachable; }
+        finally { _checking = false; await InvokeAsync(StateHasChanged); }
+    }
+
     private async Task MoveAsync()
     {
         _busy = true;
-        try { await Api.MoveAgentAsync(Agent.Id, _target!.Value); Dialog.Close(DialogResult.Ok(true)); }
-        catch (ApiException e) { Snackbar.Add(e.Message, Severity.Error); }
+        try
+        {
+            var reviewed = _processes.Select(p => p.Identity).ToHashSet();
+            await RefreshProcessesAsync();
+            if (_processesError is not null) return;
+            if (_processes.Any(p => !reviewed.Contains(p.Identity)))
+            {
+                Snackbar.Add("Background processes changed. Review the updated list before moving.", Severity.Info);
+                return;
+            }
+            await Api.MoveAgentAsync(Agent.Id, _target!.Value, _processes.Select(p => p.Identity).ToList());
+            Dialog.Close(DialogResult.Ok(true));
+        }
+        catch (ApiException e) { Snackbar.Add(e.Message, Severity.Error); await RefreshProcessesAsync(); }
         catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
         finally { _busy = false; }
     }

@@ -16,7 +16,7 @@ internal sealed record AgentMoveState(string Id, Guid AgentId, Guid SourceRunner
     string Phase = "Queued", string? Home = null, bool Source = true, bool SourceStopped = false,
     bool TargetLaunchAttempted = false, bool FallbackLaunchAttempted = false, string? ArchiveSha256 = null,
     IReadOnlyList<MoveHistory>? Histories = null, IReadOnlyList<string>? OtherSourceFolders = null, IReadOnlyList<string>? OtherTargetFolders = null,
-    string? TmuxSession = null);
+    string? TmuxSession = null, IReadOnlyList<AgentProcessIdentity>? StopProcesses = null);
 internal sealed record MoveHistory(string Path, string Harness);
 
 // Queueing a move and beginning runner maintenance must be mutually exclusive.
@@ -68,7 +68,28 @@ public sealed partial class AgentService
         finally { AgentMoveCoordination.Gate.Release(); }
     }
 
-    public async Task RequestMoveAsync(CurrentUser actor, Guid agentId, Guid targetRunnerId, CancellationToken ct)
+    public async Task<IReadOnlyList<AgentMoveProcessDto>> ListMoveProcessesAsync(CurrentUser actor, Guid agentId, CancellationToken ct)
+    {
+        if (await access.AgentAsync(actor, agentId, ct) < AgentAccess.Owner)
+            throw new UnauthorizedAccessException("Only the agent owner can inspect move blockers.");
+        var agent = await GetAsync(agentId, ct) ?? throw new KeyNotFoundException("Agent not found.");
+        RequireNotMoving(agent);
+        var runner = RequireReady(agent.Runner!);
+        var move = new AgentMoveState(Guid.NewGuid().ToString("N"), agent.Id, agent.RunnerId, agent.RunnerId,
+            agent.WorkingDirectory, agent.OwnerId.ToString("N"), agent.Id.ToString("N"), agent.State, false, TmuxSession: agent.TmuxSession);
+        return await ReadMoveProcessesAsync(runner, move, ct);
+    }
+
+    private async Task<IReadOnlyList<AgentMoveProcessDto>> ReadMoveProcessesAsync(Runner runner, AgentMoveState move, CancellationToken ct)
+    {
+        var result = (await shell.RunAsync(runner, MoveCommand("list-background", move), TimeSpan.FromSeconds(20), ct))
+            .EnsureSuccess("Reading background processes");
+        return JsonSerializer.Deserialize<List<AgentMoveProcessDto>>(result.Output, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new IOException("Could not read the background process list.");
+    }
+
+    public async Task RequestMoveAsync(CurrentUser actor, Guid agentId, Guid targetRunnerId, CancellationToken ct,
+        IReadOnlyList<AgentProcessIdentity>? stopProcesses = null)
     {
         await AgentMoveCoordination.Gate.WaitAsync(ct);
         try
@@ -104,7 +125,16 @@ public sealed partial class AgentService
                 agent.WorkingDirectory, agent.OwnerId.ToString("N"), agent.Id.ToString("N"), agent.State,
                 agent.State is AgentState.Running or AgentState.Starting,
                 OtherSourceFolders: await db.Agents.Where(a => a.Id != agent.Id && a.RunnerId == agent.RunnerId).Select(a => a.WorkingDirectory).ToListAsync(ct),
-                OtherTargetFolders: await db.Agents.Where(a => a.RunnerId == target.Id).Select(a => a.WorkingDirectory).ToListAsync(ct));
+                OtherTargetFolders: await db.Agents.Where(a => a.RunnerId == target.Id).Select(a => a.WorkingDirectory).ToListAsync(ct),
+                TmuxSession: agent.TmuxSession, StopProcesses: stopProcesses);
+            if (stopProcesses is { Count: > 0 })
+            {
+                if (stopProcesses.Count > 256 || stopProcesses.Any(p => p is null || p.Pid <= 1 || p.StartTicks <= 0 || !Guid.TryParse(p.BootId, out _)))
+                    throw new ArgumentException("Invalid background process selection.");
+                var current = await ReadMoveProcessesAsync(agent.Runner, move, ct);
+                if (current.Any(p => !stopProcesses.Contains(p.Identity)))
+                    throw new InvalidOperationException("Background processes changed. Review the updated list before moving.");
+            }
             agent.MoveJson = JsonSerializer.Serialize(move);
             agent.State = AgentState.Moving;
             agent.StateMessage = $"Moving to {target.Name}…";
@@ -183,7 +213,7 @@ public sealed partial class AgentService
         try
         {
             var sourceCheck = await MovePhaseAsync(source, "preflight", move, ct);
-            await MovePhaseAsync(source, "check-background", move, ct);
+            if (move.StopProcesses is not { Count: > 0 }) await MovePhaseAsync(source, "check-background", move, ct);
             var targetCheck = await MovePhaseAsync(target, "preflight", move with { Source = false }, ct);
             using var first = JsonDocument.Parse(sourceCheck.Output); using var second = JsonDocument.Parse(targetCheck.Output);
             if (first.RootElement.GetProperty("home").GetString() != second.RootElement.GetProperty("home").GetString()
@@ -192,8 +222,15 @@ public sealed partial class AgentService
             var existingTerminal = await shell.RunAsync(target, "tmux has-session -t " + ShellQuote.Quote("=" + agent.TmuxSession) + " 2>/dev/null", cancellationToken: ct);
             if (existingTerminal.ExitCode == 0) throw new InvalidOperationException("A terminal with this agent name already exists on the destination. Remove that terminal before moving.");
             if (existingTerminal.ExitCode != 1) throw new IOException("Could not verify that the destination terminal is absent.");
-            move = move with { Home = first.RootElement.GetProperty("home").GetString(), Phase = "Stopping",
+            move = move with { Home = first.RootElement.GetProperty("home").GetString(),
                 Resume = move.Resume || await MovePaneAliveAsync(source, agent, ct) };
+            if (move.StopProcesses is { Count: > 0 })
+            {
+                move = move with { Phase = "StoppingBackground" };
+                await SaveMoveAsync(move, "Stopping approved background processes…", ct);
+                await MovePhaseAsync(source, "stop-background", move, ct);
+            }
+            move = move with { Phase = "Stopping" };
             await SaveMoveAsync(move, "Stopping and verifying source history…", ct);
             using (await sessions.LockAsync(ct))
             {
@@ -307,7 +344,7 @@ public sealed partial class AgentService
                 if (await MovePaneAliveAsync(target, agent, ct)) throw new IOException("Destination process is still running; source will not be restarted.");
             }
             var cleanupPending = false;
-            if (move.Phase is not ("Queued" or "Stopping" or "Packing"))
+            if (move.Phase is not ("Queued" or "StoppingBackground" or "Stopping" or "Packing"))
             {
                 try { await MovePhaseAsync(target, "cleanup-target", move, ct); }
                 // Target liveness was checked above. Preserve changed/unreachable files without blocking source recovery.

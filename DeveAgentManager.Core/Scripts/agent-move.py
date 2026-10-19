@@ -7,11 +7,14 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tarfile
+import time
 
 
 def digest(path):
@@ -120,7 +123,7 @@ def safe_parents(path):
         raise ValueError('Move paths cannot pass through symlinked directories: ' + str(path))
 
 
-def check_background(c, before_stop=False):
+def background_processes(c, before_stop=False):
     # Before stopping, exclude the live pane's tree. After stopping, every remaining
     # marked process can still use the workspace, including detached dev servers.
     pane_pid = None
@@ -136,12 +139,13 @@ def check_background(c, before_stop=False):
             continue
         try:
             fields = (process / 'stat').read_text().rsplit(') ', 1)[1].split()
-            processes[int(process.name)] = (process, fields[0], int(fields[1]))
+            processes[int(process.name)] = (process, fields[0], int(fields[1]), int(fields[19]))
         except (OSError, ValueError, IndexError):
             continue
     marker = ('DAM_AGENT_ID=' + c['Agent']).encode()
+    boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     blockers = []
-    for pid, (process, state, parent) in processes.items():
+    for pid, (process, state, parent, started) in processes.items():
         if pid == os.getpid() or state == 'Z':
             continue
         ancestor, seen = pid, set()
@@ -158,14 +162,84 @@ def check_background(c, before_stop=False):
             args = (process / 'cmdline').read_bytes().split(b'\0')
             script = Path(os.fsdecode(args[1])).name if len(args) > 1 else ''
             label = script + ' (' + executable + ')' if script.endswith(('.js', '.mjs', '.cjs', '.py')) else executable
-            blockers.append(f'{label}, PID {pid}')
+            try:
+                directory = os.readlink(process / 'cwd')
+            except OSError:
+                directory = None
+            blockers.append(dict(identity=dict(pid=pid, startTicks=started, bootId=boot), name=label, workingDirectory=directory))
         except (OSError, ValueError):
             continue
+    return sorted(blockers, key=lambda item: item['identity']['pid'])
+
+
+def check_background(c, before_stop=False):
+    blockers = background_processes(c, before_stop)
     if blockers:
-        detail = '; '.join(blockers[:8])
+        detail = '; '.join(f"{p['name']}, PID {p['identity']['pid']}" for p in blockers[:8])
         if len(blockers) > 8:
             detail += f'; and {len(blockers) - 8} more'
         raise ValueError('Agent background processes are still running: ' + detail + '. Stop them, then retry the move.')
+
+
+def stop_background(c):
+    approved = {(p['Pid'], p['StartTicks'], p['BootId']) for p in c.get('StopProcesses') or []}
+    current = background_processes(c, before_stop=True)
+    key = lambda p: (p['pid'], p['startTicks'], p['bootId'])
+    if any(key(p['identity']) not in approved for p in current):
+        raise ValueError('Background processes changed. Review the updated list before moving.')
+    if not current:
+        return
+    if not hasattr(os, 'pidfd_open') or not hasattr(signal, 'pidfd_send_signal'):
+        raise ValueError('This runner cannot safely stop processes by identity. Stop them manually before moving.')
+    handles = []
+    try:
+        # Opening first pins the process; subsequent identity checks and signals
+        # cannot accidentally target a new process that reused its PID.
+        for item in current:
+            identity = item['identity']
+            try:
+                fd = os.pidfd_open(identity['pid'])
+            except ProcessLookupError:
+                continue
+            handles.append(fd)
+            process = Path('/proc') / str(identity['pid'])
+            try:
+                fields = (process / 'stat').read_text().rsplit(') ', 1)[1].split()
+                owned = ('DAM_AGENT_ID=' + c['Agent']).encode() in (process / 'environ').read_bytes().split(b'\0')
+                if int(fields[19]) != identity['startTicks'] or not owned or process.stat().st_uid != os.geteuid():
+                    raise ValueError('A process identity or owner changed. Refresh the list before moving.')
+            except FileNotFoundError:
+                os.close(handles.pop())
+                continue
+        poll = select.poll()
+        pending = set(handles)
+        for fd in handles:
+            poll.register(fd, select.POLLIN)
+            try:
+                signal.pidfd_send_signal(fd, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+        def wait_for_exit(seconds):
+            deadline = time.monotonic() + seconds
+            while pending and time.monotonic() < deadline:
+                for fd, _ in poll.poll(max(1, int((deadline - time.monotonic()) * 1000))):
+                    pending.discard(fd)
+                    poll.unregister(fd)
+
+        wait_for_exit(10)
+        for fd in pending:
+            try:
+                signal.pidfd_send_signal(fd, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        wait_for_exit(5)
+        if pending:
+            raise ValueError('Some approved processes did not stop. The source has been retained.')
+        check_background(c, before_stop=True)
+    finally:
+        for fd in handles:
+            os.close(fd)
 
 
 def main(phase, c):
@@ -199,6 +273,9 @@ def main(phase, c):
     if phase in ('quiesce', 'check-background'):
         check_background(c, before_stop=phase == 'check-background')
         return
+    if phase == 'list-background':
+        print(json.dumps(background_processes(c, before_stop=True)))
+        return
     operation.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # A lost SSH connection must not let cleanup race an already submitted phase.
     lock = (operation.parent / (c['Id'] + '.lock')).open('a')
@@ -207,6 +284,10 @@ def main(phase, c):
     archive = operation / 'bundle.tar'
     manifest_path = operation / 'manifest.json'
     ledger_path = operation / 'installed.json'
+    if phase == 'stop-background':
+        stop_background(c)
+        print('Approved background processes stopped.')
+        return
     if phase == 'discard':
         shutil.rmtree(operation)
         return

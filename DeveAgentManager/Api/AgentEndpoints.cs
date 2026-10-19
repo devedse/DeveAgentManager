@@ -53,8 +53,13 @@ internal static class AgentEndpoints
 
         agents.MapPost("/{agentId:guid}/move", async (Guid agentId, MoveAgentRequest request, CurrentUser user, AgentService service, CancellationToken ct) =>
         {
-            await service.RequestMoveAsync(user, agentId, request.RunnerId, ct);
+            await service.RequestMoveAsync(user, agentId, request.RunnerId, ct, request.StopProcesses);
             return Results.Accepted();
+        }).RequireAgent(AgentAccess.Owner);
+        agents.MapGet("/{agentId:guid}/move/processes", (Guid agentId, CurrentUser user, AgentService service, HttpContext context, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            return service.ListMoveProcessesAsync(user, agentId, ct);
         }).RequireAgent(AgentAccess.Owner);
         agents.MapPost("/{agentId:guid}/move/recover", async (Guid agentId, CurrentUser user, AgentService service, CancellationToken ct) =>
         {

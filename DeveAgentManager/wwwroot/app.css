@@ -2131,6 +2131,16 @@ html:has(.terminal-layout) body {
     gap: 8px;
 }
 
+.move-process-list {
+    margin-top: 8px;
+}
+
+.move-process {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--dam-border);
+    overflow-wrap: anywhere;
+}
+
 .operation-description {
     color: var(--dam-muted);
     font-size: 0.8rem;

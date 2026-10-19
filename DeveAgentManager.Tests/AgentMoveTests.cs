@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DeveAgentManager.Contracts;
 using DeveAgentManager.Core;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Agents;
@@ -15,6 +16,106 @@ namespace DeveAgentManager.Tests;
 public sealed class AgentMoveTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Theory(Timeout = 120_000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StopReviewedProcessesRejectsStaleIdentitiesAndNewBlockersAndProtectsOtherAgents(bool ignoreTerm)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var f = await Fixture.CreateAsync();
+        await f.Agents.StartAsync(f.Agent.Id, cancellationToken: Ct);
+        using var background = StartBackground(f.Agent.Id, f.Agent.WorkingDirectory, ignoreTerm);
+        using var other = StartBackground(Guid.NewGuid(), f.Agent.WorkingDirectory);
+        try
+        {
+            for (var i = 0; i < 100 && !File.Exists(f.Agent.WorkingDirectory + "/ready-" + background.Id); i++) await Task.Delay(20, Ct);
+            Assert.True(File.Exists(f.Agent.WorkingDirectory + "/ready-" + background.Id));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => f.Agents.ListMoveProcessesAsync(TestUsers.Plain(f.Other.Id), f.Agent.Id, Ct));
+            var process = Assert.Single(await f.Agents.ListMoveProcessesAsync(TestUsers.Admin, f.Agent.Id, Ct));
+            Assert.Equal(background.Id, process.Identity.Pid);
+            Assert.Equal(f.Agent.WorkingDirectory, process.WorkingDirectory);
+            Assert.DoesNotContain("test-only-secret", JsonSerializer.Serialize(process));
+            var move = f.Move with { TmuxSession = f.Agent.TmuxSession };
+            foreach (var stale in new[] { process.Identity with { StartTicks = process.Identity.StartTicks + 1 }, process.Identity with { BootId = Guid.NewGuid().ToString() } })
+            {
+                var failed = await f.Ssh.Shell.RunAsync(f.Source, AgentService.MoveCommand("stop-background", move with { StopProcesses = [stale] }), cancellationToken: Ct);
+                Assert.False(failed.Succeeded); Assert.Contains("processes changed", failed.Combined);
+                Assert.False(background.HasExited); Assert.False(other.HasExited);
+            }
+            using (var newcomer = StartBackground(f.Agent.Id, f.Agent.WorkingDirectory))
+            {
+                try
+                {
+                    var failed = await f.Ssh.Shell.RunAsync(f.Source, AgentService.MoveCommand("stop-background", move with { StopProcesses = [process.Identity] }), cancellationToken: Ct);
+                    Assert.False(failed.Succeeded); Assert.Contains("processes changed", failed.Combined);
+                    Assert.False(background.HasExited); Assert.False(newcomer.HasExited);
+                }
+                finally { await EndBackgroundAsync(newcomer); }
+            }
+            // Even a forged identity for a different agent is never selected for signalling.
+            var stat = (await File.ReadAllTextAsync($"/proc/{other.Id}/stat", Ct)).Split(") ", 2)[1].Split(' ');
+            var otherIdentity = new AgentProcessIdentity(other.Id, long.Parse(stat[19]), process.Identity.BootId);
+            var stopped = await f.Ssh.Shell.RunAsync(f.Source, AgentService.MoveCommand("stop-background", move with { StopProcesses = [process.Identity, otherIdentity] }), cancellationToken: Ct);
+            Assert.True(stopped.Succeeded, stopped.Combined);
+            await background.WaitForExitAsync(Ct);
+            Assert.Equal(!ignoreTerm, File.Exists(f.Agent.WorkingDirectory + "/graceful-" + background.Id));
+            Assert.False(other.HasExited);
+            Assert.Empty(await f.Agents.ListMoveProcessesAsync(TestUsers.Admin, f.Agent.Id, Ct));
+            Assert.Equal("launch\n", await File.ReadAllTextAsync(f.Ssh.Root + "/launches", Ct));
+            Assert.Equal("0", (await f.Ssh.Shell.RunAsync(f.Source, "tmux display-message -p -t " + ShellQuote.Quote("=" + f.Agent.TmuxSession + ":") + " '#{pane_dead}'", cancellationToken: Ct)).Output.Trim());
+            Assert.Equal("original workspace", await File.ReadAllTextAsync(f.Agent.WorkingDirectory + "/data.txt", Ct));
+        }
+        finally { await EndBackgroundAsync(background); await EndBackgroundAsync(other); }
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task MoveApprovalIsPersistedAndAnInterruptedStopIsNotReplayed()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var f = await Fixture.CreateAsync();
+        await f.Agents.StartAsync(f.Agent.Id, cancellationToken: Ct);
+        using var background = StartBackground(f.Agent.Id, f.Agent.WorkingDirectory);
+        try
+        {
+            var process = Assert.Single(await f.Agents.ListMoveProcessesAsync(TestUsers.Admin, f.Agent.Id, Ct));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => f.Agents.RequestMoveAsync(TestUsers.Admin, f.Agent.Id, f.Target.Id, Ct,
+                [process.Identity with { StartTicks = process.Identity.StartTicks + 1 }]));
+            Assert.False(background.HasExited);
+            await f.Agents.RequestMoveAsync(TestUsers.Admin, f.Agent.Id, f.Target.Id, Ct, [process.Identity]);
+            await using var db = await f.Factory.CreateDbContextAsync(Ct);
+            var agent = await db.Agents.SingleAsync(Ct);
+            var queued = JsonSerializer.Deserialize<AgentMoveState>(agent.MoveJson!)!;
+            Assert.Equal(process.Identity, Assert.Single(queued.StopProcesses!));
+            Assert.False(background.HasExited); // Requesting a move never signals a process in the HTTP request.
+            var interrupted = queued with { Phase = "StoppingBackground", Resume = true };
+            agent.MoveJson = JsonSerializer.Serialize(interrupted); await db.SaveChangesAsync(Ct);
+            await f.Agents.ExecuteMoveAsync(interrupted, f.Ssh.Root + "/transport", Ct);
+            Assert.False(background.HasExited);
+            var restored = await db.Agents.AsNoTracking().SingleAsync(Ct);
+            Assert.Null(restored.MoveJson); Assert.Equal(f.Source.Id, restored.RunnerId);
+            Assert.Equal(AgentState.Running, restored.State);
+            Assert.Equal("launch\n", await File.ReadAllTextAsync(f.Ssh.Root + "/launches", Ct));
+        }
+        finally { await EndBackgroundAsync(background); }
+    }
+
+    private static System.Diagnostics.Process StartBackground(Guid agent, string workspace, bool ignoreTerm = false)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo("python3") { UseShellExecute = false, WorkingDirectory = workspace };
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add("import os,signal,sys,time; from pathlib import Path; "
+            + (ignoreTerm ? "signal.signal(signal.SIGTERM,signal.SIG_IGN); " : "signal.signal(signal.SIGTERM,lambda *_: (Path('graceful-'+str(os.getpid())).touch(),sys.exit(0))); ")
+            + "Path('ready-'+str(os.getpid())).touch(); private_argument='test-only-secret'; time.sleep(600)");
+        start.Environment["DAM_AGENT_ID"] = agent.ToString("N");
+        return System.Diagnostics.Process.Start(start)!;
+    }
+
+    private static async Task EndBackgroundAsync(System.Diagnostics.Process process)
+    {
+        if (!process.HasExited) process.Kill();
+        await process.WaitForExitAsync(CancellationToken.None);
+    }
 
     [Fact(Timeout = 120_000)]
     public async Task DetachedBackgroundProcessRefusesMoveBeforeStoppingSource()

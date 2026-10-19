@@ -17,7 +17,18 @@ artifacts are transferred too. Saved screenshots, shared documents and their
 collection index stay in Manager storage under the same identities. Pending
 image and file publications on the runner are included in the transfer.
 
-Finish background commands first. Shared workspaces, parent folders used by
+The move dialog lists background processes started by this agent outside its
+current terminal, including their names, PIDs and working folders. Choose
+**Cancel** to keep them running, or **Stop processes and move** to approve stopping
+the listed processes before the transfer. Opening the dialog does not stop anything.
+The Manager asks them to exit, waits ten seconds, then force-stops any survivors.
+In-memory work can be lost; these commands are not restarted after a move or fallback.
+Process identities include the runner boot and process start time. Reused PIDs,
+new blockers, and processes belonging to another agent are never selected for stopping.
+Changed blocker lists require another review. Process command-line arguments are
+not shown because they can contain credentials.
+
+Shared workspaces, parent folders used by
 other agents, symlinked directory parents and linked Git worktrees cannot be
 moved. Use an independent checkout. The source, destination and Manager need
 space for the temporary transfer archive; the destination also needs staging
@@ -25,7 +36,8 @@ space for the restored files.
 
 ## Transfer and failure handling
 
-1. Check paths, access, installed harness and destination conflicts.
+1. Check paths, access, installed harness and destination conflicts. Stop only
+   the background processes the user reviewed and approved.
 2. Stop the source harness, check for remaining agent background processes, and
    fully verify the latest native history and artifact collection.
 3. Build a private archive, stream it through the Manager over SFTP, and verify
@@ -37,7 +49,7 @@ space for the restored files.
    other agents can reference them.
 
 Move intent and checkpoints persist in the database. If the Manager restarts
-before commit, it rolls back instead of replaying the transfer or an uncertain
+before commit, it rolls back instead of replaying an uncertain process stop, the transfer or an uncertain
 launch. A failed transfer keeps the source. A failed destination launch must be
 confirmed stopped before the source can resume. Changed destination files are
 retained for inspection without blocking a confirmed source fallback.
@@ -61,8 +73,11 @@ screenshots, uploaded and shared documents, cached artifacts, permissions,
 symlinks, checksum rejection, destination conflicts and rollback after install.
 `AgentMoveTests` checks authorization, workspace exclusivity, maintenance
 coordination, durable queuing, source fallback, retained identity/shares/policy
-and recovery without duplicate launches. Browser coverage checks all four
-access surfaces on desktop and mobile, and the destination selector.
+and recovery without duplicate launches. It also verifies graceful/forced process
+exit, stale identities, new blockers, other-agent isolation and recovery without
+repeating an uncertain stop. Browser coverage checks all four access surfaces on
+desktop and mobile, destination selection, process loading/retry, cancellation,
+changed blocker review and explicit stop approval.
 
 These tests use disposable fixtures. They do not move or restart production
 agents or validate a live deployment.

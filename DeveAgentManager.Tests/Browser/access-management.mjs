@@ -35,9 +35,16 @@ try {
     const session = { id: id(730), title: 'Test conversation', ownerId: me.id, ownerName: 'Admin', access: 'Owner', harnessId: 'codex',
         agentId: agent.id, workspaceAgentId: agent.id, workspaceAccess: 'Owner', agent, messageCount: 0, createdAt: now, updatedAt: now };
     const mutations = [];
+    let moveProcesses = [], processGate = null, processFailure = false;
     await context.route('**/api/**', async route => {
         const path = new URL(route.request().url()).pathname, method = route.request().method();
         if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/build' || path === '/api/diagnostics/cpu') return route.continue();
+        if (path.endsWith('/move/processes')) {
+            if (processGate) await processGate;
+            return processFailure
+                ? route.fulfill({ status: 500, json: { detail: 'Test-only process lookup failure' } })
+                : route.fulfill({ json: moveProcesses });
+        }
         if (method !== 'GET') {
             mutations.push({ path, body: route.request().postDataJSON() });
             if (path.endsWith('/grants/' + other.id)) grants = grants.map(g => g.userId === other.id ? { ...g, access: 'Manage' } : g);
@@ -117,7 +124,56 @@ try {
     await page.getByRole('dialog').getByRole('combobox', { name: 'Runner', exact: true }).click();
     await page.getByRole('option', { name: target.name, exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Move agent', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
     assert.ok(mutations.some(m => m.path === '/api/agents/' + agent.id + '/move' && m.body.runnerId === target.id));
+    const vite = { identity: { pid: 642, startTicks: 123456, bootId: id(900) }, name: 'vite.js (node)', workingDirectory: '/work/test-project' };
+    const worker = { identity: { pid: 643, startTicks: 123457, bootId: id(900) }, name: 'python3', workingDirectory: '/work/test-project/a-folder-with-a-long-name-that-must-wrap-on-phones' };
+    const openMove = async () => {
+        await page.getByLabel('More actions', { exact: true }).click();
+        await page.getByRole('menuitem', { name: 'Move to another runner…', exact: true }).click();
+        await page.getByRole('dialog').getByRole('combobox', { name: 'Runner', exact: true }).click();
+        await page.getByRole('option', { name: target.name, exact: true }).click();
+    };
+    moveProcesses = [vite]; processFailure = true;
+    let releaseProcesses;
+    processGate = new Promise(resolve => { releaseProcesses = resolve; });
+    await page.setViewportSize({ width: 320, height: 900 });
+    let moveDialog;
+    try {
+        await openMove();
+        moveDialog = page.getByRole('dialog');
+        await moveDialog.locator('[role="status"]', { hasText: 'Checking background processes' }).waitFor({ state: 'attached' });
+        assert.equal(await moveDialog.getByText('No blocking processes.').count(), 0);
+        assert.equal(await moveDialog.getByRole('button', { name: 'Move agent', exact: true }).isDisabled(), true);
+    } finally {
+        processGate = null;
+        releaseProcesses();
+    }
+    await moveDialog.getByText('Test-only process lookup failure', { exact: true }).waitFor();
+    processFailure = false;
+    await moveDialog.getByRole('button', { name: 'Retry', exact: true }).click();
+    await moveDialog.getByText('vite.js (node)', { exact: true }).waitFor();
+    const movesBeforeCancel = mutations.filter(m => m.path.endsWith('/move')).length;
+    await moveDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await moveDialog.waitFor({ state: 'hidden' });
+    assert.equal(mutations.filter(m => m.path.endsWith('/move')).length, movesBeforeCancel, 'cancel never authorizes a stop');
+    await openMove();
+    moveDialog = page.getByRole('dialog');
+    await moveDialog.getByText('vite.js (node)', { exact: true }).waitFor();
+    moveProcesses = [vite, worker];
+    await moveDialog.getByRole('button', { name: 'Stop processes and move', exact: true }).click();
+    await moveDialog.getByText('python3', { exact: true }).waitFor();
+    assert.equal(mutations.filter(m => m.path.endsWith('/move')).length, movesBeforeCancel, 'new blockers require another review');
+    const bounds = await moveDialog.boundingBox();
+    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 321, 'process review dialog fits a 320px phone');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"] button')]
+        .some(button => button.textContent.trim() === 'Stop processes and move' && !button.disabled));
+    await moveDialog.screenshot({ path: '/tmp/dam-move-processes-320.png' });
+    await moveDialog.getByRole('button', { name: 'Stop processes and move', exact: true }).click();
+    await moveDialog.waitFor({ state: 'hidden' });
+    const approved = mutations.filter(m => m.path.endsWith('/move')).at(-1);
+    assert.deepEqual(approved.body.stopProcesses, [vite.identity, worker.identity], 'only reviewed identities are approved');
     assert.deepEqual(errors, []);
-    console.log('Passed: creator-prefixed aligned logins, explicit Use rights, four consistent access surfaces, permission updates, mobile layouts and move selection.');
+    console.log('Passed: aligned logins, access controls, password layouts and move process review with loading/retry, cancellation, changed blockers and explicit stop approval.');
 } finally { await browser.close(); }
