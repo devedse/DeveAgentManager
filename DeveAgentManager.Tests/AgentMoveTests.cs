@@ -9,6 +9,8 @@ using DeveAgentManager.Core.Ssh;
 using DeveAgentManager.Core.Users;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using DeveAgentManager.Logging;
 using Xunit;
 
 namespace DeveAgentManager.Tests;
@@ -16,6 +18,63 @@ namespace DeveAgentManager.Tests;
 public sealed class AgentMoveTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact(Timeout = 120_000)]
+    public async Task FailedMoveRecordsTheFailedStepRecoveryDurationsAndManagerLog()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var f = await Fixture.CreateAsync();
+        await f.Agents.RequestMoveAsync(TestUsers.Admin, f.Agent.Id, f.Target.Id, Ct);
+        await using var db = await f.Factory.CreateDbContextAsync(Ct);
+        var queued = JsonSerializer.Deserialize<AgentMoveState>((await db.Agents.AsNoTracking().SingleAsync(Ct)).MoveJson!)!;
+        Assert.Equal(12, queued.Steps!.Count);
+        Assert.All(queued.Steps, step => { Assert.Equal(AgentMoveStepStatus.Pending, step.Status); Assert.Null(step.StartedAt); });
+        // Both disposable runners share a filesystem, so destination preflight rejects the occupied path.
+        await f.Agents.ExecuteMoveAsync(queued, f.Ssh.Root + "/transport", Ct);
+        var agent = await db.Agents.AsNoTracking().SingleAsync(Ct);
+        Assert.Null(agent.MoveJson); Assert.Contains("Move failed; source retained", agent.StateMessage);
+        var result = AgentService.MoveDetails(agent)!;
+        var failed = Assert.Single(result.Steps!, s => s.Status == AgentMoveStepStatus.Failed);
+        Assert.Equal("check", failed.Id); Assert.Contains("destination workspace already exists", failed.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(failed.StartedAt); Assert.True(failed.FinishedAt >= failed.StartedAt);
+        var recovery = Assert.Single(result.Steps!, s => s.Id == "recovery");
+        Assert.Equal(AgentMoveStepStatus.Completed, recovery.Status); Assert.True(recovery.FinishedAt >= recovery.StartedAt);
+        Assert.All(result.Steps!.Where(s => s.Id is not ("check" or "recovery")), s => Assert.Equal(AgentMoveStepStatus.Skipped, s.Status));
+        Assert.Contains(f.Logs.Read(LogLevel.Warning, queued.Id, 100), entry => entry.Message.Contains("failed during Queued", StringComparison.Ordinal));
+        Assert.Contains(f.Logs.Read(LogLevel.Information, queued.Id, 100), entry => entry.Message.Contains("completed step recovery", StringComparison.Ordinal));
+        Assert.Equal("original workspace", await File.ReadAllTextAsync(f.Agent.WorkingDirectory + "/data.txt", Ct));
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task CleanupFailureAndExplicitRetryRetainStepErrorWithoutRollingBackCommittedDestination()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var f = await Fixture.CreateAsync();
+        var move = f.Move with { Phase = "Cleanup", SourceName = "source", TargetName = "target", StartedAt = DateTime.UtcNow };
+        (await f.Ssh.Shell.RunAsync(f.Source, AgentService.MoveCommand("pack", move), cancellationToken: Ct)).EnsureSuccess("Prepare source cleanup");
+        await using var db = await f.Factory.CreateDbContextAsync(Ct);
+        await db.Agents.Where(a => a.Id == f.Agent.Id).ExecuteUpdateAsync(s => s.SetProperty(a => a.RunnerId, f.Target.Id)
+            .SetProperty(a => a.MoveJson, JsonSerializer.Serialize(move)), Ct);
+        await File.WriteAllTextAsync(f.Agent.WorkingDirectory + "/data.txt", "changed since verification", Ct);
+        await f.Agents.ExecuteMoveAsync(move, f.Ssh.Root + "/transport", Ct);
+        var retained = await db.Agents.AsNoTracking().SingleAsync(Ct);
+        Assert.Equal(f.Target.Id, retained.RunnerId); Assert.Equal(AgentState.Stopped, retained.State);
+        var failed = AgentService.MoveDetails(retained)!;
+        Assert.Equal("Needs attention", failed.Outcome);
+        Assert.Equal(AgentMoveStepStatus.Failed, Assert.Single(failed.Steps!, s => s.Id == "cleanup").Status);
+        Assert.Contains(f.Logs.Read(LogLevel.Warning, move.Id, 100), entry => entry.Message.Contains("failed during Cleanup", StringComparison.Ordinal));
+        Assert.False(File.Exists(f.Ssh.Root + "/launches"));
+        // Correct the test-only conflict, then use the same explicit recovery action as the UI.
+        await File.WriteAllTextAsync(f.Agent.WorkingDirectory + "/data.txt", "original workspace", Ct);
+        await f.Agents.RecoverMoveAsync(TestUsers.Admin, f.Agent.Id, Ct);
+        var retry = JsonSerializer.Deserialize<AgentMoveState>((await db.Agents.AsNoTracking().SingleAsync(Ct)).MoveJson!)!;
+        await f.Agents.ExecuteMoveAsync(retry, f.Ssh.Root + "/transport", Ct);
+        var done = await db.Agents.AsNoTracking().SingleAsync(Ct);
+        Assert.Null(done.MoveJson); Assert.Equal(f.Target.Id, done.RunnerId);
+        var cleanup = Assert.Single(AgentService.MoveDetails(done)!.Steps!, s => s.Id == "cleanup");
+        Assert.Equal(AgentMoveStepStatus.Completed, cleanup.Status); Assert.NotNull(cleanup.Error); Assert.True(cleanup.FinishedAt >= cleanup.StartedAt);
+        Assert.False(File.Exists(f.Ssh.Root + "/launches"));
+    }
 
     [Fact(Timeout = 120_000)]
     public async Task SuccessfulCleanupRetainsLatestMoveOnTheReadyAgentAndHidesDetailsFromListedUsers()
@@ -33,6 +92,9 @@ public sealed class AgentMoveTests
         Assert.Equal(f.Target.Id, completed.RunnerId); Assert.False(Directory.Exists(f.Agent.WorkingDirectory));
         var dto = DeveAgentManager.Api.DtoMapper.Agent(completed, TestUsers.Admin);
         Assert.Equal("Completed", dto.MoveDetails!.Outcome); Assert.NotNull(dto.MoveDetails.CompletedAt); Assert.Null(dto.MoveDetails.Progress);
+        var cleanup = Assert.Single(dto.MoveDetails.Steps!, s => s.Id == "cleanup");
+        Assert.Equal(AgentMoveStepStatus.Completed, cleanup.Status); Assert.NotNull(cleanup.StartedAt); Assert.True(cleanup.FinishedAt >= cleanup.StartedAt);
+        Assert.Contains(cleanup.Stages!, stage => stage.Stage == "Removing source files");
         var observer = TestUsers.Plain(Guid.NewGuid());
         completed.Runner!.Members.Add(new() { RunnerId = completed.RunnerId, UserId = observer.Id, Access = RunnerAccess.Manage });
         var listed = DeveAgentManager.Api.DtoMapper.Agent(completed, observer);
@@ -45,7 +107,9 @@ public sealed class AgentMoveTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var f = await Fixture.CreateAsync();
         await using var db = await f.Factory.CreateDbContextAsync(Ct);
-        var move = f.Move with { Phase = "Packing", SourceStopped = true, StartedAt = DateTime.UtcNow, SourceName = "source", TargetName = "target" };
+        var move = f.Move with { Phase = "Packing", SourceStopped = true, StartedAt = DateTime.UtcNow, SourceName = "source", TargetName = "target",
+            Steps = [new("pack", "Prepare archive", AgentMoveStepStatus.Running, DateTime.UtcNow),
+                new("target-cleanup", "Clean destination"), new("recovery", "Restore source")] };
         await db.Agents.Where(a => a.Id == f.Agent.Id).ExecuteUpdateAsync(s => s
             .SetProperty(a => a.MoveJson, JsonSerializer.Serialize(move)).SetProperty(a => a.State, AgentState.Moving), Ct);
         var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -70,6 +134,8 @@ public sealed class AgentMoveTests
             var checkpoint = JsonSerializer.Deserialize<AgentMoveState>(observed.MoveJson!)!;
             Assert.Equal("Packing", checkpoint.Phase); Assert.True(checkpoint.SourceStopped);
             Assert.Equal("/work/project/image.png", checkpoint.Progress!.CurrentFile);
+            var step = Assert.Single(checkpoint.Steps!, s => s.Id == "pack");
+            Assert.Equal(10_000, Assert.Single(step.Stages!).BytesCompleted);
             Assert.InRange(changes, 2, 4); // Two runner notifications per coalesced update, never per file/chunk.
         }
         finally { finish.TrySetResult(); await reporting; }
@@ -81,6 +147,9 @@ public sealed class AgentMoveTests
         Assert.Equal("Failed; source retained", result.Outcome);
         Assert.Equal("source", result.SourceRunner); Assert.Equal("target", result.TargetRunner);
         Assert.NotNull(result.CompletedAt); Assert.Null(result.Progress);
+        var failedStep = Assert.Single(result.Steps!, s => s.Id == "pack");
+        Assert.Equal(AgentMoveStepStatus.Failed, failedStep.Status);
+        Assert.Equal("/work/project/image.png", Assert.Single(failedStep.Stages!).CurrentFile);
         await Task.Delay(1100, Ct);
         Assert.Null((await db.Agents.AsNoTracking().SingleAsync(Ct)).MoveJson);
     }
@@ -394,6 +463,7 @@ public sealed class AgentMoveTests
         internal Runner Source => ssh.Runner;
         internal Runner Target => target;
         internal User Other => other;
+        internal ManagerLogStore Logs => services.GetRequiredService<ManagerLogStore>();
         internal AgentMoveState Move => new(Guid.NewGuid().ToString("N"), agent.Id, Source.Id, target.Id, agent.WorkingDirectory,
             agent.OwnerId.ToString("N"), agent.Id.ToString("N"), AgentState.Stopped, false, Home: ssh.Root + "/home");
         internal static async Task<Fixture> CreateAsync()
@@ -401,7 +471,9 @@ public sealed class AgentMoveTests
             Assert.SkipWhen(!OperatingSystem.IsLinux() || !File.Exists("/usr/sbin/sshd"), "Requires isolated OpenSSH.");
             var ssh = await RunnerShellIntegrationTests.Fixture.StartAsync();
             var collection = new ServiceCollection();
-            collection.AddLogging();
+            var logs = new ManagerLogStore(ssh.Root + "/logs");
+            collection.AddSingleton(logs);
+            collection.AddLogging(logging => logging.AddProvider(new ManagerLogProvider(logs)));
             collection.AddSingleton<IHarness>(new Harness(ssh.Root + "/launches"));
             collection.AddDeveAgentManagerCore(new ManagerOptions { DataDirectory = ssh.Root + "/manager", AdminPassword = "test-only-password" });
             collection.AddSingleton(ssh.Shell);

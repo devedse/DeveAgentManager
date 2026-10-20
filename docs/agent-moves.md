@@ -39,6 +39,18 @@ being processed. Click the status to open **Latest move**, which updates while
 open and keeps the latest result available after the agent returns to Ready.
 It shows the source, destination, start/finish times and any failure or cleanup
 problem. This result persists across Manager restarts.
+While moving, the status opens a dedicated move window. Afterward, open the
+status and choose **View move details**. Every planned step is listed with its
+state and elapsed time. Expand a step for its checks, start/finish times,
+reported stages, last files and errors. Optional recovery steps are marked
+skipped when not needed; failed steps remain visible after a successful fallback.
+Retrying cleanup can finish its step while retaining its earlier error.
+
+Manager logs record queued moves, step starts/completions with duration,
+failures, cleanup problems and source recovery. The move reference in the
+window identifies its log entries. A failed move also leaves an agent status
+message and a failure note on the status button. Elapsed timers run in the
+browser without polling the Manager; changes arrive through live updates.
 
 Percentages measure the current stage, not an estimated overall completion time.
 Preparation and cleanup use an indeterminate bar when their total is unknown.
@@ -98,6 +110,10 @@ changed blocker review and explicit stop approval.
 Progress checks cover archive entry boundaries, transfer byte counts, bounded
 update frequency, checkpoint preservation, live dialog updates, narrow layouts,
 retained success/failure results and privacy for users with only Listed access.
+Step checks exercise pending plans, persisted timings, retained stage summaries,
+failure log entries, confirmed source fallback and explicit cleanup retry without
+restarting the committed destination. Browser checks cover live step changes,
+expandable details, local elapsed timers and reopening the timeline after Ready.
 The file fixtures include large slash-heavy native records and attachment paths
 split across read boundaries; discovery byte counts detect duplicate history scans.
 

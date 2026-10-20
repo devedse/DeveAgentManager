@@ -24,6 +24,8 @@ class Progress:
         self.value = {}
 
     def start(self, stage, total=None):
+        if self.value:
+            self.send(True)
         self.value = dict(Stage=stage, CurrentFile=None, BytesCompleted=0, TotalBytes=total)
         self.send(True)
 

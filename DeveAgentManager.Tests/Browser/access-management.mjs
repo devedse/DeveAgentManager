@@ -6,7 +6,9 @@ const base = process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
 const id = n => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
 const now = new Date().toISOString();
 try {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const theme = process.env.DAM_TEST_COLOR_SCHEME ?? 'light';
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: theme });
+    await context.addInitScript(theme => localStorage.setItem('dam-theme', theme), theme);
     const page = await context.newPage();
     const errors = []; page.on('pageerror', e => errors.push(e.message));
     await page.goto(base + '/login');
@@ -26,18 +28,22 @@ try {
         { id: id(710), harnessId: 'codex', name: 'Personal', createdByUsername: 'alice', access: 'Manage', isDefault: true },
         { id: id(711), harnessId: 'codex', name: 'Shared', createdByUsername: 'bob', access: 'Use' },
         { id: id(712), harnessId: 'grok', name: 'Personal', createdByUsername: 'bob', access: 'Use' },
-        { id: id(713), harnessId: 'codex', name: 'Admin view', createdByUsername: 'carol', access: 'None' }
+        { id: id(713), harnessId: 'codex', name: 'Admin view', createdByUsername: 'carol', access: 'None' },
+        { id: id(714), harnessId: 'codex', name: 'Disabled', createdByUsername: 'carol', access: 'Use' }
     ].map(a => ({ ...a, kind: 'ApiKey', enabled: true, canManage: true, version: 1, createdAt: now, updatedAt: now }));
+    accounts.find(a => a.id === id(714)).enabled = false;
     const other = { id: id(720), username: 'bob', displayName: 'Bob' };
     let grants = [{ userId: me.id, username: me.username, displayName: 'Admin', access: 'Manage', disabled: false },
         { userId: other.id, username: other.username, displayName: other.displayName, access: 'Use', disabled: false }];
     const shares = [{ userId: other.id, username: 'bob', displayName: 'Bob', access: 'Read', grantedAt: now }];
     const session = { id: id(730), title: 'Test conversation', ownerId: me.id, ownerName: 'Admin', access: 'Owner', harnessId: 'codex',
         agentId: agent.id, workspaceAgentId: agent.id, workspaceAccess: 'Owner', agent, messageCount: 0, createdAt: now, updatedAt: now };
-    const mutations = [];
-    let moveProcesses = [], processGate = null, processFailure = false;
+    const mutations = [], accountRequests = [];
+    let moveProcesses = [], processGate = null, processFailure = false, agentReads = 0;
     await context.route('**/api/**', async route => {
         const path = new URL(route.request().url()).pathname, method = route.request().method();
+        if (method === 'GET' && path === '/api/agents/' + agent.id) agentReads++;
+        if (method === 'GET' && (path === '/api/accounts' || path === '/api/accounts/all')) accountRequests.push(path);
         if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/build' || path === '/api/diagnostics/cpu') return route.continue();
         if (path.endsWith('/move/processes')) {
             if (processGate) await processGate;
@@ -68,13 +74,17 @@ try {
     const menu = page.locator('.switch-menu:visible');
     await menu.getByRole('button', { name: /bob · Shared/ }).waitFor().catch(async error => { console.error('MENU', await page.locator('body').innerText(), errors); await page.screenshot({path:'/tmp/dam-picker-debug.png'}); throw error; });
     assert.equal(await menu.getByRole('button', { name: /bob · Personal/ }).isDisabled(), true, 'Grok login remains visible when the runner lacks Grok');
-    assert.equal(await menu.getByRole('button', { name: /carol · Admin view/ }).isDisabled(), true, 'admin visibility does not grant Use');
+    assert.equal(await menu.getByRole('button', { name: /carol · Admin view/ }).count(), 0, 'administration-only logins do not appear in the switcher');
+    assert.equal(await menu.getByRole('button', { name: /carol · Disabled/ }).count(), 0, 'disabled logins do not appear in the switcher');
+    assert.ok(accountRequests.length > 0 && accountRequests.every(path => path === '/api/accounts'), 'switcher requests personal visibility, not the administrator catalog');
     await menu.getByRole('link', { name: 'Install Grok on test-runner' }).waitFor();
     const lefts = await menu.locator('.switch-option-label').evaluateAll(nodes => nodes.map(n => Math.round(n.getBoundingClientRect().left)));
     assert.equal(new Set(lefts).size, 1, 'all account labels share an aligned left edge');
     await page.screenshot({ path: '/tmp/dam-account-picker.png' });
     await page.keyboard.press('Escape');
     await page.goto(base + '/harness-logins');
+    await page.locator('.account-row').filter({ hasText: 'carol · Admin view' }).waitFor();
+    assert.ok(accountRequests.includes('/api/accounts/all'), 'administration-only logins stay on the Harness logins page');
     await page.locator('.account-row').filter({ hasText: 'alice · Personal' }).getByRole('button', { name: 'Manage access' }).click();
     const dialog = page.getByRole('dialog');
     await dialog.locator('.access-person').filter({ hasText: 'Bob (bob)' }).waitFor();
@@ -190,8 +200,17 @@ try {
     });
     agent.state = 'Moving'; agent.movePending = true;
     agent.stateMessage = 'Uploading to destination-runner…';
-    agent.moveDetails = { sourceRunner: runner.name, targetRunner: target.name, startedAt: now,
+    agent.moveDetails = { id: id(777).replaceAll('-', ''), sourceRunner: runner.name, targetRunner: target.name, startedAt: now,
         outcome: 'In progress', progress: { stage: 'Uploading to destination-runner', currentFile: '/work/test-project/screenshots/a-very-long-screenshot-filename-for-phone-layout-checks.png', bytesCompleted: 4194304, totalBytes: 8388608 } };
+    const stepNames = [['check','Check runners and destination'],['stop','Stop the source agent'],['history','Verify session history and attachments'],
+        ['pack','Find files and prepare the archive'],['download','Download from the source'],['upload','Upload to the destination'],
+        ['restore','Restore and verify destination files'],['install','Install files and commit the destination'],['start','Start the destination agent'],
+        ['cleanup','Remove source files'],['target-cleanup','Clean destination after a failure'],['recovery','Restore the agent on the source']];
+    agent.moveDetails.steps = stepNames.map(([id,title], index) => ({ id, title, status: index < 5 ? 'Completed' : index === 5 ? 'Running' : 'Pending',
+        startedAt: index <= 5 ? new Date(Date.parse(now)-10000).toISOString() : null,
+        finishedAt: index < 5 ? new Date(Date.parse(now)-9000).toISOString() : null,
+        detail: id === 'upload' ? 'Streams the verified archive to the destination.' : 'Test-only recorded step details.',
+        stages: id === 'upload' ? [agent.moveDetails.progress] : [] }));
     await page.goto(base + '/agents');
     await connection;
     await page.getByRole('button', { name: 'Explain test-agent status: Moving', exact: true }).waitFor();
@@ -199,38 +218,67 @@ try {
     await inline.getByText('50%', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'inline move progress fits a 320px phone');
     await page.getByRole('button', { name: 'Explain test-agent status: Moving', exact: true }).click();
+    await page.getByRole('dialog').getByText('Move details', { exact: true }).waitFor();
+    assert.equal(await page.locator('.move-step').count(), 12, 'all planned steps are visible');
+    assert.equal(await page.locator('.move-step-completed').count(), 5);
+    assert.equal(await page.locator('.move-step-running').count(), 1);
+    await page.locator('[data-step-id="check"] .move-step-duration').getByText('1.0s', { exact: true }).waitFor();
+    const uploadStep = page.locator('[data-step-id="upload"]');
+    await uploadStep.locator('summary').focus();
+    await page.keyboard.press('Enter');
+    await uploadStep.getByText('Streams the verified archive to the destination.', { exact: true }).waitFor();
+    const elapsed = await uploadStep.locator('.move-step-duration').innerText();
+    const reads = agentReads;
+    await page.waitForFunction(previous => document.querySelector('[data-step-id="upload"] .move-step-duration')?.textContent !== previous, elapsed);
+    assert.equal(agentReads, reads, 'elapsed time updates locally without polling agent metadata');
     const latest = page.getByRole('dialog').getByRole('region', { name: 'Latest move' });
     await latest.getByText('test-runner → destination-runner', { exact: true }).waitFor();
+    await latest.getByText(id(777).replaceAll('-', ''), { exact: true }).waitFor();
     await latest.getByText('50%', { exact: true }).waitFor();
     agent.moveDetails.progress = { stage: 'Finding session files and attachments', currentFile: '/work/test-project/native-session.jsonl', bytesCompleted: 16777216, totalBytes: null };
     notify();
     await latest.getByText('Processed 16 MiB', { exact: true }).waitFor();
     await latest.getByText('/work/test-project/native-session.jsonl', { exact: true }).waitFor();
     agent.moveDetails.progress = { stage: 'Uploading to destination-runner', currentFile: '/work/test-project/shared-documents/design.pdf', bytesCompleted: 6291456, totalBytes: 8388608 };
+    agent.moveDetails.steps = agent.moveDetails.steps.map(step => step.id === 'upload' ? { ...step, stages: [agent.moveDetails.progress] } : step);
     notify();
     await latest.getByText('75%', { exact: true }).waitFor();
     await latest.getByText('/work/test-project/shared-documents/design.pdf', { exact: true }).waitFor();
+    await uploadStep.getByText('/work/test-project/shared-documents/design.pdf', { exact: true }).waitFor();
     for (const width of [320, 1280]) {
-        await page.setViewportSize({ width, height: 900 });
+        await page.setViewportSize({ width, height: width === 1280 ? 1400 : 900 });
         const layout = await latest.evaluate(node => ({ width: node.scrollWidth, available: node.clientWidth }));
         assert.ok(layout.width <= layout.available + 1, 'move details wrap long paths');
+        const stepsLayout = await page.getByRole('region', { name: 'Move steps' }).evaluate(node => ({ width: node.scrollWidth, available: node.clientWidth }));
+        assert.ok(stepsLayout.width <= stepsLayout.available + 1, 'expanded steps fit narrow phones');
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         await page.getByRole('dialog').screenshot({ path: `/tmp/dam-move-progress-${width}.png` });
     }
     agent.state = 'Running'; agent.movePending = false; agent.stateMessage = null;
     agent.activity = { status: 'Ready', reason: 'Ready for a prompt.', currentTurnCompleted: false };
     agent.moveDetails = { ...agent.moveDetails, outcome: 'Completed', completedAt: now, message: 'Source files removed.', progress: null };
+    agent.moveDetails.steps = agent.moveDetails.steps.map(step => ({ ...step, status: ['target-cleanup','recovery'].includes(step.id) ? 'Skipped' : 'Completed',
+        startedAt: step.startedAt ?? now, finishedAt: now }));
     notify();
     await latest.getByText('Completed', { exact: true }).waitFor();
     assert.equal(await latest.locator('[role="progressbar"]').count(), 0, 'completion does not leave a running progress indicator');
+    assert.equal(await page.locator('.move-step-completed').count(), 10);
+    assert.equal(await page.locator('.move-step-skipped').count(), 2);
     await page.getByRole('dialog').locator('.mud-dialog-actions').getByRole('button', { name: 'Close', exact: true }).click();
     await page.getByRole('button', { name: 'Explain test-agent status: Ready', exact: true }).click();
     await page.getByRole('dialog').getByRole('region', { name: 'Latest move' }).getByText('Completed', { exact: true }).waitFor();
+    await page.getByRole('dialog').getByRole('button', { name: 'View move details', exact: true }).click();
+    await page.getByRole('dialog').getByText('Move details', { exact: true }).waitFor();
+    assert.equal(await page.locator('.move-step-completed').count(), 10, 'Ready can reopen the recorded step timeline');
     await page.getByRole('dialog').locator('.mud-dialog-actions').getByRole('button', { name: 'Close', exact: true }).click();
     agent.moveDetails = { ...agent.moveDetails, outcome: 'Failed; source retained', message: 'Test-only destination unavailable.' };
+    agent.moveDetails.steps = agent.moveDetails.steps.map(step => step.id === 'upload' ? { ...step, status: 'Failed', error: 'Test-only destination unavailable.' } : step);
     notify();
     await page.getByRole('button', { name: 'Explain test-agent status: Ready', exact: true }).click();
     await page.getByRole('dialog').getByRole('region', { name: 'Latest move' }).getByText('Failed; source retained', { exact: true }).waitFor();
+    await page.getByRole('dialog').getByRole('button', { name: 'View move details', exact: true }).click();
+    await page.locator('[data-step-id="upload"] summary').click();
+    await page.locator('.move-step-failed .move-step-error').getByText('Test-only destination unavailable.', { exact: true }).waitFor();
     assert.deepEqual(errors, []);
     console.log('Passed: aligned logins, access controls, password layouts, move process review and live move progress with retained success/failure results.');
 } finally { await browser.close(); }

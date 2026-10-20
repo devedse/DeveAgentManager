@@ -9,9 +9,17 @@
     {
         <span class="agent-status-extra">Question</span>
     }
+    @if (Agent.MoveDetails?.Outcome is "Needs attention" or "Failed; source retained")
+    {
+        <span class="agent-status-extra move-failure-note">Move @(Agent.MovePending ? "needs attention" : "failed")</span>
+    }
 </button>
 @code {
     [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
     [Parameter] public string? Class { get; set; }
-    private Task OpenAsync() => Dialogs.ShowAsync<AgentStatusDialog>("Agent status", new DialogParameters<AgentStatusDialog> { { d => d.Agent, Agent } }, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+    private async Task OpenAsync()
+    {
+        if (Agent.MovePending && Agent.MoveDetails is not null) await AgentMoveDialog.ShowAsync(Dialogs, Agent);
+        else await Dialogs.ShowAsync<AgentStatusDialog>("Agent status", new DialogParameters<AgentStatusDialog> { { d => d.Agent, Agent } }, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+    }
 }

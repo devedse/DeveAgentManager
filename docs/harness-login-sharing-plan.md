@@ -1,5 +1,9 @@
 # Harness login sharing and administration
 
+The agent switcher lists enabled logins with Use access, including shared logins.
+Logins visible only through global administration stay on the Harness logins page.
+A usable login remains visible when its harness needs installing on the runner.
+
 Status: **implemented; deployed verification pending**. Updated 2026-10-15.
 
 ## Goal and previous behavior

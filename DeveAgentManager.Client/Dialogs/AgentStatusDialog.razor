@@ -1,5 +1,6 @@
 @inherits LiveComponent
 @inject IJSRuntime Js
+@inject IDialogService Dialogs
 <MudDialog>
     <DialogContent>
         <MudText Typo="Typo.h6">@Agent.Name · @StateStyles.For(Agent).Text</MudText>
@@ -26,6 +27,7 @@
                 {
                     <MudText Class="move-result">@message</MudText>
                 }
+                <MudButton Class="mt-2" StartIcon="@Icons.Material.Rounded.DriveFileMove" OnClick="OpenMoveAsync">View move details</MudButton>
             </section>
         }
         @if (LoadError is { } loadError)
@@ -100,6 +102,7 @@
     private List<AgentDiagnosticDto> _history = [];
     private bool _historyLoaded;
     private string? _historyError;
+    private Task<IDialogReference> OpenMoveAsync() { Dialog.Close(); return AgentMoveDialog.ShowAsync(Dialogs, Agent); }
     private async Task CopyAsync()
     {
         var report = System.Text.Json.JsonSerializer.Serialize(new {

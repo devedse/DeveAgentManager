@@ -189,7 +189,14 @@ public sealed record AgentDto(
 public sealed record AgentMoveProgressDto(string Stage, string? CurrentFile = null, long BytesCompleted = 0, long? TotalBytes = null);
 
 public sealed record AgentMoveDetailsDto(string SourceRunner, string TargetRunner, DateTime? StartedAt,
-    DateTime? CompletedAt, string Outcome, string? Message, AgentMoveProgressDto? Progress);
+    DateTime? CompletedAt, string Outcome, string? Message, AgentMoveProgressDto? Progress,
+    IReadOnlyList<AgentMoveStepDto>? Steps = null, string? Id = null);
+
+public enum AgentMoveStepStatus { Pending, Running, Completed, Failed, Skipped }
+
+public sealed record AgentMoveStepDto(string Id, string Title, AgentMoveStepStatus Status = AgentMoveStepStatus.Pending,
+    DateTime? StartedAt = null, DateTime? FinishedAt = null, string? Detail = null, string? Error = null,
+    IReadOnlyList<AgentMoveProgressDto>? Stages = null);
 
 /// <summary>An image in an agent's folder, for the icon picker. <paramref name="Path"/> is relative to the folder.</summary>
 /// <param name="Automatic">What the Manager would pick by itself.</param>

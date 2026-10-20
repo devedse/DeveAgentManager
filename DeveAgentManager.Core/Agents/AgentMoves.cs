@@ -18,7 +18,8 @@ internal sealed record AgentMoveState(string Id, Guid AgentId, Guid SourceRunner
     IReadOnlyList<MoveHistory>? Histories = null, IReadOnlyList<string>? OtherSourceFolders = null, IReadOnlyList<string>? OtherTargetFolders = null,
     string? TmuxSession = null, IReadOnlyList<AgentProcessIdentity>? StopProcesses = null,
     AgentMoveProgressDto? Progress = null, bool ReportProgress = false,
-    DateTime? StartedAt = null, string? SourceName = null, string? TargetName = null);
+    DateTime? StartedAt = null, string? SourceName = null, string? TargetName = null,
+    IReadOnlyList<AgentMoveStepDto>? Steps = null);
 internal sealed record MoveHistory(string Path, string Harness);
 
 // Queueing a move and beginning runner maintenance must be mutually exclusive.
@@ -44,7 +45,7 @@ public sealed partial class AgentService
         return reader.ReadToEnd();
     }
     internal static string MoveCommand(string phase, AgentMoveState move) =>
-        "python3 - " + ShellQuote.Quote(phase) + " " + ShellQuote.Quote(JsonSerializer.Serialize(move)) + " <<'DAM_MOVE'\n" + MoveScript + "\nDAM_MOVE";
+        "python3 - " + ShellQuote.Quote(phase) + " " + ShellQuote.Quote(JsonSerializer.Serialize(move with { Steps = null, Progress = null })) + " <<'DAM_MOVE'\n" + MoveScript + "\nDAM_MOVE";
     internal static bool MoveBlocksActions(Agent agent) => agent.MoveJson is not null
         && JsonSerializer.Deserialize<AgentMoveState>(agent.MoveJson)?.Phase is not ("Cleanup" or "CleanupFailed" or "TargetCleanup" or "TargetCleanupFailed");
     private static void RequireNotMoving(Agent agent)
@@ -129,7 +130,7 @@ public sealed partial class AgentService
                 OtherSourceFolders: await db.Agents.Where(a => a.Id != agent.Id && a.RunnerId == agent.RunnerId).Select(a => a.WorkingDirectory).ToListAsync(ct),
                 OtherTargetFolders: await db.Agents.Where(a => a.RunnerId == target.Id).Select(a => a.WorkingDirectory).ToListAsync(ct),
                 TmuxSession: agent.TmuxSession, StopProcesses: stopProcesses,
-                StartedAt: DateTime.UtcNow, SourceName: agent.Runner.Name, TargetName: target.Name);
+                StartedAt: DateTime.UtcNow, SourceName: agent.Runner.Name, TargetName: target.Name, Steps: MoveStepPlan());
             if (stopProcesses is { Count: > 0 })
             {
                 if (stopProcesses.Count > 256 || stopProcesses.Any(p => p is null || p.Pid <= 1 || p.StartTicks <= 0 || !Guid.TryParse(p.BootId, out _)))
@@ -143,6 +144,7 @@ public sealed partial class AgentService
             agent.StateMessage = $"Moving to {target.Name}…";
             agent.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
+            logger.LogInformation("Queued agent move {MoveId} for agent {AgentId} from runner {SourceRunner} to {TargetRunner}", move.Id, agent.Id, agent.RunnerId, target.Id);
             events.AgentChanged(agent.RunnerId, agent.Id);
         }
         finally { AgentMoveCoordination.Gate.Release(); }
@@ -200,7 +202,7 @@ public sealed partial class AgentService
         pending ? move.Phase is "Failed" or "CleanupFailed" or "TargetCleanupFailed" ? "Needs attention" : "In progress"
             : failed ? "Failed; source retained" : "Completed",
         message, pending && move.Phase is not ("Failed" or "CleanupFailed" or "TargetCleanupFailed")
-            ? move.Progress ?? new AgentMoveProgressDto(message ?? "Preparing move") : null);
+            ? move.Progress ?? new AgentMoveProgressDto(message ?? "Preparing move") : null, move.Steps, move.Id);
 
     private async Task<CommandResult> MovePhaseAsync(Runner runner, string phase, AgentMoveState move, CancellationToken ct)
     {
@@ -224,13 +226,20 @@ public sealed partial class AgentService
     // and frequent file/chunk reports become at most one database write and live update per second.
     internal async Task<T> ReportMoveProgressAsync<T>(AgentMoveState move, Func<Action<AgentMoveProgressDto>, Task<T>> action, CancellationToken ct)
     {
+        move = await ReadMoveStepsAsync(move, ct);
         AgentMoveProgressDto? latest = null, saved = null;
+        var stageGate = new object();
+        var stages = new Dictionary<string, AgentMoveProgressDto>(StringComparer.Ordinal);
+        foreach (var stage in move.Steps!.Where(step => step.Status == AgentMoveStepStatus.Running).SelectMany(step => step.Stages ?? [])) stages[stage.Stage] = stage;
         using var finished = new CancellationTokenSource();
         async Task SaveAsync()
         {
-            var value = Volatile.Read(ref latest);
+            AgentMoveProgressDto? value;
+            AgentMoveProgressDto[] observations;
+            lock (stageGate) { value = latest; observations = stages.Values.ToArray(); }
             if (value is null || value == saved) return;
-            try { await SaveMoveAsync(move with { Progress = value }, value.Stage + "…", ct); saved = value; }
+            var steps = move.Steps?.Select(step => step.Status == AgentMoveStepStatus.Running ? step with { Stages = observations } : step).ToArray();
+            try { await SaveMoveAsync(move with { Progress = value, Steps = steps }, value.Stage + "…", ct); saved = value; }
             catch (Exception e) when (!ct.IsCancellationRequested) { logger.LogDebug(e, "Could not save move progress for {Agent}", move.AgentId); }
         }
         async Task PumpAsync()
@@ -243,7 +252,7 @@ public sealed partial class AgentService
             catch (OperationCanceledException) when (finished.IsCancellationRequested) { }
         }
         var pump = PumpAsync();
-        try { return await action(value => Volatile.Write(ref latest, value)); }
+        try { return await action(value => { lock (stageGate) { latest = value; if (stages.Count < 16 || stages.ContainsKey(value.Stage)) stages[value.Stage] = value; } }); }
         finally
         {
             finished.Cancel();
@@ -267,14 +276,17 @@ public sealed partial class AgentService
         var source = await db.Runners.SingleAsync(r => r.Id == move.SourceRunner, ct);
         var target = await db.Runners.SingleAsync(r => r.Id == move.TargetRunner, ct);
         move = move with { TmuxSession = agent.TmuxSession, SourceName = move.SourceName ?? source.Name, TargetName = move.TargetName ?? target.Name };
-        if (move.Phase != "Queued")
-        {
-            if (move.Phase == "Cleanup") { await FinishMoveCleanupAsync(move, source, ct); return; }
-            if (move.Phase == "TargetCleanup") { await MovePhaseAsync(target, "cleanup-target", move, ct); await ClearMoveAsync(move, ct); return; }
-            await RollbackMoveAsync(move, agent, source, target, "Interrupted move", ct); return;
-        }
         try
         {
+            if (move.Phase != "Queued")
+            {
+                if (move.Phase == "Cleanup") { move = await StartMoveStepAsync(move, "cleanup", ct); await FinishMoveCleanupAsync(move, source, ct); return; }
+                if (move.Phase == "TargetCleanup") { move = await StartMoveStepAsync(move, "target-cleanup", ct); await MovePhaseAsync(target, "cleanup-target", move, ct); await ClearMoveAsync(move, ct); return; }
+                logger.LogWarning("Agent move {MoveId} for agent {AgentId} was interrupted during {Phase}; reconciling on the source", move.Id, move.AgentId, move.Phase);
+                move = await FailMoveStepAsync(move, "Move interrupted; checking the source before recovery.", ct);
+                await RollbackMoveAsync(move, agent, source, target, "Interrupted move", ct); return;
+            }
+            move = await StartMoveStepAsync(move, "check", ct);
             var sourceCheck = await MovePhaseAsync(source, "preflight", move, ct);
             if (move.StopProcesses is not { Count: > 0 }) await MovePhaseAsync(source, "check-background", move, ct);
             var targetCheck = await MovePhaseAsync(target, "preflight", move with { Source = false }, ct);
@@ -287,6 +299,7 @@ public sealed partial class AgentService
             if (existingTerminal.ExitCode != 1) throw new IOException("Could not verify that the destination terminal is absent.");
             move = move with { Home = first.RootElement.GetProperty("home").GetString(),
                 Resume = move.Resume || await MovePaneAliveAsync(source, agent, ct) };
+            move = await StartMoveStepAsync(move, "stop", ct);
             if (move.StopProcesses is { Count: > 0 })
             {
                 move = move with { Phase = "StoppingBackground" };
@@ -301,19 +314,19 @@ public sealed partial class AgentService
                 if (await MovePaneAliveAsync(source, agent, ct)) throw new IOException("Source agent did not stop.");
                 await MovePhaseAsync(source, "quiesce", move, ct);
                 move = move with { SourceStopped = true, Phase = "Packing" };
-                await SaveMoveAsync(move, "Packing workspace, native history and attachments…", ct);
+                move = await StartMoveStepAsync(move, "history", ct);
                 await sessions.SyncRunnerLockedAsync(source, ct, agent.Id, forceVerification: true);
                 await sessions.PreserveArtifactsAsync(agent.Id, ct);
                 var stored = await db.Sessions.AsNoTracking().Where(s => s.AgentId == agent.Id || s.WorkspaceAgentId == agent.Id)
                     .Where(s => s.SourcePath != null).Select(s => new MoveHistory(s.SourcePath!, s.HarnessId)).ToListAsync(ct);
                 move = move with { Histories = stored };
-                await SaveMoveAsync(move, "Packing workspace, native history and attachments…", ct);
+                move = await StartMoveStepAsync(move, "pack", ct);
             }
             var pack = await MovePhaseAsync(source, "pack", move, ct);
             var hash = pack.Output.Trim();
             if (hash.Length != 64 || !hash.All(char.IsAsciiHexDigit)) throw new IOException("Invalid move archive checksum.");
             move = move with { ArchiveSha256 = hash, Phase = "Transferring" };
-            await SaveMoveAsync(move, "Transferring and checking every file…", ct);
+            move = await StartMoveStepAsync(move, "download", ct);
             if (OperatingSystem.IsWindows()) Directory.CreateDirectory(localFolder);
             else Directory.CreateDirectory(localFolder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             var archive = Path.Combine(localFolder, move.Id + ".tar");
@@ -327,16 +340,19 @@ public sealed partial class AgentService
                     await shell.DownloadToAsync(source, remote.Replace("bundle.tar", "transfer-index.jsonl", StringComparison.Ordinal), output, ct);
                 await TransferMoveArchiveAsync(move, index, "Downloading from " + source.Name,
                     async report => { await using var output = new FileStream(archive, fileOptions); await shell.DownloadToAsync(source, remote, output, ct, report); }, ct);
+                move = await StartMoveStepAsync(move, "upload", ct);
                 (await shell.RunAsync(target, "umask 077\nmkdir -p " + ShellQuote.Path($"~/.deveagentmanager/moves/{move.Id}"), cancellationToken: ct)).EnsureSuccess("Preparing destination");
                 await TransferMoveArchiveAsync(move, index, "Uploading to " + target.Name,
                     async report => { await using var input = File.OpenRead(archive); await shell.UploadFromAsync(target, remote, input, ct, report); }, ct);
             }
             finally { File.Delete(archive); File.Delete(index); }
+            move = await StartMoveStepAsync(move, "restore", ct);
             await MovePhaseAsync(target, "unpack", move, ct);
             move = move with { Phase = "Installing" };
-            await SaveMoveAsync(move, "Installing verified files on the destination…", ct);
+            move = await StartMoveStepAsync(move, "install", ct);
             await MovePhaseAsync(target, "install", move, ct);
             await MovePhaseAsync(source, "verify-source", move, ct);
+            move = await ReadMoveStepsAsync(move, ct);
             using (await sessions.LockAsync(ct))
             {
                 db.Entry(agent).State = EntityState.Detached;
@@ -351,7 +367,7 @@ public sealed partial class AgentService
                 if (move.Resume)
                 {
                     move = move with { Phase = "StartingTarget", TargetLaunchAttempted = true };
-                    await SaveMoveAsync(move, "Starting the agent on the destination…", ct);
+                    move = await StartMoveStepAsync(move, "start", ct);
                     await LaunchAsync(target, agent, restart: false, ct);
                     await Task.Delay(1000, ct);
                     if (!await MovePaneAliveAsync(target, agent, ct)) throw new IOException("The destination harness exited during startup.");
@@ -363,15 +379,24 @@ public sealed partial class AgentService
                 agent.UpdatedAt = DateTime.UtcNow;
                 await db.SaveChangesAsync(ct);
             }
+            move = await StartMoveStepAsync(move, "cleanup", ct);
             events.AgentChanged(source.Id, agent.Id); events.AgentChanged(target.Id, agent.Id);
             await FinishMoveCleanupAsync(move, source, ct);
         }
         catch (Exception error)
         {
+            logger.LogWarning(error, "Agent move {MoveId} for agent {AgentId} from {SourceRunner} to {TargetRunner} failed during {Phase}",
+                move.Id, move.AgentId, move.SourceRunner, move.TargetRunner, move.Phase);
+            move = await FailMoveStepAsync(move, error.Message, CancellationToken.None);
             if (move.Phase == "Cleanup")
             {
                 await SaveMoveAsync(move with { Phase = "CleanupFailed" }, "Moved successfully; source cleanup needs attention: " + error.Message, CancellationToken.None);
                 return; // The live target is committed. Never launch it again or roll it back for a cleanup error.
+            }
+            if (move.Phase == "TargetCleanup")
+            {
+                await SaveMoveAsync(move with { Phase = "TargetCleanupFailed" }, "Source retained; destination cleanup needs attention: " + error.Message, CancellationToken.None);
+                return;
             }
             using var rollbackTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             await RollbackMoveAsync(move, agent, source, target, error.Message, rollbackTimeout.Token);
@@ -410,33 +435,43 @@ public sealed partial class AgentService
 
     private async Task ClearMoveAsync(AgentMoveState move, CancellationToken ct)
     {
+        move = await FinishMoveStepsAsync(move, ct);
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var failed = move.Phase == "TargetCleanup";
         var previous = failed ? await db.Agents.Where(a => a.Id == move.AgentId).Select(a => a.LastMoveJson).SingleAsync(ct) : null;
-        var detail = previous is not null ? JsonSerializer.Deserialize<AgentMoveDetailsDto>(previous)!
+        var detail = previous is not null ? JsonSerializer.Deserialize<AgentMoveDetailsDto>(previous)! with { Steps = move.Steps, CompletedAt = DateTime.UtcNow }
             : Details(move, failed ? "Destination cleanup finished; agent retained on source." : "Source files removed.", pending: false, failed: failed);
         var last = JsonSerializer.Serialize(detail);
         await db.Agents.Where(a => a.Id == move.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.MoveJson, (string?)null)
             .SetProperty(a => a.LastMoveJson, last).SetProperty(a => a.StateMessage, (string?)null), ct);
         events.AgentChanged(move.TargetRunner, move.AgentId);
+        logger.LogInformation("Agent move {MoveId} for agent {AgentId} finished: {Outcome}", move.Id, move.AgentId, detail.Outcome);
     }
 
     private async Task RollbackMoveAsync(AgentMoveState move, Agent agent, Runner source, Runner target, string error, CancellationToken ct)
     {
         try
         {
+            var targetWork = move.TargetLaunchAttempted || move.Phase is not ("Queued" or "StoppingBackground" or "Stopping" or "Packing");
+            move = await StartMoveStepAsync(move, targetWork ? "target-cleanup" : "recovery", ct);
             if (move.TargetLaunchAttempted)
             {
                 (await shell.RunAsync(target, BuildStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), ct)).EnsureSuccess("Stopping destination for rollback");
                 if (await MovePaneAliveAsync(target, agent, ct)) throw new IOException("Destination process is still running; source will not be restarted.");
             }
             var cleanupPending = false;
-            if (move.Phase is not ("Queued" or "StoppingBackground" or "Stopping" or "Packing"))
+            if (targetWork)
             {
                 try { await MovePhaseAsync(target, "cleanup-target", move, ct); }
                 // Target liveness was checked above. Preserve changed/unreachable files without blocking source recovery.
-                catch (Exception) when (!ct.IsCancellationRequested) { cleanupPending = true; }
+                catch (Exception cleanupError) when (!ct.IsCancellationRequested)
+                {
+                    cleanupPending = true;
+                    logger.LogWarning(cleanupError, "Agent move {MoveId} retained destination files for cleanup", move.Id);
+                    move = await FailMoveStepAsync(move, cleanupError.Message, ct);
+                }
             }
+            if (targetWork) move = await StartMoveStepAsync(move, "recovery", ct);
             using (await sessions.LockAsync(ct))
             {
                 await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -457,16 +492,21 @@ public sealed partial class AgentService
                 }
                 agent.State = move.Resume ? AgentState.Running : move.PreviousState;
                 agent.StateMessage = "Move failed; source retained: " + error;
+                move = await FinishMoveStepsAsync(move, ct);
                 agent.LastMoveJson = JsonSerializer.Serialize(Details(move, error, pending: false, failed: true));
                 agent.MoveJson = cleanupPending ? JsonSerializer.Serialize(move with { Phase = "TargetCleanup" }) : null;
                 await db.SaveChangesAsync(ct);
             }
             events.AgentChanged(source.Id, agent.Id); events.AgentChanged(target.Id, agent.Id);
+            logger.LogWarning("Agent move {MoveId} failed; agent {AgentId} was retained on source runner {SourceRunner}. Destination cleanup pending: {CleanupPending}",
+                move.Id, move.AgentId, source.Id, cleanupPending);
             try { await MovePhaseAsync(source, "discard", move, ct); }
             catch (Exception cleanupError) { logger.LogDebug(cleanupError, "Move staging retained on source {Runner}", source.Id); }
         }
         catch (Exception rollbackError)
         {
+            logger.LogError(rollbackError, "Agent move {MoveId} for agent {AgentId} needs recovery on the source", move.Id, move.AgentId);
+            move = await FailMoveStepAsync(move, rollbackError.Message, CancellationToken.None);
             await SaveMoveAsync(move with { Phase = "Failed" }, "Move needs recovery. Source files retained. " + rollbackError.Message, CancellationToken.None);
             await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
             await db.Agents.Where(a => a.Id == move.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.State, AgentState.Error), CancellationToken.None);

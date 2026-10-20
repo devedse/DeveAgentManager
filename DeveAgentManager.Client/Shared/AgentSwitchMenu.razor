@@ -43,7 +43,7 @@
                 }
                 else
                 {
-                    var accounts = _accounts.Where(a => a.HarnessId == harness.Id && a.Enabled).OrderBy(a => a.CreatedByUsername).ThenBy(a => a.Name).ToList();
+                    var accounts = _accounts.Where(a => a.HarnessId == harness.Id && a.Enabled && a.Access >= AccountAccess.Use).OrderBy(a => a.CreatedByUsername).ThenBy(a => a.Name).ToList();
                     @foreach (var account in accounts)
                     {
                         @Option(harness, account, AccountLabel.Name(account) + " · " + account.Id.ToString("N")[..6] + (account.IsDefault ? " (your default)" : ""))
@@ -109,7 +109,7 @@
         {
             _harnesses = (await Api.InfoAsync()).Harnesses.ToList();
             _me = await Me.GetAsync();
-            _accounts = await Api.ListAccountsAsync(_me.Has(UserRoles.HarnessLoginManager));
+            _accounts = await Api.ListAccountsAsync();
             _loaded = true;
         }
         catch (ApiException ex)
@@ -136,7 +136,6 @@
         <button type="button" class="switch-option @(current ? "switch-current" : "")" disabled="@(current || !Agent.RunnerHarnessIds.Contains(harness.Id) || account is { Access: < AccountAccess.Use })" @onclick="() => SwitchAsync(harness, account)">
             <MudIcon Icon="@(current ? Icons.Material.Rounded.CheckCircle : Icons.Material.Rounded.ArrowForward)" Size="Size.Small" />
             <span class="switch-option-label">@label
-                @if (account is { Access: < AccountAccess.Use }) { <span class="switch-option-detail">Use access required</span> }
             </span>
             @if (current)
             {

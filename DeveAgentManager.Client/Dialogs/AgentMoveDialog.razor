@@ -1,0 +1,131 @@
+@inherits LiveComponent
+@inject IJSRuntime Js
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.h6">@Agent.Name</MudText>
+        @if (Agent.MoveDetails is { } move)
+        {
+            <section class="latest-agent-move" aria-label="Latest move">
+                <div class="help-heading"><MudText Typo="Typo.subtitle1">Latest move</MudText>
+                    <HelpTip Label="Move details"><p>The bar measures the current stage. File names follow the reported archive byte position during transfer. The latest result and recorded steps remain available after the agent is ready and across Manager restarts.</p></HelpTip></div>
+                <div class="move-route">@move.SourceRunner → @move.TargetRunner</div>
+                <MudText Typo="Typo.body2">@move.Outcome</MudText>
+                @if (move.StartedAt is { } started) { <div class="move-timestamp">Started @Timestamp(started)</div> }
+                @if (move.CompletedAt is { } finished) { <div class="move-timestamp">Finished @Timestamp(finished)</div> }
+                @if (move.Id is { } reference) { <div class="move-timestamp move-reference" title="Search this reference in Manager logs">Reference <span class="mono">@reference</span></div> }
+                @if (move.Progress is { } progress) { <AgentMoveProgress Progress="progress" /> }
+                else if (move.Message is { } message) { <MudText Class="move-result">@message</MudText> }
+            </section>
+            <section class="move-steps" aria-label="Move steps">
+                <div class="help-heading"><MudText Typo="Typo.subtitle1">Steps</MudText>
+                    <HelpTip Label="Move steps"><p>Waiting steps have an empty circle. A spinner marks the running step; a green check marks success. Failures have a red icon and optional steps that were not needed are skipped.</p><p>Expand a step for its timings, checks, last reported files and errors. Elapsed time includes waiting and recovery between its first start and finish. Stage reports are bounded summaries, not a complete file inventory. Older moves may not have recorded step details.</p></HelpTip></div>
+                @if (move.Steps is { Count: > 0 } steps)
+                {
+                    <div class="move-step-list">
+                        @foreach (var step in steps)
+                        {
+                            <details @key="step.Id" class="@($"move-step move-step-{step.Status.ToString().ToLowerInvariant()}")" data-step-id="@step.Id">
+                                <summary>
+                                    <span class="move-step-heading">
+                                        <span class="move-step-icon" aria-hidden="true">
+                                            @if (step.Status == AgentMoveStepStatus.Running) { <MudProgressCircular Indeterminate="true" Color="Color.Primary" Style="width:18px;height:18px;" /> }
+                                            else { <MudIcon Icon="@Icon(step.Status)" Color="@IconColor(step.Status)" Size="Size.Small" /> }
+                                        </span>
+                                        <span class="move-step-title">@step.Title<span class="visually-hidden"> · @step.Status</span></span>
+                                        <span class="move-step-duration" title="Elapsed time">@Duration(step)</span>
+                                    </span>
+                                    <MudIcon Icon="@Icons.Material.Rounded.ExpandMore" Class="move-step-chevron" Size="Size.Small" />
+                                </summary>
+                                    <div class="move-step-detail">
+                                        <p>@step.Detail</p>
+                                        @if (step.StartedAt is { } start) { <div class="move-timestamp">Started @Timestamp(start)</div> }
+                                        @if (step.FinishedAt is { } end) { <div class="move-timestamp">Finished @Timestamp(end)</div> }
+                                        @if (step.Error is { } error)
+                                        {
+                                            <MudAlert Severity="@(step.Status == AgentMoveStepStatus.Failed ? Severity.Error : Severity.Warning)" Class="mt-2">
+                                                <strong>@(step.Status == AgentMoveStepStatus.Failed ? "Failure" : "Earlier failure")</strong>
+                                                <pre class="move-step-error">@error</pre>
+                                            </MudAlert>
+                                        }
+                                        @foreach (var stage in step.Stages ?? [])
+                                        {
+                                            <div class="move-stage-report">
+                                                <div class="move-stage-line"><span>@stage.Stage</span><span class="move-byte-count">@SessionSize.Bytes(stage.BytesCompleted)@(stage.TotalBytes is { } total ? " / " + SessionSize.Bytes(total) : " processed")</span></div>
+                                                @if (stage.CurrentFile is { } file) { <div class="move-current-file mono">@file</div> }
+                                            </div>
+                                        }
+                                    </div>
+                            </details>
+                        }
+                    </div>
+                }
+                else { <MudText Typo="Typo.body2">Step details were not recorded for this move.</MudText> }
+            </section>
+        }
+        else
+        {
+            <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading move details">
+                <Placeholder><SkeletonList Rows="4" Avatar="false" /></Placeholder>
+                <ChildContent><MudText>No recorded move.</MudText></ChildContent>
+            </LoadingSection>
+        }
+        @if (Agent.MoveDetails is not null && LoadError is { } errorMessage)
+        {
+            <MudAlert Severity="Severity.Warning">@errorMessage <MudButton OnClick="RetryAsync">Retry</MudButton></MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CopyAsync">Copy move details</MudButton>
+        <MudButton OnClick="() => Dialog.Close()">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
+    private readonly CancellationTokenSource _clockStop = new();
+    public static Task<IDialogReference> ShowAsync(IDialogService dialogs, AgentDto agent) => dialogs.ShowAsync<AgentMoveDialog>("Move details",
+        new DialogParameters<AgentMoveDialog> { { d => d.Agent, agent } }, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+    protected override bool IsRelevant(ManagerEvent change) => change.AgentId == Agent.Id;
+    protected override async Task LoadAsync() => Agent = await Api.GetAgentAsync(Agent.Id) ?? Agent;
+    protected override async Task OnInitializedAsync() { await base.OnInitializedAsync(); _ = TickAsync(); }
+    private async Task TickAsync()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+            while (await timer.WaitForNextTickAsync(_clockStop.Token))
+                if (Agent.MoveDetails?.Steps?.Any(s => s.Status == AgentMoveStepStatus.Running) == true) await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException) when (_clockStop.IsCancellationRequested) { }
+    }
+    public override void Dispose() { _clockStop.Cancel(); base.Dispose(); }
+    private static string Timestamp(DateTime value) => value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+    private static string Duration(AgentMoveStepDto step)
+    {
+        if (step.Status == AgentMoveStepStatus.Pending) return "Waiting";
+        if (step.Status == AgentMoveStepStatus.Skipped) return "Skipped";
+        if (step.StartedAt is not { } started) return "Not recorded";
+        var elapsed = (step.FinishedAt ?? DateTime.UtcNow) - started;
+        var seconds = Math.Max(0, elapsed.TotalSeconds);
+        return seconds < 60 ? $"{seconds:0.0}s" : seconds < 3600 ? $"{(int)seconds / 60}m {(int)seconds % 60:00}s" : $"{(int)seconds / 3600}h {(int)seconds / 60 % 60:00}m";
+    }
+    private static string Icon(AgentMoveStepStatus status) => status switch
+    {
+        AgentMoveStepStatus.Completed => Icons.Material.Rounded.CheckCircle,
+        AgentMoveStepStatus.Failed => Icons.Material.Rounded.Error,
+        AgentMoveStepStatus.Skipped => Icons.Material.Rounded.RemoveCircleOutline,
+        _ => Icons.Material.Rounded.RadioButtonUnchecked
+    };
+    private static Color IconColor(AgentMoveStepStatus status) => status switch
+    {
+        AgentMoveStepStatus.Completed => Color.Success,
+        AgentMoveStepStatus.Failed => Color.Error,
+        _ => Color.Default
+    };
+    private async Task CopyAsync()
+    {
+        try { await Js.InvokeVoidAsync("damUi.copy", System.Text.Json.JsonSerializer.Serialize(Agent.MoveDetails, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })); Snackbar.Add("Move details copied", Severity.Success); }
+        catch (Exception) { Snackbar.Add("Clipboard unavailable", Severity.Warning); }
+    }
+}
