@@ -19,7 +19,8 @@ try {
     const at = minutesAgo => new Date(Date.now() - minutesAgo * 60000).toISOString();
     const agent = (n, name, lastReply, createdMinutesAgo) => ({ id: `00000000-0000-0000-0000-00000000001${n}`, runnerId, ownerId: me.id, ownerName: 'Test user', access: 'Owner',
         runnerName: 'runner-01', runnerState: 'Ready', runnerHarnessIds: ['claude'], runnerToolIds: [], name, harnessId: 'claude', workingDirectory: `/work/${name}`,
-        state: 'Running', runningAccountName: 'Active subscription', accountName: 'Next selection', loginOwnerId: me.id, loginOwnerName: 'Test user', createdAt: at(createdMinutesAgo), updatedAt: at(1), lastAssistantMessageAt: lastReply });
+        state: 'Running', runningAccountName: 'Active subscription', runningAccountUsername: 'alice', accountName: 'Next selection', accountUsername: 'bob',
+        loginOwnerId: me.id, loginOwnerName: 'Test user', createdAt: at(createdMinutesAgo), updatedAt: at(1), lastAssistantMessageAt: lastReply });
     // Listed in the API in another order on purpose.
     const agents = [
         agent(1, 'an-hour-ago', at(60), 5000),
@@ -56,7 +57,7 @@ try {
         const accountLabels = page.locator('.agent-table .agent-account');
         await accountLabels.first().waitFor({ timeout: 60000 });
         assert.equal(await accountLabels.count(), 4);
-        assert.ok((await accountLabels.allInnerTexts()).every(text => text.trim() === 'Account: Active subscription'), `${path}: active subscription labels`);
+        assert.ok((await accountLabels.allInnerTexts()).every(text => text.trim() === 'Account: alice · Active subscription'), `${path}: running login owner and subscription labels`);
     }
     // Admin access is Owner for everyone: grouping must use identity, not permission.
     agents[0].ownerId = "00000000-0000-0000-0000-000000000099";
