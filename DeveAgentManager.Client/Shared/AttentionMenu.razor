@@ -94,7 +94,7 @@
                 limit = a.State == AgentState.Running && a.Activity?.Status == AgentActivityStatus.UsageLimited
                     ? $"{a.Activity.Since:O}:{a.Activity.Evidence}" : null,
                 finished = a.State == AgentState.Running && a.Activity is
-                    { Status: AgentActivityStatus.Ready, CurrentTurnCompleted: true, CompletedAt: not null, BackgroundTaskCount: not > 0 }
+                    { Status: AgentActivityStatus.Ready, CurrentTurnCompleted: true, CompletedAt: not null }
                     ? a.Activity.CompletionSequence.ToString() : null
             }).ToArray();
         }

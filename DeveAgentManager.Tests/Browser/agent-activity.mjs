@@ -5,6 +5,20 @@ let page;
 try {
 const context = await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Europe/Amsterdam',colorScheme:process.env.DAM_TEST_COLOR_SCHEME ?? 'light'});
 await context.addInitScript(theme=>localStorage.setItem('dam-theme',theme),process.env.DAM_TEST_COLOR_SCHEME ?? 'light');
+// Observe calls before Blazor caches the JavaScript function reference.
+await context.addInitScript(()=>{
+ let sounds;
+ window.activitySoundStates=[];
+ Object.defineProperty(window,'damNotificationSounds',{
+  configurable:true,
+  get:()=>sounds,
+  set:value=>{
+   const observe=value.observe;
+   value.observe=states=>{window.activitySoundStates.push(states);return observe(states);};
+   sounds=value;
+  }
+ });
+});
 page = await context.newPage();
 page.setDefaultTimeout(20000);
 await page.routeWebSocket('**/ws/terminal?**', ws => { ws.send(JSON.stringify({type:'ready',tty:'/dev/pts/99'})); });
@@ -21,7 +35,7 @@ let dismissed=false, limitVisible=true, limitFailed=false, automaticFailed=false
 let commands=[];
 let automatic={enabled:false,remaining:null,sent:0,detail:null};
 let seen=[], schedules=[], limitStatus='Detected', limitDetail=null;
-const activity={status:'Ready',reason:"Codex returned a response and its prompt is ready.",rule:'codex/codex-ready-prompt · composer and latest response',evidence:'• done',observedAt:now,since:now,sequence:5,questionWaiting:false,completedAt:now,completionSequence:5,seenCompletionSequence:0,unseenCompletion:true,currentTurnCompleted:true};
+const activity={status:'Ready',reason:"Codex returned a response and its prompt is ready.",rule:'codex/codex-ready-prompt · composer and latest response',evidence:'• done',observedAt:now,since:now,sequence:5,questionWaiting:false,completedAt:now,completionSequence:5,seenCompletionSequence:0,unseenCompletion:true,currentTurnCompleted:true,backgroundTaskCount:3};
 const agent={id,ownerId:id,ownerName:'Test user',access:'Owner',loginOwnerId:id,loginOwnerName:'Test user',runnerId:'00000000-0000-0000-0000-000000000002',runnerName:'runner-01',runnerState:'Ready',runnerHarnessIds:['codex','claude'],runnerToolIds:[],name:'Example agent',harnessId:'codex',workingDirectory:'/work/example',state:'Running',accountName:'Personal',createdAt:now,updatedAt:now,working:false,activity,lastAssistantMessageAt:now};
 const runner={id:agent.runnerId,name:'runner-01',providerId:'proxmox',kind:'Headless',state:'Ready',host:'10.0.0.2',sshPort:22,username:'test',cores:4,memoryMb:8192,diskGb:64,harnessIds:['codex','claude'],toolIds:[],agents:[agent],createdAt:now,updatedAt:now,status:{powerState:'Running',cpuUsage:18,memoryUsedBytes:4294967296,memoryTotalBytes:8589934592,diskUsedBytes:21474836480,diskTotalBytes:68719476736}};
 await page.route('**/api/**',async route=>{
@@ -34,7 +48,7 @@ await page.route('**/api/**',async route=>{
  else if(path==='/api/agents/reply-previews')body=[{agentId:id,text:'Latest response preview for the activity queue.'}];
  else if(path===`/api/agents/${id}/diagnostics`)body=[{at:now,category:'Activity',message:'Ready after completing the task.',rule:'codex-ready-prompt'}];
  else if(path===`/api/agents/${id}/commands`){if(route.request().method()==='POST'){commands.push(route.request().postDataJSON());return route.fulfill({status:204});}body=[{command:'/model',label:'Choose model'},{command:'/status',label:'Usage and status'},{command:'/diff',label:'View changes'},{command:'/permissions',label:'Permissions'}];}
- else if(path==='/api/agents/attention') body=activity.currentTurnCompleted&&activity.status==='Ready'&&!activity.backgroundTaskCount&&activity.unseenCompletion&&!dismissed?[{agentId:id,name:agent.name,runnerName:agent.runnerName,harnessId:'codex',kind:'Finished',reason:'Finished since you last viewed this agent.',at:now,completionSequence:5,token:'A'.repeat(64)}]:[];
+ else if(path==='/api/agents/attention') body=activity.currentTurnCompleted&&activity.status==='Ready'&&activity.unseenCompletion&&!dismissed?[{agentId:id,name:agent.name,runnerName:agent.runnerName,harnessId:'codex',kind:'Finished',reason:'Finished since you last viewed this agent.',at:now,completionSequence:5,token:'A'.repeat(64)}]:[];
  else if(path===`/api/agents/${id}/attention/dismiss`){assert.equal(route.request().postDataJSON().token,'A'.repeat(64));dismissed=true;return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}/limit/continue`){schedules.push(route.request().postDataJSON());return route.fulfill({status:204});}
  else if(path===`/api/agents/${id}/seen`){seen.push(route.request().postDataJSON());activity.unseenCompletion=false;activity.seenCompletionSequence=activity.completionSequence;return route.fulfill({status:204});}
@@ -58,6 +72,17 @@ await page.getByRole('button',{name:'Explain Example agent status: Finished'}).w
 await page.getByText(activity.reason,{exact:true}).waitFor();
 assert.equal(seen.length,0,'activity overview must not mark results seen');
 await page.getByText('Latest response preview for the activity queue.',{exact:true}).waitFor();
+await page.getByText('Background · 3',{exact:true}).waitFor();
+await page.getByRole('button',{name:'Ready (0)',exact:true}).waitFor();
+await page.getByRole('button',{name:'Working (0)',exact:true}).click();
+await page.getByText('No agents match this filter.',{exact:true}).waitFor();
+await page.getByRole('button',{name:'All (1)',exact:true}).click();
+await page.screenshot({path:'/tmp/dam-finished-background-desktop.png'});
+await page.setViewportSize({width:390,height:844});
+await page.waitForTimeout(500);
+assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'finished background status overflows phone');
+await page.screenshot({path:'/tmp/dam-finished-background-phone.png'});
+await page.setViewportSize({width:1280,height:900});
 assert.equal(await page.getByRole('link',{name:'Next needing attention'}).getAttribute('href'),`agents/${id}`);
 await page.getByRole('button',{name:'Needs input (0)',exact:true}).click();
 await page.getByText('No agents match this filter.',{exact:true}).waitFor();
@@ -66,12 +91,21 @@ await page.getByRole('button',{name:'Explain Example agent status: Finished'}).w
 await page.getByRole('button',{name:'All (1)',exact:true}).click();
 activity.status='Working';activity.reason='The agent is working in the background.';
 await page.getByRole('button',{name:'Explain Example agent status: Working'}).waitFor({timeout:25000});
+await page.getByRole('button',{name:'Working (1)',exact:true}).waitFor();
 await page.getByText(activity.reason,{exact:true}).waitFor();
 await page.setViewportSize({width:390,height:844});
 await page.waitForTimeout(500);
 await page.screenshot({path:'/tmp/dam-activity-overview-phone.png'});
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,'activity overview overflows on phone');
 activity.status='Ready';activity.reason='Codex returned a response and its prompt is ready.';
+await page.getByRole('button',{name:'Explain Example agent status: Finished'}).waitFor({timeout:25000});
+await page.waitForFunction(()=>window.activitySoundStates.some(states=>states.some(state=>state.finished==='5')));
+activity.unseenCompletion=false;activity.seenCompletionSequence=5;
+await page.getByRole('button',{name:'Ready (1)',exact:true}).click({timeout:25000});
+await page.getByRole('button',{name:'Explain Example agent status: Ready'}).waitFor();
+await page.getByText('Background · 3',{exact:true}).waitFor();
+await page.getByRole('button',{name:'Working (0)',exact:true}).waitFor();
+activity.unseenCompletion=true;activity.seenCompletionSequence=0;
 await page.setViewportSize({width:1280,height:900});
 await page.goto(base+'/agents');
 await page.getByRole('button',{name:'Explain Example agent status: Finished'}).waitFor({timeout:60000});
@@ -91,6 +125,7 @@ await page.setViewportSize({width:1280,height:900});
 await page.keyboard.press('Escape');
 await page.getByRole('button',{name:'Explain Example agent status: Finished'}).click();
 await page.getByText(activity.reason,{exact:true}).waitFor();
+await page.getByText('Background commands: 3',{exact:true}).waitFor();
 await page.getByText('Detection details',{exact:true}).click();
 await page.getByText('Rule: '+activity.rule,{exact:true}).waitFor();
 await page.getByText('Recent diagnostic history',{exact:true}).click();
@@ -258,7 +293,7 @@ await page.locator('.usage-chart-line-disk').first().waitFor({state:'attached'})
 assert.equal(await page.locator('.usage-chart-line-disk').first().evaluate(p=>getComputedStyle(p).stroke),'rgb(245, 158, 11)');
 await page.screenshot({path:'/tmp/dam-disk-phone.png'});
 assert.deepEqual(errors,[]);
-console.log('Passed: activity overview polling without a terminal, phone layout, attention and completion guards, latest reply label, local reset picker, duration scheduling, disk bars and graph.');
+console.log('Passed: activity overview polling without a terminal, completion and sound alongside background commands, activity filters, phone layout, attention and completion guards, latest reply label, local reset picker, duration scheduling, disk bars and graph.');
 } catch (error) {
  if(page){await page.screenshot({path:'/tmp/dam-activity-failure.png'});console.error('Visible buttons:',await page.getByRole('button').evaluateAll(elements=>elements.map(e=>({text:e.innerText,label:e.getAttribute('aria-label')}))));}
  throw error;

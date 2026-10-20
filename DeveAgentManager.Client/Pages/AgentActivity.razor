@@ -73,9 +73,8 @@
         "Needs input" => agent.State == AgentState.Running && (agent.Activity?.Status == AgentActivityStatus.NeedsInput || agent.Activity?.QuestionWaiting == true),
         "Finished" => StateStyles.ShowsFinished(agent),
         "Usage limited" => agent.State == AgentState.Running && agent.Activity?.Status == AgentActivityStatus.UsageLimited,
-        "Working" => agent.State == AgentState.Running && (agent.Activity?.Status == AgentActivityStatus.Working
-            || agent.Activity is { Status: AgentActivityStatus.Ready, BackgroundTaskCount: > 0 }),
-        "Ready" => agent.State == AgentState.Running && agent.Activity is { Status: AgentActivityStatus.Ready, BackgroundTaskCount: not > 0 }
+        "Working" => agent.State == AgentState.Running && agent.Activity?.Status == AgentActivityStatus.Working,
+        "Ready" => agent.State == AgentState.Running && agent.Activity?.Status == AgentActivityStatus.Ready
             && !StateStyles.ShowsFinished(agent),
         _ => true
     };

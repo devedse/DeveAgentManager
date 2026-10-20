@@ -101,7 +101,7 @@ public class NativeActivityTests
     }
 
     [Fact]
-    public void NativeCompletionRespectsLiveWorkBlockersBackgroundTasksAndSessionBinding()
+    public void NativeCompletionRespectsLiveWorkAndSessionBindingWhileCommandsContinue()
     {
         foreach (var status in new[] { AgentActivityStatus.Working, AgentActivityStatus.NeedsInput, AgentActivityStatus.UsageLimited })
         {
@@ -115,8 +115,12 @@ public class NativeActivityTests
         var background = Agent();
         AgentActivityTracker.Apply(background, Ready with { BackgroundTaskCount = 1 }, "pane", Now, Turn("first"));
         AgentActivityTracker.Apply(background, Ready with { BackgroundTaskCount = 1 }, "pane", Now.AddSeconds(5), Turn("first"));
-        Assert.False(AgentActivityTracker.GetDto(background, Now.AddSeconds(5)).IsFinished);
-        Assert.True(Observe(background, Turn("first"), 10).IsFinished);
+        var completed = AgentActivityTracker.GetDto(background, Now.AddSeconds(5));
+        Assert.True(completed.IsFinished);
+        Assert.Equal(1, completed.BackgroundTaskCount);
+        var stopped = Observe(background, Turn("first"), 10);
+        Assert.True(stopped.IsFinished);
+        Assert.Equal(completed.CompletionSequence, stopped.CompletionSequence);
         Assert.False(Observe(Agent(), Turn("wrong") with { SessionId = "another-session" }).IsFinished);
     }
 

@@ -1,0 +1,14 @@
+❯ Which three shells are still running?
+
+  Ran 2 shell commands
+
+● The three background shells are the local development setup:
+  Unity Hub, the multiplayer server, and the Unity editor.
+  They are intentionally still running. The builds and test runs have finished.
+
+✻ Crunched for 17s · done 6:37 PM · 3 shells still running
+
+──────────────────────────────────────────────
+❯ Leave them running and continue with the backdrops
+──────────────────────────────────────────────
+  ⏵⏵ bypass permissions on · PR #5 · 3 shells · ↓ to manage

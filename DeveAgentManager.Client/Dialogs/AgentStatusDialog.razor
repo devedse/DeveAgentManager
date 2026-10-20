@@ -44,7 +44,8 @@
             <MudText Typo="Typo.body2">Last observed: @(activity.ObservedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "Not yet")</MudText>
             @if (Agent.State == AgentState.Running && activity.BackgroundTaskCount is > 0)
             {
-                <MudText Class="mt-3">@activity.BackgroundTaskCount background task(s) reported by the harness. The prompt can be ready while commands continue. This may include persistent servers or watchers; it does not establish progress or success.</MudText>
+                <div class="help-heading mt-3"><MudText>Background commands: @activity.BackgroundTaskCount</MudText>
+                    <HelpTip Label="Background commands"><p>The harness reports these commands separately from the current turn. Servers, editors and watchers may stay running after a reply finishes. Their count does not establish progress or success, and does not delay the Finished status.</p></HelpTip></div>
             }
             @if (activity.QuestionWaiting)
             {
@@ -53,7 +54,7 @@
             @if (StateStyles.ShowsFinished(Agent))
             {
                 <div class="help-heading mt-3"><MudText>The current turn has finished.</MudText>
-                    <HelpTip Label="Finished status"><p>Viewing the reply clears its unread notification across your devices. Finished remains until new work starts; active background work takes priority.</p></HelpTip></div>
+                    <HelpTip Label="Finished status"><p>The current turn completed and its reply has not been viewed. Viewing it in a focused terminal clears its unread notification across your devices and returns the idle badge to Ready. Background commands may continue; an agent actively waiting for their results still shows Working.</p></HelpTip></div>
             }
             <MudExpansionPanels Class="mt-3">
                 <MudExpansionPanel Text="Detection details">
