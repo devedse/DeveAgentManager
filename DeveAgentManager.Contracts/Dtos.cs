@@ -150,6 +150,8 @@ public sealed record SaveDesktopSnapshotRequest(Guid SessionId, string? Caption 
 
 /// <param name="AccountId">The harness login it runs with; null uses its owner's default login.</param>
 /// <param name="Access">What the signed-in user may do with it.</param>
+/// <param name="AccountUsername">Creator of the next selected login, or the agent owner's username for their default selection.</param>
+/// <param name="RunningAccountUsername">Creator of the login actually used by the current harness; null when unknown.</param>
 public sealed record AgentDto(
     Guid Id,
     Guid RunnerId,
@@ -183,7 +185,9 @@ public sealed record AgentDto(
     bool SharedWithMe = false,
     string? RunningAccountName = null,
     bool MovePending = false,
-    AgentMoveDetailsDto? MoveDetails = null);
+    AgentMoveDetailsDto? MoveDetails = null,
+    string? AccountUsername = null,
+    string? RunningAccountUsername = null);
 
 /// <summary>Measured progress within the current move stage; totals are unknown during preparation.</summary>
 public sealed record AgentMoveProgressDto(string Stage, string? CurrentFile = null, long BytesCompleted = 0, long? TotalBytes = null);

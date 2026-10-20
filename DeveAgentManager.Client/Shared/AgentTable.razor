@@ -38,11 +38,11 @@ else
                         <div class="list-subtitle agent-account">
                             @if (agent.State is AgentState.Running or AgentState.Starting)
                             {
-                                <span>Account: @(agent.RunningAccountName ?? "Unknown")</span>
+                                <span>Account: <AccountIdentity Username="@agent.RunningAccountUsername" Name="@(agent.RunningAccountName ?? "Unknown")" /></span>
                             }
                             else
                             {
-                                <span>Account on start: @(agent.AccountName ?? "Default")</span>
+                                <span>Account on start: <AccountIdentity Username="@agent.AccountUsername" Name="@(agent.AccountName ?? "Default")" /></span>
                             }
                         </div>
                         @if (agent.MovePending && agent.MoveDetails?.Progress is { } progress)

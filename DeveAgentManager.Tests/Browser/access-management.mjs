@@ -22,8 +22,12 @@ try {
     const target = { ...runner, id: id(702), name: 'destination-runner', agents: [] };
     const agent = { id: id(701), name: 'test-agent', ownerId: me.id, ownerName: 'Admin', access: 'Owner', runnerId: runner.id,
         runnerName: runner.name, runnerState: 'Ready', runnerHarnessIds: runner.harnessIds, runnerToolIds: [], harnessId: 'codex',
-        workingDirectory: '/work/test-project', state: 'Running', accountId: id(710), runningAccountId: id(710), createdAt: now, updatedAt: now };
-    runner.agents = [agent];
+        workingDirectory: '/work/test-project', state: 'Running', accountId: id(710), accountName: 'Personal', accountUsername: 'alice',
+        runningAccountId: id(711), runningAccountName: 'Shared', runningAccountUsername: 'bob', createdAt: now, updatedAt: now };
+    const stopped = { ...agent, id: id(703), name: 'stopped-agent', state: 'Stopped', runningAccountId: null };
+    const defaultAgent = { ...stopped, id: id(704), name: 'default-agent', accountId: null, accountName: null, accountUsername: me.username };
+    const agents = [agent, stopped, defaultAgent];
+    runner.agents = agents;
     const accounts = [
         { id: id(710), harnessId: 'codex', name: 'Personal', createdByUsername: 'alice', access: 'Manage', isDefault: true },
         { id: id(711), harnessId: 'codex', name: 'Shared', createdByUsername: 'bob', access: 'Use' },
@@ -61,13 +65,35 @@ try {
             : path.endsWith('/shares') ? shares : path === '/api/users/directory' ? [other]
             : path === '/api/runners/' + runner.id + '/password' ? { password: 'test-only-long-runner-password-0123456789' }
             : path === '/api/runners' ? [runner, target] : path === '/api/runners/' + runner.id ? runner
-            : path === '/api/agents' ? [agent] : path === '/api/agents/' + agent.id ? agent
+            : path === '/api/agents' ? agents : path === '/api/agents/' + agent.id ? agent
             : path === '/api/sessions' ? [session] : path === '/api/sessions/' + session.id ? session
             : path.endsWith('/session') ? session : path.endsWith('/limit/automatic') ? {enabled:false,sent:0} : path.endsWith('/limit') ? null
             : path.endsWith('/conversation') || path.endsWith('/content') ? { version: 1, entries: [], sources: [] } : [];
         return route.fulfill({ json: body });
     });
     await context.routeWebSocket('**/ws/terminal?**', ws => ws.send(JSON.stringify({ type: 'ready', tty: '/dev/pts/99' })));
+    const assertIdentityColors = async identity => {
+        const colors = await identity.evaluate(node => ({
+            username: getComputedStyle(node.querySelector('.account-username')).color,
+            name: getComputedStyle(node.querySelector('.account-label-name')).color,
+            separator: getComputedStyle(node.querySelector('.account-separator')).color
+        }));
+        assert.equal(new Set(Object.values(colors)).size, 3, `username, name and separator have distinct colors in ${theme} mode`);
+    };
+    for (const width of [1280, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(base + '/agents');
+        const runningRow = page.locator('.agent-row').filter({ has: page.locator('.list-title', { hasText: 'test-agent' }) });
+        await runningRow.locator('.agent-account').getByText('Account: bob · Shared', { exact: true }).waitFor();
+        await assertIdentityColors(runningRow.locator('.account-identity'));
+        await page.locator('.agent-row').filter({ hasText: 'stopped-agent' }).locator('.agent-account')
+            .getByText('Account on start: alice · Personal', { exact: true }).waitFor();
+        await page.locator('.agent-row').filter({ hasText: 'default-agent' }).locator('.agent-account')
+            .getByText(`Account on start: ${me.username} · Default`, { exact: true }).waitFor();
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `account labels fit ${width}px`);
+        await page.screenshot({ path: `/tmp/dam-account-labels-${theme}-${width}.png` });
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(base + '/agents/' + agent.id);
     await page.locator('.switch-chip').waitFor().catch(async error => { console.error(errors, await page.locator('body').innerText()); throw error; });
     await page.locator('.switch-chip').click();
@@ -80,8 +106,19 @@ try {
     await menu.getByRole('link', { name: 'Install Grok on test-runner' }).waitFor();
     const lefts = await menu.locator('.switch-option-label').evaluateAll(nodes => nodes.map(n => Math.round(n.getBoundingClientRect().left)));
     assert.equal(new Set(lefts).size, 1, 'all account labels share an aligned left edge');
+    await assertIdentityColors(menu.getByRole('button', { name: /alice · Personal/ }).locator('.account-identity'));
+    await assertIdentityColors(menu.getByRole('button', { name: /bob · Shared/ }).locator('.account-identity'));
+    await assertIdentityColors(page.locator('.switch-chip .account-identity'));
+    await page.locator('.switch-chip .account-identity').getByText('bob', { exact: true }).waitFor();
     await page.screenshot({ path: '/tmp/dam-account-picker.png' });
-    await page.keyboard.press('Escape');
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.goto(base + '/agents/' + agent.id);
+    await page.locator('.switch-chip').click();
+    await menu.getByRole('button', { name: /alice · Personal/ }).waitFor();
+    const menuBounds = await menu.boundingBox();
+    await page.screenshot({ path: `/tmp/dam-account-picker-${theme}-320.png` });
+    assert.ok(menuBounds.x >= 0 && menuBounds.x + menuBounds.width <= 321, `colored switcher labels fit a 320px phone: ${JSON.stringify(menuBounds)}`);
+    await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(base + '/harness-logins');
     await page.locator('.account-row').filter({ hasText: 'carol · Admin view' }).waitFor();
     assert.ok(accountRequests.includes('/api/accounts/all'), 'administration-only logins stay on the Harness logins page');

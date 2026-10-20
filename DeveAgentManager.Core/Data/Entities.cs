@@ -187,6 +187,8 @@ public class Agent
     public Guid? RunningAccountId { get; set; }
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public string? RunningAccountName { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? RunningAccountUsername { get; set; }
     /// <summary>Persisted before remote enforcement. Blocks launch until an explicit permitted selection.</summary>
     public bool LoginBlocked { get; set; }
     public bool LoginStopPending { get; set; }

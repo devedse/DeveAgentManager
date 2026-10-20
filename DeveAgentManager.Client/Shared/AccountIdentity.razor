@@ -1,0 +1,6 @@
+<span class="account-identity"><span class="account-username">@(Username ?? "Unknown user")</span><span class="account-separator"> · </span><span class="account-label-name">@Name</span></span>
+
+@code {
+    [Parameter] public string? Username { get; set; }
+    [Parameter, EditorRequired] public string Name { get; set; } = "";
+}

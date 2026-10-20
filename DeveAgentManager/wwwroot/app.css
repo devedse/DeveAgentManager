@@ -1022,6 +1022,12 @@ a {
 
 /* ---------- Agents ---------- */
 
+.account-identity { overflow-wrap: anywhere; }
+.account-username { color: var(--dam-primary-text); font-weight: 500; }
+.account-label-name { color: var(--dam-text); font-weight: 600; }
+.account-separator, .account-identity-meta { color: var(--dam-muted); }
+.agent-account { white-space: normal; overflow-wrap: anywhere; }
+
 .agent-table {
     display: flex;
     flex-direction: column;
@@ -2089,6 +2095,8 @@ html:has(.terminal-layout) body {
 .switch-option-detail, .switch-unavailable { display: block; color: var(--dam-muted); font-size: .75rem; }
 .switch-unavailable { margin: 4px 8px 4px 24px; }
 .switch-menu .switch-option:disabled:not(.switch-current) { color: var(--dam-muted); cursor: default; }
+.switch-option:disabled:not(.switch-current) .account-username,
+.switch-option:disabled:not(.switch-current) .account-label-name { color: var(--dam-muted); }
 .access-person .list-main { overflow-wrap: anywhere; }
 
     .switch-option:hover:not(:disabled) {

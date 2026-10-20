@@ -140,7 +140,9 @@ public sealed class DtoMapper(
         AgentActivityTracker.GetDto(agent, runnerState: runner.State),
         agent.LastAssistantMessageAt,
         runner.Kind, agent.RunningAccountId, sharedWithMe, agent.RunningAccountName, agent.MoveJson is not null,
-        access >= AgentAccess.Read ? AgentService.MoveDetails(agent) : null);
+        access >= AgentAccess.Read ? AgentService.MoveDetails(agent) : null,
+        agent.AccountId is null ? agent.Owner?.Username : agent.Account?.CreatedBy?.Username,
+        agent.RunningAccountUsername);
 
     /// <summary>A conversation loaded with its owner, shares, agent and workspace agent (see SessionService).</summary>
     public static SessionDto Session(StoredSession session, CurrentUser user)

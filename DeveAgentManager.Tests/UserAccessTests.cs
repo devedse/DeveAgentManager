@@ -31,17 +31,21 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     private const string Password = "ketty-password-1";
 
     [Fact]
-    public async Task AgentRowsExposeTheRunningAccountNameRatherThanTheNextSelection()
+    public async Task AgentRowsIdentifyTheRunningLoginOwnerRatherThanTheAgentOwnerOrNextSelection()
     {
         // Keep this extra sign-in separate from the shared fixture's authentication rate-limit window.
         using var isolatedManager = new ApiSecurityTests.Manager();
         var requests = new UserAccessTests(isolatedManager);
         var (client, owner) = await requests.SignedInAsNewUserWithIdAsync();
         var fixture = await requests.SeedAsync(owner);
+        string ownerUsername, runningUsername;
         await using (var db = await requests.DbAsync())
         {
+            ownerUsername = (await db.Users.SingleAsync(u => u.Id == owner)).Username;
+            runningUsername = (await db.Users.SingleAsync(u => u.Id == User.BootstrapId)).Username;
             var running = await db.Accounts.SingleAsync(a => a.Id == fixture.AccountId);
             running.Name = "Active subscription";
+            running.CreatedById = User.BootstrapId; // Shared login: its owner is different from the agent's owner.
             var next = new Account { Id = Guid.NewGuid(), CreatedById = owner, HarnessId = "claude", Name = "Next selection", Kind = AccountKind.ApiKey };
             db.Accounts.Add(next);
             var agent = await db.Agents.SingleAsync(a => a.Id == fixture.AgentId);
@@ -50,22 +54,40 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
             agent.AccountId = next.Id;
             await db.SaveChangesAsync();
         }
-        var detail = await requests.AgentAsync(client, fixture.AgentId);
-        Assert.Equal("Active subscription", detail.RunningAccountName);
-        Assert.Equal("Next selection", detail.AccountName);
+        void AssertIdentity(AgentDto agent)
+        {
+            Assert.Equal("Active subscription", agent.RunningAccountName);
+            Assert.Equal(runningUsername, agent.RunningAccountUsername);
+            Assert.Equal("Next selection", agent.AccountName);
+            Assert.Equal(ownerUsername, agent.AccountUsername);
+        }
+        AssertIdentity(await requests.AgentAsync(client, fixture.AgentId));
         var list = await client.GetFromJsonAsync<List<AgentDto>>("/api/agents", ApiJson.Options);
-        Assert.Equal("Active subscription", list!.Single(a => a.Id == fixture.AgentId).RunningAccountName);
+        AssertIdentity(list!.Single(a => a.Id == fixture.AgentId));
         var runner = await client.GetFromJsonAsync<RunnerDto>($"/api/runners/{fixture.RunnerId}", ApiJson.Options);
-        Assert.Equal("Active subscription", runner!.Agents.Single().RunningAccountName);
+        AssertIdentity(runner!.Agents.Single());
         var runners = await client.GetFromJsonAsync<List<RunnerDto>>("/api/runners", ApiJson.Options);
-        Assert.Equal("Active subscription", runners!.Single(r => r.Id == fixture.RunnerId).Agents.Single().RunningAccountName);
+        AssertIdentity(runners!.Single(r => r.Id == fixture.RunnerId).Agents.Single());
         await using (var db = await requests.DbAsync())
         {
             var agent = await db.Agents.SingleAsync(a => a.Id == fixture.AgentId);
             agent.AccountId = null; // A default selection must still describe the actual running account.
             await db.SaveChangesAsync();
         }
-        Assert.Equal("Active subscription", (await requests.AgentAsync(client, fixture.AgentId)).RunningAccountName);
+        var defaultSelection = await requests.AgentAsync(client, fixture.AgentId);
+        Assert.Equal("Active subscription", defaultSelection.RunningAccountName);
+        Assert.Equal(runningUsername, defaultSelection.RunningAccountUsername);
+        Assert.Null(defaultSelection.AccountName);
+        Assert.Equal(ownerUsername, defaultSelection.AccountUsername);
+        await using (var db = await requests.DbAsync())
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == fixture.AgentId);
+            agent.RunningAccountId = Guid.NewGuid(); // A missing login must not be attributed to the agent owner.
+            await db.SaveChangesAsync();
+        }
+        var missing = await requests.AgentAsync(client, fixture.AgentId);
+        Assert.Null(missing.RunningAccountName);
+        Assert.Null(missing.RunningAccountUsername);
     }
 
     [Fact]
