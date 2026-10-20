@@ -1,0 +1,24 @@
+<div class="agent-move-progress @(Compact ? "move-progress-compact" : "")" role="group" aria-label="Move progress">
+    <div class="move-stage-line">
+        <span>@Progress.Stage</span>
+        @if (Progress.TotalBytes is > 0)
+        {
+            <span class="move-percent">@Percent.ToString("0")%</span>
+        }
+    </div>
+    <MudProgressLinear Color="Color.Primary" Indeterminate="@(Progress.TotalBytes is null)" Value="Percent" aria-label="@Progress.Stage" />
+    @if (Progress.CurrentFile is { } file)
+    {
+        <div class="move-current-file mono" title="@file">@file</div>
+    }
+    @if (Progress.TotalBytes is { } total)
+    {
+        <div class="move-byte-count">@SessionSize.Bytes(Progress.BytesCompleted) / @SessionSize.Bytes(total)</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AgentMoveProgressDto Progress { get; set; } = default!;
+    [Parameter] public bool Compact { get; set; }
+    private double Percent => Progress.TotalBytes is > 0 ? Math.Clamp(100.0 * Progress.BytesCompleted / Progress.TotalBytes.Value, 0, 100) : 0;
+}

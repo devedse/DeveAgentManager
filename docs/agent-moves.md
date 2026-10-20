@@ -34,6 +34,19 @@ moved. Use an independent checkout. The source, destination and Manager need
 space for the temporary transfer archive; the destination also needs staging
 space for the restored files.
 
+The agent list and terminal show the current stage, a progress bar and the file
+being processed. Click the status to open **Latest move**, which updates while
+open and keeps the latest result available after the agent returns to Ready.
+It shows the source, destination, start/finish times and any failure or cleanup
+problem. This result persists across Manager restarts.
+
+Percentages measure the current stage, not an estimated overall completion time.
+Preparation and cleanup use an indeterminate bar when their total is unknown.
+During SFTP transfer, a streaming metadata index maps archive byte positions to
+the original filenames. File contents are not reread to calculate transfer
+progress. Updates are coalesced to once a second, plus stage boundaries, and
+file details are visible only to people who can read the agent.
+
 ## Transfer and failure handling
 
 1. Check paths, access, installed harness and destination conflicts. Stop only
@@ -78,6 +91,9 @@ exit, stale identities, new blockers, other-agent isolation and recovery without
 repeating an uncertain stop. Browser coverage checks all four access surfaces on
 desktop and mobile, destination selection, process loading/retry, cancellation,
 changed blocker review and explicit stop approval.
+Progress checks cover archive entry boundaries, transfer byte counts, bounded
+update frequency, checkpoint preservation, live dialog updates, narrow layouts,
+retained success/failure results and privacy for users with only Listed access.
 
 These tests use disposable fixtures. They do not move or restart production
 agents or validate a live deployment.

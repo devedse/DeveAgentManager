@@ -45,6 +45,10 @@ else
                                 <span>Account on start: @(agent.AccountName ?? "Default")</span>
                             }
                         </div>
+                        @if (agent.MovePending && agent.MoveDetails?.Progress is { } progress)
+                        {
+                            <AgentMoveProgress Progress="progress" Compact="true" />
+                        }
                     </div>
                 </a>
                 <div class="agent-row-state">

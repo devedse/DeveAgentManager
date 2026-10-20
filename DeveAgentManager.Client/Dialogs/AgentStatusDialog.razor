@@ -1,10 +1,41 @@
-@inject ManagerApi Api
+@inherits LiveComponent
 @inject IJSRuntime Js
-@inject ISnackbar Snackbar
 <MudDialog>
     <DialogContent>
         <MudText Typo="Typo.h6">@Agent.Name · @StateStyles.For(Agent).Text</MudText>
-        <MudText Class="mt-3">@(Agent.Activity?.Reason ?? Agent.StateMessage ?? "No activity observation is available.")</MudText>
+        @if (Agent.MoveDetails is { } move)
+        {
+            <section class="latest-agent-move" aria-label="Latest move">
+                <div class="help-heading"><MudText Typo="Typo.subtitle1">Latest move</MudText>
+                    <HelpTip Label="Move details"><p>The bar measures the current stage. Packing, transfer, verification and cleanup have separate totals. During archive transfer, the filename is the archive entry at the reported byte position.</p><p>The latest result stays available here after the agent is ready. Screenshots, shared documents and native session files are included. A failed move retains the source; cleanup problems remain visible until resolved.</p></HelpTip></div>
+                <div class="move-route">@move.SourceRunner → @move.TargetRunner</div>
+                <MudText Typo="Typo.body2">@move.Outcome</MudText>
+                @if (move.StartedAt is { } started)
+                {
+                    <div class="move-timestamp">Started @started.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</div>
+                }
+                @if (move.CompletedAt is { } completed)
+                {
+                    <div class="move-timestamp">Finished @completed.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</div>
+                }
+                @if (move.Progress is { } progress)
+                {
+                    <AgentMoveProgress Progress="progress" />
+                }
+                else if (move.Message is { } message)
+                {
+                    <MudText Class="move-result">@message</MudText>
+                }
+            </section>
+        }
+        @if (LoadError is { } loadError)
+        {
+            <MudAlert Severity="Severity.Warning">@loadError <MudButton OnClick="RetryAsync">Retry</MudButton></MudAlert>
+        }
+        @if (Agent.State != AgentState.Moving || Agent.MoveDetails is null)
+        {
+            <MudText Class="mt-3">@(Agent.Activity?.Reason ?? Agent.StateMessage ?? "No activity observation is available.")</MudText>
+        }
         <MudText Typo="Typo.body2" Class="mt-3">Process: @Agent.State · Runner: @Agent.RunnerState</MudText>
         @if (Agent.Activity is { } activity)
         {
@@ -39,7 +70,7 @@
                 {
                     <div class="diagnostic-entry"><small>@entry.At.ToLocalTime().ToString("MMM d HH:mm:ss") · @entry.Category @entry.Rule</small><div>@entry.Message</div></div>
                 }
-                <LoadingSection Loaded="_historyLoaded" Label="Loading diagnostic history">
+                <LoadingSection Loaded="_historyLoaded" Error="@_historyError" Retry="RetryAsync" Label="Loading diagnostic history">
                 <Placeholder><SkeletonList Rows="2" Avatar="false" /></Placeholder>
                 <ChildContent>
                 @if (_history.Count == 0) { <MudText>No diagnostic history recorded yet.</MudText> }
@@ -55,20 +86,26 @@
     </DialogActions>
 </MudDialog>
 @code {
-    protected override async Task OnInitializedAsync()
+    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.AgentId == Agent.Id;
+    protected override async Task LoadAsync()
     {
-        try { Agent = await Api.GetAgentAsync(Agent.Id) ?? Agent; _history = await Api.GetDiagnosticsAsync(Agent.Id); }
-        catch (Exception ex) when (ex is ApiException or HttpRequestException) { }
-        _historyLoaded = true;
+        Agent = await Api.GetAgentAsync(Agent.Id) ?? Agent;
+        if (!_historyLoaded)
+        {
+            try { _history = await Api.GetDiagnosticsAsync(Agent.Id); _historyLoaded = true; _historyError = null; }
+            catch (ApiException ex) { _historyError = ex.Message; }
+            catch (HttpRequestException) { _historyError = LoadingSection.Unreachable; }
+        }
     }
     private List<AgentDiagnosticDto> _history = [];
     private bool _historyLoaded;
+    private string? _historyError;
     private async Task CopyAsync()
     {
         var report = System.Text.Json.JsonSerializer.Serialize(new {
             ManagerVersion = typeof(AgentStatusDialog).Assembly.GetName().Version?.ToString(),
             Agent = Agent.Name, Agent.HarnessId, Agent.RunnerName, Agent.State,
-            Agent.Activity, History = _history
+            Agent.Activity, Agent.MoveDetails, History = _history
         }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         try { await Js.InvokeVoidAsync("damUi.copy", report); Snackbar.Add("Diagnostics copied", Severity.Success); }
         catch (Exception) { Snackbar.Add("Clipboard unavailable. Select the diagnostic history to copy it.", Severity.Warning); }

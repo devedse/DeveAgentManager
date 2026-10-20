@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Data;
+using DeveAgentManager.Contracts;
 using Xunit;
 
 namespace DeveAgentManager.Tests;
@@ -46,20 +47,60 @@ public sealed class AgentMoveFilesTests
         await File.WriteAllTextAsync(publication + "/file", "shared document", Ct);
         var move = new AgentMoveState(Guid.NewGuid().ToString("N"), agent, Guid.NewGuid(), Guid.NewGuid(), workspace, owner, agent.ToString("N"), AgentState.Stopped, false, Home: home,
             Histories: [new(runtime + "/acp.events.jsonl", "grok")]);
-        var pack = (await ssh.Shell.RunAsync(ssh.Runner, AgentService.MoveCommand("pack", move), cancellationToken: Ct)).EnsureSuccess("Packing move test");
-        move = move with { ArchiveSha256 = pack.Output.Trim() };
+        var reports = new List<AgentMoveProgressDto>();
+        async Task<string> ReportingPhase(string phase)
+        {
+            var result = new StringBuilder();
+            var code = await ssh.Shell.RunStreamingAsync(ssh.Runner, AgentService.MoveCommand(phase, move with { ReportProgress = true }), line =>
+            {
+                if (line.StartsWith("DAM_MOVE_PROGRESS ", StringComparison.Ordinal)) reports.Add(JsonSerializer.Deserialize<AgentMoveProgressDto>(line[18..])!);
+                else result.AppendLine(line);
+            }, TimeSpan.FromMinutes(1), Ct);
+            Assert.True(code == 0, result.ToString());
+            return result.ToString().Trim();
+        }
+        var checksum = await ReportingPhase("pack");
+        move = move with { ArchiveSha256 = checksum };
         var remote = home + "/.deveagentmanager/moves/" + move.Id + "/bundle.tar";
         var local = ssh.Root + "/transport.tar";
-        await using (var output = File.Create(local)) await ssh.Shell.DownloadToAsync(ssh.Runner, remote, output, Ct);
+        var transferred = new List<(long Bytes, long Total, string Path)>();
+        var indexPath = ssh.Root + "/transport.index";
+        File.Copy(Path.GetDirectoryName(remote)! + "/transfer-index.jsonl", indexPath);
+        using (var index = new MoveTransferIndex(indexPath))
+        await using (var output = File.Create(local)) await ssh.Shell.DownloadToAsync(ssh.Runner, remote, output, Ct,
+            (bytes, total) => transferred.Add((bytes, total, index.FileAt(bytes))));
+        Assert.Contains(transferred, p => p.Path == runtime + "/acp.events.jsonl");
+        Assert.Equal(new FileInfo(local).Length, transferred[^1].Bytes);
+        Assert.All(transferred, p => Assert.Equal(new FileInfo(local).Length, p.Total));
+        Assert.Equal(transferred.Select(p => p.Bytes).Order(), transferred.Select(p => p.Bytes));
+        var indexEntries = (await File.ReadAllLinesAsync(indexPath, Ct)).Select(line => JsonDocument.Parse(line)).ToList();
+        try
+        {
+            using var index = new MoveTransferIndex(indexPath);
+            long previous = 0;
+            foreach (var entry in indexEntries)
+            {
+                var end = entry.RootElement[0].GetInt64(); var path = entry.RootElement[1].GetString();
+                Assert.True(end > previous); Assert.Equal(path, index.FileAt(previous + 1)); Assert.Equal(path, index.FileAt(end)); previous = end;
+            }
+        }
+        finally { indexEntries.ForEach(e => e.Dispose()); }
         await using (var input = File.OpenRead(local)) Assert.Equal(move.ArchiveSha256, Convert.ToHexStringLower(await SHA256.HashDataAsync(input, Ct)));
         // Two isolated runner filesystems represented at the same absolute paths, as real VMs are.
         var source = home + "-source"; Directory.Move(home, source);
         Directory.CreateDirectory(Path.GetDirectoryName(remote)!);
         Directory.CreateDirectory(Path.GetDirectoryName(cached)!);
         await File.WriteAllTextAsync(cached, "fetched artifact", Ct); // A matching, pre-existing shared cache is reusable.
-        await using (var input = File.OpenRead(local)) await ssh.Shell.UploadFromAsync(ssh.Runner, remote, input, Ct);
+        var uploaded = new List<long>();
+        await using (var input = File.OpenRead(local)) await ssh.Shell.UploadFromAsync(ssh.Runner, remote, input, Ct,
+            (bytes, total) => { Assert.Equal(new FileInfo(local).Length, total); uploaded.Add(bytes); });
+        Assert.Equal(new FileInfo(local).Length, uploaded[^1]);
         foreach (var phase in new[] { "unpack", "install" })
-            (await ssh.Shell.RunAsync(ssh.Runner, AgentService.MoveCommand(phase, move), cancellationToken: Ct)).EnsureSuccess(phase);
+            await ReportingPhase(phase);
+        Assert.Contains(reports, p => p.Stage == "Packing files" && p.TotalBytes > 0 && p.BytesCompleted == p.TotalBytes);
+        Assert.Contains(reports, p => p.Stage == "Verifying restored files" && p.TotalBytes > 0 && p.BytesCompleted == p.TotalBytes);
+        Assert.Contains(reports, p => p.Stage == "Installing and verifying destination files" && p.TotalBytes > 0 && p.BytesCompleted == p.TotalBytes);
+        Assert.All(reports, p => { Assert.True(p.BytesCompleted >= 0); Assert.True(p.TotalBytes is null || p.BytesCompleted <= p.TotalBytes); });
         Assert.Equal("uncommitted project data", await File.ReadAllTextAsync(workspace + "/app.txt", Ct));
         Assert.True(Directory.Exists(workspace + "/empty")); Assert.Equal("app.txt", new FileInfo(workspace + "/project-link").LinkTarget);
         Assert.True(File.GetUnixFileMode(workspace + "/run.sh").HasFlag(UnixFileMode.UserExecute));

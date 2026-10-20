@@ -17,6 +17,74 @@ public sealed class AgentMoveTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    [Fact(Timeout = 120_000)]
+    public async Task SuccessfulCleanupRetainsLatestMoveOnTheReadyAgentAndHidesDetailsFromListedUsers()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var f = await Fixture.CreateAsync();
+        var move = f.Move with { Phase = "Cleanup", SourceName = "source", TargetName = "target", StartedAt = DateTime.UtcNow };
+        (await f.Ssh.Shell.RunAsync(f.Source, AgentService.MoveCommand("pack", move), cancellationToken: Ct)).EnsureSuccess("Prepare source cleanup");
+        await using var db = await f.Factory.CreateDbContextAsync(Ct);
+        await db.Agents.Where(a => a.Id == f.Agent.Id).ExecuteUpdateAsync(s => s.SetProperty(a => a.RunnerId, f.Target.Id)
+            .SetProperty(a => a.MoveJson, JsonSerializer.Serialize(move)), Ct);
+        await f.Agents.ExecuteMoveAsync(move, f.Ssh.Root + "/transport", Ct);
+        var completed = await db.Agents.AsNoTracking().Include(a => a.Runner).SingleAsync(Ct);
+        Assert.Null(completed.MoveJson); Assert.NotNull(completed.LastMoveJson);
+        Assert.Equal(f.Target.Id, completed.RunnerId); Assert.False(Directory.Exists(f.Agent.WorkingDirectory));
+        var dto = DeveAgentManager.Api.DtoMapper.Agent(completed, TestUsers.Admin);
+        Assert.Equal("Completed", dto.MoveDetails!.Outcome); Assert.NotNull(dto.MoveDetails.CompletedAt); Assert.Null(dto.MoveDetails.Progress);
+        var observer = TestUsers.Plain(Guid.NewGuid());
+        completed.Runner!.Members.Add(new() { RunnerId = completed.RunnerId, UserId = observer.Id, Access = RunnerAccess.Manage });
+        var listed = DeveAgentManager.Api.DtoMapper.Agent(completed, observer);
+        Assert.Equal(AgentAccess.Listed, listed.Access); Assert.Null(listed.MoveDetails);
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task MoveProgressIsCoalescedPreservesCheckpointsAndCannotOverwriteFinishedRollback()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var f = await Fixture.CreateAsync();
+        await using var db = await f.Factory.CreateDbContextAsync(Ct);
+        var move = f.Move with { Phase = "Packing", SourceStopped = true, StartedAt = DateTime.UtcNow, SourceName = "source", TargetName = "target" };
+        await db.Agents.Where(a => a.Id == f.Agent.Id).ExecuteUpdateAsync(s => s
+            .SetProperty(a => a.MoveJson, JsonSerializer.Serialize(move)).SetProperty(a => a.State, AgentState.Moving), Ct);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var changes = 0;
+        f.Services.GetRequiredService<DeveAgentManager.Core.Events.ManagerEvents>().Changed += e => { if (e.AgentId == f.Agent.Id) Interlocked.Increment(ref changes); };
+        var reporting = f.Agents.ReportMoveProgressAsync(move, async report =>
+        {
+            for (var i = 0; i <= 10_000; i++) report(new AgentMoveProgressDto("Packing files", "/work/project/image.png", i, 10_000));
+            await finish.Task.WaitAsync(Ct);
+            return true;
+        }, Ct);
+        try
+        {
+            Agent observed = null!;
+            for (var attempt = 0; attempt < 150; attempt++)
+            {
+                observed = await db.Agents.AsNoTracking().SingleAsync(Ct);
+                if (AgentService.MoveDetails(observed)?.Progress?.BytesCompleted == 10_000) break;
+                await Task.Delay(20, Ct);
+            }
+            Assert.Equal(10_000, AgentService.MoveDetails(observed)!.Progress!.BytesCompleted);
+            var checkpoint = JsonSerializer.Deserialize<AgentMoveState>(observed.MoveJson!)!;
+            Assert.Equal("Packing", checkpoint.Phase); Assert.True(checkpoint.SourceStopped);
+            Assert.Equal("/work/project/image.png", checkpoint.Progress!.CurrentFile);
+            Assert.InRange(changes, 2, 4); // Two runner notifications per coalesced update, never per file/chunk.
+        }
+        finally { finish.TrySetResult(); await reporting; }
+        // Rollback clears active intent but retains a result, including after a fresh entity read.
+        await f.Agents.ExecuteMoveAsync(move, f.Ssh.Root + "/transport", Ct);
+        var restored = await db.Agents.AsNoTracking().SingleAsync(Ct);
+        Assert.Null(restored.MoveJson);
+        var result = AgentService.MoveDetails(restored)!;
+        Assert.Equal("Failed; source retained", result.Outcome);
+        Assert.Equal("source", result.SourceRunner); Assert.Equal("target", result.TargetRunner);
+        Assert.NotNull(result.CompletedAt); Assert.Null(result.Progress);
+        await Task.Delay(1100, Ct);
+        Assert.Null((await db.Agents.AsNoTracking().SingleAsync(Ct)).MoveJson);
+    }
+
     [Theory(Timeout = 120_000)]
     [InlineData(false)]
     [InlineData(true)]

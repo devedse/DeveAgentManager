@@ -17,15 +17,51 @@ import tarfile
 import time
 
 
-def digest(path):
+class Progress:
+    def __init__(self, enabled):
+        self.enabled = enabled
+        self.last = 0
+        self.value = {}
+
+    def start(self, stage, total=None):
+        self.value = dict(Stage=stage, CurrentFile=None, BytesCompleted=0, TotalBytes=total)
+        self.send(True)
+
+    def file(self, path):
+        self.value['CurrentFile'] = str(path)
+        self.send()
+
+    def add(self, count):
+        self.value['BytesCompleted'] += count
+        self.send()
+
+    def send(self, force=False):
+        if self.enabled and (force or time.monotonic() - self.last >= 0.25):
+            print('DAM_MOVE_PROGRESS ' + json.dumps(self.value), flush=True)
+            self.last = time.monotonic()
+
+
+class ProgressReader:
+    def __init__(self, source, progress):
+        self.source, self.progress = source, progress
+
+    def read(self, size=-1):
+        block = self.source.read(size)
+        self.progress.add(len(block))
+        return block
+
+
+def digest(path, progress=None):
     h = hashlib.sha256()
     with path.open('rb') as source:
         for block in iter(lambda: source.read(1024 * 1024), b''):
             h.update(block)
+            if progress: progress.add(len(block))
     return h.hexdigest()
 
 
-def record(path, relative):
+def record(path, relative, progress=None):
+    if progress: progress.file(path)
     s = path.lstat()
     item = dict(name=relative, mode=stat.S_IMODE(s.st_mode))
     if stat.S_ISLNK(s.st_mode):
@@ -33,7 +69,7 @@ def record(path, relative):
     elif stat.S_ISDIR(s.st_mode):
         item.update(kind='directory')
     elif stat.S_ISREG(s.st_mode):
-        item.update(kind='file', size=s.st_size, sha256=digest(path))
+        item.update(kind='file', size=s.st_size, sha256=digest(path, progress))
     else:
         raise ValueError('Stop processes using special files in the workspace before moving it: ' + str(path))
     return item
@@ -48,11 +84,15 @@ def entries(root):
                 yield p, p.relative_to(root).as_posix()
 
 
-def verify(root, items):
-    actual = {name: record(path, name) for path, name in entries(root)}
+def verify(root, items, progress=None):
+    actual = {name: record(path, name, progress) for path, name in entries(root)}
     expected = {item['name']: item for item in items}
     if actual != expected:
         raise ValueError('File verification failed; files were changed, omitted or damaged: ' + str(root))
+
+
+def manifest_size(manifest):
+    return sum(item.get('size', 0) for root in manifest for item in root['items'])
 
 
 def write_json(path, data):
@@ -243,6 +283,7 @@ def stop_background(c):
 
 
 def main(phase, c):
+    progress = Progress(c.get('ReportProgress', False))
     os.umask(0o077)
     home = Path(c.get('Home') or Path.home())
     workspace = Path(c['Workspace'])
@@ -292,37 +333,60 @@ def main(phase, c):
         shutil.rmtree(operation)
         return
     if phase == 'pack':
+        progress.start('Finding session files and attachments')
         roots = roots_for(c, home, workspace)
+        # Metadata only: no extra reads of history contents to calculate progress.
+        total = sum(path.lstat().st_size for root, _ in roots for path, _ in entries(root)
+                    if stat.S_ISREG(path.lstat().st_mode))
+        progress.start('Checking source files', total)
         manifest = []
-        with tarfile.open(archive.with_suffix('.tmp'), 'w') as bundle:
-            for index, (root, remove) in enumerate(roots):
-                safe_parents(root)
-                items = []
-                for path, relative in entries(root):
-                    item = record(path, relative)
-                    items.append(item)
+        for root, remove in roots:
+            safe_parents(root)
+            manifest.append(dict(path=str(root), remove=remove,
+                                 items=[record(path, relative, progress) for path, relative in entries(root)]))
+        progress.start('Packing files', manifest_size(manifest))
+        # A small streaming index maps archive offsets to original paths during SFTP transfer.
+        # It is for display only; the archive checksum and per-file manifest remain authoritative.
+        with (operation / 'transfer-index.jsonl').open('w') as transfer_index, tarfile.open(archive.with_suffix('.tmp'), 'w') as bundle:
+            for index, root in enumerate(manifest):
+                for item in root['items']:
+                    relative = item['name']
+                    path = Path(root['path']) / relative if relative else Path(root['path'])
+                    progress.file(path)
                     info = bundle.gettarinfo(str(path), f'{index}/{relative}'.rstrip('/'))
                     if info.islnk():
                         info.type = tarfile.REGTYPE
                         info.linkname = ''
                         info.size = path.stat().st_size
                     with path.open('rb') if info.isfile() else io.BytesIO() as source:
-                        bundle.addfile(info, source if info.isfile() else None)
-                verify(root, items)
-                manifest.append(dict(path=str(root), remove=remove, items=items))
+                        bundle.addfile(info, ProgressReader(source, progress) if info.isfile() else None)
+                    transfer_index.write(json.dumps([bundle.offset, str(path)]) + '\n')
+            progress.send(True)
+            progress.start('Verifying packed source files', manifest_size(manifest))
+            for root in manifest:
+                verify(Path(root['path']), root['items'], progress)
             data = json.dumps(manifest).encode()
             info = tarfile.TarInfo('manifest.json'); info.size = len(data); info.mode = 0o600
             bundle.addfile(info, io.BytesIO(data))
+            transfer_index.write(json.dumps([bundle.offset, 'Move file manifest']) + '\n')
+        (operation / 'transfer-index.jsonl').chmod(0o600)
         os.replace(archive.with_suffix('.tmp'), archive)
         archive.chmod(0o600)
         write_json(manifest_path, manifest)
-        print(digest(archive))
+        progress.start('Checking packed archive', archive.stat().st_size)
+        progress.file('bundle.tar')
+        checksum = digest(archive, progress)
+        progress.send(True)
+        print(checksum)
     elif phase == 'unpack':
-        if digest(archive) != c['ArchiveSha256']:
+        progress.start('Checking received archive', archive.stat().st_size)
+        progress.file('bundle.tar')
+        if digest(archive, progress) != c['ArchiveSha256']:
             raise ValueError('Transfer checksum mismatch. The source has been retained.')
         with tarfile.open(archive) as bundle:
             manifest = json.load(bundle.extractfile('manifest.json'))
             write_json(manifest_path, manifest)
+            progress.start('Restoring files on destination', manifest_size(manifest))
             for index, root in enumerate(manifest):
                 destination = Path(root['path'])
                 safe_parents(destination)
@@ -331,7 +395,7 @@ def main(phase, c):
                 if destination.exists() or destination.is_symlink():
                     if root['remove']:
                         raise ValueError('Destination already exists; it will not be overwritten: ' + str(destination))
-                    verify(destination, root['items'])
+                    verify(destination, root['items'], progress)
                     continue
                 stage = destination.with_name(destination.name + '.dam-moving-' + c['Id'])
                 if stage.exists() or stage.is_symlink():
@@ -342,6 +406,7 @@ def main(phase, c):
                     if relative.is_absolute() or '..' in relative.parts:
                         raise ValueError('Invalid archive path.')
                     path = stage / relative if item['name'] else stage
+                    progress.file(destination / relative if item['name'] else destination)
                     if any(p.is_symlink() for p in path.parents if p != destination.parent and p.is_relative_to(destination.parent)):
                         raise ValueError('Archive cannot write through a symlink.')
                     if item['kind'] == 'directory':
@@ -354,15 +419,22 @@ def main(phase, c):
                             raise ValueError('Regular file expected in archive.')
                         member = bundle.extractfile(archive_name)
                         with path.open('xb') as output:
-                            shutil.copyfileobj(member, output, 1024 * 1024)
+                            shutil.copyfileobj(ProgressReader(member, progress), output, 1024 * 1024)
                         path.chmod(item['mode'])
                 for item in reversed(root['items']):
                     if item['kind'] == 'directory':
                         (stage / item['name'] if item['name'] else stage).chmod(item['mode'])
-                verify(stage, root['items'])
+            progress.send(True)
+            progress.start('Verifying restored files', manifest_size(manifest))
+            for root in manifest:
+                destination = Path(root['path'])
+                stage = destination.with_name(destination.name + '.dam-moving-' + c['Id'])
+                verify(stage if stage.exists() or stage.is_symlink() else destination, root['items'], progress)
+            progress.send(True)
         print('verified')
     elif phase == 'install':
         manifest = json.loads(manifest_path.read_text())
+        progress.start('Installing and verifying destination files', manifest_size(manifest))
         ledger = []
         for root in manifest:
             destination = Path(root['path'])
@@ -371,16 +443,20 @@ def main(phase, c):
             if not stage.exists() and not stage.is_symlink():
                 if root['remove']:
                     raise ValueError('Missing move staging directory.')
-                verify(destination, root['items']); continue
+                verify(destination, root['items'], progress); continue
             ledger.append(dict(path=str(destination), stage=str(stage)))
             write_json(ledger_path, ledger)
             move_no_replace(stage, destination)
-            verify(destination, root['items'])
+            verify(destination, root['items'], progress)
+        progress.send(True)
         print('installed')
     elif phase == 'verify-source':
-        for root in json.loads(manifest_path.read_text()):
+        manifest = [root for root in json.loads(manifest_path.read_text()) if root['remove']]
+        progress.start('Checking source before removal', manifest_size(manifest))
+        for root in manifest:
             if root['remove']:
-                verify(Path(root['path']), root['items'])
+                verify(Path(root['path']), root['items'], progress)
+        progress.send(True)
         print('unchanged')
     elif phase in ('cleanup-target', 'cleanup-source'):
         if not manifest_path.exists():
@@ -388,6 +464,7 @@ def main(phase, c):
                 shutil.rmtree(operation)
             return
         manifest = json.loads(manifest_path.read_text())
+        progress.start('Removing source files' if phase == 'cleanup-source' else 'Cleaning destination after failed move')
         ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else []
         for root in reversed(manifest):
             path = Path(root['path'])
@@ -395,13 +472,14 @@ def main(phase, c):
             owned = any(item['path'] == str(path) and not Path(item['stage']).exists() and not Path(item['stage']).is_symlink() for item in ledger)
             remove = root['remove'] if phase == 'cleanup-source' else owned
             if remove and (path.exists() or path.is_symlink()):
-                verify(path, root['items'])
+                verify(path, root['items'], progress)
                 if path.is_dir() and not path.is_symlink(): shutil.rmtree(path)
                 else: path.unlink()
             if phase == 'cleanup-target' and (stage.exists() or stage.is_symlink()):
                 if stage.is_dir() and not stage.is_symlink(): shutil.rmtree(stage)
                 else: stage.unlink()
         shutil.rmtree(operation)
+        progress.send(True)
         print('cleaned')
     else:
         raise ValueError('Unknown move phase.')

@@ -1057,6 +1057,20 @@ a {
     gap: 4px;
 }
 
+.agent-move-progress { width: 100%; min-width: 0; text-align: left; margin-top: 10px; }
+.move-stage-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: .85rem; margin-bottom: 5px; }
+.move-stage-line > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.move-percent { flex-shrink: 0; color: var(--dam-muted); font-variant-numeric: tabular-nums; }
+.move-current-file { font-size: .78rem; margin-top: 6px; overflow-wrap: anywhere; }
+.move-progress-compact .move-current-file { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.move-byte-count, .move-timestamp { font-size: .78rem; color: var(--dam-muted); margin-top: 4px; }
+.latest-agent-move { padding: 14px; margin-top: 16px; border: 1px solid var(--dam-border); border-radius: 10px; min-width: 0; }
+.move-route, .move-result { overflow-wrap: anywhere; }
+.move-route { margin: 8px 0 4px; }
+.move-result { margin-top: 8px; }
+.terminal-stopped > .agent-move-progress { max-width: 600px; padding: 16px; }
+.terminal-move-progress { padding: 8px 16px; background: var(--dam-surface-2); }
+
 .agent-row-actions {
     display: flex;
     align-items: center;

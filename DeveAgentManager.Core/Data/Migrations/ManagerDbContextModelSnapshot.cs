@@ -147,6 +147,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<DateTime?>("LastAssistantMessageAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("LastMoveJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("LoginBlocked")
                         .HasColumnType("INTEGER");
 

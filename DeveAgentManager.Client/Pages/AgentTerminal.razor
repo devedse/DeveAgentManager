@@ -166,12 +166,15 @@
     else if (_agent.State == AgentState.Moving)
     {
         <div class="terminal-stopped" role="status" aria-busy="true">
-            <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Medium" />
-            <MudText Typo="Typo.subtitle1">@(_agent.StateMessage ?? "Moving agent…")</MudText>
+            <AgentMoveProgress Progress="@(_agent.MoveDetails?.Progress ?? new AgentMoveProgressDto(_agent.StateMessage ?? "Moving agent…"))" />
         </div>
     }
     else if (_agent.State is AgentState.Running or AgentState.Starting)
     {
+        @if (_agent.MovePending && _agent.MoveDetails?.Progress is { } progress)
+        {
+            <div class="terminal-move-progress"><AgentMoveProgress Progress="progress" /></div>
+        }
         @if (_agent.StateMessage is { } moveMessage)
         {
             <div class="terminal-readonly-banner" role="status"><MudIcon Icon="@Icons.Material.Rounded.Info" Size="Size.Small" /><span>@moveMessage</span></div>

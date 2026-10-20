@@ -16,7 +16,9 @@ internal sealed record AgentMoveState(string Id, Guid AgentId, Guid SourceRunner
     string Phase = "Queued", string? Home = null, bool Source = true, bool SourceStopped = false,
     bool TargetLaunchAttempted = false, bool FallbackLaunchAttempted = false, string? ArchiveSha256 = null,
     IReadOnlyList<MoveHistory>? Histories = null, IReadOnlyList<string>? OtherSourceFolders = null, IReadOnlyList<string>? OtherTargetFolders = null,
-    string? TmuxSession = null, IReadOnlyList<AgentProcessIdentity>? StopProcesses = null);
+    string? TmuxSession = null, IReadOnlyList<AgentProcessIdentity>? StopProcesses = null,
+    AgentMoveProgressDto? Progress = null, bool ReportProgress = false,
+    DateTime? StartedAt = null, string? SourceName = null, string? TargetName = null);
 internal sealed record MoveHistory(string Path, string Harness);
 
 // Queueing a move and beginning runner maintenance must be mutually exclusive.
@@ -126,7 +128,8 @@ public sealed partial class AgentService
                 agent.State is AgentState.Running or AgentState.Starting,
                 OtherSourceFolders: await db.Agents.Where(a => a.Id != agent.Id && a.RunnerId == agent.RunnerId).Select(a => a.WorkingDirectory).ToListAsync(ct),
                 OtherTargetFolders: await db.Agents.Where(a => a.RunnerId == target.Id).Select(a => a.WorkingDirectory).ToListAsync(ct),
-                TmuxSession: agent.TmuxSession, StopProcesses: stopProcesses);
+                TmuxSession: agent.TmuxSession, StopProcesses: stopProcesses,
+                StartedAt: DateTime.UtcNow, SourceName: agent.Runner.Name, TargetName: target.Name);
             if (stopProcesses is { Count: > 0 })
             {
                 if (stopProcesses.Count > 256 || stopProcesses.Any(p => p is null || p.Pid <= 1 || p.StartTicks <= 0 || !Guid.TryParse(p.BootId, out _)))
@@ -186,8 +189,68 @@ public sealed partial class AgentService
         events.AgentChanged(move.TargetRunner, move.AgentId);
     }
 
-    private async Task<CommandResult> MovePhaseAsync(Runner runner, string phase, AgentMoveState move, CancellationToken ct) =>
-        (await shell.RunAsync(runner, MoveCommand(phase, move), TimeSpan.FromMinutes(30), ct)).EnsureSuccess("Agent move " + phase);
+    public static AgentMoveDetailsDto? MoveDetails(Agent agent) => agent.MoveJson is { } json
+        ? Details(JsonSerializer.Deserialize<AgentMoveState>(json)!,
+            agent.StateMessage, pending: true)
+        : agent.LastMoveJson is { } last ? JsonSerializer.Deserialize<AgentMoveDetailsDto>(last) : null;
+
+    private static AgentMoveDetailsDto Details(AgentMoveState move, string? message, bool pending, bool failed = false) => new(
+        move.SourceName ?? move.SourceRunner.ToString(), move.TargetName ?? move.TargetRunner.ToString(), move.StartedAt,
+        pending ? null : DateTime.UtcNow,
+        pending ? move.Phase is "Failed" or "CleanupFailed" or "TargetCleanupFailed" ? "Needs attention" : "In progress"
+            : failed ? "Failed; source retained" : "Completed",
+        message, pending && move.Phase is not ("Failed" or "CleanupFailed" or "TargetCleanupFailed")
+            ? move.Progress ?? new AgentMoveProgressDto(message ?? "Preparing move") : null);
+
+    private async Task<CommandResult> MovePhaseAsync(Runner runner, string phase, AgentMoveState move, CancellationToken ct)
+    {
+        if (phase is not ("pack" or "unpack" or "install" or "verify-source" or "cleanup-source" or "cleanup-target"))
+            return (await shell.RunAsync(runner, MoveCommand(phase, move), TimeSpan.FromMinutes(30), ct)).EnsureSuccess("Agent move " + phase);
+        return await ReportMoveProgressAsync(move, async report =>
+        {
+            var output = new System.Text.StringBuilder();
+            var code = await shell.RunStreamingAsync(runner, MoveCommand(phase, move with { ReportProgress = true }), line =>
+            {
+                const string prefix = "DAM_MOVE_PROGRESS ";
+                if (line.StartsWith(prefix, StringComparison.Ordinal))
+                    report(JsonSerializer.Deserialize<AgentMoveProgressDto>(line[prefix.Length..])!);
+                else output.AppendLine(line);
+            }, TimeSpan.FromMinutes(30), ct);
+            return new CommandResult(code, output.ToString(), "").EnsureSuccess("Agent move " + phase);
+        }, ct);
+    }
+
+    // The command owns this pump through completion. Progress never races a later phase or a rollback,
+    // and frequent file/chunk reports become at most one database write and live update per second.
+    internal async Task<T> ReportMoveProgressAsync<T>(AgentMoveState move, Func<Action<AgentMoveProgressDto>, Task<T>> action, CancellationToken ct)
+    {
+        AgentMoveProgressDto? latest = null, saved = null;
+        using var finished = new CancellationTokenSource();
+        async Task SaveAsync()
+        {
+            var value = Volatile.Read(ref latest);
+            if (value is null || value == saved) return;
+            try { await SaveMoveAsync(move with { Progress = value }, value.Stage + "…", ct); saved = value; }
+            catch (Exception e) when (!ct.IsCancellationRequested) { logger.LogDebug(e, "Could not save move progress for {Agent}", move.AgentId); }
+        }
+        async Task PumpAsync()
+        {
+            try
+            {
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+                while (await timer.WaitForNextTickAsync(finished.Token)) await SaveAsync();
+            }
+            catch (OperationCanceledException) when (finished.IsCancellationRequested) { }
+        }
+        var pump = PumpAsync();
+        try { return await action(value => Volatile.Write(ref latest, value)); }
+        finally
+        {
+            finished.Cancel();
+            await pump;
+            if (!ct.IsCancellationRequested) await SaveAsync();
+        }
+    }
 
     private async Task<bool> MovePaneAliveAsync(Runner runner, Agent agent, CancellationToken ct)
     {
@@ -203,7 +266,7 @@ public sealed partial class AgentService
         var agent = await db.Agents.Include(a => a.Runner).SingleAsync(a => a.Id == move.AgentId, ct);
         var source = await db.Runners.SingleAsync(r => r.Id == move.SourceRunner, ct);
         var target = await db.Runners.SingleAsync(r => r.Id == move.TargetRunner, ct);
-        move = move with { TmuxSession = agent.TmuxSession };
+        move = move with { TmuxSession = agent.TmuxSession, SourceName = move.SourceName ?? source.Name, TargetName = move.TargetName ?? target.Name };
         if (move.Phase != "Queued")
         {
             if (move.Phase == "Cleanup") { await FinishMoveCleanupAsync(move, source, ct); return; }
@@ -254,16 +317,21 @@ public sealed partial class AgentService
             if (OperatingSystem.IsWindows()) Directory.CreateDirectory(localFolder);
             else Directory.CreateDirectory(localFolder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             var archive = Path.Combine(localFolder, move.Id + ".tar");
+            var index = Path.Combine(localFolder, move.Id + ".index");
             var remote = $"~/.deveagentmanager/moves/{move.Id}/bundle.tar";
             try
             {
                 var fileOptions = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.Asynchronous };
                 if (!OperatingSystem.IsWindows()) fileOptions.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-                await using (var output = new FileStream(archive, fileOptions)) await shell.DownloadToAsync(source, remote, output, ct);
+                await using (var output = new FileStream(index, fileOptions))
+                    await shell.DownloadToAsync(source, remote.Replace("bundle.tar", "transfer-index.jsonl", StringComparison.Ordinal), output, ct);
+                await TransferMoveArchiveAsync(move, index, "Downloading from " + source.Name,
+                    async report => { await using var output = new FileStream(archive, fileOptions); await shell.DownloadToAsync(source, remote, output, ct, report); }, ct);
                 (await shell.RunAsync(target, "umask 077\nmkdir -p " + ShellQuote.Path($"~/.deveagentmanager/moves/{move.Id}"), cancellationToken: ct)).EnsureSuccess("Preparing destination");
-                await using (var input = File.OpenRead(archive)) await shell.UploadFromAsync(target, remote, input, ct);
+                await TransferMoveArchiveAsync(move, index, "Uploading to " + target.Name,
+                    async report => { await using var input = File.OpenRead(archive); await shell.UploadFromAsync(target, remote, input, ct, report); }, ct);
             }
-            finally { File.Delete(archive); }
+            finally { File.Delete(archive); File.Delete(index); }
             await MovePhaseAsync(target, "unpack", move, ct);
             move = move with { Phase = "Installing" };
             await SaveMoveAsync(move, "Installing verified files on the destination…", ct);
@@ -310,6 +378,19 @@ public sealed partial class AgentService
         }
     }
 
+    private Task<bool> TransferMoveArchiveAsync(AgentMoveState move, string indexPath, string stage,
+        Func<Action<long, long>, Task> transfer, CancellationToken ct) => ReportMoveProgressAsync(move, async report =>
+    {
+        using var index = new MoveTransferIndex(indexPath);
+        long completed = 0;
+        await transfer((bytes, total) =>
+        {
+            completed = Math.Max(completed, bytes);
+            report(new AgentMoveProgressDto(stage, index.FileAt(completed), completed, total));
+        });
+        return true;
+    }, ct);
+
     private async Task FinishMoveCleanupAsync(AgentMoveState move, Runner source, CancellationToken ct)
     {
         var agent = (await GetAsync(move.AgentId, ct))!;
@@ -330,7 +411,13 @@ public sealed partial class AgentService
     private async Task ClearMoveAsync(AgentMoveState move, CancellationToken ct)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        await db.Agents.Where(a => a.Id == move.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.MoveJson, (string?)null).SetProperty(a => a.StateMessage, (string?)null), ct);
+        var failed = move.Phase == "TargetCleanup";
+        var previous = failed ? await db.Agents.Where(a => a.Id == move.AgentId).Select(a => a.LastMoveJson).SingleAsync(ct) : null;
+        var detail = previous is not null ? JsonSerializer.Deserialize<AgentMoveDetailsDto>(previous)!
+            : Details(move, failed ? "Destination cleanup finished; agent retained on source." : "Source files removed.", pending: false, failed: failed);
+        var last = JsonSerializer.Serialize(detail);
+        await db.Agents.Where(a => a.Id == move.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.MoveJson, (string?)null)
+            .SetProperty(a => a.LastMoveJson, last).SetProperty(a => a.StateMessage, (string?)null), ct);
         events.AgentChanged(move.TargetRunner, move.AgentId);
     }
 
@@ -370,6 +457,7 @@ public sealed partial class AgentService
                 }
                 agent.State = move.Resume ? AgentState.Running : move.PreviousState;
                 agent.StateMessage = "Move failed; source retained: " + error;
+                agent.LastMoveJson = JsonSerializer.Serialize(Details(move, error, pending: false, failed: true));
                 agent.MoveJson = cleanupPending ? JsonSerializer.Serialize(move with { Phase = "TargetCleanup" }) : null;
                 await db.SaveChangesAsync(ct);
             }
@@ -426,7 +514,7 @@ public sealed class AgentMoves(IDbContextFactory<ManagerDbContext> factory, Agen
 
     internal static void DeleteLocalArchive(string folder, string moveId)
     {
-        try { File.Delete(Path.Combine(folder, moveId + ".tar")); }
+        try { File.Delete(Path.Combine(folder, moveId + ".tar")); File.Delete(Path.Combine(folder, moveId + ".index")); }
         catch (DirectoryNotFoundException) { } // Preflight failures never create the transport folder.
     }
 }

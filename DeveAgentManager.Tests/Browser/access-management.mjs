@@ -174,6 +174,59 @@ try {
     await moveDialog.waitFor({ state: 'hidden' });
     const approved = mutations.filter(m => m.path.endsWith('/move')).at(-1);
     assert.deepEqual(approved.body.stopProcesses, [vite.identity, worker.identity], 'only reviewed identities are approved');
+
+    // A disposable SignalR connection lets the open dialog and list observe the same live progress events.
+    let notify, connected;
+    const connection = new Promise(resolve => { connected = resolve; });
+    await context.routeWebSocket('**/hubs/live?**', socket => {
+        socket.onMessage(data => {
+            for (const frame of data.toString().split('\x1e').filter(Boolean)) {
+                const message = JSON.parse(frame);
+                if (message.protocol) { socket.send('{}\x1e'); connected(); }
+                else if (message.type === 6) socket.send('{"type":6}\x1e');
+            }
+        });
+        notify = () => socket.send(JSON.stringify({ type: 1, target: 'changed', arguments: [{ kind: 'AgentChanged', runnerId: runner.id, agentId: agent.id }] }) + '\x1e');
+    });
+    agent.state = 'Moving'; agent.movePending = true;
+    agent.stateMessage = 'Uploading to destination-runner…';
+    agent.moveDetails = { sourceRunner: runner.name, targetRunner: target.name, startedAt: now,
+        outcome: 'In progress', progress: { stage: 'Uploading to destination-runner', currentFile: '/work/test-project/screenshots/a-very-long-screenshot-filename-for-phone-layout-checks.png', bytesCompleted: 4194304, totalBytes: 8388608 } };
+    await page.goto(base + '/agents');
+    await connection;
+    await page.getByRole('button', { name: 'Explain test-agent status: Moving', exact: true }).waitFor();
+    const inline = page.locator('.agent-row .agent-move-progress');
+    await inline.getByText('50%', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'inline move progress fits a 320px phone');
+    await page.getByRole('button', { name: 'Explain test-agent status: Moving', exact: true }).click();
+    const latest = page.getByRole('dialog').getByRole('region', { name: 'Latest move' });
+    await latest.getByText('test-runner → destination-runner', { exact: true }).waitFor();
+    await latest.getByText('50%', { exact: true }).waitFor();
+    agent.moveDetails.progress = { stage: 'Uploading to destination-runner', currentFile: '/work/test-project/shared-documents/design.pdf', bytesCompleted: 6291456, totalBytes: 8388608 };
+    notify();
+    await latest.getByText('75%', { exact: true }).waitFor();
+    await latest.getByText('/work/test-project/shared-documents/design.pdf', { exact: true }).waitFor();
+    for (const width of [320, 1280]) {
+        await page.setViewportSize({ width, height: 900 });
+        const layout = await latest.evaluate(node => ({ width: node.scrollWidth, available: node.clientWidth }));
+        assert.ok(layout.width <= layout.available + 1, 'move details wrap long paths');
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        await page.getByRole('dialog').screenshot({ path: `/tmp/dam-move-progress-${width}.png` });
+    }
+    agent.state = 'Running'; agent.movePending = false; agent.stateMessage = null;
+    agent.activity = { status: 'Ready', reason: 'Ready for a prompt.', currentTurnCompleted: false };
+    agent.moveDetails = { ...agent.moveDetails, outcome: 'Completed', completedAt: now, message: 'Source files removed.', progress: null };
+    notify();
+    await latest.getByText('Completed', { exact: true }).waitFor();
+    assert.equal(await latest.locator('[role="progressbar"]').count(), 0, 'completion does not leave a running progress indicator');
+    await page.getByRole('dialog').locator('.mud-dialog-actions').getByRole('button', { name: 'Close', exact: true }).click();
+    await page.getByRole('button', { name: 'Explain test-agent status: Ready', exact: true }).click();
+    await page.getByRole('dialog').getByRole('region', { name: 'Latest move' }).getByText('Completed', { exact: true }).waitFor();
+    await page.getByRole('dialog').locator('.mud-dialog-actions').getByRole('button', { name: 'Close', exact: true }).click();
+    agent.moveDetails = { ...agent.moveDetails, outcome: 'Failed; source retained', message: 'Test-only destination unavailable.' };
+    notify();
+    await page.getByRole('button', { name: 'Explain test-agent status: Ready', exact: true }).click();
+    await page.getByRole('dialog').getByRole('region', { name: 'Latest move' }).getByText('Failed; source retained', { exact: true }).waitFor();
     assert.deepEqual(errors, []);
-    console.log('Passed: aligned logins, access controls, password layouts and move process review with loading/retry, cancellation, changed blockers and explicit stop approval.');
+    console.log('Passed: aligned logins, access controls, password layouts, move process review and live move progress with retained success/failure results.');
 } finally { await browser.close(); }

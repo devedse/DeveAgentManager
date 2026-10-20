@@ -182,7 +182,14 @@ public sealed record AgentDto(
     Guid? RunningAccountId = null,
     bool SharedWithMe = false,
     string? RunningAccountName = null,
-    bool MovePending = false);
+    bool MovePending = false,
+    AgentMoveDetailsDto? MoveDetails = null);
+
+/// <summary>Measured progress within the current move stage; totals are unknown during preparation.</summary>
+public sealed record AgentMoveProgressDto(string Stage, string? CurrentFile = null, long BytesCompleted = 0, long? TotalBytes = null);
+
+public sealed record AgentMoveDetailsDto(string SourceRunner, string TargetRunner, DateTime? StartedAt,
+    DateTime? CompletedAt, string Outcome, string? Message, AgentMoveProgressDto? Progress);
 
 /// <summary>An image in an agent's folder, for the icon picker. <paramref name="Path"/> is relative to the folder.</summary>
 /// <param name="Automatic">What the Manager would pick by itself.</param>

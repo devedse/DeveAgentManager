@@ -187,23 +187,48 @@ public sealed class RunnerShell(
         await DownloadBytesAsync(runner, remotePath, long.MaxValue, cancellationToken) is { } bytes ? Encoding.UTF8.GetString(bytes) : null;
 
     /// <summary>Streams an artifact to a prepared private request folder, without buffering it in managed memory.</summary>
-    internal async Task UploadFromAsync(Runner runner, string remotePath, Stream source, CancellationToken ct)
+    internal async Task UploadFromAsync(Runner runner, string remotePath, Stream source, CancellationToken ct, Action<long, long>? progress = null)
     {
+        var total = source.CanSeek ? source.Length - source.Position : 0;
+        progress?.Invoke(0, total);
         await WithSftpAsync(runner, async (sftp, token) =>
         {
-            await sftp.UploadFileAsync(source, ToSftpPath(sftp, remotePath), token);
+            if (progress is null) await sftp.UploadFileAsync(source, ToSftpPath(sftp, remotePath), token);
+            else await sftp.UploadFileAsync(source, ToSftpPath(sftp, remotePath),
+                new TransferProgress<UploadFileProgressReport>(value => progress(checked((long)value.TotalBytesUploaded), total)), token);
             return true;
         }, ct);
         (await RunAsync(runner, $"chmod 600 {ShellQuote.Path(remotePath)}", cancellationToken: ct)).EnsureSuccess("Protecting artifact download");
     }
 
-    internal Task DownloadToAsync(Runner runner, string remotePath, Stream destination, CancellationToken ct) =>
+    internal Task DownloadToAsync(Runner runner, string remotePath, Stream destination, CancellationToken ct, Action<long, long>? progress = null) =>
         WithSftpAsync(runner, async (sftp, token) =>
         {
             using var input = sftp.OpenRead(ToSftpPath(sftp, remotePath));
-            await input.CopyToAsync(destination, 1024 * 1024, token);
+            if (progress is null) await input.CopyToAsync(destination, 1024 * 1024, token);
+            else
+            {
+                var total = input.Length;
+                long completed = 0;
+                progress(0, total);
+                var buffer = new byte[1024 * 1024];
+                int read;
+                while ((read = await input.ReadAsync(buffer, token)) > 0)
+                {
+                    await destination.WriteAsync(buffer.AsMemory(0, read), token);
+                    completed += read;
+                    progress(completed, total);
+                }
+            }
             return true;
         }, ct);
+
+    // Inline delivery keeps progress ordered and owned by the transfer, unlike Progress<T>'s queued callbacks.
+    private sealed class TransferProgress<T>(Action<T> report) : IProgress<T>
+    {
+        private readonly object _gate = new();
+        public void Report(T value) { lock (_gate) report(value); }
+    }
 
     /// <summary>A file's bytes, or null when it doesn't exist or is larger than <paramref name="maxBytes"/>.</summary>
     public async Task<byte[]?> DownloadBytesAsync(Runner runner, string remotePath, long maxBytes, CancellationToken cancellationToken = default)
