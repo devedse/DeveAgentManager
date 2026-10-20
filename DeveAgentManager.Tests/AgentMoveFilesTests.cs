@@ -27,6 +27,7 @@ public sealed class AgentMoveFilesTests
         var runtime = home + $"/.deveagentmanager/agent-runtime/{owner}/{agent:N}/grok/sessions/session";
         var upload = home + "/.deveagentmanager/uploads/pasted.png";
         var document = home + "/.deveagentmanager/uploads/upload-id/report.pdf";
+        var boundaryUpload = home + "/.deveagentmanager/uploads/split.png";
         var cached = home + "/.deveagentmanager/artifact-cache/fetched.png";
         Directory.CreateDirectory(workspace + "/empty"); Directory.CreateDirectory(runtime + "/compaction_checkpoints");
         Directory.CreateDirectory(Path.GetDirectoryName(document)!); Directory.CreateDirectory(Path.GetDirectoryName(cached)!);
@@ -35,9 +36,12 @@ public sealed class AgentMoveFilesTests
         File.SetUnixFileMode(workspace + "/run.sh", UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         File.CreateSymbolicLink(workspace + "/project-link", "app.txt");
         await File.WriteAllBytesAsync(upload, [137, 80, 78, 71, 13, 10, 26, 10, 42], Ct);
+        await File.WriteAllTextAsync(boundaryUpload, "boundary attachment", Ct);
+        await File.WriteAllTextAsync(workspace + "/boundary.jsonl", new string(' ', 1024 * 1024 - 10) + JsonSerializer.Serialize(boundaryUpload), Ct);
         await File.WriteAllBytesAsync(document, Encoding.UTF8.GetBytes("%PDF-test-only"), Ct);
         await File.WriteAllTextAsync(cached, "fetched artifact", Ct);
-        var native = JsonSerializer.Serialize(new { type = "user", image = upload, document, fetched = cached, nativeRecord = new string('x', 2_000_000) });
+        // Slash-heavy base64 image records must not make attachment discovery backtrack quadratically.
+        var native = JsonSerializer.Serialize(new { type = "user", image = upload, document, fetched = cached, nativeRecord = new string('/', 2_000_000) });
         await File.WriteAllTextAsync(runtime + "/acp.events.jsonl", native, Ct);
         await File.WriteAllTextAsync(runtime + "/summary.json", "{\"compacted\":true}", Ct);
         await File.WriteAllTextAsync(runtime + "/compaction_checkpoints/replay.json", "{\"replay\":\"exact\"}", Ct);
@@ -45,6 +49,8 @@ public sealed class AgentMoveFilesTests
         Directory.CreateDirectory(publication);
         await File.WriteAllTextAsync(publication + "/metadata.json", JsonSerializer.Serialize(new { agentId = agent, fileName = "shared.pdf" }), Ct);
         await File.WriteAllTextAsync(publication + "/file", "shared document", Ct);
+        var discoveryBytes = new[] { workspace + "/app.txt", workspace + "/boundary.jsonl", runtime + "/acp.events.jsonl", runtime + "/summary.json",
+            runtime + "/compaction_checkpoints/replay.json", publication + "/metadata.json" }.Sum(path => new FileInfo(path).Length);
         var move = new AgentMoveState(Guid.NewGuid().ToString("N"), agent, Guid.NewGuid(), Guid.NewGuid(), workspace, owner, agent.ToString("N"), AgentState.Stopped, false, Home: home,
             Histories: [new(runtime + "/acp.events.jsonl", "grok")]);
         var reports = new List<AgentMoveProgressDto>();
@@ -60,6 +66,7 @@ public sealed class AgentMoveFilesTests
             return result.ToString().Trim();
         }
         var checksum = await ReportingPhase("pack");
+        Assert.Contains(reports, p => p.Stage == "Finding session files and attachments" && p.BytesCompleted == discoveryBytes && p.CurrentFile is not null);
         move = move with { ArchiveSha256 = checksum };
         var remote = home + "/.deveagentmanager/moves/" + move.Id + "/bundle.tar";
         var local = ssh.Root + "/transport.tar";
@@ -109,6 +116,7 @@ public sealed class AgentMoveFilesTests
         Assert.Equal("%PDF-test-only", await File.ReadAllTextAsync(document, Ct));
         Assert.Equal("fetched artifact", await File.ReadAllTextAsync(cached, Ct));
         Assert.Equal("shared document", await File.ReadAllTextAsync(publication + "/file", Ct));
+        Assert.Equal("boundary attachment", await File.ReadAllTextAsync(boundaryUpload, Ct));
         Assert.Equal(9, new FileInfo(upload).Length);
         if (rollback)
         {

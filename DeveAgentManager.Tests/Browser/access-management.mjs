@@ -202,6 +202,10 @@ try {
     const latest = page.getByRole('dialog').getByRole('region', { name: 'Latest move' });
     await latest.getByText('test-runner → destination-runner', { exact: true }).waitFor();
     await latest.getByText('50%', { exact: true }).waitFor();
+    agent.moveDetails.progress = { stage: 'Finding session files and attachments', currentFile: '/work/test-project/native-session.jsonl', bytesCompleted: 16777216, totalBytes: null };
+    notify();
+    await latest.getByText('Processed 16 MiB', { exact: true }).waitFor();
+    await latest.getByText('/work/test-project/native-session.jsonl', { exact: true }).waitFor();
     agent.moveDetails.progress = { stage: 'Uploading to destination-runner', currentFile: '/work/test-project/shared-documents/design.pdf', bytesCompleted: 6291456, totalBytes: 8388608 };
     notify();
     await latest.getByText('75%', { exact: true }).waitFor();

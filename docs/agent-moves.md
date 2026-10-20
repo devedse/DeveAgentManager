@@ -46,6 +46,10 @@ During SFTP transfer, a streaming metadata index maps archive byte positions to
 the original filenames. File contents are not reread to calculate transfer
 progress. Updates are coalesced to once a second, plus stage boundaries, and
 file details are visible only to people who can read the agent.
+Attachment discovery also shows its current file and processed bytes. It scans
+overlapping history/runtime paths once and searches for literal home-relative
+upload/cache prefixes, so slash-heavy inline images cannot cause repeated path
+matching across the same chunk.
 
 ## Transfer and failure handling
 
@@ -94,6 +98,8 @@ changed blocker review and explicit stop approval.
 Progress checks cover archive entry boundaries, transfer byte counts, bounded
 update frequency, checkpoint preservation, live dialog updates, narrow layouts,
 retained success/failure results and privacy for users with only Listed access.
+The file fixtures include large slash-heavy native records and attachment paths
+split across read boundaries; discovery byte counts detect duplicate history scans.
 
 These tests use disposable fixtures. They do not move or restart production
 agents or validate a live deployment.

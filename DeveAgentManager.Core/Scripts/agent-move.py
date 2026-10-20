@@ -102,7 +102,7 @@ def write_json(path, data):
     os.replace(temporary, path)
 
 
-def roots_for(c, home, workspace):
+def roots_for(c, home, workspace, progress):
     roots = [(workspace, True)]
     runtime = home / '.deveagentmanager' / 'agent-runtime' / c['Owner'] / c['Agent']
     if runtime.exists():
@@ -125,11 +125,19 @@ def roots_for(c, home, workspace):
                     roots.append((metadata.parent, False))
     # Preserve pasted uploads and fetched artifacts referred to by native records.
     # Scan bounded chunks: a single JSON record can contain a very large image.
-    pattern = re.compile(rb'(?:~|/[^\s"<>\x00]*?)/\.deveagentmanager/(?:uploads|artifact-cache)/[A-Za-z0-9_./-]+')
-    for root, _ in list(roots):
+    # Only references in this home can be included. An arbitrary-length path prefix
+    # backtracks from every slash in base64 image records and can stall on a single chunk.
+    prefix = rb'(?:' + re.escape(os.fsencode(home)) + rb'|~)'
+    pattern = re.compile(prefix + rb'/\.deveagentmanager/(?:uploads|artifact-cache)/[A-Za-z0-9_./-]+')
+    scanned_roots, attachments = [], set()
+    for root, _ in sorted(set(roots), key=lambda item: len(str(item[0]))):
+        if any(root == previous or root.is_relative_to(previous) for previous in scanned_roots):
+            continue
+        scanned_roots.append(root)
         for path, _ in entries(root):
             if not path.is_file() or path.is_symlink() or path.suffix not in ('.json', '.jsonl', '.txt', '.md', '.log'):
                 continue
+            progress.file(path)
             with path.open('rb') as source:
                 carry = b''
                 for block in iter(lambda: source.read(1024 * 1024), b''):
@@ -137,9 +145,12 @@ def roots_for(c, home, workspace):
                     for match in pattern.finditer(data):
                         value = match.group().decode('utf-8').replace('~/', str(home) + '/', 1)
                         p = Path(value)
-                        if p.is_relative_to(home / '.deveagentmanager') and p.is_file():
+                        if p not in attachments and p.is_relative_to(home / '.deveagentmanager') and p.is_file():
+                            attachments.add(p)
                             roots.append((p, False))
                     carry = data[-8192:]
+                    progress.add(len(block))
+    progress.send(True)
     result = []
     for path, remove in sorted(set(roots), key=lambda x: len(str(x[0]))):
         if any(path == previous[0] or path.is_relative_to(previous[0]) for previous in result):
@@ -334,7 +345,7 @@ def main(phase, c):
         return
     if phase == 'pack':
         progress.start('Finding session files and attachments')
-        roots = roots_for(c, home, workspace)
+        roots = roots_for(c, home, workspace, progress)
         # Metadata only: no extra reads of history contents to calculate progress.
         total = sum(path.lstat().st_size for root, _ in roots for path, _ in entries(root)
                     if stat.S_ISREG(path.lstat().st_mode))
