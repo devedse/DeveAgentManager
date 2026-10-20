@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent worktree sessions — proposed interface</title>
+<style>
+:root {
+  --dam-bg:#0d1017; --dam-surface:#141923; --dam-surface-2:#181e2a;
+  --dam-border:#2b3445; --dam-text:#e6ebf5; --dam-muted:#8e98ad;
+  --dam-primary:#8b7dff; --dam-primary-soft:rgba(139,125,255,.14);
+  --dam-success:#34d399; --dam-info:#60a5fa; --dam-warning:#fbbf24;
+  --dam-console:#0a0d13; --dam-overlay:rgba(5,8,14,.76);
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--dam-bg); color:var(--dam-text); font:15px/1.5 Arial,sans-serif; }
+button,input { font:inherit; }
+button { border:1px solid var(--dam-border); background:transparent; color:var(--dam-text); border-radius:9px; padding:10px 16px; white-space:nowrap; }
+button.primary { background:var(--dam-primary); color:var(--dam-console); border-color:var(--dam-primary); font-weight:700; }
+button.small { padding:7px 13px; font-size:13px; }
+button.quiet { border-color:transparent; color:var(--dam-muted); }
+h1,h2,h3,p { margin:0; }
+h1 { font-size:31px; line-height:1.25; letter-spacing:-.6px; }
+h2 { font-size:20px; } h3 { font-size:16px; }
+.muted { color:var(--dam-muted); } .mono { font-family:Consolas,'DejaVu Sans Mono',monospace; }
+.proposal { height:35px; display:flex; align-items:center; justify-content:space-between; padding:0 24px; background:var(--dam-surface-2); border-bottom:1px solid var(--dam-border); color:var(--dam-muted); font-size:11px; letter-spacing:1.25px; }
+.proposal strong { color:var(--dam-primary); font-weight:700; }
+.header { height:72px; display:flex; align-items:center; gap:15px; padding:0 25px; border-bottom:1px solid var(--dam-border); }
+.brand { display:flex; align-items:center; gap:12px; font-size:20px; font-weight:700; letter-spacing:-.3px; }
+.brand b { color:var(--dam-primary); } .brand i { font-style:normal; color:var(--dam-success); }
+.brand-icon { border:1px solid var(--dam-primary); border-radius:9px; width:33px; height:33px; display:grid; place-items:center; color:var(--dam-success); font:700 18px Consolas,monospace; }
+.spacer { flex:1; } .icon { font-size:22px; color:var(--dam-muted); }
+.avatar { width:28px; height:28px; border-radius:50%; display:grid; place-items:center; background:var(--dam-surface-2); font-size:12px; }
+.shell { display:flex; height:calc(100vh - 107px); }
+.sidebar { width:244px; flex:0 0 244px; padding:24px 15px; border-right:1px solid var(--dam-border); }
+.nav-label { color:var(--dam-muted); font-size:10px; letter-spacing:1.5px; padding:0 14px; margin:14px 0 12px; }
+.nav-item { padding:11px 14px; border-radius:9px; display:flex; align-items:center; gap:12px; color:var(--dam-muted); margin:3px 0; }
+.nav-item.selected { background:var(--dam-primary-soft); color:var(--dam-primary); }
+.nav-item strong { color:var(--dam-text); font-size:13px; }
+.nav-child { margin-left:31px; border-left:1px solid var(--dam-border); padding:8px 0 8px 17px; display:flex; align-items:center; gap:9px; font-size:12px; color:var(--dam-muted); }
+.nav-child.current { color:var(--dam-text); }
+.dot { width:7px; height:7px; border-radius:50%; background:var(--dam-success); display:inline-block; flex:0 0 7px; }
+.dot.info { background:var(--dam-info); } .dot.warning { background:var(--dam-warning); }
+.content { flex:1; min-width:0; padding:31px 35px; }
+.breadcrumbs { color:var(--dam-muted); font-size:12px; margin-bottom:20px; }
+.title-row { display:flex; align-items:center; gap:13px; }
+.buttons { display:flex; align-items:center; gap:9px; }
+.subtitle { color:var(--dam-muted); margin-top:9px; font-size:13px; }
+.summary { display:flex; gap:8px; margin-top:20px; }
+.pill { border-radius:20px; display:inline-flex; align-items:center; gap:7px; background:var(--dam-primary-soft); color:var(--dam-primary); padding:4px 11px; font-size:12px; white-space:nowrap; }
+.pill.success { color:var(--dam-success); background:rgba(52,211,153,.1); }
+.pill.info { color:var(--dam-info); background:rgba(96,165,250,.1); }
+.pill.warning { color:var(--dam-warning); background:rgba(251,191,36,.1); }
+.panel { background:var(--dam-surface); border:1px solid var(--dam-border); border-radius:14px; }
+.panels { display:grid; grid-template-columns:minmax(0,1fr) 264px; gap:21px; margin-top:28px; }
+.tabs { display:flex; gap:26px; border-bottom:1px solid var(--dam-border); padding:0 23px; }
+.tab { padding:18px 0 15px; color:var(--dam-muted); font-size:14px; }
+.tab.active { border-bottom:3px solid var(--dam-primary); color:var(--dam-primary); }
+.count { background:var(--dam-surface-2); border-radius:12px; margin-left:5px; padding:2px 6px; font-size:11px; }
+.list-controls { display:flex; gap:12px; align-items:center; margin:23px; }
+.search { border:1px solid var(--dam-border); color:var(--dam-muted); border-radius:8px; padding:9px 12px; flex:1; font-size:13px; }
+.session-row { padding:23px; border-top:1px solid var(--dam-border); display:grid; grid-template-columns:40px minmax(0,1fr) auto; gap:13px; align-items:start; }
+.session-logo { width:38px; height:38px; border-radius:10px; background:var(--dam-surface-2); display:grid; place-items:center; font-size:19px; color:var(--dam-primary); }
+.session-name { font-weight:700; font-size:15px; display:flex; gap:8px; align-items:center; }
+.session-context { color:var(--dam-muted); font-size:12px; margin-top:5px; }
+.branch { color:var(--dam-primary); font-size:12px; margin-top:8px; }
+.session-right { text-align:right; display:flex; flex-direction:column; align-items:flex-end; gap:9px; }
+.last-reply { font-size:11px; color:var(--dam-muted); }
+.session-buttons { display:flex; gap:5px; margin-top:3px; }
+.tiny { font-size:10px; color:var(--dam-muted); padding:2px 6px; border:1px solid var(--dam-border); border-radius:5px; font-weight:400; }
+.aside-panel { padding:21px; margin-bottom:17px; }
+.aside-panel h3 { margin-bottom:18px; }
+.detail { display:flex; justify-content:space-between; gap:9px; font-size:12px; margin:13px 0; }
+.detail span:first-child { color:var(--dam-muted); }
+.track { height:5px; background:var(--dam-surface-2); border-radius:6px; overflow:hidden; margin:9px 0 20px; }
+.fill { height:100%; width:57%; background:var(--dam-success); border-radius:6px; }
+.file { padding:11px 0; border-top:1px solid var(--dam-border); font-size:12px; }
+.file span { display:block; font-size:11px; color:var(--dam-muted); margin-top:3px; }
+.help { width:17px; height:17px; border:1px solid var(--dam-muted); color:var(--dam-muted); border-radius:50%; display:inline-grid; place-items:center; font-size:10px; margin-left:5px; }
+.aside-action { width:100%; margin-top:14px; }
+.design-note { color:var(--dam-muted); font-size:12px; margin-top:20px; display:flex; gap:8px; align-items:center; }
+.design-note .dot { background:var(--dam-primary); }
+.terminal-head { height:77px; padding:0 23px; display:flex; gap:16px; align-items:center; border-bottom:1px solid var(--dam-border); }
+.terminal-head h2 { font-size:20px; }
+.terminal-context { color:var(--dam-muted); font-size:12px; margin-top:3px; }
+.session-tabs { display:flex; gap:6px; padding:12px 23px 0; border-bottom:1px solid var(--dam-border); background:var(--dam-surface); }
+.session-tab { padding:10px 14px 13px; display:flex; align-items:center; gap:10px; border:1px solid transparent; border-radius:9px 9px 0 0; color:var(--dam-muted); font-size:13px; }
+.session-tab.active { background:var(--dam-bg); border-color:var(--dam-border); border-bottom-color:var(--dam-bg); color:var(--dam-text); }
+.session-tab .pill { padding:2px 7px; font-size:10px; }
+.branch-toolbar { height:49px; display:flex; gap:16px; align-items:center; border-bottom:1px solid var(--dam-border); padding:0 25px; font-size:12px; }
+.branch-toolbar .mono { color:var(--dam-primary); }
+.terminal-body { padding:36px 35px; background:var(--dam-console); height:calc(100vh - 35px - 77px - 58px - 49px - 59px - 42px); font:15px/1.9 Consolas,'DejaVu Sans Mono',monospace; }
+.terminal-body p { margin-bottom:23px; }
+.terminal-body .muted { color:var(--dam-muted); }
+.terminal-body .indent { padding-left:23px; }
+.terminal-body .code { padding:17px 22px; background:var(--dam-surface); border-radius:9px; margin:18px 0 27px; font-size:13px; width:72%; color:var(--dam-muted); }
+.working-line { color:var(--dam-info); margin-top:37px; }
+.composer { margin-top:42px; border-top:1px solid var(--dam-border); border-bottom:1px solid var(--dam-border); padding:14px 0; color:var(--dam-muted); }
+.terminal-footer { height:59px; display:flex; align-items:center; gap:8px; border-top:1px solid var(--dam-border); padding:0 22px; }
+.key { border:1px solid var(--dam-border); border-radius:7px; padding:6px 10px; color:var(--dam-muted); font-size:12px; }
+.terminal-note { height:42px; padding:11px 23px; color:var(--dam-primary); font-size:12px; background:var(--dam-surface); }
+.overlay { position:fixed; inset:35px 0 0; background:var(--dam-overlay); display:flex; align-items:center; justify-content:center; }
+.dialog { width:710px; background:var(--dam-surface); border:1px solid var(--dam-border); border-radius:17px; padding:27px 30px; box-shadow:0 24px 80px var(--dam-overlay); }
+.dialog h2 { font-size:23px; }
+.dialog-subtitle { color:var(--dam-muted); font-size:13px; margin:7px 0 23px; }
+.field-label { font-size:12px; color:var(--dam-muted); margin:17px 0 7px; }
+.field { min-height:46px; border:1px solid var(--dam-border); border-radius:9px; padding:11px 13px; display:flex; justify-content:space-between; align-items:center; font-size:14px; }
+.field.focused { border-color:var(--dam-primary); }
+.two-columns { display:grid; grid-template-columns:1fr 1fr; gap:17px; }
+.segmented { display:flex; gap:7px; }
+.choice { flex:1; padding:11px 13px; border:1px solid var(--dam-border); border-radius:9px; font-size:13px; }
+.choice.selected { background:var(--dam-primary-soft); border-color:var(--dam-primary); color:var(--dam-primary); }
+.hint { color:var(--dam-muted); font-size:11px; margin-top:7px; }
+.check { margin-top:25px; display:flex; align-items:center; gap:10px; font-size:14px; }
+.checkbox { width:19px; height:19px; background:var(--dam-primary); color:var(--dam-console); border-radius:4px; display:grid; place-items:center; font-size:13px; }
+.dialog-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:26px; margin-top:23px; border-top:1px solid var(--dam-border); }
+.mobile .proposal { height:31px; font-size:8px; letter-spacing:.7px; padding:0 15px; }
+.mobile .terminal-head { padding:0 15px; gap:12px; height:77px; }
+.mobile .terminal-head h2 { font-size:17px; }
+.mobile .terminal-context { font-size:11px; }
+.mobile .terminal-body { height:calc(100vh - 108px); padding:27px 18px; font-size:12px; }
+.mobile .terminal-body .code { width:100%; font-size:10px; }
+.sheet-shade { position:fixed; inset:108px 0 0; background:var(--dam-overlay); }
+.sheet { position:fixed; bottom:0; left:0; right:0; background:var(--dam-surface); border:1px solid var(--dam-border); border-radius:22px 22px 0 0; padding:12px 19px 21px; }
+.grabber { background:var(--dam-border); width:40px; height:4px; border-radius:8px; margin:0 auto 17px; }
+.sheet-heading { display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+.sheet-heading h2 { font-size:21px; }
+.sheet .summary { margin:0 0 18px; gap:6px; }
+.sheet .pill { font-size:10px; padding:4px 8px; }
+.mobile-row { border:1px solid var(--dam-border); border-radius:12px; margin:10px 0; padding:14px; }
+.mobile-row.active { border-color:var(--dam-primary); background:var(--dam-primary-soft); }
+.mobile-row .title-row { gap:6px; }
+.mobile-row .session-name { font-size:14px; }
+.mobile-row .branch { font-size:10px; overflow-wrap:anywhere; }
+.mobile-row .session-context { font-size:11px; margin-top:7px; }
+.mobile-row .last-reply { margin-top:8px; font-size:10px; }
+.sheet-bottom { margin-top:19px; display:flex; gap:10px; }
+.sheet-bottom .primary { flex:1; }
+</style>
+<main id="screen"></main>
+<script>
+// Documentation-only mockups. Controls do not execute application operations.
+const pill=(label,tone='success')=>`<span class="pill ${tone}"><span class="dot ${tone==='success'?'':tone}"></span>${label}</span>`;
+const proposal=label=>`<div class="proposal"><strong>DESIGN PROPOSAL · NOT IMPLEMENTED</strong><span>${label}</span></div>`;
+const header=()=>`<header class="header"><span class="icon">☰</span><div class="brand"><span class="brand-icon">›_</span><span>Deve<b>Agent</b><i>Manager</i></span></div><span class="spacer"></span><span class="icon">♧</span><span class="icon">☼</span><span class="avatar">O</span><span>owner</span></header>`;
+const sidebar=()=>`<aside class="sidebar"><div class="nav-label">OVERVIEW</div><div class="nav-item">▦ &nbsp; Dashboard</div><div class="nav-item">◴ &nbsp; Agent activity</div><div class="nav-label">WORK</div><div class="nav-item selected">▣ &nbsp; Agents <span class="spacer"></span><span class="count">1</span></div><div class="nav-item"><strong>⌄ &nbsp; Example project</strong><span class="spacer"></span><span class="count">4</span></div><div class="nav-child current"><span class="dot"></span>Main</div><div class="nav-child"><span class="dot info"></span>PDF improvements</div><div class="nav-child"><span class="dot warning"></span>Login fix</div><div class="nav-child"><span class="dot"></span>Test coverage <span style="color:var(--dam-primary)">●</span></div><div class="nav-item">▤ &nbsp; Conversations</div><div class="nav-item">▥ &nbsp; Runners</div><div class="nav-label">MANAGE</div><div class="nav-item">⚙ &nbsp; My settings</div><div class="nav-item">♙ &nbsp; Harness logins</div><div class="nav-item">≡ &nbsp; Manager logs</div></aside>`;
+const rows=[
+ {name:'Main',tag:'Main workspace',logo:'✳',harness:'Claude Code',account:'Personal',branch:'master',state:'Ready',tone:'success',detail:'1 background command · Reply 12 minutes ago',changes:'No changes'},
+ {name:'PDF improvements',logo:'◎',harness:'Codex',account:'Work',branch:'session/pdf-improvements',state:'Working',tone:'info',detail:'Reply 3 minutes ago · Turn in progress',changes:'4 changed files'},
+ {name:'Login fix',logo:'✳',harness:'Claude Code',account:'Personal',branch:'session/login-fix',state:'Needs input',tone:'warning',detail:'Permission requested · Reply 1 minute ago',changes:'2 changed files'},
+ {name:'Test coverage',logo:'◎',harness:'Codex',account:'Work',branch:'session/test-coverage',state:'Finished',tone:'success',detail:'Unread reply · 2 minutes ago',changes:'3 changed files'}
+];
+const orderedRows=[rows[2],rows[3],rows[1],rows[0]];
+const row=r=>`<div class="session-row"><div class="session-logo">${r.logo}</div><div><div class="session-name">${r.name}${r.tag?`<span class="tiny">${r.tag}</span>`:''}</div><div class="session-context">${r.harness} · <span style="color:var(--dam-primary)">owner</span> · ${r.account}</div><div class="branch mono">⑂ ${r.branch}</div><div class="session-context">${r.changes}</div></div><div class="session-right">${pill(r.state,r.tone)}<span class="last-reply">${r.detail}</span><div class="session-buttons"><button class="small">Open</button><button class="quiet small">⋮</button></div></div></div>`;
+const overview=()=>`${header()}<div class="shell">${sidebar()}<section class="content"><div class="breadcrumbs">Agents &nbsp; / &nbsp; Example project</div><div class="title-row"><h1>Example project</h1><span class="help">?</span><span class="spacer"></span><div class="buttons"><button>Open Main</button><button class="primary">＋ New session</button></div></div><p class="subtitle">runner-01 · 4 sessions · example.com/project.git</p><div class="summary">${pill('1 working','info')}${pill('1 needs input','warning')}${pill('1 finished')}</div><div class="panels"><section class="panel"><div class="tabs"><div class="tab active">Sessions <span class="count">4</span></div><div class="tab">Shared files <span class="count">12</span></div><div class="tab">Activity</div></div><div class="list-controls"><div class="search">⌕ &nbsp; Search sessions or branches</div><button class="small">All statuses ⌄</button></div>${orderedRows.map(row).join('')}</section><aside><div class="panel aside-panel"><h3>Project <span class="help">?</span></h3><div class="detail"><span>Owner</span><span>owner</span></div><div class="detail"><span>Runner</span><span>runner-01</span></div><div class="detail"><span>Running sessions</span><span>4</span></div><div class="detail"><span>Workspaces</span><span>Main + 3 worktrees</span></div><button class="small aside-action">Manage access</button></div><div class="panel aside-panel"><h3>Runner resources</h3><div class="detail"><span>RAM</span><span>9.1 / 16 GB</span></div><div class="track"><div class="fill"></div></div><div class="detail"><span>CPU</span><span>22%</span></div><div class="detail"><span>Disk</span><span>48 / 120 GB</span></div></div><div class="panel aside-panel"><h3>Shared files <span class="count">12</span></h3><div class="file">design-review.pdf<span>PDF improvements · 8 minutes ago</span></div><div class="file">test-results.html<span>Test coverage · 2 minutes ago</span></div><button class="small aside-action">View all files</button></div></aside></div><div class="design-note"><span class="dot"></span>Proposed interaction: Open changes your view. Other sessions keep running.</div></section></div>`;
+const terminalText=()=>`<p class="muted">› Improve PDF navigation and zoom behavior on phones.</p><p>● I’m updating the viewer in this session’s worktree.</p><div class="code">Workspace &nbsp; /work/example-sessions/pdf-improvements<br>Branch &nbsp;&nbsp;&nbsp;&nbsp; session/pdf-improvements<br>Conversation &nbsp; PDF improvements</div><p class="indent muted">Read 3 files · edited 2 files</p><p>● The page controls now stay visible while the document scrolls.<br>&nbsp; I’m checking the narrow layout and keyboard navigation.</p><p class="working-line">◌ Working… (18s · esc to interrupt)</p><div class="composer">› Queue a message for this session</div>`;
+const terminal=()=>`<div class="terminal-head"><span class="icon">←</span><div><h2>Example project <span class="muted">/</span> PDF improvements</h2><div class="terminal-context">Codex · owner · Work · runner-01</div></div>${pill('Working','info')}<span class="spacer"></span><button class="small">Files <span class="count">12</span></button><button class="small">Continue with ⌄</button><span class="icon">☼</span><button class="quiet">⋮</button></div><div class="session-tabs">${rows.map((r,i)=>`<div class="session-tab ${i===1?'active':''}">${r.name} ${pill(r.state,r.tone)}</div>`).join('')}<span class="spacer"></span><button class="quiet small">＋ New session</button></div><div class="branch-toolbar"><span class="mono">⑂ session/pdf-improvements</span><span class="muted">4 changed files</span><span class="spacer"></span><button class="quiet small">Open in VS Code ↗</button><button class="quiet small">Session actions ⌄</button></div><div class="terminal-body">${terminalText()}</div><div class="terminal-footer">${['Esc','Tab','Ctrl+C','←','↑','↓','→','⇧ ←','/','Attach'].map(k=>`<span class="key">${k}</span>`).join('')}<span class="spacer"></span><span class="muted" style="font-size:12px">Input goes to PDF improvements</span></div><div class="terminal-note">Proposed interaction: each tab has its own terminal, branch, conversation, and status. Opening another tab leaves this session running.</div>`;
+const creation=()=>`${overview()}<div class="overlay"><div class="dialog"><div class="title-row"><h2>New session</h2><span class="help">?</span><span class="spacer"></span><span class="icon">×</span></div><p class="dialog-subtitle">Example project · runner-01</p><div class="field-label">Session name</div><div class="field focused">Keyboard navigation</div><div class="field-label">Workspace <span class="help">?</span></div><div class="segmented"><div class="choice selected">◉ &nbsp; New worktree</div><div class="choice" style="color:var(--dam-muted)">○ &nbsp; Main workspace · in use</div></div><div class="two-columns"><div><div class="field-label">Start from</div><div class="field">Main · master <span class="muted">⌄</span></div></div><div><div class="field-label">New branch</div><div class="field mono">session/keyboard-navigation</div></div></div><div class="hint">Starting commit: a1b2c3d · Uncommitted files stay in their original workspace.</div><div class="field-label">Conversation <span class="help">?</span></div><div class="segmented"><div class="choice selected">◉ &nbsp; Fresh conversation</div><div class="choice">○ &nbsp; Copy a saved conversation</div></div><div class="two-columns"><div><div class="field-label">Harness</div><div class="field">◎ &nbsp; Codex <span class="muted">⌄</span></div></div><div><div class="field-label">Login</div><div class="field"><span><span style="color:var(--dam-primary)">owner</span> · Work</span><span class="muted">⌄</span></div></div></div><div class="check"><span class="checkbox">✓</span>Start session when ready</div><div class="hint">Other sessions keep running.</div><div class="dialog-actions"><button class="quiet">Cancel</button><button class="primary">Create session</button></div></div></div>`;
+const mobile=()=>`<div class="terminal-head"><span class="icon">←</span><div><h2>Example project</h2><div class="terminal-context">PDF improvements · Codex · owner · Work</div></div><span class="spacer"></span><span class="dot info"></span><span class="icon">⋮</span></div><div class="terminal-body">${terminalText()}</div><div class="sheet-shade"></div><section class="sheet"><div class="grabber"></div><div class="sheet-heading"><h2>Sessions</h2><span class="count">4</span><span class="help">?</span><span class="spacer"></span><span class="icon">×</span></div><div class="summary">${pill('1 working','info')}${pill('1 needs input','warning')}${pill('1 finished')}</div>${orderedRows.map((r,i)=>`<div class="mobile-row ${r.name==='PDF improvements'?'active':''}"><div class="title-row"><span class="session-name">${r.name}</span><span class="spacer"></span>${pill(r.state,r.tone)}</div><div class="branch mono">⑂ ${r.branch}</div><div class="session-context">${r.harness} · <span style="color:var(--dam-primary)">owner</span> · ${r.account}${r.name==='PDF improvements'?' · Viewing':''}</div><div class="last-reply">${r.detail}</div></div>`).join('')}<div class="sheet-bottom"><button>Overview</button><button class="primary">＋ New session</button></div></section>`;
+const view=new URLSearchParams(location.search).get('view')||'overview';
+document.body.className=view==='mobile'?'mobile':'';
+document.querySelector('#screen').innerHTML=proposal({overview:'AGENT SESSION OVERVIEW',terminal:'INDEPENDENT SESSION TABS',creation:'NEW WORKTREE SESSION',mobile:'PHONE SESSION PICKER'}[view]||'OVERVIEW')+({overview,terminal,creation,mobile}[view]||overview)();
+</script>
+</html>
