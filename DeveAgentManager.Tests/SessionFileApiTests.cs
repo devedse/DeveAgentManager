@@ -24,6 +24,55 @@ public sealed class SessionFileApiTests(ApiSecurityTests.Manager manager) : ICla
     private const string Password = "file-password-1";
 
     [Fact]
+    public async Task PdfPreviewStreamsOriginalRangesWithReadAccessAndRevokesSubsequentReads()
+    {
+        using var isolated = new ApiSecurityTests.Manager();
+        var requests = new SessionFileApiTests(isolated);
+        var (owner, ownerId) = await requests.SignedInAsNewUserAsync();
+        var (reader, readerId) = await requests.SignedInAsNewUserAsync();
+        var session = Guid.NewGuid();
+        await using (var db = await isolated.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync())
+        {
+            db.Sessions.Add(new StoredSession { Id = session, OwnerId = ownerId });
+            await db.SaveChangesAsync();
+        }
+        var data = new byte[4 * 1024 * 1024];
+        "%PDF-1.7\n"u8.CopyTo(data);
+        var store = isolated.Services.GetRequiredService<SessionFileStore>();
+        using var received = await store.ReceiveAsync(data.Length, Convert.ToHexStringLower(SHA256.HashData(data)), (s, ct) => s.WriteAsync(data, ct).AsTask(), default);
+        var file = await store.CommitAsync(session, Guid.NewGuid(), received, "design.PDF", "", default);
+        var path = $"/api/sessions/{session}/files/{file.Id}/preview";
+        Assert.Equal(HttpStatusCode.NotFound, (await reader.GetAsync(path)).StatusCode);
+        var sharing = isolated.Services.GetRequiredService<Sharing>();
+        await sharing.ShareSessionAsync(TestUsers.Plain(ownerId), session, readerId);
+        var response = await reader.GetAsync(path);
+        response.EnsureSuccessStatusCode();
+        Assert.True((await response.Content.ReadAsByteArrayAsync()).Length < 4096);
+        var preview = await response.Content.ReadFromJsonAsync<SessionFilePreview>(ApiJson.Options);
+        Assert.NotNull(preview!.PdfUrl);
+        Assert.Null(preview.Text); Assert.Null(preview.SourceUrl); Assert.Null(preview.HtmlUrl); Assert.Null(preview.UnavailableReason);
+        var anonymous = isolated.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var range = await anonymous.SendAsync(new HttpRequestMessage(HttpMethod.Get, preview.PdfUrl) { Headers = { Range = new RangeHeaderValue(0, 31) } });
+        Assert.Equal(HttpStatusCode.PartialContent, range.StatusCode);
+        Assert.Equal("application/pdf", range.Content.Headers.ContentType!.MediaType);
+        Assert.Null(range.Content.Headers.ContentDisposition);
+        Assert.Equal(data[..32], await range.Content.ReadAsByteArrayAsync());
+        Assert.True(range.Headers.CacheControl!.NoStore);
+        Assert.Equal("nosniff", range.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("no-referrer", range.Headers.GetValues("Referrer-Policy").Single());
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync(preview.PdfUrl.Replace("design.PDF", "other.pdf"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reader.DeleteAsync($"/api/sessions/{session}/files/{file.Id}")).StatusCode);
+        var download = await reader.GetAsync($"/api/sessions/{session}/files/{file.Id}/download");
+        Assert.Equal("attachment", download.Content.Headers.ContentDisposition!.DispositionType);
+        Assert.Equal(data, await download.Content.ReadAsByteArrayAsync());
+        await sharing.UnshareSessionAsync(TestUsers.Plain(ownerId), session, readerId);
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync(preview.PdfUrl)).StatusCode);
+        var own = await owner.GetFromJsonAsync<SessionFilePreview>(path, ApiJson.Options);
+        Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"/api/sessions/{session}/files/{file.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync(own!.PdfUrl)).StatusCode);
+    }
+
+    [Fact]
     public async Task HtmlStreamsWithScopedAssetsAndRevocationAndLargeTextHasNoPreviewCap()
     {
         var (owner, ownerId) = await SignedInAsNewUserAsync();

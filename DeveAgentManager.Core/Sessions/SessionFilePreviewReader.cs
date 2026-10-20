@@ -8,11 +8,13 @@ public static class SessionFilePreviewReader
 {
     public const int InlineBytes = 512 * 1024;
     public static bool IsHtml(string name) => Path.GetExtension(name).ToLowerInvariant() is ".html" or ".htm";
+    public static bool IsPdf(string name) => Path.GetExtension(name).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
     public static string Charset(ReadOnlySpan<byte> data) => data.StartsWith(new byte[] { 0xff, 0xfe }) ? "utf-16"
         : data.StartsWith(new byte[] { 0xfe, 0xff }) ? "utf-16BE" : "utf-8";
 
     public static async Task<SessionFilePreview> ReadAsync(string path, string name, CancellationToken ct)
     {
+        if (IsPdf(name)) return new(null, false, null);
         var markdown = Path.GetExtension(name).ToLowerInvariant() is ".md" or ".markdown" or ".mdown" or ".mkd";
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
             4096, FileOptions.Asynchronous | FileOptions.SequentialScan);

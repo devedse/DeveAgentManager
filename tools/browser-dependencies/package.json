@@ -1,9 +1,10 @@
 {
   "name": "dam-browser-dependencies",
   "private": true,
-  "description": "Audited source inventory for the two vendored xterm addons; verify vendor files against npm during CI.",
+  "description": "Audited source inventory for vendored browser libraries; verify vendor files against npm during CI.",
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
-    "@xterm/addon-web-links": "0.12.0"
+    "@xterm/addon-web-links": "0.12.0",
+    "pdfjs-dist": "6.4.299"
   }
 }

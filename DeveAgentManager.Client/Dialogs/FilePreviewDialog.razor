@@ -5,14 +5,18 @@
     <TitleContent>
         <div class="help-heading file-preview-title">
             <MudText Typo="Typo.h6">@File.FileName</MudText>
-            <HelpTip Label="Viewing shared files"><p>View HTML websites, Markdown and text here, with no preview size cap. HTML supports embedded images, public web resources and relative assets shared by the same agent. Share each local asset too; private Runner paths are unavailable to the browser.</p><p>HTML runs in an isolated view with its own scripts and styling. Use Text to read the source, or open the page in a separate tab. Large text streams directly to the browser; large Markdown starts in Text mode and renders when requested.</p></HelpTip>
+            <HelpTip Label="Viewing shared files"><p>View PDFs, HTML websites, Markdown and text here, with no preview size cap. PDFs have page navigation, zoom, fit to width and selectable text. Password-protected PDFs can be downloaded to open in another reader.</p><p>HTML supports embedded images, public web resources and relative assets shared by the same agent. Share each local asset too; private Runner paths are unavailable to the browser.</p><p>HTML runs in an isolated view with its own scripts and styling. Use Text to read the source, or open the page in a separate tab. Large text streams directly to the browser; large Markdown starts in Text mode and renders when requested.</p></HelpTip>
         </div>
     </TitleContent>
     <DialogContent>
         <LoadingSection Loaded="_loaded" Error="@_error" Retry="LoadAsync" Label="Loading file preview">
             <Placeholder><SkeletonDetail /></Placeholder>
             <ChildContent>
-                @if (_preview is { UnavailableReason: null } && (_preview.Text is not null || _preview.SourceUrl is not null))
+                @if (_preview?.PdfUrl is { } pdf)
+                {
+                    <PdfPreview @key="pdf" Url="@pdf" Title="@File.FileName" Reload="LoadAsync" />
+                }
+                else if (_preview is { UnavailableReason: null } && (_preview.Text is not null || _preview.SourceUrl is not null))
                 {
                     @if (_preview.Markdown || _preview.HtmlUrl is not null)
                     {

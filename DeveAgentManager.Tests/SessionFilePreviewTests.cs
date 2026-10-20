@@ -8,6 +8,18 @@ namespace DeveAgentManager.Tests;
 public sealed class SessionFilePreviewTests
 {
     [Theory]
+    [InlineData("document.pdf")]
+    [InlineData("document.PDF")]
+    public async Task PdfIsDescribedForDirectStreamingInsteadOfDecodedAsText(string name)
+    {
+        var result = await PreviewAsync("%PDF-1.7\n\0\u00ff binary PDF data"u8.ToArray(), name);
+        Assert.True(SessionFilePreviewReader.IsPdf(name));
+        Assert.False(result.Markdown);
+        Assert.Null(result.Text);
+        Assert.Null(result.UnavailableReason);
+    }
+
+    [Theory]
     [InlineData("utf8")]
     [InlineData("utf8-bom")]
     [InlineData("utf16-le")]

@@ -1,0 +1,117 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="pdf-preview">
+    <div class="pdf-preview-toolbar" role="group" aria-label="PDF controls">
+        <div class="pdf-preview-control-group">
+            <MudIconButton Icon="@Icons.Material.Rounded.ChevronLeft" Size="Size.Small" aria-label="Previous page" Disabled="@(_busy || _page <= 1)" OnClick="() => GoAsync(_page - 1)" />
+            @if (_pages > 0)
+            {
+                <input class="pdf-page-number" type="number" inputmode="numeric" aria-label="Page" min="1" max="@_pages" value="@_page" @onchange="PageChangedAsync" disabled="@_busy" />
+                <span class="pdf-page-count">of @_pages</span>
+            }
+            else if (_error is null)
+            {
+                <Skeleton Width="100px" Height="24px" />
+            }
+            <MudIconButton Icon="@Icons.Material.Rounded.ChevronRight" Size="Size.Small" aria-label="Next page" Disabled="@(_busy || _pages == 0 || _page >= _pages)" OnClick="() => GoAsync(_page + 1)" />
+        </div>
+        <div class="pdf-preview-control-group">
+            <MudIconButton Icon="@Icons.Material.Rounded.ZoomOut" Size="Size.Small" aria-label="Zoom out" Disabled="@(_busy || _pages == 0 || _zoom <= 10)" OnClick="() => ZoomAsync(-25)" />
+            <span class="pdf-zoom-label">@(_zoom is { } zoom ? $"{zoom:0}%" : "Fit")</span>
+            <MudIconButton Icon="@Icons.Material.Rounded.ZoomIn" Size="Size.Small" aria-label="Zoom in" Disabled="@(_busy || _pages == 0 || _zoom >= 400)" OnClick="() => ZoomAsync(25)" />
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="@(_busy || _pages == 0)" OnClick="FitAsync">Fit width</MudButton>
+        </div>
+    </div>
+    @if (_loaded && _error is not null)
+    {
+        <MudAlert Severity="Severity.Warning"><span>@_error</span> <MudButton Size="Size.Small" OnClick="Reload">Retry</MudButton></MudAlert>
+    }
+    <div class="pdf-preview-busy">
+        @if (_busy && _loaded) { <MudProgressLinear Indeterminate="true" aria-label="Loading PDF page" /> }
+    </div>
+    <div class="pdf-preview-stage" aria-busy="@(_busy ? "true" : "false")">
+        <div class="pdf-preview-scroll" tabindex="0" role="region" aria-label="@($"PDF contents of {Title}")" style="@(_loaded ? null : "visibility:hidden")">
+            <div class="pdf-page" @ref="_host"></div>
+        </div>
+        <LoadingSection Loaded="_loaded" Error="@_error" Retry="Reload" Label="Loading PDF" Class="pdf-preview-loading">
+            <Placeholder><SkeletonDetail /></Placeholder>
+            <ChildContent />
+        </LoadingSection>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Url { get; set; } = "";
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public EventCallback Reload { get; set; }
+    private ElementReference _host;
+    private IJSObjectReference? _module;
+    private int _page = 1, _pages;
+    private double? _zoom;
+    private bool _loaded, _disposed, _busy = true;
+    private string? _error;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            var module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/pdf-preview.js");
+            if (_disposed) { await module.DisposeAsync(); return; }
+            _module = module;
+            _pages = await module.InvokeAsync<int>("open", _host, Url);
+            if (!_disposed) await RenderAsync();
+        }
+        catch (JSException ex)
+        {
+            if (_disposed) return;
+            _error = ex.Message.Contains("PDF_PASSWORD_REQUIRED", StringComparison.Ordinal)
+                ? "This PDF needs a password. Download it to open it in another reader."
+                : "Couldn't load this PDF. Try again or download the original file.";
+        }
+        finally
+        {
+            _busy = false;
+            if (!_disposed) StateHasChanged();
+        }
+    }
+
+    private async Task RenderAsync()
+    {
+        if (_module is null || _disposed || _pages == 0) return;
+        _busy = true; _error = null;
+        StateHasChanged();
+        try
+        {
+            await _module.InvokeVoidAsync("render", _host, _page, _zoom);
+            _loaded = true;
+        }
+        catch (JSException) { if (!_disposed) _error = "Couldn't load this PDF page. Try again or download the original file."; }
+        finally { _busy = false; if (!_disposed) StateHasChanged(); }
+    }
+
+    private Task PageChangedAsync(ChangeEventArgs e) => int.TryParse(e.Value?.ToString(), out var page) ? GoAsync(page) : Task.CompletedTask;
+    private Task GoAsync(int page)
+    {
+        if (_busy || _pages == 0) return Task.CompletedTask;
+        _page = Math.Clamp(page, 1, _pages);
+        return RenderAsync();
+    }
+    private async Task ZoomAsync(int change)
+    {
+        if (_busy || _module is null) return;
+        var current = await _module.InvokeAsync<double>("getZoom", _host);
+        _zoom = Math.Clamp(Math.Round(current / 25) * 25 + change, 10, 400);
+        await RenderAsync();
+    }
+    private Task FitAsync() { _zoom = null; return RenderAsync(); }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        if (_module is null) return;
+        try { await _module.InvokeVoidAsync("dispose", _host); await _module.DisposeAsync(); }
+        catch (Exception ex) when (ex is JSDisconnectedException or TaskCanceledException or JSException) { }
+    }
+}

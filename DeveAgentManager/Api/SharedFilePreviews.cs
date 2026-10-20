@@ -28,8 +28,9 @@ public sealed class SharedFilePreviews(IDataProtectionProvider protection, UserS
         var prefix = $"{context.Request.PathBase}/shared-preview/{token}";
         return preview with
         {
-            SourceUrl = $"{prefix}/text/{Uri.EscapeDataString(name)}",
-            HtmlUrl = SessionFilePreviewReader.IsHtml(name) ? $"{prefix}/view/{Uri.EscapeDataString(name)}" : null
+            SourceUrl = SessionFilePreviewReader.IsPdf(name) ? null : $"{prefix}/text/{Uri.EscapeDataString(name)}",
+            HtmlUrl = SessionFilePreviewReader.IsHtml(name) ? $"{prefix}/view/{Uri.EscapeDataString(name)}" : null,
+            PdfUrl = SessionFilePreviewReader.IsPdf(name) ? $"{prefix}/view/{Uri.EscapeDataString(name)}" : null
         };
     }
 
