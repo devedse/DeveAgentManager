@@ -25,6 +25,7 @@ try {
         resetAt: reset.toISOString(), continueAt: null, status: 'Detected', detail: null, nativeAutoContinue: false, manual: false, detectedResetAt: reset.toISOString() };
     let limit = detected;
     let automatic = { enabled: false, remaining: null, sent: 0, detail: null, available: true };
+    const schedules = [];
     await context.route('**/api/**', route => {
         const path = new URL(route.request().url()).pathname, method = route.request().method();
         if (path === '/api/me' || path.startsWith('/api/me/')) return route.continue();
@@ -33,10 +34,14 @@ try {
             // As the Manager does: switching on schedules the limit on screen at once.
             automatic = { ...automatic, enabled: request.enabled, remaining: request.remaining ?? null,
                 detail: request.enabled ? (limit.detectedResetAt ? 'Waiting until one minute after the detected reset.' : 'The reset time is uncertain. Switch to a one-time schedule to choose it manually.') : 'Automatic continuation is off.' };
-            if (request.enabled && limit.detectedResetAt) limit = { ...limit, status: 'Scheduled', continueAt: new Date(reset.getTime() + 60000).toISOString() };
+            if (request.enabled && limit.detectedResetAt) limit = { ...limit, status: 'Scheduled', continueAt: new Date(new Date(limit.detectedResetAt).getTime() + 60000).toISOString() };
             return route.fulfill({ status: 204 });
         }
         if (path === `/api/agents/${id}/limit/automatic`) return route.fulfill({ json: automatic });
+        if (path === `/api/agents/${id}/limit/continue` && method === 'POST') {
+            schedules.push(route.request().postDataJSON());
+            return route.fulfill({ status: 204 });
+        }
         if (path === `/api/agents/${id}/limit`) return route.fulfill({ json: limit });
         const body = path === '/api/info' ? info : path === `/api/agents/${id}` ? agent : path.endsWith('/session') ? null : [];
         return route.fulfill({ json: body });
@@ -116,8 +121,53 @@ try {
     automatic.detail = 'Waiting for a detected usage limit.';
     await checkStatus('Auto-continue on · unlimited', 'success');
 
+    // A dated weekly reset in the repeated clock hour has a precise, conservative UTC instant.
+    const weekly = { ...detected, message: "You've hit your weekly limit · resets Oct 25, 2am (Europe/Amsterdam) /upgrade to increase your usage limit.",
+        resetAt: '2026-10-25T01:00:00Z', detectedResetAt: '2026-10-25T01:00:00Z',
+        detail: 'Clocks repeat; using the later occurrence (01:00 UTC).' };
+    limit = { ...weekly };
+    automatic = { enabled: false, remaining: null, sent: 0, detail: null, available: true };
+    await openDialog();
+    await dialog.getByText(/Detected reset: 2026-10-25 02:00 \(Europe\/Amsterdam, UTC\+01:00\)/).waitFor();
+    assert.equal(await dialog.getByText(/No reset time was found/).count(), 0);
+    await dialog.getByText('Auto-continue enabled', { exact: true }).click();
+    await dialog.getByText(/Next continue:.*2026-10-25 02:01/).waitFor();
+    await page.screenshot({ path: '/tmp/dam-weekly-dst-automatic.png' });
+
+    const oneTime = async () => {
+        limit = { ...weekly };
+        automatic = { enabled: false, remaining: null, sent: 0, detail: null, available: true };
+        await openDialog();
+        await dialog.locator('.mud-select').first().click();
+        await page.getByRole('option', { name: 'One-time schedule', exact: true }).click();
+        await dialog.getByRole('button', { name: 'Use detected reset time (+1 min)', exact: true }).click();
+    };
+    await oneTime();
+    await dialog.getByText(/using the later occurrence/).waitFor();
+    await page.screenshot({ path: '/tmp/dam-weekly-dst-one-time.png' });
+    await dialog.getByRole('button', { name: 'Schedule continue', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(new Date(schedules.at(-1).resetAtUtc).toISOString(), weekly.detectedResetAt.replace('Z', '.000Z'), 'detected UTC offset survives local picker round-trip');
+
+    await oneTime();
+    const count = schedules.length;
+    await dialog.getByRole('textbox', { name: 'Reset time', exact: true }).fill('02:30');
+    await dialog.getByRole('textbox', { name: 'Reset time', exact: true }).press('Tab');
+    await dialog.getByRole('button', { name: 'Schedule continue', exact: true }).click();
+    await dialog.getByText(/This local time occurs twice/).waitFor();
+    assert.equal(schedules.length, count, 'editing to another ambiguous clock still requires an exact choice');
+    await dialog.getByRole('textbox', { name: 'Reset time', exact: true }).fill('03:00');
+    await dialog.getByRole('textbox', { name: 'Reset time', exact: true }).press('Tab');
+    await dialog.getByRole('button', { name: 'Schedule continue', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(new Date(schedules.at(-1).resetAtUtc).toISOString(), '2026-10-25T02:00:00.000Z', 'a changed picker uses its newly selected instant');
+
+    limit = { ...weekly, resetAt: null, detectedResetAt: null, detail: 'This reset falls in a daylight-saving clock change. Use a duration to choose an exact continuation time.' };
+    await openDialog();
+    await dialog.getByText('The reset time needs confirmation.', { exact: true }).waitFor();
+    assert.equal(await dialog.getByText(/No reset time was found/).count(), 0, 'an uncertain parsed reset is not described as missing');
     assert.deepEqual(errors, []);
-    console.log(`Passed (${engine}): detected resets, unknown resets, future schedules, blocked delivery, unresolved sends, uncertainty and healthy automatic mode have distinct visible status, including on phones.`);
+    console.log(`Passed (${engine}): detected/unknown resets, dated DST overlap scheduling with UTC offset, edited picker guards, blocked delivery, unresolved sends and automatic mode, including on phones.`);
 } finally {
     await browser.close();
 }

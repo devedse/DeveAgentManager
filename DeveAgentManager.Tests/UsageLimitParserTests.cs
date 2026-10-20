@@ -227,6 +227,33 @@ public sealed class UsageLimitParserTests
         Assert.NotNull(parsed?.ResetAt);
     }
 
+    [Theory]
+    [InlineData("Oct 25, 2am (Europe/Amsterdam)", "2026-10-25T01:00:00Z")]
+    [InlineData("Nov 1, 1:30am (America/New_York)", "2026-11-01T06:30:00Z")]
+    public void DatedRepeatedClockResolvesToLaterOccurrenceWithLiveAndStoredParity(string reset, string expected)
+    {
+        var observed = new DateTime(2026, 10, 20, 1, 22, 0, DateTimeKind.Utc);
+        var screen = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", "claude-weekly-limit-dst.txt"))
+            .Replace("Oct 25, 2am (Europe/Amsterdam)", reset);
+        var parsed = UsageLimitParser.Parse("claude", screen, "UTC", observed)!;
+        Assert.Equal(DateTime.Parse(expected).ToUniversalTime(), parsed.ResetAt);
+        Assert.Contains("later occurrence", parsed.Detail!);
+        Assert.False(parsed.NativeAutoContinue); // Claude stopped its own automatic wait for the weekly limit.
+        Assert.Equal(parsed, UsageLimitParser.InspectStored("claude", parsed.Message, "UTC", observed).Limit);
+        Assert.Equal(DeveAgentManager.Contracts.AgentActivityStatus.UsageLimited,
+            AgentScreenDetector.Detect("claude", screen, observed).Status);
+    }
+
+    [Theory]
+    [InlineData("You've hit your weekly limit · resets Mar 8, 2:30am (America/New_York)", "2026-03-01T05:00:00Z")]
+    [InlineData("You've hit your limit · resets 1:30am (America/New_York)", "2026-11-01T04:00:00Z")]
+    public void MissingClockAndUndatedOverlapRemainUncertain(string message, string observed)
+    {
+        var parsed = UsageLimitParser.Parse("claude", Claude(message), "UTC", DateTime.Parse(observed).ToUniversalTime())!;
+        Assert.Null(parsed.ResetAt);
+        Assert.Contains("clock change", parsed.Detail!);
+    }
+
     [Fact]
     public void RecognizesNativeWaitBelowThePrompt()
     {

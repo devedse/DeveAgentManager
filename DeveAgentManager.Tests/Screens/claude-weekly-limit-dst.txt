@@ -1,0 +1,17 @@
+● Usage limit reset · continuing automatically
+
+● I'll check the project before continuing.
+
+  Ran 1 shell command
+
+● Automatic continue stopped · the usage limit now resets more than 24 hours out, so this task will not resume on its own (/rate-limit-options to wait anyway)
+  └ You've hit your weekly limit · resets Oct 25, 2am (Europe/Amsterdam)
+    /upgrade to increase your usage limit.
+
+✻ Crunched for 46s · done 3:22 AM
+
+                              new task? /clear to save tokens
+────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────
+  bypass permissions on

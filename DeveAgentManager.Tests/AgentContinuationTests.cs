@@ -428,6 +428,42 @@ public sealed class AgentContinuationTests
         Assert.Equal(0, rig.Terminal.Sends);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WeeklyResetAcrossClockOverlapRepairsAndSendsOnceAtTheLaterOccurrence(bool alreadyStored)
+    {
+        await using var rig = await Rig.Create();
+        rig.Clock.Utc = new(2026, 10, 20, 1, 22, 0, TimeSpan.Zero);
+        await using (var db = rig.Factory.CreateDbContext())
+            await db.Agents.Where(a => a.Id == rig.Id).ExecuteUpdateAsync(s => s.SetProperty(a => a.HarnessId, "claude"), Ct);
+        rig.Terminal.Screen = rig.Terminal.Screen with { Screen = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Screens", "claude-weekly-limit-dst.txt")) };
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        var detected = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal(new DateTime(2026, 10, 25, 1, 0, 0, DateTimeKind.Utc), detected.DetectedResetAt);
+        Assert.Contains("later occurrence", detected.Detail!);
+        if (alreadyStored)
+        {
+            await using var db = rig.Factory.CreateDbContext();
+            await db.AgentLimits.Where(l => l.AgentId == rig.Id).ExecuteUpdateAsync(s => s.SetProperty(l => l.ResetAt, (DateTime?)null)
+                .SetProperty(l => l.Detail, "This reset falls in a daylight-saving clock change."), Ct);
+            rig.Clock.Utc = rig.Clock.Utc.AddDays(1);
+            rig.Service.Dispose(); rig.Service = rig.NewService();
+        }
+        await rig.Service.SetAutomaticAsync(rig.Id, true, 2, Ct);
+        var scheduled = (await rig.Service.GetAsync(rig.Id, Ct))!;
+        Assert.Equal(detected.DetectedAt, scheduled.DetectedAt);
+        Assert.Equal(new DateTime(2026, 10, 25, 1, 1, 0, DateTimeKind.Utc), scheduled.ContinueAt);
+        rig.Clock.Utc = new(2026, 10, 25, 0, 1, 0, TimeSpan.Zero); // The earlier 02:01 must not send.
+        await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(0, rig.Terminal.Sends);
+        rig.Clock.Utc = new(2026, 10, 25, 1, 1, 0, TimeSpan.Zero);
+        for (var i = 0; i < 3; i++) await rig.Service.RefreshAsync(rig.Id, Ct);
+        Assert.Equal(1, rig.Terminal.Sends);
+        Assert.Equal("Sent", (await rig.Service.GetAsync(rig.Id, Ct))!.Status);
+        Assert.NotNull((await rig.Service.GetAsync(rig.Id, Ct))!.DetectedResetAt); // Passing the reset is not proof of recovery.
+    }
+
     [Fact]
     public async Task RefreshRepairsPreviouslyUnparsedResetWithoutANewLimitMessage()
     {

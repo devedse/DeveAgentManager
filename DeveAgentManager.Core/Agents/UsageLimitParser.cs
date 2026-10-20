@@ -194,11 +194,17 @@ public static class UsageLimitParser
             // A time-only message cannot establish a weekly reset or the date of an old error.
             if (localReset > localNow.AddHours(6)) return Unknown();
         }
-        if (zone.IsInvalidTime(localReset) || zone.IsAmbiguousTime(localReset))
+        var overlap = zone.IsAmbiguousTime(localReset);
+        if (zone.IsInvalidTime(localReset) || overlap && dateText.Length == 0)
             return new(message, null, zoneId, native, "This reset falls in a daylight-saving clock change. Use a duration to choose an exact continuation time.");
-        var utc = TimeZoneInfo.ConvertTimeToUtc(localReset, zone);
+        // A dated reset names the repeated civil time but omits its UTC offset. Waiting for the later
+        // occurrence avoids retrying before either possible reset. Keep undated overlaps uncertain.
+        var utc = overlap ? zone.GetAmbiguousTimeOffsets(localReset).Select(offset => new DateTimeOffset(localReset, offset).UtcDateTime).Max()
+            : TimeZoneInfo.ConvertTimeToUtc(localReset, zone);
         if ((dateText.Length != 0 && utc < nowUtc.AddMinutes(-5)) || utc > nowUtc.AddDays(32)) return Unknown();
-        return new(message, utc, zoneId, native, null);
+        return new(message, utc, zoneId, native, overlap
+            ? $"Clocks repeat; using the later occurrence ({utc:HH:mm} UTC)."
+            : null);
 
         ParsedUsageLimit Unknown() => new(message, null, zoneId, native,
             "The reset date or time is uncertain. Choose the reset time manually before scheduling.");

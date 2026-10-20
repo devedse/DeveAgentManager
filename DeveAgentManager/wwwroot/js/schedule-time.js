@@ -3,9 +3,11 @@
     const pad = n => String(n).padStart(2, '0');
     const localParts = utc => {
         const d = new Date(utc);
+        const offset = -d.getTimezoneOffset(), sign = offset < 0 ? '-' : '+';
         return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
             time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
-            zone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+            zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            offset: `${sign}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}` };
     };
     const toUtc = (date, time) => {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return { error: 'Choose a valid date and time.' };

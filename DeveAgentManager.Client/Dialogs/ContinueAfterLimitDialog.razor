@@ -31,7 +31,7 @@
             <MudSelectItem T="bool" Value="false">One-time schedule</MudSelectItem>
             <MudSelectItem T="bool" Value="true" Disabled="!Automatic.Available && !Automatic.Enabled">Automatic after usage limits@(Automatic.Available ? "" : " (Codex and Claude)")</MudSelectItem>
         </MudSelect>
-        <HelpTip Label="Continuation modes">A one-time schedule types and sends <b>continue</b> once: one minute after the chosen reset, or after the chosen duration. If the agent is busy or you have a draft, it stays armed until the prompt is empty and the agent is ready. Automatic mode repeats after detected usage-limit resets until disabled or its count is reached; it needs the usage-limit messages of Codex or Claude.</HelpTip>
+        <HelpTip Label="Continuation modes"><p>A one-time schedule types and sends <b>continue</b> once: one minute after the chosen reset, or after the chosen duration. If the agent is busy or you have a draft, it stays armed until the prompt is empty and the agent is ready.</p><p>Automatic mode repeats after detected usage-limit resets until disabled or its count is reached; it needs the usage-limit messages of Codex or Claude. If a dated reset falls in a repeated clock hour, the Manager waits for the later occurrence to avoid continuing before the reset.</p></HelpTip>
         </div>
         @if (_autoMode)
         {
@@ -154,13 +154,15 @@
     private int _remaining = 1;
     private DateTime? _date;
     private TimeSpan? _time;
+    private DateTime? _exactReset, _exactDate;
+    private TimeSpan? _exactTime;
     private string _zone = "Loading…";
     private string _resetDescription = "";
     private string? _continueDescription;
     private string? _error;
     private bool _busy, _loaded, _relative, _hours;
     private double _amount = 5;
-    private sealed record LocalParts(string Date, string Time, string Zone);
+    private sealed record LocalParts(string Date, string Time, string Zone, string? Offset = null);
     private sealed record Conversion(string? Utc, string? Error);
 
     protected override async Task OnInitializedAsync()
@@ -178,7 +180,8 @@
             {
                 _date = DateTime.ParseExact(local.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
                 _time = TimeSpan.Parse(local.Time, CultureInfo.InvariantCulture);
-
+                _exactReset = Limit.ResetAt ?? Limit.DetectedResetAt;
+                _exactDate = _date; _exactTime = _time;
             }
             await DescribeAsync();
             _loaded = true;
@@ -219,12 +222,13 @@
         if (Limit.DetectedResetAt is { } detected)
         {
             var original = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", detected);
-            _resetDescription = $"Detected reset: {original.Date} {original.Time} ({original.Zone}). Message timezone: {Limit.TimeZoneId ?? "unknown"}.";
+            _resetDescription = $"Detected reset: {original.Date} {original.Time} ({original.Zone}{(original.Offset is { } offset ? $", UTC{offset}" : "")}). Message timezone: {Limit.TimeZoneId ?? "unknown"}.";
         }
         else
         {
             _resetDescription = Limit.Manual ? "Test a one-time continuation without waiting for a usage limit."
                 : Limit.ResetAt is not null ? "Using your previously selected reset. The message's reset time could not be detected."
+                : Limit.Detail is not null ? "The reset time needs confirmation."
                 : "No reset time was found in the message: it needs to be chosen by hand.";
         }
 
@@ -263,6 +267,7 @@
             var local = await Js.InvokeAsync<LocalParts>("damSchedule.localParts", detected);
             _date = DateTime.ParseExact(local.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
             _time = TimeSpan.Parse(local.Time, CultureInfo.InvariantCulture);
+            _exactReset = detected; _exactDate = _date; _exactTime = _time;
             _relative = false;
             _error = null;
         }
@@ -278,6 +283,11 @@
             { _error = "Enter a duration from one minute up to 32 days."; return; }
             await RunAsync(() => Api.ScheduleContinueAsync(AgentId, null, Limit.Manual ? null : Limit.DetectedAt, _hours ? _amount * 60 : _amount, Limit.Manual));
             return;
+        }
+        else if (_exactReset is { } exact && _date == _exactDate && _time == _exactTime)
+        {
+            // Preserve the detected UTC offset, especially when the displayed local clock occurs twice.
+            reset = exact;
         }
         else
         {
