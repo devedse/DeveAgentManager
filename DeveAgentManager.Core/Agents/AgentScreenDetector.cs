@@ -159,20 +159,23 @@ public static class AgentScreenDetector
     private static AgentScreenDetection? ClaudeWorking(Context c)
     {
         if (c.Harness != "claude") return null;
-        var recent = AfterLastSubmitted(c).Split('\n');
-        var spinner = Array.FindLastIndex(recent, l => Has(l, @"^\s*[✢✳✶✻✽*·] \S[^\n]*… (?:\([0-9]+[smh]|$)[^\n]*")
-            || Has(l, @"^\s*[✢✳✶✻✽*·] Waiting for [1-9][0-9]* background agents? to finish\s*$"));
+        var recent = AfterLastSubmitted(c);
+        // Claude explicitly wraps this status on narrow terminals, so capture-pane -J may
+        // still return multiple lines. Match the complete known phrase across those breaks.
+        var spinner = Pattern(@"^\s*[✢✳✶✻✽*·](?: \S[^\n]*… (?:\([0-9]+[smh]|$)[^\n]*|[ \t]+(?<waiting>Waiting\s+for\s+[1-9][0-9]*\s+background\s+agents?\s+to\s+finish)[^\S\n]*$)")
+            .Matches(recent).Cast<Match>().LastOrDefault();
         // The optional feedback survey shares the assistant's bullet, but can appear while
         // work continues. Exclude only its complete panel, including wrapped choices;
         // real responses, submitted prompts and completion footers still invalidate a spinner.
-        var following = spinner < 0 ? "" : string.Join('\n', recent.Skip(spinner + 1));
+        var following = spinner is null ? "" : recent[(spinner.Index + spinner.Length)..];
         following = Regex.Replace(following,
             @"^\s*●\s+How\s+is\s+Claude\s+doing\s+this\s+session\?\s*\(optional\)\s+1:\s*Bad\s+2:\s*Fine\s+3:\s*Good\s+0:\s*Dismiss[^\S\n]*(?=\n|$)", "",
             RegexOptions.Multiline | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
-        var stale = spinner >= 0 && Has(following, @"^\s*[●❯]|^\s*[✢✳✶✻✽*·] .+ for [0-9]+[smh]");
-        var line = spinner >= 0 && !stale ? recent[spinner].Trim()
+        var stale = spinner is not null && Has(following, @"^\s*[●❯]|^\s*[✢✳✶✻✽*·] .+ for [0-9]+[smh]");
+        var waiting = spinner is not null && !stale && spinner.Groups["waiting"].Success;
+        var line = spinner is not null && !stale ? string.Join(" ", spinner.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
             : Find(c.After, @"^\s*[⏵⏸][^\n]*esc to interrupt[^\n]*");
-        return line is null ? null : new(AgentActivityStatus.Working, "Claude Code is working.", "", Evidence(line));
+        return line is null ? null : new(AgentActivityStatus.Working, waiting ? "Claude Code is waiting for background agents to finish." : "Claude Code is working.", "", Evidence(line));
     }
 
     private static string AfterLastSubmitted(Context c)

@@ -1,0 +1,23 @@
+✻ Waiting for 3 background agents to
+  finish
+
+● Agent "Generate project artwork" finished · 29m 45s
+
+● The artwork is done. Checking the preview:
+
+  Read 1 file, listed 1 directory
+
+● The assets look consistent. Still waiting on the
+  other agents.
+
+✻ Waiting for 2 background agents to
+  finish
+
+──────────────────────────── example-project ─
+❯
+──────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+  ● main
+  ○ general-purpose 42m 43s · ↓ 256.7k
+  ○ general-purpose 42m 8s · ↓ 186.3k

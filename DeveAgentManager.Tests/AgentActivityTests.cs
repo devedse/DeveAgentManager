@@ -118,6 +118,62 @@ public class AgentActivityTests
         Assert.Equal(AgentActivityStatus.Ready, AgentScreenDetector.Detect("claude", screen, Now).Status);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ClaudeWaitingForBackgroundAgentsStaysWorkingWhenTheStatusWraps(bool wrapped)
+    {
+        var screen = Screen("claude-waiting-background-agents");
+        if (!wrapped) screen = screen.Replace("to\n  finish", "to finish");
+        var detection = AgentScreenDetector.Detect("claude", screen, Now);
+        Assert.Equal(AgentActivityStatus.Working, detection.Status);
+        Assert.Contains("Waiting for 2 background agents to finish", detection.Evidence);
+        Assert.Null(detection.CompletionEvidence);
+        var agent = NewAgent(); agent.HarnessId = "claude";
+        AgentActivityTracker.Apply(agent, detection, "pane", Now);
+        AgentActivityTracker.Apply(agent, detection, "pane", Now.AddSeconds(15));
+        var activity = AgentActivityTracker.GetDto(agent, Now.AddSeconds(15));
+        Assert.Equal(AgentActivityStatus.Working, activity.Status);
+        Assert.False(activity.IsFinished);
+        Assert.True(agent.Working);
+    }
+
+    [Theory]
+    [InlineData("● Done.")]
+    [InlineData("✻ Crunched for 9m 21s · done 6:33 PM")]
+    [InlineData("❯ another prompt\n● Done.")]
+    public void WrappedClaudeBackgroundWaitDoesNotOverrideLaterTurnBoundaries(string following)
+    {
+        var screen = Screen("claude-waiting-background-agents").Replace("──────────────────────────── example-project", following + "\n──────────────────────────── example-project");
+        Assert.Equal(AgentActivityStatus.Ready, AgentScreenDetector.Detect("claude", screen, Now).Status);
+    }
+
+    [Theory]
+    [InlineData("Waiting\n  for 1 background agent to finish")]
+    [InlineData("Waiting for\n  1 background agent to finish")]
+    [InlineData("Waiting for 1\n  background agent to finish")]
+    [InlineData("Waiting for 1 background\n  agent to finish")]
+    [InlineData("Waiting for 1 background agent\n  to finish")]
+    [InlineData("Waiting for 1 background agent to\n  finish")]
+    public void ClaudeBackgroundWaitAllowsEachWordBoundaryWithoutInferringCompletion(string status)
+    {
+        var screen = "✻ " + status + "\n─────────\n❯\n─────────\nbypass permissions on (shift+tab to cycle)";
+        var detection = AgentScreenDetector.Detect("claude", screen, Now);
+        Assert.Equal(AgentActivityStatus.Working, detection.Status);
+        Assert.Equal("✻ Waiting for 1 background agent to finish", detection.Evidence);
+        Assert.Null(detection.CompletionEvidence);
+    }
+
+    [Theory]
+    [InlineData("● Waiting for 2 background agents to\n  finish")]
+    [InlineData("✻ Waiting for 0 background agents to\n  finish")]
+    [InlineData("✻ Waiting for 2 background agents to\n  ● finish")]
+    public void ClaudeBackgroundWaitStillRequiresACompleteLiveIndicator(string status)
+    {
+        var screen = status + "\n─────────\n❯\n─────────\nbypass permissions on (shift+tab to cycle)";
+        Assert.Equal(AgentActivityStatus.Ready, AgentScreenDetector.Detect("claude", screen, Now).Status);
+    }
+
     [Fact]
     public void WrappedOptionalClaudeFeedbackDoesNotInterruptWorking()
     {
