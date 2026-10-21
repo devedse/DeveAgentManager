@@ -127,6 +127,7 @@ public static class ManagerApi
             var status = ex switch
             {
                 KeyNotFoundException => StatusCodes.Status404NotFound,
+                DeveAgentManager.Core.Sessions.ConversationTooLargeException => StatusCodes.Status413PayloadTooLarge,
                 UnauthorizedAccessException => StatusCodes.Status403Forbidden,
                 ArgumentException or FormatException or BadHttpRequestException => StatusCodes.Status400BadRequest,
                 InvalidOperationException or AgentNotRunningException => StatusCodes.Status409Conflict,

@@ -33,7 +33,7 @@ try {
     const session = () => ({ id: sessionId, ownerId: agentId, ownerName: 'Test user', access, title: 'Release builds', harnessId: 'codex', messageCount: 0, createdAt: now, updatedAt: now });
     await context.route('**/api/**', async route => {
         const path = new URL(route.request().url()).pathname, method = route.request().method();
-        if (path === '/api/me' || path.startsWith('/api/me/')) return route.continue();
+        if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/diagnostics/cpu') return route.continue();
         if (path === `/api/sessions/${sessionId}/files`) return route.fulfill({ json: files });
         const file = files.find(f => path.startsWith(`/api/sessions/${sessionId}/files/${f.id}`));
         if (file && method === 'DELETE') { files = files.filter(f => f !== file); deleted.push(file.id); return route.fulfill({ status: 204 }); }

@@ -8,8 +8,11 @@ RUN mkdir -p /data && chown app:app /data
 ENV DATA_DIR=/data \
     ASPNETCORE_HTTP_PORTS=8080;8081 \
     CPU_TRACE_STARTUP=false \
-    DOTNET_EventPipeThreadSamplingRate=0x32
-# CoreCLR reads this hexadecimal DWORD before Main: 0x32 is a 50 ms sampling interval.
+    DOTNET_EventPipeThreadSamplingRate=0x32 \
+    DOTNET_GCHeapHardLimitPercent=0x46
+# CoreCLR reads these hexadecimal DWORDs before Main: 0x32 is a 50 ms sampling interval. 0x46 caps the .NET heap at
+# 70% of the machine's (or container's) memory, so a request that needs too much fails with OutOfMemoryException and
+# is logged, instead of the kernel killing the whole Manager (docs/manager-memory.md).
 
 # The app is platform independent, so build once on the build machine for every target platform.
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build

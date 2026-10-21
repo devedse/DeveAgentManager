@@ -79,7 +79,7 @@
             {
                 <div><span class="fact-label">Repository</span><span class="mono">@_stored.RepositoryUrl@(_stored.RepositoryBranch is null ? "" : $" ({_stored.RepositoryBranch})")</span></div>
             }
-            <div><span class="fact-label">Messages</span><span>@_stored.MessageCount · @_toolCalls tool calls@(_branches > 0 ? $" · {_branches} other branch{(_branches == 1 ? "" : "es")}" : "")</span></div>
+            <div><span class="fact-label">Messages</span><span>@_stored.MessageCount@(_tooLarge is null ? $" · {_toolCalls} tool calls" : "")@(_branches > 0 ? $" · {_branches} other branch{(_branches == 1 ? "" : "es")}" : "")</span></div>
             @if (_tokens > 0)
             {
                 <div><span class="fact-label">Usage</span><span>@FormatTokens(_tokens) tokens@(_cost > 0 ? $" · ${_cost:0.00}" : "")@(_models.Count > 0 ? $" · {string.Join(", ", _models)}" : "")</span></div>
@@ -88,7 +88,21 @@
             <div><span class="fact-label">Updated</span><span>@_stored.UpdatedAt.Humanize()@(_stored.LastSyncedAt is { } synced ? $" · synced {synced.Humanize()}" : "")</span></div>
         </div>
 
-        <ConversationView Session="_session" />
+        @if (_tooLarge is not null)
+        {
+            <div class="panel mt-4" role="status">
+                <div class="help-heading mb-2"><MudText Typo="Typo.h6">Conversation not shown</MudText>
+                    <HelpTip Label="Large conversations">
+                        <p>Showing a conversation takes many times its size in memory, on the Manager and in your browser, so a large one is not loaded here.</p>
+                        <p>Nothing is lost: the full history stays saved, and the agent and its terminal keep working. The Manager's limit is set with CONVERSATION_VIEW_MAX_MB.</p>
+                    </HelpTip></div>
+                <MudText Typo="Typo.body2">@_tooLarge</MudText>
+            </div>
+        }
+        else
+        {
+            <ConversationView Session="_session" />
+        }
         <div class="panel mt-4">
             <div class="help-heading mb-3"><MudText Typo="Typo.h6">Shared images</MudText>
                 <HelpTip Label="Shared images"><p>Images published by the agent or saved from the desktop are available in all its sessions, including after an older session is deleted.</p><p>Agents can publish a file with <code>dam-tools share-image /path/to/image.png --caption "Description"</code>.</p></HelpTip></div>
@@ -124,6 +138,8 @@
     private decimal _cost;
     private List<string> _models = [];
     private bool _scrolled;
+    private string? _tooLarge;
+    private (DateTime UpdatedAt, DateTime? LastSyncedAt, int MessageCount, string HarnessId)? _contentVersion;
 
     protected override bool IsRelevant(ManagerEvent managerEvent) =>
         managerEvent.SessionId == SessionId || (managerEvent.AgentId is not null && managerEvent.AgentId == _stored?.AgentId);
@@ -136,7 +152,22 @@
             return;
         }
 
-        _session = await Api.GetSessionContentAsync(SessionId);
+        // Agent events (status, activity) only refresh the facts above. The conversation itself, which can be large, is
+        // fetched again only when it changed.
+        var version = (_stored.UpdatedAt, _stored.LastSyncedAt, _stored.MessageCount, _stored.HarnessId);
+        if (version == _contentVersion) return;
+        try
+        {
+            _session = await Api.GetSessionContentAsync(SessionId);
+            _tooLarge = null;
+        }
+        catch (ApiException ex) when (ex.Status == System.Net.HttpStatusCode.RequestEntityTooLarge)
+        {
+            _session = new();
+            _tooLarge = ex.Message;
+        }
+
+        _contentVersion = version;
         var messages = _session.Entries.Where(e => e.Kind == DeveEntryKind.Message).ToList();
         _toolCalls = messages.Where(e => e.Content is not null).Sum(e => e.Content!.Count(b => b.Type == "toolCall"));
         _branches = _session.OtherBranchCount();

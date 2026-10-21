@@ -134,6 +134,32 @@ public sealed class SessionService(
         return await db.Sessions.AsNoTracking().FirstOrDefaultAsync(s => s.AgentId == agentId, cancellationToken);
     }
 
+    // A whole conversation in memory takes many times its saved size (a 100 MB history about 1.2 GB while it is read and
+    // written). Views and exports load one at a time, so several never add up.
+    private readonly SemaphoreSlim _wholeLoads = new(1, 1);
+    private const long LoggedLoadBytes = 16L * 1024 * 1024;
+
+    /// <summary>
+    /// The conversation for the conversation page, serialized straight to <paramref name="output"/>. One larger than
+    /// <see cref="ManagerOptions.ConversationViewMaxBytes"/> is refused instead of loaded.
+    /// </summary>
+    public async Task WriteContentAsync(Guid sessionId, Stream output, CancellationToken cancellationToken)
+    {
+        var stored = await GetAsync(sessionId, cancellationToken) ?? throw new KeyNotFoundException("Session not found.");
+        if (stored.SavedSize > options.ConversationViewMaxBytes)
+            throw new ConversationTooLargeException(
+                $"This conversation is {stored.SavedSize / 1048576} MB, more than the {options.ConversationViewMaxBytes / 1048576} MB the Manager shows here.");
+        await _wholeLoads.WaitAsync(cancellationToken);
+        try
+        {
+            if (stored.SavedSize >= LoggedLoadBytes)
+                logger.LogInformation("Loading conversation {Session} ({Size} MB) to show it", sessionId, stored.SavedSize / 1048576);
+            var session = await LoadAsync(sessionId, cancellationToken);
+            await session.WriteAsync(output, cancellationToken);
+        }
+        finally { _wholeLoads.Release(); }
+    }
+
     /// <summary>The stored conversation, or an empty one when nothing was synced yet.</summary>
     public async Task<DeveSession> LoadAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
@@ -476,7 +502,18 @@ public sealed class SessionService(
         using var lease = await LockAsync(cancellationToken);
         await EnsureVerifiedLockedAsync(sessionId, cancellationToken);
         var stored = await GetAsync(sessionId, cancellationToken) ?? throw new ArgumentException("Session not found.");
-        var session = await LoadAsync(sessionId, cancellationToken);
+        await _wholeLoads.WaitAsync(cancellationToken);
+        try
+        {
+            if (stored.SavedSize >= LoggedLoadBytes)
+                logger.LogInformation("Exporting conversation {Session} ({Size} MB) as {Format}", sessionId, stored.SavedSize / 1048576, format);
+            return Export(stored, await LoadAsync(sessionId, cancellationToken), format);
+        }
+        finally { _wholeLoads.Release(); }
+    }
+
+    private SessionExport Export(StoredSession stored, DeveSession session, string format)
+    {
         session.Title = stored.Title;
         var name = SafeFileName(stored.Title);
         if (format == "deve")
@@ -485,7 +522,7 @@ public sealed class SessionService(
         }
 
         var harnessFormat = _formats.GetValueOrDefault(format) ?? throw new ArgumentException($"Unknown export format '{format}'.");
-        var harnessSessionId = stored.HarnessSessionId ?? sessionId.ToString("N");
+        var harnessSessionId = stored.HarnessSessionId ?? stored.Id.ToString("N");
         var cwd = session.Cwd ?? stored.WorkingDirectory ?? "/";
         var from = session.Sources.LastOrDefault()?.Harness ?? stored.HarnessId;
         if (from != format && session.Entries.Count > 0)

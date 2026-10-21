@@ -41,6 +41,12 @@ public sealed class ManagerOptions
     /// <summary>Public editor origin template; {runner} is within the first hostname label, {host} comes from the public allowlist.</summary>
     public string? EditorUrl { get; init; }
 
+    /// <summary>
+    /// The largest conversation (saved history) the conversation page loads. Showing one takes many times its size in
+    /// memory on the Manager and in the browser; a larger one is described, not loaded (CONVERSATION_VIEW_MAX_MB).
+    /// </summary>
+    public long ConversationViewMaxBytes { get; init; } = 64L * 1024 * 1024;
+
     public string[] PublicOrigins { get; init; } = [];
     public string[] TrustedProxies { get; init; } = [];
     public bool AllowLocalAccess { get; init; } = true;
@@ -77,6 +83,7 @@ public sealed class ManagerOptions
             DefaultMemoryMb = Int(configuration, "RUNNER_DEFAULT_MEMORY_MB", 8192),
             DefaultDiskGb = Int(configuration, "RUNNER_DEFAULT_DISK_GB", 64),
             EditorPort = Int(configuration, "EDITOR_PORT", 8081),
+            ConversationViewMaxBytes = Int(configuration, "CONVERSATION_VIEW_MAX_MB", 64) * 1024L * 1024,
             EditorUrl = Value(configuration, "EDITOR_URL")?.TrimEnd('/'),
             PublicOrigins = List(configuration, "PUBLIC_ORIGINS"),
             TrustedProxies = List(configuration, "TRUSTED_PROXIES"),

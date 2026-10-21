@@ -39,6 +39,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<DeveAgentManager.D
 builder.Services.AddSingleton<OperationNotifier>();
 builder.Services.AddHttpForwarder();
 builder.Services.AddHostedService<LiveUpdatesBridge>();
+builder.Services.AddHostedService<DeveAgentManager.Diagnostics.MemoryWatch>();
 builder.Services.AddProblemDetails();
 
 builder.Services.AddManagerSignIn();
@@ -92,6 +93,8 @@ foreach (var (setting, instead) in new[]
     }
 }
 
+// Requests in progress go into the memory heartbeat, so a Manager killed for running out of memory says what it was doing.
+app.Use(DeveAgentManager.Diagnostics.MemoryWatch.TrackRequestsAsync);
 app.Use(boundary.InvokeAsync);
 app.UseForwardedHeaders();
 app.Use(boundary.RouteAsync);

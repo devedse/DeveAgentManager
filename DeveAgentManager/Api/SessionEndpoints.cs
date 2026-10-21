@@ -22,9 +22,14 @@ internal static class SessionEndpoints
             await service.GetAsync(sessionId, ct) is { } session ? Results.Ok(DtoMapper.Session(session, user)) : Results.NotFound())
             .RequireSession(SessionAccess.Read);
 
-        // The conversation itself, as a DeveSession (see docs/session-formats.md).
-        sessions.MapGet("/{sessionId:guid}/content", async (Guid sessionId, SessionService service, CancellationToken ct) =>
-            Results.Text((await service.LoadAsync(sessionId, ct)).ToJson(), "application/json", Encoding.UTF8)).RequireSession(SessionAccess.Read);
+        // The conversation itself, as a DeveSession (see docs/session-formats.md), written as it is serialized: no copy of
+        // the whole JSON is kept in memory. Too large a conversation answers 413 (docs/manager-memory.md).
+        sessions.MapGet("/{sessionId:guid}/content", async (Guid sessionId, HttpContext http, SessionService service, CancellationToken ct) =>
+        {
+            http.Response.ContentType = "application/json; charset=utf-8";
+            await service.WriteContentAsync(sessionId, http.Response.Body, ct);
+            return Results.Empty;
+        }).RequireSession(SessionAccess.Read);
 
         sessions.MapGet("/{sessionId:guid}/export", async (Guid sessionId, string format, SessionService service, CancellationToken ct) =>
         {
