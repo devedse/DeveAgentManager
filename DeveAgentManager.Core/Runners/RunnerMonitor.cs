@@ -11,10 +11,14 @@ using Microsoft.Extensions.Logging;
 
 namespace DeveAgentManager.Core.Runners;
 
-/// <summary>Latest machine status (power, CPU, memory) per Runner, for the Portal.</summary>
+/// <summary>
+/// Latest machine status per Runner, for the Portal: power and address from the provider, CPU, memory and disk read
+/// inside the Runner (<see cref="GuestUsage"/>).
+/// </summary>
 public sealed class RunnerStatusCache
 {
     private readonly ConcurrentDictionary<Guid, MachineStatus> _statuses = new();
+    private readonly ConcurrentDictionary<Guid, GuestUsage.CpuCounters> _cpu = new();
     private readonly ConcurrentDictionary<Guid, UsageHistory> _history = new();
     private static readonly TimeSpan Retain = TimeSpan.FromHours(1);
     private static readonly TimeSpan FullResolution = TimeSpan.FromMinutes(1);
@@ -48,25 +52,58 @@ public sealed class RunnerStatusCache
         RecordUsage(runnerId, status, at);
     }
 
-    // Provider status has no guest filesystem reading. Keep it while the next SSH
-    // probe is in flight; an actual probe failure still clears it through Set.
-    public void SetProviderStatus(Guid runnerId, MachineStatus status, DateTime? at = null)
+    // The provider reports power, address and uptime. While the machine keeps running, the readings from inside it stay;
+    // a machine that stopped has none.
+    public void SetProviderStatus(Guid runnerId, MachineStatus status)
     {
         var merged = _statuses.AddOrUpdate(runnerId, status, (_, previous) =>
             status.PowerState == MachinePowerState.Running && previous.PowerState == MachinePowerState.Running
-                && status.DiskUsedBytes is null && status.DiskTotalBytes is null
-                ? status with { DiskUsedBytes = previous.DiskUsedBytes, DiskTotalBytes = previous.DiskTotalBytes }
-                : status);
-        RecordUsage(runnerId, merged, at);
+                ? status with
+                {
+                    CpuUsage = previous.CpuUsage, MemoryUsedBytes = previous.MemoryUsedBytes, MemoryTotalBytes = previous.MemoryTotalBytes,
+                    DiskUsedBytes = previous.DiskUsedBytes, DiskTotalBytes = previous.DiskTotalBytes,
+                }
+                : status with { CpuUsage = null, MemoryUsedBytes = null, MemoryTotalBytes = null, DiskUsedBytes = null, DiskTotalBytes = null });
+        if (merged.PowerState != MachinePowerState.Running) _cpu.TryRemove(runnerId, out _);
     }
 
-    public void RecordUsage(Guid runnerId, MachineStatus status, DateTime? at = null)
+    /// <summary>
+    /// A reading from inside the Runner. CPU is the use since the previous reading, so the first one after a start, a
+    /// reboot or an outage has none. A reading without disk keeps the last disk reading.
+    /// </summary>
+    public void SetGuestReading(Guid runnerId, GuestUsage.Reading reading, DateTime? at = null)
+    {
+        double? cpu = null;
+        if (reading.Cpu is { } counters)
+        {
+            cpu = GuestUsage.CpuPercent(_cpu.TryGetValue(runnerId, out var previous) ? previous : null, counters);
+            _cpu[runnerId] = counters;
+        }
+        else _cpu.TryRemove(runnerId, out _);
+
+        var status = Get(runnerId) ?? new MachineStatus(MachinePowerState.Running);
+        Set(runnerId, status with
+        {
+            CpuUsage = cpu, MemoryUsedBytes = reading.MemoryUsedBytes, MemoryTotalBytes = reading.MemoryTotalBytes,
+            DiskUsedBytes = reading.HasDisk ? reading.DiskUsedBytes : status.DiskUsedBytes,
+            DiskTotalBytes = reading.HasDisk ? reading.DiskTotalBytes : status.DiskTotalBytes,
+        }, at);
+    }
+
+    /// <summary>The Runner can't be read (e.g. SSH fails): no CPU, memory or disk until it can, and a gap in the history.</summary>
+    public void ClearGuestReading(Guid runnerId, DateTime? at = null)
+    {
+        _cpu.TryRemove(runnerId, out _);
+        if (Get(runnerId) is { } status)
+            Set(runnerId, status with { CpuUsage = null, MemoryUsedBytes = null, MemoryTotalBytes = null, DiskUsedBytes = null, DiskTotalBytes = null }, at);
+    }
+
+    private void RecordUsage(Guid runnerId, MachineStatus status, DateTime? at = null)
     {
         var cpu = Valid(status.CpuUsage);
         var memory = status is { MemoryUsedBytes: { } used, MemoryTotalBytes: > 0 and var total }
             ? Valid(used * 100.0 / total) : null;
         var disk = status is { DiskUsedBytes: { } diskUsed, DiskTotalBytes: > 0 and var diskTotal } ? Valid(diskUsed * 100.0 / diskTotal) : null;
-        if (disk is null && status.PowerState == MachinePowerState.Running && Get(runnerId) is { DiskUsedBytes: { } cachedUsed, DiskTotalBytes: > 0 and var cachedTotal }) disk = Valid(cachedUsed * 100.0 / cachedTotal);
         if (cpu is null && memory is null && disk is null && !_history.ContainsKey(runnerId))
         {
             return;
@@ -136,6 +173,7 @@ public sealed class RunnerStatusCache
     {
         _statuses.TryRemove(runnerId, out _);
         _history.TryRemove(runnerId, out _);
+        _cpu.TryRemove(runnerId, out _);
     }
 
     public void RemoveMissing(IReadOnlySet<Guid> runnerIds)
@@ -151,8 +189,9 @@ public sealed class RunnerStatusCache
 }
 
 /// <summary>
-/// Polls providers and Runners in the background: power state and resources from the provider, agent state from tmux,
-/// and copies changed conversations into the session store.
+/// Polls providers and Runners in the background: power state and address from the provider; agent state from tmux and
+/// CPU and memory from inside the Runner every pass, in the same SSH command; disk every third pass; and copies changed
+/// conversations into the session store.
 /// </summary>
 public sealed class RunnerMonitor(
     RunnerService runners,
@@ -163,7 +202,7 @@ public sealed class RunnerMonitor(
     ManagerEvents events,
     ILogger<RunnerMonitor> logger) : BackgroundService
 {
-    /// <summary>Agents (running, working or idle) are checked this often; the provider and conversations every third time.</summary>
+    /// <summary>Agents (running, working or idle) and usage are checked this often; the provider, disk and conversations every third time.</summary>
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
 
     private const int FullPassEvery = 3;
@@ -193,14 +232,6 @@ public sealed class RunnerMonitor(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    internal static (long Used, long Total) ParseDiskUsage(string output)
-    {
-        var parts = output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 2 || !long.TryParse(parts[0], out var used) || !long.TryParse(parts[1], out var total) || used < 0 || total <= 0 || used > total)
-            throw new FormatException("Invalid root filesystem usage reading.");
-        return (used, total);
-    }
-
     private async Task PollAsync(CancellationToken cancellationToken)
     {
         var full = _pass++ % FullPassEvery == 0;
@@ -218,13 +249,18 @@ public sealed class RunnerMonitor(
 
             try
             {
+                // Usage is read inside the Runner, in the agent check's SSH command; Runners without agents get their own
+                // command every third pass. A Runner that can't be reached shows no usage rather than an old reading.
+                GuestUsage.Reading? guest = null;
+                var unreachable = false;
                 if (runner.State == RunnerState.Ready && runner.Agents.Count > 0)
                 {
-                    try { await agents.RefreshRunnerAsync(runner, ct); }
+                    try { await agents.RefreshRunnerAsync(runner, ct, GuestUsage.Script(disk: full), output => guest = GuestUsage.Parse(output)); }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
                         logger.LogWarning(ex, "Could not observe terminal state for runner {Runner}", runner.Name);
                         await agents.MarkObservationUnavailableAsync(runner.Id, ct);
+                        unreachable = guest is null;
                     }
                 }
 
@@ -240,22 +276,24 @@ public sealed class RunnerMonitor(
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     { logger.LogWarning(ex, "Provider status unavailable for runner {Runner}; terminal observation will still run", runner.Name); }
                 }
-                if (full && runner.State == RunnerState.Ready)
+                if (full && runner.State == RunnerState.Ready && guest is null && !unreachable)
                 {
                     try
                     {
-                        var result = (await shell.RunAsync(runner, "df -B1 --output=used,size / | tail -n 1", TimeSpan.FromSeconds(10), ct)).EnsureSuccess("Reading root disk usage");
-                        var disk = ParseDiskUsage(result.Output);
-                        var status = statusCache.Get(runner.Id) ?? new MachineStatus(MachinePowerState.Running);
-                        statusCache.Set(runner.Id, status with { DiskUsedBytes = disk.Used, DiskTotalBytes = disk.Total });
+                        var result = (await shell.RunAsync(runner, GuestUsage.Script(disk: true), TimeSpan.FromSeconds(10), ct)).EnsureSuccess("Reading usage");
+                        guest = GuestUsage.Parse(result.Output);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        if (statusCache.Get(runner.Id) is { } status) statusCache.Set(runner.Id, status with { DiskUsedBytes = null, DiskTotalBytes = null });
-                        logger.LogDebug(ex, "Root disk usage unavailable for runner {Runner}", runner.Name);
+                        unreachable = true;
+                        logger.LogDebug(ex, "Usage unavailable for runner {Runner}", runner.Name);
                     }
-                    events.RunnerChanged(runner.Id);
                 }
+
+                if (runner.State == RunnerState.Ready && guest is not null) statusCache.SetGuestReading(runner.Id, guest);
+                else if (unreachable) statusCache.ClearGuestReading(runner.Id);
+                // Cards refresh every third pass; the usage graph polls the history itself.
+                if (full && runner.State == RunnerState.Ready) events.RunnerChanged(runner.Id);
 
                 if (full && runner.State == RunnerState.Ready && runner.Agents.Count > 0)
                     await sessions.TrySyncRunnerAsync(runner, ct);

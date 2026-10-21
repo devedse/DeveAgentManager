@@ -37,13 +37,8 @@ public interface IRunnerProvider
 
     Task DestroyMachineAsync(RunnerMachine machine, IRunnerLog log, CancellationToken cancellationToken);
 
+    /// <summary>Power state, address and uptime. CPU, memory and disk are read inside the Runner, not from the provider.</summary>
     Task<MachineStatus> GetStatusAsync(RunnerMachine machine, CancellationToken cancellationToken);
-
-    /// <summary>Whether this provider offers a cheap per-machine CPU and memory read.</summary>
-    bool SupportsUsageSampling => false;
-
-    /// <summary>Reads usage without doing the full status/address lookup.</summary>
-    Task<MachineStatus?> GetUsageAsync(RunnerMachine machine, CancellationToken cancellationToken) => Task.FromResult<MachineStatus?>(null);
 
     /// <summary>Waits until the machine has an address the Manager can SSH to and returns it.</summary>
     Task<string> WaitForAddressAsync(RunnerMachine machine, IRunnerLog log, CancellationToken cancellationToken);

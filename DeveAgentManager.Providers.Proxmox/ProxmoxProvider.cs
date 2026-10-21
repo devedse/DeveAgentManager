@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using Corsinvest.ProxmoxVE.Api;
 using Corsinvest.ProxmoxVE.Api.Extension;
@@ -20,7 +19,6 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
     public const string Tag = "deveagentmanager";
 
     private static readonly SemaphoreSlim AllocationLock = new(1, 1);
-    private readonly ConcurrentDictionary<int, string> _knownNodes = new();
 
     private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan TaskTimeout = TimeSpan.FromMinutes(5);
@@ -31,8 +29,6 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
     public string DisplayName => "Proxmox VE";
 
     public bool IsConfigured => options.IsConfigured;
-
-    public bool SupportsUsageSampling => true;
 
     public RunnerProviderCapabilities Capabilities { get; } = new(
         CanStartStop: true,
@@ -293,8 +289,6 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
             return new MachineStatus(MachinePowerState.Missing);
         }
 
-        _knownNodes[vmId] = vm.Node;
-
         if (!vm.IsRunning)
         {
             return new MachineStatus(MachinePowerState.Stopped, Detail: vm.Status);
@@ -310,87 +304,8 @@ public sealed class ProxmoxProvider(ProxmoxOptions options, IHttpClientFactory h
             logger.LogDebug(ex, "Guest agent of VM {VmId} did not answer", vmId);
         }
 
-        return new MachineStatus(
-            MachinePowerState.Running,
-            address,
-            CpuUsage: vm.CpuUsagePercentage * 100,
-            MemoryUsedBytes: (long)vm.MemoryUsage,
-            MemoryTotalBytes: (long)vm.MemorySize,
-            Uptime: TimeSpan.FromSeconds(vm.Uptime),
-            Detail: vm.Node);
-    }
-
-    public async Task<MachineStatus?> GetUsageAsync(RunnerMachine machine, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var vmId = ParseVmId(machine);
-        using var http = httpClientFactory.CreateClient(HttpClientName);
-        http.Timeout = TimeSpan.FromSeconds(5);
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(TimeSpan.FromSeconds(5));
-        using var cancel = budget.Token.Register(http.CancelPendingRequests);
-        var client = new PveClient(options.Host, options.Port, http) { ApiToken = options.ApiToken };
-        try
-        {
-            // The stored node is where the VM was created. Full status checks learn its current location after migration.
-            var node = _knownNodes.GetValueOrDefault(vmId);
-            if (node is null && !string.IsNullOrWhiteSpace(machine.ProviderData))
-            {
-                try { node = JsonSerializer.Deserialize<ProxmoxMachineData>(machine.ProviderData)?.Node; }
-                catch (JsonException) { /* Older runner data may not contain a node. */ }
-            }
-
-            // options.Node is a placement preference for new VMs, not the location of existing ones.
-            node ??= (await GetVmsAsync(client)).FirstOrDefault(vm => vm.VmId == vmId)?.Node;
-            if (node is null) return null;
-
-            budget.Token.ThrowIfCancellationRequested();
-            VmQemuStatusCurrent vm;
-            try
-            {
-                vm = await client.Nodes[node].Qemu[vmId].Status.Current.GetAsync();
-            }
-            catch (PveResultException original) when (!budget.IsCancellationRequested && IsVmLocationError(original, node, vmId))
-            {
-                // A missing config on this particular node can mean migration. Transport/auth/server failures cannot.
-                try
-                {
-                    var currentNode = (await GetVmsAsync(client)).FirstOrDefault(v => v.VmId == vmId)?.Node;
-                    if (currentNode is null || currentNode == node) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(original).Throw();
-                    budget.Token.ThrowIfCancellationRequested();
-                    node = currentNode;
-                    vm = await client.Nodes[node].Qemu[vmId].Status.Current.GetAsync();
-                }
-                catch (Exception secondary) when (!ReferenceEquals(secondary, original))
-                {
-                    // Preserve the initiating error without putting unfiltered provider responses in diagnostics.
-                    throw new InvalidOperationException("VM location recovery failed after a node-specific missing configuration.",
-                        new AggregateException(original, secondary));
-                }
-            }
-            budget.Token.ThrowIfCancellationRequested();
-            _knownNodes[vmId] = node;
-            return vm.IsRunning
-                ? new MachineStatus(MachinePowerState.Running, CpuUsage: vm.CpuUsagePercentage * 100,
-                    MemoryUsedBytes: (long)vm.MemoryUsage, MemoryTotalBytes: (long)vm.MemorySize)
-                : new MachineStatus(MachinePowerState.Stopped);
-        }
-        catch (Exception ex) when (budget.IsCancellationRequested)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            throw new TimeoutException("Proxmox usage sampling exceeded its five-second budget.", ex);
-        }
-    }
-
-    internal static bool IsVmLocationError(PveResultException error, string node, int vmId)
-    {
-        if (error.Result.StatusCode is not (System.Net.HttpStatusCode.InternalServerError or System.Net.HttpStatusCode.NotFound)) return false;
-        var reason = error.Result.ReasonPhrase;
-        // Proxmox reports this failure in the HTTP reason; a generic 404/500 is insufficient.
-        return reason is { Length: <= 4096 }
-            && reason.Contains("Configuration file", StringComparison.OrdinalIgnoreCase)
-            && reason.Contains($"nodes/{node}/qemu-server/{vmId}.conf", StringComparison.Ordinal)
-            && reason.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
+        // CPU and memory are read inside the Runner (GuestUsage): Proxmox sees the VM from the host.
+        return new MachineStatus(MachinePowerState.Running, address, Uptime: TimeSpan.FromSeconds(vm.Uptime), Detail: vm.Node);
     }
 
     public async Task<string> WaitForAddressAsync(RunnerMachine machine, IRunnerLog log, CancellationToken cancellationToken)

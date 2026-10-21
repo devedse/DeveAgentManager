@@ -144,7 +144,7 @@
                     <RunnerAccessPanel Runner="_runner" User="_user" />
                 }
                 <div class="panel mb-4"><RunnerTimeZoneEditor RunnerId="RunnerId" ReadOnly="!manage" /></div>
-                @if (_runner.State == RunnerState.Ready && status is { CpuUsage: not null })
+                @if (_runner.State == RunnerState.Ready && status is not null)
                 {
                     <div class="panel mb-4">
                         <div class="panel-header">

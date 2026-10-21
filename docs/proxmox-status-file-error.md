@@ -1,5 +1,7 @@
 # Proxmox status warning mentioning a configuration file
 
+> The one-second Proxmox usage sampler described here was removed on 2026-10-21: CPU and memory are now read inside the Runner (see [agent-activity.md](agent-activity.md)). Kept as an investigation record.
+
 The usage sampler requests `GET /api2/json/nodes/{node}/qemu/{vmid}/status/current` through the configured Proxmox HTTPS API client. It does not open a host file, mount the Proxmox filesystem or run SSH commands on the Proxmox host. The apparent file access in the exception is Proxmox explaining its own failed operation.
 
 Proxmox's [status endpoint implementation](https://github.com/proxmox/qemu-server/blob/master/src/PVE/API2/Qemu.pm) calls `PVE::QemuConfig->load_config` before reading the VM counters. Its [configuration path implementation](https://github.com/proxmox/qemu-server/blob/master/src/PVE/QemuConfig.pm) constructs `nodes/{node}/qemu-server/{vmid}.conf`. These paths belong to Proxmox's internal cluster configuration. The API checks VM.Audit permission for status reads; this does not add a host filesystem permission to the Manager.

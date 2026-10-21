@@ -154,7 +154,7 @@
                                 <div class="list-meta">
                                     <StatusPill Style="StateStyles.For(runner.State)" Text="@runner.Operation" />
                                 </div>
-                                @if (runner.State == RunnerState.Ready && status is { CpuUsage: not null })
+                                @if (runner.State == RunnerState.Ready && status is not null)
                                 {
                                     <UsageBars Status="status" Compact="true" />
                                 }

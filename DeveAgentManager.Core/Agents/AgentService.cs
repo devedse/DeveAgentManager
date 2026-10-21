@@ -572,21 +572,39 @@ public sealed partial class AgentService(
 
     private const int BusyLines = 15;
 
-    /// <summary>Reads process lifecycle and the current visible screen. Activity rules and stable completion tracking run in the Manager.</summary>
-    public async Task RefreshRunnerAsync(Runner runner, CancellationToken cancellationToken = default)
+    internal const string StateStartMarker = "__DAM_STATE_START__";
+
+    /// <summary>The agent state part of the output; what a leading script printed before it goes to <paramref name="leadingOutput"/>.</summary>
+    internal static string SplitLeadingOutput(string output, bool hasLeading, Action<string>? leadingOutput)
+    {
+        if (!hasLeading) return output;
+        var marker = StateStartMarker + "\n";
+        var start = output.StartsWith(marker, StringComparison.Ordinal) ? 0 : output.IndexOf("\n" + marker, StringComparison.Ordinal) is var at and >= 0 ? at + 1 : -1;
+        leadingOutput?.Invoke(start < 0 ? "" : output[..start]);
+        return start < 0 ? output : output[(start + marker.Length)..];
+    }
+
+    /// <summary>
+    /// Reads process lifecycle and the current visible screen. Activity rules and stable completion tracking run in the Manager.
+    /// <paramref name="leadingScript"/> runs first in the same SSH command (e.g. usage readings); its output goes to
+    /// <paramref name="leadingOutput"/> before the agent state is parsed.
+    /// </summary>
+    public async Task RefreshRunnerAsync(Runner runner, CancellationToken cancellationToken = default, string? leadingScript = null, Action<string>? leadingOutput = null)
     {
         using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agents = await db.Agents.Where(a => a.RunnerId == runner.Id && a.State != AgentState.Moving).ToListAsync(cancellationToken);
         agents.RemoveAll(MoveBlocksActions);
 
-        var result = (await shell.RunAsync(runner, BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern)), captureScreens: true,
-            nativeSessions: agents.ToDictionary(a => a.TmuxSession, a => new NativeActivityTarget(a.HarnessId, a.HarnessSessionId))),
-            TimeSpan.FromSeconds(30), cancellationToken)).EnsureSuccess("Reading agent state");
-        var (_, panes, _) = ParsePanes(result.Output);
+        var script = BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern)), captureScreens: true,
+            nativeSessions: agents.ToDictionary(a => a.TmuxSession, a => new NativeActivityTarget(a.HarnessId, a.HarnessSessionId)));
+        if (leadingScript is not null) script = leadingScript.TrimEnd('\n') + $"\necho '{StateStartMarker}'\n" + script;
+        var result = (await shell.RunAsync(runner, script, TimeSpan.FromSeconds(30), cancellationToken)).EnsureSuccess("Reading agent state");
+        var output = SplitLeadingOutput(result.Output, leadingScript is not null, leadingOutput);
+        var (_, panes, _) = ParsePanes(output);
         var knownLimits = await db.AgentLimits.AsNoTracking().Where(l => db.Agents.Any(a => a.Id == l.AgentId && a.RunnerId == runner.Id)).ToDictionaryAsync(l => l.AgentId, cancellationToken);
         var changedAgents = new List<Guid>();
-        var screens = ParseScreens(result.Output);
+        var screens = ParseScreens(output);
 
         foreach (var agent in agents)
         {

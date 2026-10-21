@@ -1,13 +1,14 @@
+@* Read inside the Runner; a value that can't be read (e.g. no SSH) shows "–" with an empty bar. *@
 <div class="usage @(Compact ? "usage-compact" : "")">
     <div class="usage-item">
         <span class="usage-label">CPU</span>
-        <div class="usage-track"><div class="usage-fill usage-cpu" style="width:@Percent(Cpu)%"></div></div>
-        <span class="usage-value">@Cpu.ToString("0")%</span>
+        <div class="usage-track"><div class="usage-fill usage-cpu" style="width:@Percent(Cpu ?? 0)%"></div></div>
+        <span class="usage-value">@(Cpu is { } cpu ? $"{cpu:0}%" : "–")</span>
     </div>
     <div class="usage-item">
         <span class="usage-label">RAM</span>
-        <div class="usage-track"><div class="usage-fill usage-memory" style="width:@Percent(Memory)%"></div></div>
-        <span class="usage-value">@(Compact ? $"{Memory:0}%" : MemoryText)</span>
+        <div class="usage-track"><div class="usage-fill usage-memory" style="width:@Percent(Memory ?? 0)%"></div></div>
+        <span class="usage-value">@(Memory is { } memory ? Compact ? $"{memory:0}%" : MemoryText : "–")</span>
     </div>
     <div class="usage-item" title="Root filesystem (/) usage">
         <span class="usage-label">Disk</span>
@@ -26,13 +27,11 @@
     private double? Disk => Status is { DiskUsedBytes: >= 0 and var used, DiskTotalBytes: > 0 and var total } ? used * 100.0 / total : null;
     private string DiskText => $"{Status.DiskUsedBytes / 1073741824.0:0.0} / {Status.DiskTotalBytes / 1073741824.0:0.#} GB";
 
-    private double Cpu => Status.CpuUsage ?? 0;
+    private double? Cpu => Status.CpuUsage;
 
-    private double Memory => Status is { MemoryUsedBytes: { } used, MemoryTotalBytes: > 0 and var total } ? used * 100.0 / total : 0;
+    private double? Memory => Status is { MemoryUsedBytes: { } used, MemoryTotalBytes: > 0 and var total } ? used * 100.0 / total : null;
 
-    private string MemoryText => Status is { MemoryUsedBytes: { } used, MemoryTotalBytes: { } total }
-        ? $"{used / 1024.0 / 1024 / 1024:0.0} / {total / 1024.0 / 1024 / 1024:0.#} GB"
-        : "-";
+    private string MemoryText => $"{Status.MemoryUsedBytes / 1073741824.0:0.0} / {Status.MemoryTotalBytes / 1073741824.0:0.#} GB";
 
     private static string Percent(double value) => Math.Clamp(value, 0, 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
 }

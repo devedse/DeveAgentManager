@@ -84,7 +84,6 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<RunnerMonitor>();
         services.AddHostedService<AgentToolsSync>();
         services.AddHostedService<Accounts.AccountRenewalService>();
-        services.AddHostedService<RunnerUsageMonitor>();
         services.AddSingleton<AgentIconService>();
         services.AddHostedService(sp => sp.GetRequiredService<AgentIconService>());
         return services;

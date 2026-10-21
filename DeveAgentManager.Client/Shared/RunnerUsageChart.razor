@@ -136,8 +136,8 @@
                 continue;
             }
 
-            // The full provider check also supplies a reading every 15 seconds when fast sampling is unavailable.
-            // Connect those readings, but leave longer outages visible as gaps.
+            // Readings come every 5 seconds, or every 15 for a Runner without agents. Connect those, but leave longer
+            // outages visible as gaps.
             if (current is null || previous is { } last && sample.At - last > TimeSpan.FromSeconds(_minutes == 1 ? 20 : 40))
             {
                 current = [];
