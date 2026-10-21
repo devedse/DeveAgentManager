@@ -118,6 +118,15 @@ internal static class AgentEndpoints
                 ? Results.Ok(DtoMapper.Session(full, user))
                 : Results.NotFound()).RequireAgent(AgentAccess.Read);
 
+        // The agent's task list (dam-tools tasks): everyone who reads the agent sees it; clearing it needs read-write.
+        agents.MapGet("/{agentId:guid}/tasks", (Guid agentId, AgentTasks tasks, CancellationToken ct) => tasks.GetAsync(agentId, ct))
+            .RequireAgent(AgentAccess.Read);
+        agents.MapDelete("/{agentId:guid}/tasks", async (Guid agentId, AgentTasks tasks, CancellationToken ct) =>
+        {
+            await tasks.ClearAsync(agentId, ct);
+            return Results.NoContent();
+        }).RequireAgent(AgentAccess.Write);
+
         MapLimits(agents);
         MapIcons(agents);
         MapShares(agents);

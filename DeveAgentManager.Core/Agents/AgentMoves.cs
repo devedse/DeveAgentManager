@@ -424,7 +424,9 @@ public sealed partial class AgentService
         await MovePhaseAsync(source, "quiesce", move, ct);
         await MovePhaseAsync(source, "cleanup-source", move, ct);
         (await shell.RunAsync(source, "tmux kill-session -t " + ShellQuote.Quote("=" + agent.TmuxSession)
-            + " 2>/dev/null || true\nrm -f -- " + ShellQuote.Path($"~/.deveagentmanager/artifact-access/{move.Agent}.token"), cancellationToken: ct)).EnsureSuccess("Removing source agent runtime");
+            + " 2>/dev/null || true\nrm -f -- " + ShellQuote.Path($"~/.deveagentmanager/artifact-access/{move.Agent}.token")
+            + " " + ShellQuote.Path($"~/.deveagentmanager/tasks/{move.AgentId:N}.json") + " " + ShellQuote.Path($"~/.deveagentmanager/tasks/{move.AgentId:N}.lock"),
+            cancellationToken: ct)).EnsureSuccess("Removing source agent runtime");
         await using (var db = await dbFactory.CreateDbContextAsync(ct))
         {
             var target = await db.Runners.SingleAsync(r => r.Id == move.TargetRunner, ct);

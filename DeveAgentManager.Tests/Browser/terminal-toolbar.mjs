@@ -11,7 +11,7 @@ const now = new Date().toISOString();
 // What leaves the toolbar first (AgentTerminal.ToolbarOverflow), with the menu entry each one becomes.
 const priority = [
     ['hint', null], ['avatar', null], ['switch-label', null], ['viewers', 'Screens (2)'], ['quick', 'Quick commands'],
-    ['images', 'Shared images (3)'], ['files', 'Shared files (1)'], ['awake', 'Keep screen awake'], ['limit', 'Schedule continue'], ['sessions', 'Switch session'],
+    ['images', 'Shared images (3)'], ['files', 'Shared files (1)'], ['tasks', 'Tasks (1/2)'], ['awake', 'Keep screen awake'], ['limit', 'Schedule continue'], ['sessions', 'Switch session'],
 ];
 const selectors = { hint: '.terminal-hint', avatar: '.terminal-avatar', 'switch-label': '.switch-chip-label' };
 const fixed = ['Conversation', 'Sharing', 'Git identity…', 'Runner desktop', 'VS Code', 'Restart the harness', 'Stop the agent'];
@@ -34,6 +34,9 @@ async function run(touch) {
     const session = { id: sessionId, ownerId: agentId, ownerName: 'Test user', access: 'Owner', title: 'Plan Windows runner agent', harnessId: 'claude', messageCount: 3, createdAt: now, updatedAt: now };
     const images = [1, 2, 3].map(i => ({ id: `00000000-0000-0000-0000-00000000002${i}`, sessionId, fileName: `shot-${i}.png`, caption: `Shot ${i}`, contentType: 'image/png', bytes: 2048, createdAt: now }));
     const files = [{ id: '00000000-0000-0000-0000-000000000031', sessionId, fileName: 'app-release.apk', caption: '', bytes: 4096, sha256: 'a'.repeat(64), createdAt: now }];
+    const tasks = { revision: 3, updatedAt: now, tasks: [
+        { id: 1, name: 'Build', percent: 100, description: '', startedAt: now, finishedAt: now },
+        { id: 2, name: 'Test', percent: 40, description: 'Unit tests', startedAt: now, leftSeconds: 300, leftAt: now }] };
     const viewers = [{ tty: '/dev/pts/99', columns: 120, rows: 40, connectedAt: now, lastActiveAt: now }, { tty: '/dev/pts/7', columns: 80, rows: 24, connectedAt: now, lastActiveAt: now, watching: true }];
     await context.route('**/api/**', async route => {
         const path = new URL(route.request().url()).pathname;
@@ -42,6 +45,7 @@ async function run(touch) {
         const body = path === '/api/info' ? info : path === `/api/agents/${agentId}` ? agent : path === `/api/agents/${agentId}/session` ? session
             : path === `/api/sessions/${sessionId}/images` ? images : path === `/api/sessions/${sessionId}/files` ? files
             : path === `/api/agents/${agentId}/viewers` ? viewers : path === `/api/agents/${agentId}/commands` ? [{ command: '/compact', label: 'Compact the conversation' }]
+            : path === `/api/agents/${agentId}/tasks` ? tasks
             : path === '/api/agents' ? [agent] : path.endsWith('/limit/automatic') ? { enabled: false, sent: 0 } : path.endsWith('/limit') ? null : [];
         return route.fulfill({ json: body });
     });

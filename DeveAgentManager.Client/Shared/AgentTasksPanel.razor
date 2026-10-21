@@ -1,0 +1,174 @@
+@* An agent's task list (dam-tools tasks): overall progress, then each task with its state, %, description and times.
+   Shown in the tasks dropdown and, when the toolbar has no room for it, in a dialog. *@
+<div class="tasks-panel">
+    <div class="tasks-header">
+        <div class="help-heading">
+            <span class="tasks-title">Tasks</span>
+            <HelpTip Label="Tasks">
+                <p>The agent's own progress list, kept with <code>dam-tools tasks</code>: each task's % done, what it is or what was done, the time it took and the agent's estimate of the time left.</p>
+                <p>The agent updates it as it works, ideally each time it finishes a task, and can read it back. The button shows a dot when the list changed since you last opened it here.</p>
+                <p>Clear removes every task for everyone who can see this agent, and the agent then reads an empty list. It can't be undone.</p>
+            </HelpTip>
+        </div>
+        @if (Loaded && HasTasks)
+        {
+            <span class="tasks-overall @(Done == List.Tasks.Count ? "tasks-overall-done" : "")">@Percent%</span>
+        }
+    </div>
+    <LoadingSection Loaded="Loaded" Error="@Error" Retry="Retry" Label="Loading tasks">
+        <Placeholder><SkeletonList Rows="3" Avatar="false" /></Placeholder>
+        <ChildContent>
+            @if (!HasTasks)
+            {
+                <div class="tasks-empty">
+                    <MudIcon Icon="@Icons.Material.Rounded.Checklist" />
+                    <div>
+                        <strong>No tasks yet</strong>
+                        <span>The agent shows its progress here with <code>dam-tools tasks</code>.</span>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="tasks-summary">
+                    <div class="tasks-track" role="progressbar" aria-label="Overall progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@Percent">
+                        <div class="tasks-fill" style="width:@Percent%"></div>
+                    </div>
+                    <span>@Summary</span>
+                </div>
+                <ol class="tasks-list">
+                    @foreach (var task in List.Tasks)
+                    {
+                        var state = task.Percent >= 100 ? "done" : task.Percent > 0 ? "active" : "pending";
+                        <li class="task task-@state" @key="task.Id">
+                            <span class="task-status" aria-hidden="true">
+                                @if (state == "done")
+                                {
+                                    <MudIcon Icon="@Icons.Material.Rounded.CheckCircle" Size="Size.Small" />
+                                }
+                                else if (state == "active")
+                                {
+                                    <MudProgressCircular Value="task.Percent" Size="Size.Small" StrokeWidth="4" Class="task-ring" />
+                                }
+                                else
+                                {
+                                    <MudIcon Icon="@Icons.Material.Rounded.RadioButtonUnchecked" Size="Size.Small" />
+                                }
+                            </span>
+                            <div class="task-main">
+                                <div class="task-line">
+                                    <span class="task-name"><span class="task-number">@task.Id.</span> @task.Name</span>
+                                    <span class="task-percent">@task.Percent%</span>
+                                </div>
+                                @if (state == "active")
+                                {
+                                    <div class="task-track"><div class="task-fill" style="width:@task.Percent%"></div></div>
+                                }
+                                @if (task.Description.Length > 0)
+                                {
+                                    <div class="task-description">@task.Description</div>
+                                }
+                                @if (Meta(task) is { Length: > 0 } meta)
+                                {
+                                    <div class="task-meta">@meta</div>
+                                }
+                            </div>
+                        </li>
+                    }
+                </ol>
+            }
+            <div class="tasks-footer">
+                <span>@(List.UpdatedAt is { } updated ? $"Updated {updated.Humanize()}" : "")</span>
+                @if (CanClear && HasTasks)
+                {
+                    @if (_confirming)
+                    {
+                        <span class="tasks-confirm">
+                            <span>Clear all tasks?</span>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_busy" OnClick="() => _confirming = false">Cancel</MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Error" Disabled="_busy" OnClick="ConfirmAsync">Clear</MudButton>
+                        </span>
+                    }
+                    else
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" StartIcon="@Icons.Material.Rounded.ClearAll" OnClick="() => _confirming = true">Clear</MudButton>
+                    }
+                }
+            </div>
+        </ChildContent>
+    </LoadingSection>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AgentTaskListDto List { get; set; } = AgentTaskListDto.Empty;
+    [Parameter] public bool Loaded { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public EventCallback Retry { get; set; }
+    /// <summary>Read-write access: the list can be cleared.</summary>
+    [Parameter] public bool CanClear { get; set; }
+    [Parameter] public EventCallback Clear { get; set; }
+    private bool _confirming, _busy;
+
+    private bool HasTasks => List.Tasks.Count > 0;
+    private int Done => List.Tasks.Count(t => t.Percent >= 100);
+    private int Percent => Overall(List);
+
+    /// <summary>Every task's % done counts the same.</summary>
+    internal static int Overall(AgentTaskListDto list) => list.Tasks.Count > 0 ? (int)Math.Round(list.Tasks.Average(t => t.Percent)) : 0;
+
+    private string Summary
+    {
+        get
+        {
+            var now = DateTime.UtcNow;
+            var parts = new List<string> { $"{Done} of {List.Tasks.Count} done" };
+            // From the first start to the last finish (or now): tasks can overlap, so their times aren't added up.
+            var started = List.Tasks.Where(t => t.StartedAt is not null).Select(t => t.StartedAt!.Value).ToList();
+            if (started.Count > 0)
+            {
+                var end = Done == List.Tasks.Count ? List.Tasks.Max(t => t.FinishedAt ?? now) : now;
+                parts.Add($"{Duration(end - started.Min())} taken");
+            }
+            var left = List.Tasks.Where(t => t.Percent < 100).Select(t => Left(t, now)).Where(l => l is not null).Sum(l => l!.Value.TotalSeconds);
+            if (left > 0) parts.Add($"~{Duration(TimeSpan.FromSeconds(left))} left");
+            return string.Join(" · ", parts);
+        }
+    }
+
+    private static string Meta(AgentTaskDto task)
+    {
+        var now = DateTime.UtcNow;
+        var parts = new List<string>();
+        if (Taken(task, now) is { } taken) parts.Add($"{Duration(taken)} {(task.Percent >= 100 ? "taken" : "so far")}");
+        if (task.Percent < 100 && Left(task, now) is { } left) parts.Add(left > TimeSpan.Zero ? $"~{Duration(left)} left" : "finishing");
+        return string.Join(" · ", parts);
+    }
+
+    private static TimeSpan? Taken(AgentTaskDto task, DateTime now) =>
+        task.TakenSeconds is { } seconds ? TimeSpan.FromSeconds(seconds)
+        : task.StartedAt is { } started ? (task.FinishedAt ?? now) - started : null;
+
+    // The agent's estimate, counting down from when it gave it.
+    private static TimeSpan? Left(AgentTaskDto task, DateTime now)
+    {
+        if (task.LeftSeconds is not { } seconds) return null;
+        var left = TimeSpan.FromSeconds(seconds) - (task.LeftAt is { } at ? now - at : TimeSpan.Zero);
+        return left > TimeSpan.Zero ? left : TimeSpan.Zero;
+    }
+
+    internal static string Duration(TimeSpan span) =>
+        span < TimeSpan.FromMinutes(1) ? $"{Math.Max(0, (int)span.TotalSeconds)}s"
+        : span < TimeSpan.FromHours(1) ? $"{(int)span.TotalMinutes}m"
+        : $"{(int)span.TotalHours}h {span.Minutes:00}m";
+
+    private async Task ConfirmAsync()
+    {
+        _busy = true;
+        try { await Clear.InvokeAsync(); }
+        finally
+        {
+            _busy = false;
+            _confirming = false;
+        }
+    }
+}

@@ -71,6 +71,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<Accounts.AccountService>();
         services.AddHostedService<Accounts.AccountEnforcement>();
         services.AddSingleton<AgentService>();
+        services.AddSingleton<AgentTasks>();
         services.AddHostedService<Agents.AgentMoves>();
         services.AddSingleton<AgentAttentionService>();
         services.AddSingleton<RunnerService>();

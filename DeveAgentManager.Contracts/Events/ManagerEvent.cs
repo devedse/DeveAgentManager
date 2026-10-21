@@ -22,6 +22,9 @@ public enum ManagerEventKind
     /// else about the Runner changing is <see cref="RunnerChanged"/>.
     /// </summary>
     RunnerUsageChanged,
+
+    /// <summary>An agent's task list (dam-tools tasks) changed; only its tasks button reloads.</summary>
+    TasksChanged,
 }
 
 /// <param name="UserId">For changes that concern one user only: their settings, logins or account.</param>

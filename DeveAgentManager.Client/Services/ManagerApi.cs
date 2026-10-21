@@ -191,6 +191,15 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     public Task SwitchAgentAsync(Guid agentId, string harnessId, Guid? accountId) =>
         SendAsync(HttpMethod.Post, $"api/agents/{agentId}/switch", new SwitchAgentRequest(harnessId, accountId));
 
+    /// <summary>The agent's task list (dam-tools tasks). One that can't be read is a load error, not a crash.</summary>
+    public async Task<AgentTaskListDto> GetAgentTasksAsync(Guid agentId)
+    {
+        try { return await GetAsync<AgentTaskListDto>($"api/agents/{agentId}/tasks"); }
+        catch (System.Text.Json.JsonException) { throw new ApiException("The task list couldn't be read.", HttpStatusCode.BadGateway); }
+    }
+
+    public Task ClearAgentTasksAsync(Guid agentId) => SendAsync(HttpMethod.Delete, $"api/agents/{agentId}/tasks");
+
     public Task SetGitIdentityAsync(Guid agentId, Guid userId) =>
         SendAsync(HttpMethod.Post, $"api/agents/{agentId}/git-identity", new SetGitIdentityRequest(userId));
 

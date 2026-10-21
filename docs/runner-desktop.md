@@ -121,9 +121,19 @@ for everyone. Files stay with the conversation across harness/session switches a
 when someone continues a copy of the conversation, and are removed when the conversation is deleted. They are stored
 in the Manager's data folder (`sessions/files`).
 
+### Task list
+
+```bash
+dam-tools tasks set "Read the code" "Write the fix" "Test it"
+dam-tools tasks done 1 --description "Found the cause in the export"
+```
+
+The agent's progress, shown under **Tasks** next to Shared files: each task's %, description, time taken and time left.
+See [agent task lists](agent-tasks.md).
+
 ### How agents know about it
 
-The Manager adds a few sentences about `dam-tools` (sharing images and files) to the system prompt of each harness it starts
+The Manager adds a few sentences about `dam-tools` (sharing images and files, and the task list) to the system prompt of each harness it starts
 (`--append-system-prompt` for Claude Code and pi, `-c developer_instructions=…` for Codex). Nothing is written to
 `CLAUDE.md`, `AGENTS.md` or any other file, so it can't end up in a repository, and a harness started by hand over
 SSH doesn't get it. The harnesses record the system prompt when a conversation starts, so conversations started

@@ -55,6 +55,10 @@
                 <span class="toolbar-item" data-toolbar="images"><SessionImageButton @key="sessionId" SessionId="sessionId" /></span>
                 <SessionFileButton @key="(sessionId, nameof(SessionFileButton))" SessionId="sessionId" class="toolbar-item" data-toolbar="files" />
             }
+            @if (read)
+            {
+                <AgentTasksButton @key="(AgentId, nameof(AgentTasksButton))" AgentId="AgentId" CanClear="write" class="toolbar-item" data-toolbar="tasks" />
+            }
             @if (running && write)
             {
                 <span class="toolbar-item" data-toolbar="limit"><AgentLimitButton @key="AgentId" AgentId="AgentId" /></span>
@@ -85,6 +89,10 @@
                             {
                                 <SessionFileButton SessionId="menuSessionId" InMenu="true" />
                             }
+                        }
+                        @if (Overflowed("tasks"))
+                        {
+                            <AgentTasksButton AgentId="AgentId" CanClear="write" InMenu="true" />
                         }
                         @if (running && write)
                         {
@@ -262,7 +270,7 @@
     private DotNetObjectReference<AgentTerminal>? _toolbarSelf;
     private HashSet<string> _overflow = [];
 
-    /// <summary>What leaves the toolbar first when it runs out of room. Only the last seven get an entry in the ⋮ menu.</summary>
+    /// <summary>What leaves the toolbar first when it runs out of room. Only the last eight get an entry in the ⋮ menu.</summary>
     private static readonly object[] ToolbarOverflow =
     [
         new { key = "hint", selector = ".terminal-hint" },
@@ -273,12 +281,13 @@
         new { key = "quick", selector = "[data-toolbar='quick']" },
         new { key = "images", selector = "[data-toolbar='images']" },
         new { key = "files", selector = "[data-toolbar='files']" },
+        new { key = "tasks", selector = "[data-toolbar='tasks']" },
         new { key = "awake", selector = "[data-toolbar='awake']" },
         new { key = "limit", selector = "[data-toolbar='limit']" },
         new { key = "sessions", selector = "[data-toolbar='sessions']" },
     ];
 
-    private static readonly string[] MenuEntries = ["viewers", "quick", "images", "files", "awake", "limit", "sessions"];
+    private static readonly string[] MenuEntries = ["viewers", "quick", "images", "files", "tasks", "awake", "limit", "sessions"];
 
     private bool Overflowed(string key) => _overflow.Contains(key);
 

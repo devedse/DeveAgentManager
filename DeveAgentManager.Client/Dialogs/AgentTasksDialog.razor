@@ -1,0 +1,46 @@
+@inherits LiveComponent
+@inject AgentTaskViews Views
+
+@* The tasks dropdown as a dialog, for the toolbar's ⋮ menu on narrow screens. Closing it marks the list as seen. *@
+<MudDialog>
+    <DialogContent>
+        <AgentTasksPanel List="_tasks" Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" CanClear="CanClear" Clear="ClearAsync" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Close()">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public Guid AgentId { get; set; }
+    [Parameter] public bool CanClear { get; set; }
+    private AgentTaskListDto _tasks = AgentTaskListDto.Empty;
+
+    // Returns once shown, so the ⋮ menu it was opened from closes; the dialog marks what it showed as seen itself.
+    public static Task ShowAsync(IDialogService dialogs, Guid agentId, bool canClear) =>
+        dialogs.ShowAsync<AgentTasksDialog>("Tasks", new DialogParameters<AgentTasksDialog> { { d => d.AgentId, agentId }, { d => d.CanClear, canClear } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small, NoHeader = true });
+
+    protected override bool ShowsTasks => true;
+    protected override bool IsRelevant(ManagerEvent e) => e.Kind == ManagerEventKind.TasksChanged && e.AgentId == AgentId;
+    protected override async Task LoadAsync() => _tasks = await Api.GetAgentTasksAsync(AgentId);
+
+    private async Task ClearAsync()
+    {
+        try
+        {
+            await Api.ClearAgentTasksAsync(AgentId);
+            await ReloadAsync();
+        }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+    }
+
+    public override void Dispose()
+    {
+        // However it was closed (Close, Escape, outside), what it showed counts as seen.
+        if (Loaded) _ = Views.MarkSeenAsync(AgentId, _tasks.Revision);
+        base.Dispose();
+    }
+}

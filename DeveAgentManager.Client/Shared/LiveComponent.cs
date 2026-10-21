@@ -41,6 +41,9 @@ public abstract class LiveComponent : ComponentBase, IDisposable
     /// <summary>True for what shows Runner CPU, memory or disk, refreshed every 15 seconds (<see cref="ManagerEventKind.RunnerUsageChanged"/>).</summary>
     protected virtual bool ShowsRunnerUsage => false;
 
+    /// <summary>True for what shows an agent's task list (<see cref="ManagerEventKind.TasksChanged"/>), which can change often.</summary>
+    protected virtual bool ShowsTasks => false;
+
     /// <summary>True once data loaded successfully; until then show the section as loading (AGENTS.md, "UI: loading states").</summary>
     protected bool Loaded { get; private set; }
 
@@ -111,6 +114,7 @@ public abstract class LiveComponent : ComponentBase, IDisposable
     private void OnManagerEvent(ManagerEvent managerEvent)
     {
         if (managerEvent.Kind == ManagerEventKind.RunnerUsageChanged && !ShowsRunnerUsage) return;
+        if (managerEvent.Kind == ManagerEventKind.TasksChanged && !ShowsTasks) return;
         if (IsRelevant(managerEvent))
         {
             ScheduleWhenShown();

@@ -187,6 +187,12 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<long>("SeenCompletionSequence")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("TasksJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("TasksRevision")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("State")
                         .IsRequired()
                         .HasMaxLength(32)

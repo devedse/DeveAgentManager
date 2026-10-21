@@ -862,6 +862,9 @@ public sealed partial class AgentService(
         + "Shared files and images belong to this agent across all its sessions. Use `dam-tools list-artifacts` for your collection, "
         + "`dam-tools list-artifacts --all` to discover readable agents and their artifacts, and "
         + "`dam-tools fetch-artifact <id> --agent <source-agent-id>` to get a local file, including from another runner. "
+        + "For multi-step work, show the user your progress with `dam-tools tasks`: set the list when you start, update a task "
+        + "each time you finish it (`dam-tools tasks done 2 --description \"what you did\"`), and keep % done and time-left "
+        + "estimates current. `dam-tools tasks` prints the list, which the user may clear. "
         + "Use your harness’s built-in background tasks whenever it supports them. "
         + "Use `dam-tools run-job` only when your harness has no built-in background-job support. Long runtimes, restart survival and validation needs are not exceptions. "
         + "Run `dam-tools --help` for other tools.";

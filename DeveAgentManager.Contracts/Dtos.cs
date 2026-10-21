@@ -201,6 +201,20 @@ public sealed record AgentDto(
     AgentGitIdentityDto? RunningGitIdentity = null);
 
 /// <summary>
+/// An agent's task list (dam-tools tasks), shown next to its terminal. <see cref="Revision"/> grows with every change,
+/// so a viewer can tell an update it hasn't seen.
+/// </summary>
+public sealed record AgentTaskListDto(long Revision, DateTime? UpdatedAt, IReadOnlyList<AgentTaskDto> Tasks)
+{
+    public static AgentTaskListDto Empty { get; } = new(0, null, []);
+}
+
+/// <param name="TakenSeconds">Given by the agent; otherwise the time since <see cref="StartedAt"/> counts.</param>
+/// <param name="LeftSeconds">The agent's estimate when it gave it, at <see cref="LeftAt"/>.</param>
+public sealed record AgentTaskDto(int Id, string Name, int Percent, string Description, DateTime? StartedAt, DateTime? FinishedAt,
+    long? TakenSeconds, long? LeftSeconds, DateTime? LeftAt, DateTime? UpdatedAt);
+
+/// <summary>
 /// Whose git identity and GitHub token an agent commits and pushes with: the one chosen for its next start
 /// (<see cref="AgentDto.GitIdentity"/>), or the one its running harness started with. Names are null for a deleted user.
 /// </summary>

@@ -3317,3 +3317,257 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .notification-sounds-heading { color: var(--dam-muted); font-size: 0.875rem; font-weight: 600; margin-bottom: 4px; }
 .notification-sounds .notification-sound-switch { display: flex; justify-content: space-between; width: 100%; margin: 0; min-height: 44px; color: var(--dam-text); }
 .notification-sounds .notification-sound-switch .mud-typography { flex: 1; }
+
+/* Tasks (dam-tools tasks): the toolbar button, its update dot and the dropdown panel. */
+.tasks-button {
+    position: relative;
+    display: inline-flex;
+}
+
+/* Overall progress, just outside the icon button's hover circle. */
+.tasks-progress {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+    pointer-events: none;
+}
+
+.tasks-progress circle {
+    fill: none;
+    stroke-width: 2;
+}
+
+.tasks-progress-track { stroke: color-mix(in srgb, var(--dam-muted) 28%, transparent); }
+.tasks-progress-value { stroke: var(--dam-primary); stroke-linecap: round; transition: stroke-dasharray 300ms ease; }
+.tasks-progress-done .tasks-progress-value { stroke: var(--dam-success); }
+
+/* Where a count badge would be, cut out of the ring by the toolbar's colour. */
+.tasks-update-dot {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--dam-teal);
+    box-shadow: 0 0 0 2px var(--dam-surface);
+    pointer-events: none;
+}
+
+.tasks-update-dot::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--dam-teal);
+    animation: tasks-ping 2.4s ease-out infinite;
+}
+
+.tasks-update-dot-inline {
+    position: relative;
+    top: auto;
+    right: auto;
+    display: inline-block;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+.tasks-menu-entry {
+    display: inline-flex;
+    align-items: center;
+}
+
+@keyframes tasks-ping {
+    0% { transform: scale(1); opacity: 0.7; }
+    70%, 100% { transform: scale(2.6); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tasks-update-dot::after { animation: none; opacity: 0; }
+}
+
+.tasks-panel {
+    width: min(400px, calc(100vw - 32px));
+    max-height: min(70vh, 560px);
+    display: flex;
+    flex-direction: column;
+    padding: 12px 14px 8px;
+    color: var(--dam-text);
+}
+
+.mud-dialog .tasks-panel {
+    width: 100%;
+    max-height: none;
+    padding: 4px 0 0;
+}
+
+.tasks-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.tasks-title {
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.tasks-overall {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--dam-primary-text);
+}
+
+.tasks-overall-done {
+    color: var(--dam-success);
+}
+
+.tasks-summary {
+    display: grid;
+    gap: 6px;
+    margin: 8px 0 10px;
+    font-size: 0.78rem;
+    color: var(--dam-muted);
+}
+
+.tasks-track,
+.task-track {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--dam-surface-3);
+    overflow: hidden;
+}
+
+.task-track {
+    height: 4px;
+    margin-top: 6px;
+}
+
+.tasks-fill,
+.task-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--dam-brand-start), var(--dam-teal));
+    transition: width 300ms ease;
+}
+
+.tasks-list {
+    list-style: none;
+    margin: 0 -14px;
+    padding: 0 14px;
+    overflow-y: auto;
+    border-top: 1px solid var(--dam-border);
+}
+
+.task {
+    display: flex;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--dam-border);
+}
+
+.task:last-child {
+    border-bottom: none;
+}
+
+.task-status {
+    flex: 0 0 auto;
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+    margin-top: 1px;
+    align-items: center;
+    justify-content: center;
+}
+
+.task-done .task-status { color: var(--dam-success); }
+.task-pending .task-status { color: var(--dam-faint); }
+.task-ring { color: var(--dam-primary); }
+
+.task-main {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.task-line {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.task-name {
+    font-size: 0.86rem;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+}
+
+.task-done .task-name { color: var(--dam-muted); }
+
+.task-number {
+    color: var(--dam-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+.task-percent {
+    flex: 0 0 auto;
+    font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--dam-muted);
+}
+
+.task-active .task-percent { color: var(--dam-primary-text); font-weight: 600; }
+
+.task-description {
+    margin-top: 4px;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--dam-muted);
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+}
+
+.task-meta {
+    margin-top: 4px;
+    font-size: 0.72rem;
+    color: var(--dam-faint);
+}
+
+.tasks-empty {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 14px 0 10px;
+    color: var(--dam-muted);
+    font-size: 0.82rem;
+}
+
+.tasks-empty > div {
+    display: grid;
+    gap: 2px;
+}
+
+.tasks-empty strong { color: var(--dam-text); font-weight: 600; }
+
+.tasks-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 36px;
+    padding-top: 6px;
+    border-top: 1px solid var(--dam-border);
+    font-size: 0.74rem;
+    color: var(--dam-faint);
+}
+
+.tasks-confirm {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--dam-text);
+}

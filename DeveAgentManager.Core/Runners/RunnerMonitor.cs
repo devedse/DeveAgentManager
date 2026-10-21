@@ -200,7 +200,8 @@ public sealed class RunnerMonitor(
     RunnerShell shell,
     RunnerStatusCache statusCache,
     ManagerEvents events,
-    ILogger<RunnerMonitor> logger) : BackgroundService
+    ILogger<RunnerMonitor> logger,
+    AgentTasks? tasks = null) : BackgroundService
 {
     /// <summary>Agents (running, working or idle) and usage are checked this often; the provider, disk and conversations every third time.</summary>
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
@@ -251,16 +252,29 @@ public sealed class RunnerMonitor(
             {
                 // Usage is read inside the Runner, in the agent check's SSH command; Runners without agents get their own
                 // command every third pass. A Runner that can't be reached shows no usage rather than an old reading.
+                // Agents' task lists whose revision changed come along in the same command.
                 GuestUsage.Reading? guest = null;
+                string? leading = null;
                 var unreachable = false;
                 if (runner.State == RunnerState.Ready && runner.Agents.Count > 0)
                 {
-                    try { await agents.RefreshRunnerAsync(runner, ct, GuestUsage.Script(disk: full), output => guest = GuestUsage.Parse(output)); }
+                    try
+                    {
+                        await agents.RefreshRunnerAsync(runner, ct, GuestUsage.Script(disk: full) + AgentTasks.CollectScript(runner.Agents), output => leading = output);
+                        guest = GuestUsage.Parse(leading ?? "");
+                    }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
                         logger.LogWarning(ex, "Could not observe terminal state for runner {Runner}", runner.Name);
                         await agents.MarkObservationUnavailableAsync(runner.Id, ct);
+                        guest = leading is null ? null : GuestUsage.Parse(leading);
                         unreachable = guest is null;
+                    }
+
+                    if (leading is not null && tasks is not null)
+                    {
+                        try { await tasks.ApplyAsync(runner.Id, AgentTasks.Parse(leading), ct); }
+                        catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Could not keep the task lists from runner {Runner}", runner.Name); }
                     }
                 }
 

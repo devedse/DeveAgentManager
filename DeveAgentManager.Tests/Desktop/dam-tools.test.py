@@ -251,5 +251,151 @@ class ArtifactDownloadTests(unittest.TestCase):
             share.artifact_folder("../outside")
 
 
+class TaskTests(unittest.TestCase):
+    """dam-tools tasks: the agent's task list on its Runner, which the Manager reads by revision."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.home = Path(temp.name)
+        self.patcher = patch.object(share, "TASKS", self.home / "tasks")
+        self.patcher.start()
+        self.addCleanup(self.patcher.stop)
+        self.agent = str(uuid.uuid4())
+
+    def run_cli(self, *args, stdin=None):
+        env = dict(os.environ, HOME=str(self.home), DAM_AGENT_ID=self.agent)
+        return subprocess.run([sys.executable, str(Path(__file__).with_name("dam-tools.py")), *args], env=env, input=stdin,
+                              capture_output=True, text=True, timeout=20)
+
+    def test_set_update_done_apply_remove_and_clear_each_make_a_new_revision(self):
+        self.assertIn("No tasks", self.run_cli("tasks").stdout)
+        self.run_cli("tasks", "set", "Build", "Test", "Ship")
+        result = self.run_cli("tasks", "update", "2", "--percent", "40", "--left", "10m", "--description", "Unit tests\nthen browser tests")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("[ 40%] Test", result.stdout)
+        self.run_cli("tasks", "done", "1", "--description", "Built it")
+        self.run_cli("tasks", "apply", "--json", "-", stdin=json.dumps([{"id": 3, "percent": 10}, {"name": "Docs", "left": "1h30m"}]))
+        self.run_cli("tasks", "remove", "3")
+        state = json.loads(self.run_cli("tasks", "--json").stdout)
+        self.assertEqual(5, state["revision"])
+        self.assertEqual([1, 2, 4], [task["id"] for task in state["tasks"]])
+        build, test, docs = state["tasks"]
+        self.assertEqual((100, "Built it"), (build["percent"], build["description"]))
+        self.assertIsNotNone(build["startedAt"])
+        self.assertIsNotNone(build["finishedAt"])
+        self.assertEqual("Unit tests\nthen browser tests", test["description"])
+        self.assertEqual((600, None), (test["leftSeconds"], test["finishedAt"]))
+        self.assertEqual(5400, docs["leftSeconds"])
+        self.assertIn("No tasks", self.run_cli("tasks", "clear").stdout)
+        self.assertEqual((6, []), (lambda s: (s["revision"], s["tasks"]))(json.loads(self.run_cli("tasks", "show", "--json").stdout)))
+
+    def test_a_task_first_reported_when_done_started_when_it_was_added_or_the_previous_one_finished(self):
+        def at(time):
+            return patch.object(share, "now_iso", return_value=f"2026-10-21T{time}:00Z")
+        with at("10:00"):
+            tasks = [share.new_task(1, dict(name="Read"), []), share.new_task(2, dict(name="Fix"), [])]
+        with at("10:10"):
+            share.set_task_fields(tasks[0], tasks, percent=100)
+        with at("10:20"):
+            tasks.append(share.new_task(3, dict(name="Docs"), tasks))
+        with at("10:25"):
+            share.set_task_fields(tasks[1], tasks, percent=100)
+        with at("10:30"):
+            share.set_task_fields(tasks[2], tasks, percent=50)
+        self.assertEqual([("10:00", "10:10"), ("10:10", "10:25"), ("10:25", None)],
+                         [(task["startedAt"][11:16], task["finishedAt"] and task["finishedAt"][11:16]) for task in tasks])
+        self.assertIn("[ 50%] Docs  (", share.describe_tasks(dict(revision=4, tasks=tasks)))
+        self.assertIn("so far)", share.describe_tasks(dict(revision=4, tasks=tasks)))
+
+    def test_set_from_json_replaces_everything_in_one_go(self):
+        items = [{"name": "Plan", "percent": 100, "description": "Agreed"}, {"name": "Build", "percent": 30, "left": "20m", "taken": "5m"}]
+        self.assertEqual(0, self.run_cli("tasks", "set", "--json", json.dumps(items)).returncode)
+        tasks = json.loads(self.run_cli("tasks", "--json").stdout)["tasks"]
+        self.assertEqual([(1, "Plan", 100), (2, "Build", 30)], [(t["id"], t["name"], t["percent"]) for t in tasks])
+        self.assertEqual((1200, 300), (tasks[1]["leftSeconds"], tasks[1]["takenSeconds"]))
+
+    def test_bad_input_is_refused_with_a_reason_and_changes_nothing(self):
+        self.run_cli("tasks", "set", "Build")
+        for args, reason in [(("update", "9", "--percent", "5"), "no task 9"), (("update", "1", "--percent", "120"), "0 to 100"),
+                             (("update", "1", "--left", "soon"), "duration"), (("set", "--json", "{}"), "JSON array"),
+                             (("add", "   "), "needs a name")]:
+            result = self.run_cli("tasks", *args)
+            self.assertEqual(1, result.returncode)
+            self.assertIn(reason, result.stderr)
+        self.assertEqual(1, json.loads(self.run_cli("tasks", "--json").stdout)["revision"])
+        many = self.run_cli("tasks", "set", *[f"Task {i}" for i in range(51)])
+        self.assertIn("at most 50", many.stderr)
+
+    def test_long_text_is_bounded_and_control_characters_dropped(self):
+        self.run_cli("tasks", "add", "x" * 500 + "\x1b[31m", "--description", "y" * 5000)
+        task = json.loads(self.run_cli("tasks", "--json").stdout)["tasks"][0]
+        self.assertEqual(120, len(task["name"]))
+        self.assertNotIn("\x1b", task["name"])
+        self.assertEqual(1000, len(task["description"]))
+
+    def test_durations(self):
+        self.assertEqual([90, 300, 5400, 7200, 120], [share.duration_seconds(v) for v in ("90s", "5m", "1h30m", "2h", "2")])
+        for bad in ("", "m", "5x", "1h30"):
+            with self.assertRaises(ValueError):
+                share.duration_seconds(bad)
+
+    def test_manager_reads_only_changed_lists_and_clears_with_a_new_revision(self):
+        self.run_cli("tasks", "set", "Build")
+        listed = subprocess.run([sys.executable, str(Path(__file__).with_name("dam-tools.py")), "--changed-tasks",
+                                 f"{self.agent}=0", f"{uuid.uuid4()}=0", "not-an-agent=1"],
+                                env=dict(os.environ, HOME=str(self.home)), capture_output=True, text=True, timeout=20).stdout.splitlines()
+        self.assertEqual(1, len(listed))
+        marker, agent, encoded = listed[0].split(" ")
+        self.assertEqual((share.TASKS_MARKER, uuid.UUID(self.agent).hex), (marker, agent))
+        self.assertEqual("Build", json.loads(__import__("base64").b64decode(encoded))["tasks"][0]["name"])
+        unchanged = subprocess.run([sys.executable, str(Path(__file__).with_name("dam-tools.py")), "--changed-tasks", f"{self.agent}=1"],
+                                   env=dict(os.environ, HOME=str(self.home)), capture_output=True, text=True, timeout=20)
+        self.assertEqual("", unchanged.stdout)
+        cleared = subprocess.run([sys.executable, str(Path(__file__).with_name("dam-tools.py")), "--clear-tasks", self.agent],
+                                 env=dict(os.environ, HOME=str(self.home)), capture_output=True, text=True, timeout=20).stdout
+        state = json.loads(__import__("base64").b64decode(cleared.split(" ")[2]))
+        self.assertEqual((2, []), (state["revision"], state["tasks"]))
+        self.assertIn("No tasks", self.run_cli("tasks").stdout)
+
+    def test_manager_puts_its_copy_back_only_where_the_runner_has_none(self):
+        def restore():
+            output = subprocess.run([sys.executable, str(Path(__file__).with_name("dam-tools.py")), "--restore-tasks", self.agent],
+                                    env=dict(os.environ, HOME=str(self.home)), capture_output=True, text=True, timeout=20).stdout
+            return json.loads(__import__("base64").b64decode(output.split(" ")[2]))
+        folder = self.home / ".deveagentmanager/tasks"
+        folder.mkdir(parents=True)
+        upload = folder / (uuid.UUID(self.agent).hex + ".restore")
+        upload.write_text(json.dumps(dict(revision=7, updatedAt="2026-10-21T10:00:00Z", tasks=[dict(id=1, name="Build", percent=40)])))
+        state = restore()
+        self.assertEqual((7, "Build"), (state["revision"], state["tasks"][0]["name"]))
+        self.assertFalse(upload.exists())
+        self.assertIn("[ 40%] Build", self.run_cli("tasks").stdout)
+        # A list the agent started here wins over the Manager's copy.
+        self.run_cli("tasks", "set", "New")
+        upload.write_text(json.dumps(dict(revision=7, tasks=[dict(id=1, name="Build", percent=40)])))
+        self.assertEqual((8, "New"), (lambda s: (s["revision"], s["tasks"][0]["name"]))(restore()))
+        self.assertFalse(upload.exists())
+
+    def test_concurrent_updates_are_never_lost(self):
+        self.run_cli("tasks", "set", *[f"Task {i}" for i in range(1, 9)])
+        script = Path(__file__).with_name("dam-tools.py")
+        env = dict(os.environ, HOME=str(self.home), DAM_AGENT_ID=self.agent)
+        runs = [subprocess.Popen([sys.executable, str(script), "tasks", "update", str(i), "--percent", "50"], env=env,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE) for i in range(1, 9)]
+        for run in runs:
+            _, error = run.communicate(timeout=20)
+            self.assertEqual(0, run.returncode, error)
+        state = json.loads(self.run_cli("tasks", "--json").stdout)
+        self.assertEqual(9, state["revision"])
+        self.assertEqual([50] * 8, [task["percent"] for task in state["tasks"]])
+
+    def test_needs_an_agent(self):
+        result = subprocess.run([sys.executable, str(Path(__file__).with_name("dam-tools.py")), "tasks"], env=dict(os.environ, HOME=str(self.home), DAM_AGENT_ID=""),
+                                capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("Run from a DAM agent", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

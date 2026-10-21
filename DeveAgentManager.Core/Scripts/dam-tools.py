@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """DeveAgentManager tools for agents running on this runner."""
 import argparse
+import base64
 import fcntl
 import hashlib
 import stat
@@ -569,6 +570,252 @@ def retry_completion(ident):
         complete_job(folder, record)  # retry validation/notification only, never the workload
         print(json.dumps(public_job(record)))
 
+TASKS = Path.home() / ".deveagentmanager/tasks"
+MAX_TASKS = 50
+MAX_TASK_NAME = 120
+MAX_TASK_DESCRIPTION = 1000
+TASKS_MARKER = "__DAM_TASKS__"
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def task_text(text, limit):
+    # Keeps line breaks in descriptions; other control characters become spaces.
+    lines = ["".join(" " if ord(c) < 32 else c for c in line).strip() for line in str(text).splitlines()]
+    return "\n".join(line for line in lines if line)[:limit]
+
+
+def duration_seconds(text):
+    """'90s', '5m', '1h30m' or '2h'; a plain number is minutes."""
+    value = str(text).strip().lower().replace(" ", "")
+    if value.replace(".", "", 1).isdigit():
+        return int(float(value) * 60)
+    total, number = 0, ""
+    for c in value:
+        if c.isdigit() or c == ".":
+            number += c
+        elif c in "hms" and number:
+            total += float(number) * {"h": 3600, "m": 60, "s": 1}[c]
+            number = ""
+        else:
+            raise ValueError(f"Use a duration like 90s, 5m or 1h30m, not '{text}'.")
+    if number or not value:
+        raise ValueError(f"Use a duration like 90s, 5m or 1h30m, not '{text}'.")
+    return int(total)
+
+
+def tasks_path(agent):
+    if TASKS.is_symlink():
+        raise ValueError("Task directory cannot be a symlink.")
+    return TASKS / (uuid.UUID(agent).hex + ".json")
+
+
+def read_tasks(agent, path=None):
+    path = path or tasks_path(agent)
+    if not path.exists():
+        return dict(revision=0, updatedAt=None, tasks=[])
+    if path.is_symlink() or path.stat().st_size > 1024 * 1024:
+        raise ValueError("Invalid task list.")
+    state = json.loads(path.read_text())
+    if not isinstance(state, dict) or not isinstance(state.get("tasks"), list) or type(state.get("revision")) is not int:
+        raise ValueError("Invalid task list.")
+    return state
+
+
+class TaskLock:
+    """One change at a time per agent, so concurrent updates never lose each other."""
+    def __init__(self, agent):
+        TASKS.mkdir(parents=True, mode=0o700, exist_ok=True)
+        self.path = TASKS / (uuid.UUID(agent).hex + ".lock")
+
+    def __enter__(self):
+        self.stream = open(self.path, "a")
+        fcntl.flock(self.stream, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *_):
+        fcntl.flock(self.stream, fcntl.LOCK_UN)
+        self.stream.close()
+
+
+def set_task_fields(task, tasks, name=None, percent=None, description=None, left=None, taken=None):
+    stamp = now_iso()
+    if name is not None:
+        name = task_text(name, MAX_TASK_NAME).replace("\n", " ")
+        if not name:
+            raise ValueError("A task needs a name.")
+        task["name"] = name
+    if description is not None:
+        task["description"] = task_text(description, MAX_TASK_DESCRIPTION)
+    if percent is not None:
+        percent = int(round(float(percent)))
+        if not 0 <= percent <= 100:
+            raise ValueError("Use a percentage from 0 to 100.")
+        task["percent"] = percent
+        if percent > 0 and not task.get("startedAt"):
+            # Agents often only report a task once it is done: it began when it was added or the previous one finished.
+            finished = [other["finishedAt"] for other in tasks if other is not task and other.get("finishedAt")]
+            task["startedAt"] = min(stamp, max([task.get("addedAt") or stamp] + finished))
+        task["finishedAt"] = (task.get("finishedAt") or stamp) if percent == 100 else None
+        if percent == 100:
+            task["leftSeconds"], task["leftAt"] = None, None
+    if left is not None:
+        task["leftSeconds"], task["leftAt"] = duration_seconds(left), stamp
+    if taken is not None:
+        task["takenSeconds"] = duration_seconds(taken)
+    task["updatedAt"] = stamp
+    return task
+
+
+def new_task(ident, item, tasks):
+    task = dict(id=ident, name="", percent=0, description="", addedAt=now_iso(), startedAt=None, finishedAt=None,
+                takenSeconds=None, leftSeconds=None, leftAt=None, updatedAt=None)
+    return set_task_fields(task, tasks, name=item.get("name"), percent=item.get("percent", 0),
+                           description=item.get("description", ""), left=item.get("left"), taken=item.get("taken"))
+
+
+def change_tasks(agent, change):
+    """Applies change(tasks) to the agent's list under its lock and saves it with a new revision."""
+    with TaskLock(agent):
+        state = read_tasks(agent)
+        tasks = change(state["tasks"])
+        if len(tasks) > MAX_TASKS:
+            raise ValueError(f"Track at most {MAX_TASKS} tasks; group smaller steps.")
+        state = dict(revision=state["revision"] + 1, updatedAt=now_iso(), tasks=tasks)
+        atomic_job(tasks_path(agent), state)
+        return state
+
+
+def find_task(tasks, ident):
+    for task in tasks:
+        if task["id"] == int(ident):
+            return task
+    raise ValueError(f"There is no task {ident}. Run 'dam-tools tasks' to see them.")
+
+
+def task_items(text):
+    items = json.loads(text)
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise ValueError("Pass a JSON array of tasks, e.g. [{\"name\": \"Build\", \"percent\": 0}].")
+    return items
+
+
+def short_duration(seconds):
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    hours, minutes = divmod(seconds // 60, 60)
+    return f"{hours}h{minutes:02d}m" if hours else f"{minutes}m"
+
+
+def describe_tasks(state):
+    tasks = state["tasks"]
+    if not tasks:
+        return "No tasks. Add them with 'dam-tools tasks set \"First\" \"Second\"' or 'dam-tools tasks add \"Name\"'."
+    done = sum(1 for task in tasks if task["percent"] == 100)
+    overall = round(sum(task["percent"] for task in tasks) / len(tasks))
+    lines = [f"Tasks: {done} of {len(tasks)} done, {overall}% (revision {state['revision']})"]
+    now = datetime.now(timezone.utc)
+    for task in tasks:
+        detail = []
+        taken = " taken" if task["percent"] == 100 else " so far"
+        if task.get("takenSeconds") is not None:
+            detail.append(short_duration(task["takenSeconds"]) + taken)
+        elif task.get("startedAt"):
+            end = datetime.fromisoformat(task["finishedAt"].replace("Z", "+00:00")) if task.get("finishedAt") else now
+            detail.append(short_duration((end - datetime.fromisoformat(task["startedAt"].replace("Z", "+00:00"))).total_seconds()) + taken)
+        if task["percent"] < 100 and task.get("leftSeconds") is not None:
+            detail.append("~" + short_duration(task["leftSeconds"]) + " left")
+        lines.append(f"{task['id']:>3}. [{task['percent']:>3}%] {task['name']}" + (f"  ({', '.join(detail)})" if detail else ""))
+        for line in task.get("description", "").splitlines():
+            lines.append("       " + line)
+    return "\n".join(lines)
+
+
+def run_tasks(args, parser):
+    agent = os.environ.get("DAM_AGENT_ID", "")
+    if not agent:
+        parser.error("Run from a DAM agent: its tasks show in the Manager next to its terminal.")
+    action = args.tasks_action or "show"
+    if action == "show":
+        state = read_tasks(agent)
+        print(json.dumps(state, indent=2) if args.json else describe_tasks(state))
+        return
+    if action == "set":
+        if args.json is not None:
+            items = task_items(sys.stdin.read() if args.json == "-" else args.json)
+        else:
+            items = [dict(name=name) for name in args.names]
+        state = change_tasks(agent, lambda _: [new_task(index + 1, item, []) for index, item in enumerate(items)])
+    elif action == "add":
+        def add(tasks):
+            tasks.append(new_task(max((task["id"] for task in tasks), default=0) + 1, dict(
+                name=args.name, percent=args.percent or 0, description=args.description or "", left=args.left, taken=args.taken), tasks))
+            return tasks
+        state = change_tasks(agent, add)
+    elif action in ("update", "done"):
+        def update(tasks):
+            set_task_fields(find_task(tasks, args.id), tasks, name=getattr(args, "name", None),
+                            percent=100 if action == "done" else args.percent, description=args.description,
+                            left=getattr(args, "left", None), taken=args.taken)
+            return tasks
+        state = change_tasks(agent, update)
+    elif action == "apply":
+        def apply(tasks):
+            for item in task_items(sys.stdin.read() if args.json == "-" else args.json):
+                if item.get("id") is None:
+                    tasks.append(new_task(max((task["id"] for task in tasks), default=0) + 1, item, tasks))
+                else:
+                    set_task_fields(find_task(tasks, item["id"]), tasks, name=item.get("name"), percent=item.get("percent"),
+                                    description=item.get("description"), left=item.get("left"), taken=item.get("taken"))
+            return tasks
+        state = change_tasks(agent, apply)
+    elif action == "remove":
+        state = change_tasks(agent, lambda tasks: [task for task in tasks if task["id"] != find_task(tasks, args.id)["id"]])
+    else:
+        state = change_tasks(agent, lambda _: [])
+    print(describe_tasks(state))
+
+
+def changed_tasks(known):
+    """For the Manager: every listed agent whose task revision differs from what it saw, as one marked line each."""
+    for item in known:
+        agent, _, revision = item.partition("=")
+        try:
+            state = read_tasks(agent)
+            if state["revision"] != int(revision):
+                print_tasks_line(agent, state)
+        except (ValueError, OSError):
+            continue
+
+
+def print_tasks_line(agent, state):
+    print(f"{TASKS_MARKER} {uuid.UUID(agent).hex} " + base64.b64encode(json.dumps(state, separators=(",", ":")).encode()).decode())
+
+
+def clear_tasks(agent):
+    """For the Manager: the user cleared the list. A new revision, so the agent sees it on its next read."""
+    print_tasks_line(agent, change_tasks(agent, lambda _: []))
+
+
+def restore_tasks(agent):
+    """For the Manager: this Runner has no list for the agent (it moved here, or the Runner was rebuilt), so the
+    Manager uploaded its copy next to it. It goes back with the same revision, unless the agent started a new list."""
+    upload = TASKS / (uuid.UUID(agent).hex + ".restore")
+    try:
+        with TaskLock(agent):
+            state = read_tasks(agent)
+            if state["revision"] == 0:
+                saved = read_tasks(agent, upload)
+                state = dict(revision=saved["revision"], updatedAt=saved.get("updatedAt"), tasks=saved["tasks"][:MAX_TASKS])
+                atomic_job(tasks_path(agent), state)
+    finally:
+        upload.unlink(missing_ok=True)
+    print_tasks_line(agent, state)
+
+
 def main():
     if sys.argv[1:] == ["--pending-transfers"]:
         print(json.dumps(dict(files=pending_files(), requests=pending_artifacts())))
@@ -578,6 +825,15 @@ def main():
         return
     if sys.argv[1:2] == ["--job-worker"] and len(sys.argv) == 3:
         run_job_worker(sys.argv[2])
+        return
+    if sys.argv[1:2] == ["--changed-tasks"]:
+        changed_tasks(sys.argv[2:])
+        return
+    if sys.argv[1:2] == ["--clear-tasks"] and len(sys.argv) == 3:
+        clear_tasks(sys.argv[2])
+        return
+    if sys.argv[1:2] == ["--restore-tasks"] and len(sys.argv) == 3:
+        restore_tasks(sys.argv[2])
         return
     if sys.argv[1:] == ["--pending-jobs"]:
         print(json.dumps(pending_jobs()))
@@ -635,6 +891,45 @@ def main():
     file.add_argument("--agent", default=os.environ.get("DAM_AGENT_ID", ""), help=argparse.SUPPRESS)
     file.add_argument("--session", default=os.environ.get("DAM_SESSION_ID", ""), help=argparse.SUPPRESS)
     file.set_defaults(run=lambda args: share_file(args, file))
+
+    tasks = commands.add_parser("tasks", help="Show the user your progress: a list of tasks with %% done and time left",
+                                description="Keep a short task list for the user, shown next to this agent's terminal. "
+                                            "Set it when you start multi-step work, and update a task each time you finish "
+                                            "it, with a description of what you did. Adjust % done and time-left estimates "
+                                            "as you go. Without arguments it prints the current list; the user may clear it.")
+    tasks.add_argument("--json", action="store_true", help="Print the list as JSON")
+    tasks.set_defaults(run=lambda args: run_tasks(args, tasks), tasks_action=None)
+    actions = tasks.add_subparsers(dest="tasks_action", metavar="ACTION")
+    show = actions.add_parser("show", help="Print the current list (also without an action)")
+    show.add_argument("--json", action="store_true", help="Print the list as JSON")
+    replace = actions.add_parser("set", help="Replace the whole list: names, or a JSON array with --json",
+                                 description="Replace the list. Names start at 0%; a JSON array can set everything at once: "
+                                             "[{\"name\": \"Build\", \"percent\": 40, \"description\": \"...\", \"left\": \"10m\"}]. "
+                                             "Use --json - to read it from standard input.")
+    replace.add_argument("names", nargs="*", help="Task names, in order")
+    replace.add_argument("--json", help="JSON array of tasks (name, percent, description, left, taken), or - for stdin")
+    add = actions.add_parser("add", help="Add a task at the end")
+    add.add_argument("name")
+    update = actions.add_parser("update", help="Change one task: its %%, name, description or time estimates")
+    update.add_argument("id", type=int, help="Task number from 'dam-tools tasks'")
+    update.add_argument("--name")
+    done = actions.add_parser("done", help="Mark a task 100%% done, ideally with what you did")
+    done.add_argument("id", type=int, help="Task number from 'dam-tools tasks'")
+    for action in (add, update, done):
+        action.add_argument("--description", help="What the task is, or what was done")
+        action.add_argument("--taken", help="Time taken, e.g. 15m (otherwise measured from its first progress)")
+    for action in (add, update):
+        action.add_argument("--percent", type=float, help="0 to 100")
+        action.add_argument("--left", help="Estimated time left, e.g. 10m or 1h30m")
+    many = actions.add_parser("apply", help="Change several tasks in one go from a JSON array",
+                              description="Each item with an id updates that task (only the fields given); one without an id "
+                                          "is added. E.g. [{\"id\": 2, \"percent\": 100, \"description\": \"Done: ...\"}, {\"name\": \"Next\"}].")
+    many.add_argument("--json", required=True, help="JSON array, or - for stdin")
+    remove = actions.add_parser("remove", help="Remove a task")
+    remove.add_argument("id", type=int)
+    actions.add_parser("clear", help="Remove all tasks")
+    for action in (show, replace, add, update, done, many, remove):
+        action.set_defaults(run=lambda args: run_tasks(args, tasks))
 
     job = commands.add_parser("run-job", help="Fallback only for harnesses without built-in background jobs",
                               description="Use your harness built-in background tasks whenever it supports them. "

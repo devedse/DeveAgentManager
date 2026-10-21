@@ -1,0 +1,116 @@
+@inherits LiveComponent
+@inject AgentTaskViews Views
+@inject IDialogService Dialogs
+
+@* The agent's task list (dam-tools tasks) in a dropdown next to Shared images and files. A ring around the icon shows the
+   overall progress; a dot marks an update not seen in this browser yet, and goes once the dropdown is closed again. *@
+@if (InMenu)
+{
+    <MudMenuItem Icon="@Icons.Material.Rounded.Checklist" OnClick="OpenDialogAsync">
+        <span class="tasks-menu-entry">Tasks@(HasTasks ? $" ({Done}/{_tasks.Tasks.Count})" : "")@if (Unseen)
+        {
+            <span class="tasks-update-dot tasks-update-dot-inline" aria-label="updated"></span>
+        }</span>
+    </MudMenuItem>
+}
+else
+{
+    <span @attributes="Attributes">
+        <MudMenu @bind-Open="_open" @bind-Open:after="OnOpenChangedAsync" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+            <ActivatorContent>
+                <span class="tasks-button">
+                    <MudIconButton Icon="@Icons.Material.Rounded.Checklist" Size="Size.Small" OnClick="@context.ToggleAsync" aria-label="@Label" title="@Title" />
+                    @if (HasTasks)
+                    {
+                        <svg class="tasks-progress @(AllDone ? "tasks-progress-done" : "")" viewBox="0 0 30 30" aria-hidden="true">
+                            <circle class="tasks-progress-track" cx="15" cy="15" r="13.5" />
+                            @if (Overall > 0)
+                            {
+                                <circle class="tasks-progress-value" cx="15" cy="15" r="13.5" pathLength="100"
+                                        stroke-dasharray="@($"{Overall} 100")" />
+                            }
+                        </svg>
+                    }
+                    @if (Unseen)
+                    {
+                        <span class="tasks-update-dot" aria-hidden="true"></span>
+                    }
+                </span>
+            </ActivatorContent>
+            <ChildContent>
+                <AgentTasksPanel List="_tasks" Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" CanClear="CanClear" Clear="ClearAsync" />
+            </ChildContent>
+        </MudMenu>
+    </span>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid AgentId { get; set; }
+    /// <summary>Read-write access to the agent: its list can be cleared.</summary>
+    [Parameter] public bool CanClear { get; set; }
+    /// <summary>An entry in the toolbar's ⋮ menu, when the toolbar has no room for the button; it opens a dialog.</summary>
+    [Parameter] public bool InMenu { get; set; }
+    /// <summary>On the button's wrapper (the toolbar's overflow attributes).</summary>
+    [Parameter(CaptureUnmatchedValues = true)] public Dictionary<string, object>? Attributes { get; set; }
+    private AgentTaskListDto _tasks = AgentTaskListDto.Empty;
+    private long _seen;
+    private bool _open;
+
+    private bool HasTasks => _tasks.Tasks.Count > 0;
+    private int Done => _tasks.Tasks.Count(t => t.Percent >= 100);
+    private bool AllDone => HasTasks && Done == _tasks.Tasks.Count;
+    private int Overall => AgentTasksPanel.Overall(_tasks);
+    private bool Unseen => Loaded && _tasks.Revision > 0 && _tasks.Revision != _seen;
+    private string Label => (HasTasks ? $"Tasks: {Done} of {_tasks.Tasks.Count} done" : "Tasks") + (Unseen ? ", updated" : "");
+    private string Title => HasTasks ? $"Tasks · {Done} of {_tasks.Tasks.Count} done · {Overall}%" : "Tasks";
+
+    protected override bool ShowsTasks => true;
+    protected override bool IsRelevant(ManagerEvent e) => e.Kind == ManagerEventKind.TasksChanged && e.AgentId == AgentId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Views.Changed += OnViewsChanged;
+        await base.OnInitializedAsync();
+    }
+
+    protected override async Task LoadAsync()
+    {
+        _tasks = await Api.GetAgentTasksAsync(AgentId);
+        _seen = await Views.SeenAsync(AgentId);
+    }
+
+    // Closing it marks what was shown as seen; an update that came while it was open is in it.
+    private async Task OnOpenChangedAsync()
+    {
+        if (!_open) await Views.MarkSeenAsync(AgentId, _tasks.Revision);
+    }
+
+    private async Task OpenDialogAsync()
+    {
+        await AgentTasksDialog.ShowAsync(Dialogs, AgentId, CanClear);
+    }
+
+    private void OnViewsChanged() => _ = InvokeAsync(async () =>
+    {
+        _seen = await Views.SeenAsync(AgentId);
+        StateHasChanged();
+    });
+
+    private async Task ClearAsync()
+    {
+        try
+        {
+            await Api.ClearAgentTasksAsync(AgentId);
+            await ReloadAsync();
+            await Views.MarkSeenAsync(AgentId, _tasks.Revision);
+        }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+    }
+
+    public override void Dispose()
+    {
+        Views.Changed -= OnViewsChanged;
+        base.Dispose();
+    }
+}

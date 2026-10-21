@@ -392,6 +392,43 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     }
 
     [Fact]
+    public async Task TaskLists_AreForReadersOfTheAgent_AndOnlyReadWriteClearsThem()
+    {
+        // Its own sign-ins, outside the shared fixture's authentication rate-limit window.
+        using var isolatedManager = new ApiSecurityTests.Manager();
+        await new UserAccessTests(isolatedManager).TaskListAccessAsync();
+    }
+
+    private async Task TaskListAccessAsync()
+    {
+        var admins = await SeedAsync(User.BootstrapId);
+        var (reader, readerId) = await SignedInAsNewUserWithIdAsync();
+        var (writer, writerId) = await SignedInAsNewUserWithIdAsync();
+        var (stranger, _) = await SignedInAsNewUserWithIdAsync();
+        var sharing = manager.Services.GetRequiredService<Sharing>();
+        await sharing.ShareAgentAsync(TestUsers.Admin, admins.AgentId, readerId, AgentAccess.Read);
+        await sharing.ShareAgentAsync(TestUsers.Admin, admins.AgentId, writerId, AgentAccess.Write);
+        var list = new AgentTaskListDto(4, DateTime.UtcNow, [new AgentTaskDto(1, "Build", 40, "Compiling", DateTime.UtcNow, null, null, 600, DateTime.UtcNow, DateTime.UtcNow)]);
+        await using (var db = await DbAsync())
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == admins.AgentId);
+            agent.TasksJson = System.Text.Json.JsonSerializer.Serialize(list, ApiJson.Options);
+            agent.TasksRevision = 4;
+            await db.SaveChangesAsync();
+        }
+
+        var read = await reader.GetFromJsonAsync<AgentTaskListDto>($"/api/agents/{admins.AgentId}/tasks", ApiJson.Options);
+        Assert.Equal((4L, "Build", 40, 600L), (read!.Revision, read.Tasks.Single().Name, read.Tasks.Single().Percent, read.Tasks.Single().LeftSeconds!.Value));
+        Assert.Equal(HttpStatusCode.NotFound, (await stranger.GetAsync($"/api/agents/{admins.AgentId}/tasks")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reader.DeleteAsync($"/api/agents/{admins.AgentId}/tasks")).StatusCode);
+        // Read-write may clear it; the seeded Runner is stopped, so it says why it can't now.
+        var clear = await writer.DeleteAsync($"/api/agents/{admins.AgentId}/tasks");
+        Assert.Equal(HttpStatusCode.Conflict, clear.StatusCode);
+        Assert.Contains("Runner is not ready", await clear.Content.ReadAsStringAsync());
+        Assert.Equal(4L, (await reader.GetFromJsonAsync<AgentTaskListDto>($"/api/agents/{admins.AgentId}/tasks", ApiJson.Options))!.Revision);
+    }
+
+    [Fact]
     public async Task SharingAConversation_IsReadOnly_AndOnlyTheOwnerSharesIt()
     {
         var admins = await SeedAsync(User.BootstrapId);

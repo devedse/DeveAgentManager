@@ -15,6 +15,9 @@ public sealed class ManagerEvents
 
     public void RunnerUsageChanged(Guid runnerId) => Publish(new ManagerEvent(ManagerEventKind.RunnerUsageChanged, runnerId));
 
+    // Without the Runner: only the people who can read the agent hear about its tasks.
+    public void TasksChanged(Guid agentId) => Publish(new ManagerEvent(ManagerEventKind.TasksChanged, AgentId: agentId));
+
     public void AgentChanged(Guid runnerId, Guid agentId) => Publish(new ManagerEvent(ManagerEventKind.AgentChanged, runnerId, agentId));
 
     public void SessionChanged(Guid sessionId, Guid? agentId = null) => Publish(new ManagerEvent(ManagerEventKind.SessionChanged, AgentId: agentId, SessionId: sessionId));

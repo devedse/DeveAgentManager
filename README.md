@@ -30,6 +30,8 @@ when you close the tab.
   text: messages, answers and what the tools did carry over, and the model's hidden thinking stays behind.
 - **Session**: an agent's conversation. The Manager keeps a copy in a harness-neutral format, so it survives the agent
   and its Runner and can be continued on another Runner.
+- **Tasks**: an agent shows its progress next to its terminal with `dam-tools tasks`: each task's % done, what it is or
+  what was done, time taken and time left. See [agent task lists](docs/agent-tasks.md).
 - **Move to another runner…**: an agent's actions menu moves its workspace, native histories and attachments while
   keeping its identity and sharing. Failed moves retain the source and offer recovery. See [agent moves](docs/agent-moves.md).
 - **Setup Profile** (**Manager settings**): what every Runner gets during setup: login and settings files, and a script.

@@ -167,6 +167,12 @@ public class Agent
     /// <summary>The git identity the current harness was started with; null is the owner (or a start before identities).</summary>
     public Guid? RunningGitIdentityUserId { get; set; }
 
+    /// <summary>The agent's task list (dam-tools tasks) as last read from its Runner, as JSON; null without one.</summary>
+    public string? TasksJson { get; set; }
+
+    /// <summary>The revision of <see cref="TasksJson"/>; the Runner's list is read again when its revision differs.</summary>
+    public long TasksRevision { get; set; }
+
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public (string Username, string DisplayName)? GitIdentityName { get; set; }
 
