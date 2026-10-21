@@ -6,7 +6,8 @@ namespace DeveAgentManager.Core.Users;
 
 /// <summary>
 /// Agents and conversations their owners share with other users. An agent is shared read-only (watch its terminal, read
-/// its conversations) or read-write (also type and prompt it, with the harness login it runs with). A conversation is
+/// its conversations) or read-write (also type and prompt it, with the harness login and git identity it runs with; no
+/// access to its Runner is needed). A conversation is
 /// shared read-only. Owners change or end a share at any time; anyone can leave a share they got.
 /// </summary>
 public sealed class Sharing(IDbContextFactory<ManagerDbContext> dbFactory, AuditLog audit, ManagerEvents events)
@@ -63,6 +64,13 @@ public sealed class Sharing(IDbContextFactory<ManagerDbContext> dbFactory, Audit
         var share = await db.AgentShares.Include(s => s.User).FirstOrDefaultAsync(s => s.AgentId == agentId && s.UserId == userId, cancellationToken)
             ?? throw new KeyNotFoundException("This agent isn't shared with that user.");
         db.AgentShares.Remove(share);
+        // Their git identity goes with their share: the next start uses the owner's, and a harness still running with
+        // theirs is stopped (AgentService.EnforceGitIdentitiesAsync).
+        if (agent.GitIdentityUserId == userId)
+        {
+            agent.GitIdentityUserId = null;
+        }
+
         await db.SaveChangesAsync(cancellationToken);
         await audit.RecordAsync(actor, AuditActions.AgentUnshared, $"Agent {agent.Name}", userId == actor.Id ? $"{share.User?.Username} left" : share.User?.Username, cancellationToken);
         events.Publish(new ManagerEvent(ManagerEventKind.AccessChanged, agent.RunnerId, agentId, UserId: userId));

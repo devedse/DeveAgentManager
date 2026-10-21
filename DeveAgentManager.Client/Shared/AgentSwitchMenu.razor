@@ -45,7 +45,14 @@
                 <div class="switch-harness harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</div>
                 @if (!Agent.RunnerHarnessIds.Contains(harness.Id))
                 {
-                    <a class="switch-unavailable" href="@($"runners/{Agent.RunnerId}")">Install @harness.DisplayName on @Agent.RunnerName</a>
+                    @if (Agent.CanUseRunner)
+                    {
+                        <a class="switch-unavailable" href="@($"runners/{Agent.RunnerId}")">Install @harness.DisplayName on @Agent.RunnerName</a>
+                    }
+                    else
+                    {
+                        <span class="switch-unavailable">Not installed on @Agent.RunnerName</span>
+                    }
                 }
                 @if (harness.AccountSupport is null)
                 {
@@ -159,6 +166,10 @@
         if (!IsOwner && account is not null)
         {
             message += $" {Agent.OwnerName} must also have Use access to this login.";
+            if (!Agent.CanUseRunner)
+            {
+                message += $" The login is copied to {Agent.RunnerName}, where everyone with access to that Runner can read it.";
+            }
         }
         var confirmed = await Dialogs.ShowMessageBoxAsync($"Continue '{Agent.Name}' with {target}?", message, yesText: "Continue", cancelText: "Cancel");
         if (confirmed != true)

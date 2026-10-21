@@ -299,8 +299,7 @@ public sealed partial class AccountService
             if (!a.LoginStopPending || a.Runner?.State != RunnerState.Ready) continue;
             try
             {
-                var target = ShellQuote.Quote("=" + a.TmuxSession + ":");
-                var stop = AgentService.BuildStopScript(target) + $"\nif tmux has-session -t {target} 2>/dev/null && [ \"$(tmux display-message -p -t {target} '#{{pane_dead}}')\" != 1 ]; then exit 1; fi";
+                var stop = AgentService.BuildVerifiedStopScript(ShellQuote.Quote("=" + a.TmuxSession + ":"));
                 (await shell.RunAsync(a.Runner, stop, TimeSpan.FromSeconds(30), ct))
                     .EnsureSuccess("Stopping agent after login access ended");
                 a.State = AgentState.Stopped; a.LoginStopPending = false; a.RunningAccountId = null; a.Working = false;

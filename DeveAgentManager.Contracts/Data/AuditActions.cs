@@ -25,6 +25,7 @@ public static class AuditActions
     public const string RunnerKeysOnlyChanged = "runner-keys-only-changed";
     public const string AgentShared = "agent-shared";
     public const string AgentUnshared = "agent-unshared";
+    public const string AgentGitIdentityChanged = "agent-git-identity-changed";
     public const string SessionShared = "session-shared";
     public const string SessionUnshared = "session-unshared";
 
@@ -51,6 +52,7 @@ public static class AuditActions
         RunnerKeysOnlyChanged => "Changed a Runner's SSH logins",
         AgentShared => "Shared an agent",
         AgentUnshared => "Ended an agent's share",
+        AgentGitIdentityChanged => "Changed whose git identity an agent uses",
         SessionShared => "Shared a conversation",
         SessionUnshared => "Ended a conversation's share",
         ManagerCpuTraceStarted => "Started a Manager CPU trace",

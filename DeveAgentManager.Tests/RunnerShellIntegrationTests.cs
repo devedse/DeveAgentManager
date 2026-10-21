@@ -101,6 +101,16 @@ public class RunnerShellIntegrationTests
         }
     }
 
+    private static async Task KillTmuxServerAsync(string root)
+    {
+        if (!Directory.Exists(root + "/tmux") || !File.Exists("/usr/bin/tmux")) return;
+        var start = new ProcessStartInfo("/usr/bin/tmux", ["kill-server"]) { RedirectStandardOutput = true, RedirectStandardError = true };
+        start.Environment["TMUX_TMPDIR"] = root + "/tmux";
+        start.Environment.Remove("TMUX");
+        using var process = Process.Start(start)!;
+        await process.WaitForExitAsync(CancellationToken.None);
+    }
+
     private static async Task SignalAsync(string signal, int[] pids)
     {
         if (pids.Length > 0) await RunAsync("/bin/kill", [signal, "--", .. pids.Select(p => p.ToString())], ensureSuccess: false,
@@ -137,6 +147,8 @@ public class RunnerShellIntegrationTests
             try
             {
                 Directory.CreateDirectory(root + "/home");
+                // Its own tmux server, started with the fixture's HOME, never the machine's (which may run real agents).
+                Directory.CreateDirectory(root + "/tmux");
                 key = ManagerSshKey.LoadOrCreate(root + "/key");
                 await File.WriteAllTextAsync(root + "/authorized_keys", key.PublicKey + "\n", Ct);
                 await RunAsync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", root + "/host_key"]);
@@ -157,7 +169,7 @@ public class RunnerShellIntegrationTests
                     PasswordAuthentication no
                     KbdInteractiveAuthentication no
                     MaxSessions 10
-                    SetEnv HOME={root}/home
+                    SetEnv HOME={root}/home TMUX_TMPDIR={root}/tmux
                     Subsystem sftp internal-sftp -d {root}/home
                     LogLevel VERBOSE
 
@@ -188,6 +200,7 @@ public class RunnerShellIntegrationTests
             // Resume paused fixture children even if an assertion/cancellation failed.
             await SignalAsync("-CONT", Descendants(server.Id).ToArray());
             shell.Dispose();
+            await KillTmuxServerAsync(root);
             if (!server.HasExited) server.Kill(true);
             await server.WaitForExitAsync(CancellationToken.None);
             server.Dispose();

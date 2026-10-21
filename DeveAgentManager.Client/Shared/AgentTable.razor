@@ -44,6 +44,10 @@ else
                             {
                                 <span>Account on start: <AccountIdentity Username="@agent.AccountUsername" Name="@(agent.AccountName ?? "Default")" /></span>
                             }
+                            @if (CommitsAs(agent) is { } git)
+                            {
+                                <span title="@GitIdentityTitle(git)"> · @(agent.State is AgentState.Running or AgentState.Starting ? "Git" : "Git on start"): <span class="account-username">@GitIdentityText(git)</span></span>
+                            }
                         </div>
                         @if (agent.MovePending && agent.MoveDetails?.Progress is { } progress)
                         {
@@ -92,7 +96,7 @@ else
                             <MudMenuItem Icon="@(write ? Icons.Material.Rounded.Terminal : Icons.Material.Rounded.Visibility)" Href="@($"agents/{agent.Id}")">@(write ? "Open" : "Watch")</MudMenuItem>
                             @if (write)
                             {
-                                @if (agent.RunnerToolIds.Contains("vscode"))
+                                @if (agent.CanUseRunner && agent.RunnerToolIds.Contains("vscode"))
                                 {
                                     <MudMenuItem Icon="@Icons.Material.Rounded.Code" Href="@($"agents/{agent.Id}/vscode")">Open in VS Code</MudMenuItem>
                                 }
@@ -145,10 +149,19 @@ else
     public static string ShareText(AgentDto agent) => agent.Access switch
     {
         AgentAccess.Owner => $"Agent owned by {agent.OwnerName}",
-        AgentAccess.Write => $"{agent.OwnerName}'s agent, shared with you read-write (it runs with the login it is switched to)",
+        AgentAccess.Write => $"{agent.OwnerName}'s agent, shared with you read-write (it runs with the login and git identity it is switched to)",
         AgentAccess.Read => $"{agent.OwnerName}'s agent, shared with you read-only",
         _ => $"{agent.OwnerName}'s agent, on a Runner you manage",
     };
+
+    /// <summary>Whose git identity the agent commits with: its running harness's, otherwise the one its next start uses.</summary>
+    public static AgentGitIdentityDto? CommitsAs(AgentDto agent) =>
+        agent.State is AgentState.Running or AgentState.Starting ? agent.RunningGitIdentity ?? agent.GitIdentity : agent.GitIdentity;
+
+    public static string GitIdentityText(AgentGitIdentityDto identity) => identity.Username ?? "deleted user";
+
+    public static string GitIdentityTitle(AgentGitIdentityDto identity) =>
+        $"Commits and pushes with the git identity and GitHub token of {identity.DisplayName ?? "a deleted user"}, whoever prompts it";
 
     private async Task StartAsync(AgentDto agent, bool restart)
     {

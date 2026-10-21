@@ -81,17 +81,19 @@ public sealed class RunnerUsers(
 
     /// <summary>
     /// Brings the Runner in line with who has access now: the owner's and members' files and SSH keys are put on it, and
-    /// those of everyone else removed.
+    /// those of everyone else removed. Someone whose git identity an agent there uses (without access to the Runner) only
+    /// gets their files, no SSH key.
     /// </summary>
     public async Task SyncAsync(Runner runner, CancellationToken cancellationToken = default)
     {
         var users = await UsersWithAccessAsync(runner.Id, cancellationToken);
-        foreach (var (id, _) in users)
+        var identities = (await GitIdentitiesAsync(runner.Id, cancellationToken)).Except(users.Select(u => u.Id)).ToList();
+        foreach (var id in users.Select(u => u.Id).Concat(identities))
         {
             await EnsureAsync(runner, id, cancellationToken);
         }
 
-        var keep = string.Join(' ', users.Select(u => u.Id.ToString("N")));
+        var keep = string.Join(' ', users.Select(u => u.Id).Concat(identities).Select(id => id.ToString("N")));
         (await shell.RunAsync(runner, $$"""
             for folder in "$HOME"/.deveagentmanager/users/*/; do
               [ -d "$folder" ] || continue
@@ -125,7 +127,8 @@ public sealed class RunnerUsers(
         {
             await using var db = await dbFactory.CreateDbContextAsync();
             var runners = await db.Runners.AsNoTracking()
-                .Where(r => r.State == RunnerState.Ready && (r.OwnerId == userId || r.Members.Any(m => m.UserId == userId))).ToListAsync();
+                .Where(r => r.State == RunnerState.Ready && (r.OwnerId == userId || r.Members.Any(m => m.UserId == userId)
+                    || db.Agents.Any(a => a.RunnerId == r.Id && (a.GitIdentityUserId == userId || a.RunningGitIdentityUserId == userId)))).ToListAsync();
             foreach (var runner in runners)
             {
                 try
@@ -208,6 +211,21 @@ public sealed class RunnerUsers(
 
     internal static string RemoveScript(IEnumerable<Guid> users, IEnumerable<Guid> accounts) =>
         "rm -rf" + string.Concat(users.Select(u => $" \"{Folder(u)}\" \"$HOME/.deveagentmanager/agent-runtime/{u:N}\"")) + string.Concat(accounts.Select(a => $" \"{AccountService.Folder(a)}\""));
+
+    /// <summary>
+    /// The existing users whose git identity agents on the Runner use: chosen, or still running until the harness stops.
+    /// An agent's owner counts too, whether or not they still have access to the Runner.
+    /// </summary>
+    private async Task<List<Guid>> GitIdentitiesAsync(Guid runnerId, CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var agents = await db.Agents.AsNoTracking().Where(a => a.RunnerId == runnerId)
+            .Select(a => new { a.OwnerId, a.GitIdentityUserId, a.RunningGitIdentityUserId, a.State }).ToListAsync(cancellationToken);
+        var ids = agents.Select(a => a.GitIdentityUserId ?? a.OwnerId)
+            .Concat(agents.Where(a => a.State is AgentState.Running or AgentState.Starting).Select(a => a.RunningGitIdentityUserId ?? a.OwnerId))
+            .Distinct().ToList();
+        return await db.Users.Where(u => ids.Contains(u.Id)).Select(u => u.Id).ToListAsync(cancellationToken);
+    }
 
     private async Task<List<(Guid Id, string Username)>> UsersWithAccessAsync(Guid runnerId, CancellationToken cancellationToken)
     {

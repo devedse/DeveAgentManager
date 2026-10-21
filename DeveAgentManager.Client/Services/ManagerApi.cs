@@ -189,6 +189,9 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     public Task SwitchAgentAsync(Guid agentId, string harnessId, Guid? accountId) =>
         SendAsync(HttpMethod.Post, $"api/agents/{agentId}/switch", new SwitchAgentRequest(harnessId, accountId));
 
+    public Task SetGitIdentityAsync(Guid agentId, Guid userId) =>
+        SendAsync(HttpMethod.Post, $"api/agents/{agentId}/git-identity", new SetGitIdentityRequest(userId));
+
     public Task<List<AgentViewer>> ListViewersAsync(Guid agentId) => GetAsync<List<AgentViewer>>($"api/agents/{agentId}/viewers");
 
     public Task<AgentTerminalText> GetTerminalTextAsync(Guid agentId, int lines) => GetAsync<AgentTerminalText>($"api/agents/{agentId}/terminal-text?lines={lines}");

@@ -155,8 +155,23 @@ public class Agent
 
     public Runner? Runner { get; set; }
 
-    /// <summary>Who created it. Its harness runs with this user's git identity, GitHub token and environment.</summary>
+    /// <summary>Who created it. Its harness runs with this user's git identity unless <see cref="GitIdentityUserId"/> says otherwise.</summary>
     public Guid OwnerId { get; set; }
+
+    /// <summary>
+    /// Whose git identity, GitHub token and environment the harness runs with; null is the owner. Starting and
+    /// restarting never change it: only an explicit switch (<see cref="Agents.AgentService.SetGitIdentityAsync"/>) does.
+    /// </summary>
+    public Guid? GitIdentityUserId { get; set; }
+
+    /// <summary>The git identity the current harness was started with; null is the owner (or a start before identities).</summary>
+    public Guid? RunningGitIdentityUserId { get; set; }
+
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public (string Username, string DisplayName)? GitIdentityName { get; set; }
+
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public (string Username, string DisplayName)? RunningGitIdentityName { get; set; }
 
     public User? Owner { get; set; }
 

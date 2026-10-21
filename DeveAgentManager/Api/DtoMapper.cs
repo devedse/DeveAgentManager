@@ -101,17 +101,19 @@ public sealed class DtoMapper(
             statuses.Get(runner.Id),
             runner.Agents.Select(a => (Agent: a, Access: AccessControl.ForAgent(user, a.OwnerId, a.Shares, access)))
                 .Where(a => a.Access >= AgentAccess.Listed).OrderByDescending(a => a.Agent.CreatedAt)
-                .Select(a => Agent(a.Agent, runner, a.Access, a.Agent.Shares.Any(s => s.UserId == user.Id))).ToList());
+                .Select(a => Agent(a.Agent, runner, a.Access, access, a.Agent.Shares.Any(s => s.UserId == user.Id))).ToList());
     }
 
     /// <summary>An agent loaded with its Runner (and the Runner's members), owner, shares and harness login.</summary>
     public static AgentDto Agent(Agent agent, CurrentUser user)
     {
         var runner = agent.Runner ?? throw new InvalidOperationException("Load the agent with its Runner.");
-        return Agent(agent, runner, AccessControl.ForAgent(user, agent.OwnerId, agent.Shares, AccessControl.ForRunner(user, runner.OwnerId, runner.Members)), agent.Shares.Any(s => s.UserId == user.Id));
+        var runnerAccess = AccessControl.ForRunner(user, runner.OwnerId, runner.Members);
+        return Agent(agent, runner, AccessControl.ForAgent(user, agent.OwnerId, agent.Shares, runnerAccess), runnerAccess, agent.Shares.Any(s => s.UserId == user.Id));
     }
 
-    private static AgentDto Agent(Agent agent, Runner runner, AgentAccess access, bool sharedWithMe) => new(
+    // Runner access only decides what the Portal offers beyond the agent (VS Code, the desktop, the Runner page).
+    private static AgentDto Agent(Agent agent, Runner runner, AgentAccess access, RunnerAccess runnerAccess, bool sharedWithMe) => new(
         agent.Id,
         runner.Id,
         agent.OwnerId,
@@ -142,7 +144,16 @@ public sealed class DtoMapper(
         runner.Kind, agent.RunningAccountId, sharedWithMe, agent.RunningAccountName, agent.MoveJson is not null,
         access >= AgentAccess.Read ? AgentService.MoveDetails(agent) : null,
         agent.AccountId is null ? agent.Owner?.Username : agent.Account?.CreatedBy?.Username,
-        agent.RunningAccountUsername);
+        agent.RunningAccountUsername,
+        runnerAccess >= RunnerAccess.Use,
+        access >= AgentAccess.Read ? GitIdentity(agent, AgentService.GitIdentity(agent), agent.GitIdentityName) : null,
+        access >= AgentAccess.Read ? GitIdentity(agent, AgentService.RunningGitIdentity(agent), agent.RunningGitIdentityName) : null);
+
+    private static AgentGitIdentityDto GitIdentity(Agent agent, Guid userId, (string Username, string DisplayName)? name)
+    {
+        name ??= userId == agent.OwnerId && agent.Owner is { } owner ? (owner.Username, owner.DisplayName) : null;
+        return new(userId, name?.Username, name?.DisplayName);
+    }
 
     /// <summary>A conversation loaded with its owner, shares, agent and workspace agent (see SessionService).</summary>
     public static SessionDto Session(StoredSession session, CurrentUser user)

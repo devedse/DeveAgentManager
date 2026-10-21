@@ -1,0 +1,136 @@
+@inject ManagerApi Api
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+@* Whose git identity and GitHub token an agent commits and pushes with, and switching it. Returns true after a switch. *@
+<MudDialog>
+    <TitleContent>
+        <div class="help-heading">
+            <MudText Typo="Typo.h6">Git identity</MudText>
+            <HelpTip Label="Git identity">
+                <p>The agent commits and pushes with this person's git name, email and GitHub token, whoever types the prompt. It starts as the owner's.</p>
+                <p>Starting or restarting the agent keeps it. Switching it restarts a running harness, which resumes the same conversation.</p>
+                <p>With read-write access you can switch it to yourself, and whoever it is can hand it back to the owner. A conversation manager can choose anyone. When that person loses access to the agent, it stops, and the next start uses the owner's.</p>
+            </HelpTip>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <div class="git-identity-facts">
+            <div>
+                <span class="fact-label">@(Running ? "Commits as" : "Commits on start as")</span>
+                <span class="fact-value">@Describe(Shown)</span>
+            </div>
+            @if (Running && Agent.GitIdentity is { } next && next.UserId != Shown?.UserId)
+            {
+                <div>
+                    <span class="fact-label">From the next start</span>
+                    <span class="fact-value">@Describe(next)</span>
+                </div>
+            }
+            <div>
+                <span class="fact-label">Owner</span>
+                <span class="fact-value">@Agent.OwnerName</span>
+            </div>
+        </div>
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mt-3">@_error</MudAlert>
+        }
+        <div class="git-identity-actions">
+            @if (CanUseMine)
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="_busy" OnClick="() => SwitchAsync(Me.Id, Me.Username)">Commit as me (@Me.Username)</MudButton>
+            }
+            @if (CanHandBack)
+            {
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="() => SwitchAsync(Agent.OwnerId, Agent.OwnerName)">Hand back to @Agent.OwnerName</MudButton>
+            }
+            @if (Me.Has(UserRoles.ConversationManager))
+            {
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="ChooseAsync">Choose someone…</MudButton>
+            }
+            @if (!CanUseMine && !CanHandBack && !Me.Has(UserRoles.ConversationManager))
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">@(Current == Me.Id ? "It already uses yours." : "People with read-write access can switch it to themselves.")</MudText>
+            }
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Disabled="_busy" OnClick="() => Dialog.Cancel()">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
+    [Parameter, EditorRequired] public CurrentUserDto Me { get; set; } = default!;
+    private bool _busy;
+    private string? _error;
+
+    /// <summary>Shows the agent's git identity; true when it was switched (a running terminal reconnects).</summary>
+    public static async Task<bool> ShowAsync(IDialogService dialogs, AgentDto agent, CurrentUserDto me)
+    {
+        var dialog = await dialogs.ShowAsync<GitIdentityDialog>(agent.Name, new DialogParameters<GitIdentityDialog> { { d => d.Agent, agent }, { d => d.Me, me } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        return await dialog.Result is { Canceled: false, Data: true };
+    }
+
+    private bool Running => Agent.State is AgentState.Running or AgentState.Starting;
+    private AgentGitIdentityDto? Shown => AgentTable.CommitsAs(Agent);
+    private Guid Current => Agent.GitIdentity?.UserId ?? Agent.OwnerId;
+    private bool CanUseMine => Agent.Access >= AgentAccess.Write && Current != Me.Id;
+    private bool CanHandBack => Current == Me.Id && Me.Id != Agent.OwnerId;
+
+    private static string Describe(AgentGitIdentityDto? identity) => identity?.Username is { } username
+        ? identity.DisplayName is { Length: > 0 } name && name != username ? $"{name} ({username})" : username
+        : "A deleted user";
+
+    private async Task ChooseAsync()
+    {
+        var parameters = new DialogParameters<ChooseUserDialog>
+        {
+            { d => d.Intro, $"'{Agent.Name}' commits and pushes with their git identity and GitHub token, whoever prompts it." },
+            { d => d.Confirm, "Choose" },
+            { d => d.Exclude, new[] { Current } },
+        };
+        var dialog = await Dialogs.ShowAsync<ChooseUserDialog>("Commit as someone else", parameters);
+        if (await dialog.Result is { Canceled: false, Data: ChooseUserDialog.ChosenUser chosen })
+        {
+            await SwitchAsync(chosen.UserId, null);
+        }
+    }
+
+    private async Task SwitchAsync(Guid userId, string? name)
+    {
+        var who = userId == Me.Id ? "your" : name is null ? "their" : $"{name}'s";
+        var message = Running
+            ? $"'{Agent.Name}' restarts and resumes the conversation. From then on it commits and pushes with {who} git identity and GitHub token, whoever prompts it."
+            : $"From its next start, '{Agent.Name}' commits and pushes with {who} git identity and GitHub token, whoever prompts it.";
+        if (userId == Me.Id && Me.Id != Agent.OwnerId && !Agent.CanUseRunner)
+        {
+            message += $" They are copied to {Agent.RunnerName}, where everyone with access to that Runner can read them.";
+        }
+
+        if (await Dialogs.ShowMessageBoxAsync(Running ? "Switch and restart?" : "Switch git identity?", message, yesText: "Switch", cancelText: "Cancel") != true)
+        {
+            return;
+        }
+
+        _busy = true;
+        _error = null;
+        try
+        {
+            await Api.SetGitIdentityAsync(Agent.Id, userId);
+            Snackbar.Add($"'{Agent.Name}' commits as {(userId == Me.Id ? "you" : name ?? "them")}{(Running ? "" : " from its next start")}.", Severity.Success);
+            Dialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

@@ -133,6 +133,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<int?>("ExitCode")
                         .HasColumnType("INTEGER");
 
+                    b.Property<Guid?>("GitIdentityUserId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("HarnessId")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -176,6 +179,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<Guid?>("RunningAccountId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("RunningGitIdentityUserId")
                         .HasColumnType("TEXT");
 
                     b.Property<long>("SeenCompletionSequence")

@@ -23,7 +23,7 @@ try {
     const agent = { id: id(701), name: 'test-agent', ownerId: me.id, ownerName: 'Admin', access: 'Owner', runnerId: runner.id,
         runnerName: runner.name, runnerState: 'Ready', runnerHarnessIds: runner.harnessIds, runnerToolIds: [], harnessId: 'codex',
         workingDirectory: '/work/test-project', state: 'Running', accountId: id(710), accountName: 'Personal', accountUsername: 'alice',
-        runningAccountId: id(711), runningAccountName: 'Shared', runningAccountUsername: 'bob', createdAt: now, updatedAt: now };
+        runningAccountId: id(711), runningAccountName: 'Shared', runningAccountUsername: 'bob', createdAt: now, updatedAt: now, canUseRunner: true };
     const stopped = { ...agent, id: id(703), name: 'stopped-agent', state: 'Stopped', runningAccountId: null };
     const defaultAgent = { ...stopped, id: id(704), name: 'default-agent', accountId: null, accountName: null, accountUsername: me.username };
     const agents = [agent, stopped, defaultAgent];

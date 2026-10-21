@@ -10,8 +10,8 @@ namespace DeveAgentManager.Core.Users;
 /// <item>A Runner: its owner and runner managers have <see cref="RunnerAccess.Owner"/>; others have what their membership
 /// gives (<see cref="RunnerAccess.Use"/> or <see cref="RunnerAccess.Manage"/>).</item>
 /// <item>An agent: its owner has <see cref="AgentAccess.Owner"/>, users it is shared with have the share's level, and who
-/// manages its Runner sees it is there (<see cref="AgentAccess.Listed"/>). Writing needs Use access to the Runner as
-/// well: without it, an agent can only be read.</item>
+/// manages its Runner sees it is there (<see cref="AgentAccess.Listed"/>). A read-write share needs no access to the
+/// Runner: it covers the agent only, not the Runner's shell, VS Code or desktop.</item>
 /// <item>A conversation: its owner, users it is shared with, and users its workspace's agent is shared with (read-only).</item>
 /// <item>A harness login: an explicit Use/Manage grant; login managers may administer all logins.</item>
 /// </list>
@@ -32,11 +32,6 @@ public sealed class AccessControl(IDbContextFactory<ManagerDbContext> dbFactory)
     public static AgentAccess ForAgent(CurrentUser user, Guid ownerId, IEnumerable<AgentShare> shares, RunnerAccess runner)
     {
         var access = ownerId == user.Id ? AgentAccess.Owner : shares.FirstOrDefault(s => s.UserId == user.Id)?.Access ?? AgentAccess.None;
-        if (access >= AgentAccess.Write && runner < RunnerAccess.Use)
-        {
-            access = AgentAccess.Read;
-        }
-
         if (user.Has(UserRoles.ConversationManager)) return AgentAccess.Owner;
         return runner >= RunnerAccess.Manage && access < AgentAccess.Listed ? AgentAccess.Listed : access;
     }

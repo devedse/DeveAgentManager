@@ -81,8 +81,18 @@ An agent's owner can share it with other users, **read-only** or **read-write**,
 - Conversations can be shared read-only on their own. Anyone who can read someone else's conversation can **continue a
   copy** of it in a new agent of their own, on a Runner they can use, with their own login. Everyone an agent is shared
   with can read its workspace's conversations.
-- Reading an agent needs no access to its Runner; read-write needs Use access to the Runner as well (without it, a
-  read-write share works as read-only).
+- **Git identity**: an agent commits and pushes with one person's git name, email, GitHub token and environment
+  variables, whoever types the prompt. It starts as the owner's and only an explicit switch (Git identity in the
+  agent's menu) changes it; starting or restarting never does. Someone with read-write access can switch it to
+  themselves, whoever it is can hand it back to the owner (read access is enough), and a conversation manager can
+  choose any enabled user. Switching restarts a running harness, which resumes the same conversation. The agent list
+  and terminal show whose it is; every switch is in the audit log.
+- When that person loses it (their share ends, or they are disabled or deleted), the agent goes back to the owner's
+  identity and a harness still running with theirs is stopped, like after a revoked login. Their files stay on the
+  Runner only while an agent there uses them; they never get an SSH key on it.
+- Reading an agent needs no access to its Runner, and neither does read-write: it covers the agent (its terminal,
+  prompts, sessions, login and git identity), not the Runner's shell, VS Code or desktop, which still need Use access.
+  Prompting an agent runs commands on its Runner, so share read-write only with people you trust there.
 - Conversation manager (included in Admin) grants full access to all agents and conversations. Other roles do not.
 - Existing admins with all four original roles are upgraded once and their security stamps rotate; sign in again.
 

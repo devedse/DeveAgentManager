@@ -35,7 +35,10 @@
                     <span class="terminal-name" title="@_agent.Name">@_agent.Name</span>
                     <AgentStatus Agent="_agent" Class="terminal-status" />
                 </div>
-                <span class="terminal-context"><HarnessLogo HarnessId="@_agent.HarnessId" Class="context-logo" />@(_agent.AccountName is { } account ? $"{account} · " : "")@_agent.RunnerName · <span class="mono">@(_sessionTitle ?? _agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
+                <span class="terminal-context"><HarnessLogo HarnessId="@_agent.HarnessId" Class="context-logo" />@(_agent.AccountName is { } account ? $"{account} · " : "")@if (AgentTable.CommitsAs(_agent) is { } git)
+                    {
+                        <span title="@AgentTable.GitIdentityTitle(git)">Git: @AgentTable.GitIdentityText(git) · </span>
+                    }@_agent.RunnerName · <span class="mono">@(_sessionTitle ?? _agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
             </div>
             @if (write)
             {
@@ -113,6 +116,7 @@
                             <MudMenuItem Icon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{conversationId}")">Conversation</MudMenuItem>
                         }
                         <MudMenuItem Icon="@(_agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="ShareAsync">Sharing</MudMenuItem>
+                        <MudMenuItem Icon="@Icons.Material.Rounded.Badge" OnClick="GitIdentityAsync">Git identity…</MudMenuItem>
                         @if (_agent.Access == AgentAccess.Owner)
                         {
                             @if (_agent.MovePending)
@@ -124,13 +128,14 @@
                                 <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="_agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, _agent)">Move to another runner…</MudMenuItem>
                             }
                         }
-                        @if (write && _agent.RunnerKind == RunnerKind.Desktop)
+                        @* A read-write share covers the agent; the desktop and VS Code are the Runner's. *@
+                        @if (write && _agent.CanUseRunner && _agent.RunnerKind == RunnerKind.Desktop)
                         {
                             <MudMenuItem Icon="@Icons.Material.Rounded.DesktopWindows" Href="@($"runners/{_agent.RunnerId}/desktop?agent={AgentId}")">Runner desktop</MudMenuItem>
                         }
                         @if (running && write)
                         {
-                            @if (_agent.RunnerToolIds.Contains("vscode"))
+                            @if (_agent.CanUseRunner && _agent.RunnerToolIds.Contains("vscode"))
                             {
                                 <MudMenuItem Icon="@(_vsCodeIcon ?? Icons.Material.Rounded.Code)" Href="@($"agents/{_agent.Id}/vscode")">VS Code</MudMenuItem>
                             }
@@ -372,6 +377,14 @@
         }
 
         await RunAsync(() => Api.StartAgentAsync(AgentId, restart: true), reconnect: true);
+    }
+
+    private async Task GitIdentityAsync()
+    {
+        if (_agent is not null && await GitIdentityDialog.ShowAsync(Dialogs, _agent, await Me.GetAsync()))
+        {
+            await OnSwitchedAsync();
+        }
     }
 
     private async Task OnSwitchedAsync()

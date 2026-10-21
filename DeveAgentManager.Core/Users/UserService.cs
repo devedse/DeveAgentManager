@@ -198,6 +198,9 @@ public sealed partial class UserService(
                     agent.LoginStopPending = agent.State is AgentState.Running or AgentState.Starting;
                     agent.StateMessage = "The user running this harness login was disabled. Choose a permitted login.";
                 }
+            if (disabled)
+                // A disabled user's git identity is no longer used: back to each agent's owner (running harnesses stop).
+                await db.Agents.Where(a => a.GitIdentityUserId == userId).ExecuteUpdateAsync(s => s.SetProperty(a => a.GitIdentityUserId, (Guid?)null), cancellationToken);
             user.SecurityStamp = NewStamp();
         }
 
@@ -318,6 +321,8 @@ public sealed partial class UserService(
                     agent.StateMessage = "Agent ownership changed. Choose a login permitted for the new owner.";
                 }
             }
+            // Agents that committed as them go back to their owners; harnesses still running with it are stopped.
+            await db.Agents.Where(a => a.GitIdentityUserId == userId).ExecuteUpdateAsync(s => s.SetProperty(a => a.GitIdentityUserId, (Guid?)null), cancellationToken);
             await db.SessionShares.Where(s => s.UserId == heir.Id && db.Sessions.Any(x => x.Id == s.SessionId && x.OwnerId == userId)).ExecuteDeleteAsync(cancellationToken);
             await db.Sessions.Where(s => s.OwnerId == userId).ExecuteUpdateAsync(s => s.SetProperty(x => x.OwnerId, heir.Id), cancellationToken);
             db.AgentLoginGrants.RemoveRange(await db.AgentLoginGrants.Where(g => g.OwnerId == userId).ToListAsync(cancellationToken));

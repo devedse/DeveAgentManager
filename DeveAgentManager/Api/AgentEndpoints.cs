@@ -51,6 +51,13 @@ internal static class AgentEndpoints
             return Results.NoContent();
         }).RequireAgent(AgentAccess.Write);
 
+        // Read access suffices to hand your own identity back to the owner; the service checks the rest.
+        agents.MapPost("/{agentId:guid}/git-identity", async (Guid agentId, SetGitIdentityRequest request, CurrentUser user, AgentService service, CancellationToken ct) =>
+        {
+            await service.SetGitIdentityAsync(user, agentId, request.UserId, ct);
+            return Results.NoContent();
+        }).RequireAgent(AgentAccess.Read);
+
         agents.MapPost("/{agentId:guid}/move", async (Guid agentId, MoveAgentRequest request, CurrentUser user, AgentService service, CancellationToken ct) =>
         {
             await service.RequestMoveAsync(user, agentId, request.RunnerId, ct, request.StopProcesses);

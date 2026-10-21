@@ -259,24 +259,90 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         Assert.Equal(HttpStatusCode.Forbidden, (await ketty.PutAsync($"/api/sessions/{admins.SessionId}/shares/{kettyId}", null)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await ketty.PutAsJsonAsync($"/api/agents/{admins.AgentId}/shares/{kettyId}", new ShareAgentRequest(AgentAccess.Write), ApiJson.Options)).StatusCode);
 
-        // Read-write needs access to the Runner too; then she can prompt it, with its own login or one of hers.
+        // Read-write needs no access to the Runner: she can prompt it, with its own login or one of hers. The Runner's own
+        // tools (VS Code, the desktop, its page) stay the Runner's.
         await sharing.ShareAgentAsync(TestUsers.Admin, admins.AgentId, kettyId, AgentAccess.Write);
-        Assert.Equal(AgentAccess.Read, (await AgentAsync(ketty, admins.AgentId)).Access);
-        await manager.Services.GetRequiredService<RunnerMembers>().SetAsync(TestUsers.Admin, admins.RunnerId, kettyId, RunnerAccess.Use);
         var shared = await AgentAsync(ketty, admins.AgentId);
-        Assert.Equal(AgentAccess.Write, shared.Access);
+        Assert.Equal((AgentAccess.Write, false), (shared.Access, shared.CanUseRunner));
+        Assert.Equal(HttpStatusCode.NotFound, (await ketty.GetAsync($"/api/runners/{admins.RunnerId}")).StatusCode);
         var start = await ketty.PostAsync($"/api/agents/{admins.AgentId}/start", null);
         Assert.Equal(HttpStatusCode.Conflict, start.StatusCode); // The Runner is stopped: past the access check.
         var switching = await ketty.PostAsJsonAsync($"/api/agents/{admins.AgentId}/switch", new SwitchAgentRequest("claude", admins.AccountId), ApiJson.Options);
         Assert.Equal(HttpStatusCode.BadRequest, switching.StatusCode);
         Assert.Contains("Use access", await switching.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.Forbidden, (await ketty.DeleteAsync($"/api/agents/{admins.AgentId}")).StatusCode);
+        await manager.Services.GetRequiredService<RunnerMembers>().SetAsync(TestUsers.Admin, admins.RunnerId, kettyId, RunnerAccess.Use);
+        Assert.True((await AgentAsync(ketty, admins.AgentId)).CanUseRunner);
 
         // Leaving: it is gone for her, also from the Runner she can still use (only its managers see other people's agents).
         Assert.Equal(HttpStatusCode.NoContent, (await ketty.DeleteAsync($"/api/agents/{admins.AgentId}/shares/{kettyId}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await ketty.GetAsync($"/api/agents/{admins.AgentId}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await ketty.GetAsync($"/api/sessions/{admins.SessionId}")).StatusCode);
         Assert.DoesNotContain(admins.AgentId.ToString(), await ketty.GetStringAsync($"/api/runners/{admins.RunnerId}"));
+    }
+
+    [Fact]
+    public async Task GitIdentity_OnlyAnExplicitSwitchChangesIt_ToYourselfUnlessYouManageConversations()
+    {
+        // Its own sign-ins, outside the shared fixture's authentication rate-limit window.
+        using var isolatedManager = new ApiSecurityTests.Manager();
+        await new UserAccessTests(isolatedManager).GitIdentityRulesAsync();
+    }
+
+    private async Task GitIdentityRulesAsync()
+    {
+        var admins = await SeedAsync(User.BootstrapId);
+        var (ketty, kettyId) = await SignedInAsNewUserWithIdAsync();
+        var (reader, readerId) = await SignedInAsNewUserWithIdAsync();
+        var (conversations, _) = await SignedInAsNewUserWithIdAsync(UserRoles.ConversationManager);
+        var sharing = manager.Services.GetRequiredService<Sharing>();
+        await sharing.ShareAgentAsync(TestUsers.Admin, admins.AgentId, kettyId, AgentAccess.Write);
+        await sharing.ShareAgentAsync(TestUsers.Admin, admins.AgentId, readerId, AgentAccess.Read);
+        async Task<HttpStatusCode> Set(HttpClient client, Guid userId) =>
+            (await client.PostAsJsonAsync($"/api/agents/{admins.AgentId}/git-identity", new SetGitIdentityRequest(userId), ApiJson.Options)).StatusCode;
+        async Task<Guid?> ChosenAsync()
+        {
+            await using var db = await DbAsync();
+            return (await db.Agents.SingleAsync(a => a.Id == admins.AgentId)).GitIdentityUserId;
+        }
+
+        // It starts as the owner's, and everyone who can read the agent sees whose it is.
+        var initial = (await AgentAsync(reader, admins.AgentId)).GitIdentity!;
+        Assert.Equal((User.BootstrapId, "admin"), (initial.UserId, initial.Username));
+
+        // Read-only can't take it, and nobody but a conversation manager chooses someone else.
+        Assert.Equal(HttpStatusCode.Forbidden, await Set(reader, readerId));
+        Assert.Equal(HttpStatusCode.Forbidden, await Set(ketty, readerId));
+        Assert.Equal(HttpStatusCode.NoContent, await Set(ketty, kettyId));
+        Assert.Equal(kettyId, (await AgentAsync(ketty, admins.AgentId)).GitIdentity!.UserId);
+        Assert.Equal(kettyId, (await AgentAsync(reader, admins.AgentId)).GitIdentity!.UserId);
+        // Only whose it is can hand it back to the owner.
+        Assert.Equal(HttpStatusCode.Forbidden, await Set(reader, User.BootstrapId));
+        Assert.Equal(HttpStatusCode.NoContent, await Set(ketty, User.BootstrapId));
+        Assert.Null(await ChosenAsync());
+
+        // A conversation manager picks anyone; that person can hand it back with read access only.
+        Assert.Equal(HttpStatusCode.NoContent, await Set(conversations, readerId));
+        Assert.Equal(readerId, await ChosenAsync());
+        Assert.Equal(HttpStatusCode.NoContent, await Set(reader, User.BootstrapId));
+        Assert.Null(await ChosenAsync());
+
+        // Ending her share drops her identity.
+        Assert.Equal(HttpStatusCode.NoContent, await Set(ketty, kettyId));
+        await sharing.UnshareAgentAsync(TestUsers.Admin, admins.AgentId, kettyId);
+        Assert.Null(await ChosenAsync());
+
+        // So does disabling the user, and a disabled user can't be chosen.
+        Assert.Equal(HttpStatusCode.NoContent, await Set(conversations, readerId));
+        var readerUser = (await Users.GetAsync(readerId))!;
+        await Users.UpdateAsync(TestUsers.Admin, readerId, readerUser.DisplayName, readerUser.Roles, disabled: true);
+        Assert.Null(await ChosenAsync());
+        Assert.Equal(HttpStatusCode.BadRequest, await Set(conversations, readerId));
+        await using (var db = await DbAsync())
+        {
+            var target = $"Agent {(await db.Agents.SingleAsync(a => a.Id == admins.AgentId)).Name}";
+            Assert.True(await db.AuditEvents.AnyAsync(e => e.Action == AuditActions.AgentGitIdentityChanged && e.Target == target));
+        }
     }
 
     [Fact]
@@ -449,7 +515,7 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
 
         Assert.Equal(AgentAccess.Owner, AccessControl.ForAgent(me, me.Id, [], RunnerAccess.Use));
         Assert.Equal(AgentAccess.Write, AccessControl.ForAgent(me, other, [Share(AgentAccess.Write)], RunnerAccess.Use));
-        Assert.Equal(AgentAccess.Read, AccessControl.ForAgent(me, other, [Share(AgentAccess.Write)], RunnerAccess.None));
+        Assert.Equal(AgentAccess.Write, AccessControl.ForAgent(me, other, [Share(AgentAccess.Write)], RunnerAccess.None));
         Assert.Equal(AgentAccess.Listed, AccessControl.ForAgent(me, other, [], RunnerAccess.Manage));
         Assert.Equal(AgentAccess.None, AccessControl.ForAgent(me, other, [], RunnerAccess.Use));
         Assert.Equal(AgentAccess.Read, AccessControl.ForAgent(me, other, [Share(AgentAccess.Read)], RunnerAccess.Owner));

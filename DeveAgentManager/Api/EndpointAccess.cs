@@ -138,7 +138,7 @@ public static class EndpointAccess
     private static string AgentNeed(AgentAccess level) => level switch
     {
         AgentAccess.Owner => "being the owner of this agent",
-        AgentAccess.Write => "read-write access to this agent (and access to its Runner)",
+        AgentAccess.Write => "read-write access to this agent",
         _ => "access to this agent",
     };
 

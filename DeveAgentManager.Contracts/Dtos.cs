@@ -187,7 +187,16 @@ public sealed record AgentDto(
     bool MovePending = false,
     AgentMoveDetailsDto? MoveDetails = null,
     string? AccountUsername = null,
-    string? RunningAccountUsername = null);
+    string? RunningAccountUsername = null,
+    bool CanUseRunner = false,
+    AgentGitIdentityDto? GitIdentity = null,
+    AgentGitIdentityDto? RunningGitIdentity = null);
+
+/// <summary>
+/// Whose git identity and GitHub token an agent commits and pushes with: the one chosen for its next start
+/// (<see cref="AgentDto.GitIdentity"/>), or the one its running harness started with. Names are null for a deleted user.
+/// </summary>
+public sealed record AgentGitIdentityDto(Guid UserId, string? Username, string? DisplayName);
 
 /// <summary>Measured progress within the current move stage; totals are unknown during preparation.</summary>
 public sealed record AgentMoveProgressDto(string Stage, string? CurrentFile = null, long BytesCompleted = 0, long? TotalBytes = null);
@@ -274,6 +283,9 @@ public sealed record LoginDependencyDto(Guid Id, string Name, string HarnessId, 
 // Requests.
 
 public sealed record SwitchAgentRequest(string HarnessId, Guid? AccountId);
+
+/// <summary>Commit and push as this user from now on (a running harness restarts with it).</summary>
+public sealed record SetGitIdentityRequest(Guid UserId);
 
 /// <param name="Tty">One screen to disconnect, or null for all but <paramref name="KeepTty"/>.</param>
 public sealed record DisconnectViewersRequest(string? Tty, string? KeepTty);

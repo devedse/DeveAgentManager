@@ -784,6 +784,25 @@ a {
     color: var(--dam-muted);
 }
 
+.git-identity-facts {
+    display: grid;
+    gap: 6px;
+    font-size: 0.85rem;
+}
+
+    .git-identity-facts > div {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+.git-identity-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+}
+
 .fact-value {
     text-align: right;
 }

@@ -30,7 +30,8 @@ public sealed partial class AgentService(
     AccessControl access,
     ManagerEvents events,
     ILogger<AgentService> logger,
-    AgentContinuations? continuations = null, AgentDiagnostics? diagnostics = null, UsageLimitReader? limitReader = null, ArtifactTokens? artifactTokens = null)
+    AgentContinuations? continuations = null, AgentDiagnostics? diagnostics = null, UsageLimitReader? limitReader = null, ArtifactTokens? artifactTokens = null,
+    AuditLog? audit = null)
 {
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
 
@@ -878,10 +879,13 @@ public sealed partial class AgentService(
         var instructions = runner.SetupVersion >= Runners.RunnerSetupService.AgentToolsSetupVersion ? LaunchInstructions : null;
         var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model, instructions));
 
-        // The owner's environment (their git identity, GitHub token and variables), then the harness login's, so e.g. a
-        // subscription wins over an API key meant for pi.
-        await users.EnsureAsync(runner, agent.OwnerId, cancellationToken);
-        var ownerEnvironment = $". \"{Runners.RunnerUsers.EnvironmentFile(agent.OwnerId)}\"; ";
+        // The git identity's environment (the owner's unless switched: git config, GitHub token and variables), then the
+        // harness login's, so e.g. a subscription wins over an API key meant for pi. A restart keeps the identity.
+        var identity = GitIdentity(agent);
+        if (identity != agent.OwnerId && !await loginDb.Users.AnyAsync(u => u.Id == identity && !u.Disabled, cancellationToken))
+            throw new InvalidOperationException("The agent's git identity belongs to a disabled or deleted user. Choose another git identity.");
+        await users.EnsureAsync(runner, identity, cancellationToken);
+        var ownerEnvironment = $". \"{Runners.RunnerUsers.EnvironmentFile(identity)}\"; ";
         var account = await accounts.ResolveAsync(agent, cancellationToken);
         var accountEnvironment = "";
         if (account is not null)
@@ -892,7 +896,10 @@ public sealed partial class AgentService(
         }
 
         agent.RunningAccountId = account?.Id;
-        await loginDb.Agents.Where(a => a.Id == agent.Id).ExecuteUpdateAsync(s => s.SetProperty(a => a.RunningAccountId, account == null ? (Guid?)null : account.Id), cancellationToken);
+        agent.RunningGitIdentityUserId = identity;
+        await loginDb.Agents.Where(a => a.Id == agent.Id).ExecuteUpdateAsync(s => s
+            .SetProperty(a => a.RunningAccountId, account == null ? (Guid?)null : account.Id)
+            .SetProperty(a => a.RunningGitIdentityUserId, (Guid?)identity), cancellationToken);
         // The browser terminal (xterm.js) and tmux support 24-bit color, but programs inside tmux only use it when told.
         var zone = Runners.RunnerTimeZones.Validate(runner.TimeZoneId ?? await settings.GetDefaultTimeZoneAsync(cancellationToken));
         var stored = await sessions.GetForAgentAsync(agent.Id, cancellationToken);

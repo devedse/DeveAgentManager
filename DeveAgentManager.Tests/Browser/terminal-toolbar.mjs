@@ -14,7 +14,7 @@ const priority = [
     ['images', 'Shared images (3)'], ['files', 'Shared files (1)'], ['awake', 'Keep screen awake'], ['limit', 'Schedule continue'], ['sessions', 'Switch session'],
 ];
 const selectors = { hint: '.terminal-hint', avatar: '.terminal-avatar', 'switch-label': '.switch-chip-label' };
-const fixed = ['Conversation', 'Sharing', 'Runner desktop', 'VS Code', 'Restart the harness', 'Stop the agent'];
+const fixed = ['Conversation', 'Sharing', 'Git identity…', 'Runner desktop', 'VS Code', 'Restart the harness', 'Stop the agent'];
 
 async function run(touch) {
     const context = await browser.newContext({ viewport: { width: 1600, height: 900 }, hasTouch: touch, isMobile: false });
@@ -30,14 +30,14 @@ async function run(touch) {
     const agent = { id: agentId, runnerId: agentId, ownerId: agentId, ownerName: 'Test user', access: 'Owner', runnerName: 'runner-01', runnerState: 'Ready',
         runnerHarnessIds: ['claude', 'codex'], runnerToolIds: ['vscode'], name: 'deveagentmanager', harnessId: 'claude', workingDirectory: '/work/deveagentmanager',
         state: 'Running', accountName: 'Xebia', loginOwnerId: agentId, loginOwnerName: 'Test user', createdAt: now, updatedAt: now, iconVersion: 1,
-        working: true, runnerKind: 'Desktop' };
+        working: true, runnerKind: 'Desktop', canUseRunner: true };
     const session = { id: sessionId, ownerId: agentId, ownerName: 'Test user', access: 'Owner', title: 'Plan Windows runner agent', harnessId: 'claude', messageCount: 3, createdAt: now, updatedAt: now };
     const images = [1, 2, 3].map(i => ({ id: `00000000-0000-0000-0000-00000000002${i}`, sessionId, fileName: `shot-${i}.png`, caption: `Shot ${i}`, contentType: 'image/png', bytes: 2048, createdAt: now }));
     const files = [{ id: '00000000-0000-0000-0000-000000000031', sessionId, fileName: 'app-release.apk', caption: '', bytes: 4096, sha256: 'a'.repeat(64), createdAt: now }];
     const viewers = [{ tty: '/dev/pts/99', columns: 120, rows: 40, connectedAt: now, lastActiveAt: now }, { tty: '/dev/pts/7', columns: 80, rows: 24, connectedAt: now, lastActiveAt: now, watching: true }];
     await context.route('**/api/**', async route => {
         const path = new URL(route.request().url()).pathname;
-        if (path === '/api/me' || path.startsWith('/api/me/')) return route.continue();
+        if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/diagnostics/cpu') return route.continue();
         if (path.endsWith('/icon')) return route.fulfill({ status: 404 });
         const body = path === '/api/info' ? info : path === `/api/agents/${agentId}` ? agent : path === `/api/agents/${agentId}/session` ? session
             : path === `/api/sessions/${sessionId}/images` ? images : path === `/api/sessions/${sessionId}/files` ? files
