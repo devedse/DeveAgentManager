@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -193,10 +194,8 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
                     if (reusable)
                     {
                         // Sampled appends have no whole-file fingerprint. Compute one only for the audit.
-                        await using var input = File.OpenRead(Path.Combine(folder, old!.File));
-                        using var bounded = new PrefixStream(input, offset);
                         using var hashTiming = Diagnostics.CaptureOperations.Start("history.hash-prefix", session: id, bytes: offset);
-                        hash = Convert.ToHexString(await SHA256.HashDataAsync(bounded, ct));
+                        hash = await HashFileAsync(Path.Combine(folder, old!.File), offset, ct);
                     }
                     received = await transfer(offset, hash, output, ct);
                     if (sampled && !received.PrefixMatches)
@@ -242,11 +241,11 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
             }
             if (received.FullyVerified)
             {
-                await using var input = File.OpenRead(path);
                 using var timing = Diagnostics.CaptureOperations.Start("history.hash", session: id, bytes: size);
-                state.Sha256 = Convert.ToHexString(await SHA256.HashDataAsync(input, ct));
+                state.Sha256 = await HashFileAsync(path, null, ct);
                 if (received.SnapshotSha256 is not null && !string.Equals(received.SnapshotSha256, state.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new IOException("Native history changed during transfer; synchronization will retry.");
+                using var input = File.OpenRead(path);
                 state.EndsWithNewline = size == 0 || (input.Seek(-1, SeekOrigin.End) >= 0 && input.ReadByte() == '\n');
                 state.VerifiedAt = clock.GetUtcNow();
             }
@@ -295,6 +294,33 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
         await gate.WaitAsync(ct);
         try { verifiedThisProcess.TryRemove(id, out _); if (Directory.Exists(Folder(id))) Directory.Delete(Folder(id), true); }
         finally { gate.Release(); }
+    }
+
+    private const int HashChunkBytes = 1 << 20;
+
+    /// <summary>
+    /// SHA-256 of a file's first <paramref name="length"/> bytes (fewer when it is shorter), or of all of it, read 1 MiB at
+    /// a time. SHA256.HashDataAsync reads 4 KiB per call, and every async read of a file opened for synchronous I/O is a
+    /// thread pool round trip: restart audits of a few large histories kept two cores busy for a minute.
+    /// </summary>
+    internal static async Task<string> HashFileAsync(string path, long? length, CancellationToken ct)
+    {
+        using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.SequentialScan);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = ArrayPool<byte>.Shared.Rent(HashChunkBytes);
+        try
+        {
+            for (long position = 0; length is not { } end || position < end;)
+            {
+                var count = (int)Math.Min(HashChunkBytes, (length ?? long.MaxValue) - position);
+                var read = await RandomAccess.ReadAsync(handle, buffer.AsMemory(0, count), position, ct);
+                if (read == 0) break;
+                hash.AppendData(buffer, 0, read);
+                position += read;
+            }
+        }
+        finally { ArrayPool<byte>.Shared.Return(buffer); }
+        return Convert.ToHexString(hash.GetHashAndReset());
     }
 
     private sealed class PrefixStream(Stream input, long length) : Stream

@@ -67,6 +67,10 @@ verification hashes the entire local committed prefix and compares it with the
 Runner's prefix, then verifies the requested Runner snapshot against the assembled
 local file. A mismatch retries or rebuilds, preserving the last good checkpoint.
 The checkpoint SHA-256 is repopulated only after full verification succeeds.
+Local hashes read the file in 1 MiB chunks (`NativeHistoryStore.HashFileAsync`).
+`SHA256.HashDataAsync` on a synchronously opened file reads 4 KiB per thread pool
+round trip, which made restart audits of a few multi-hundred-megabyte histories
+keep about two Manager cores busy for a minute.
 
 Export, shared copies, and session/harness continuation require verification of
 any pending checkpoint under the session operation lock. If the source Runner is

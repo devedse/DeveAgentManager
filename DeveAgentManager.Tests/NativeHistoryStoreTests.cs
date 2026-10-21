@@ -15,6 +15,27 @@ namespace DeveAgentManager.Tests;
 public class NativeHistoryStoreTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task FileHashes_ReadInLargeChunks_MatchSha256OfEveryPrefix()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            Assert.Equal(Convert.ToHexString(SHA256.HashData([])), await NativeHistoryStore.HashFileAsync(path, null, Ct));
+            // Several 1 MiB chunks and a partial one, so every chunk boundary case is covered.
+            var bytes = new byte[(1 << 20) * 3 + 12345];
+            new Random(7).NextBytes(bytes);
+            await File.WriteAllBytesAsync(path, bytes, Ct);
+            string Expected(int count) => Convert.ToHexString(SHA256.HashData(bytes.AsSpan(0, count)));
+            Assert.Equal(Expected(bytes.Length), await NativeHistoryStore.HashFileAsync(path, null, Ct));
+            foreach (var prefix in new[] { 0, 1, 1 << 20, (1 << 20) + 1, bytes.Length - 1, bytes.Length })
+                Assert.Equal(Expected(prefix), await NativeHistoryStore.HashFileAsync(path, prefix, Ct));
+            // A file shorter than the requested prefix hashes what is there, so the prefix check fails and rebuilds.
+            Assert.Equal(Expected(bytes.Length), await NativeHistoryStore.HashFileAsync(path, bytes.Length + 100, Ct));
+        }
+        finally { File.Delete(path); }
+    }
     internal static ISessionFormat Format(string harness) => harness switch { "claude" => new ClaudeSessionFormat(), "codex" => new CodexSessionFormat(), "grok" => new GrokSessionFormat(), _ => new PiSessionFormat() };
     internal static string Sample(string harness) => harness switch { "claude" => HarnessFormatTests.ClaudeSession, "codex" => HarnessFormatTests.CodexSession, "grok" => GrokTests.History, _ => SessionTests.PiSession };
 
