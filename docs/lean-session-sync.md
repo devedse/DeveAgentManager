@@ -70,7 +70,9 @@ The checkpoint SHA-256 is repopulated only after full verification succeeds.
 Local hashes read the file in 1 MiB chunks (`NativeHistoryStore.HashFileAsync`).
 `SHA256.HashDataAsync` on a synchronously opened file reads 4 KiB per thread pool
 round trip, which made restart audits of a few multi-hundred-megabyte histories
-keep about two Manager cores busy for a minute.
+keep two to three Manager cores busy for minutes. The assembled file's hash
+continues the committed prefix's hash over the appended bytes read back from disk:
+writing truncates to the prefix and appends, so the prefix is read once per audit.
 
 Export, shared copies, and session/harness continuation require verification of
 any pending checkpoint under the session operation lock. If the source Runner is

@@ -108,6 +108,33 @@ public class SampledHistoryTests
     }
 
     [Fact]
+    public async Task AuditsReadTheCommittedPrefixOnce_AndHashTheAssembledFileEvenAfterAnUncommittedSuffix()
+    {
+        using var rig = new Rig("claude");
+        await rig.Sync(new(HistorySyncMode.Full));
+        var committed = Encoding.UTF8.GetByteCount(rig.Text);
+        // A failed earlier sync can leave bytes past the committed length; the next audit truncates them.
+        var state = await rig.State();
+        await File.AppendAllTextAsync(Path.Combine(rig.Folder, "native", rig.Id.ToString("N"), state.File), "test-only uncommitted suffix", Ct);
+        rig.Text += Extra;
+        var hashed = new Dictionary<string, long>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = s => s.Name == DeveAgentManager.Core.Diagnostics.CaptureOperations.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = a => { if (a.GetTagItem("session")?.ToString() == rig.Id.ToString("N") && a.OperationName.StartsWith("history.hash")) hashed[a.OperationName] = (long)a.GetTagItem("bytes")!; }
+        };
+        ActivitySource.AddActivityListener(listener);
+        await rig.Sync(new(HistorySyncMode.Full)); // The store throws if its hash differs from the Runner's snapshot.
+        Assert.Equal(committed, hashed["history.hash-prefix"]);
+        Assert.Equal(Encoding.UTF8.GetByteCount(Extra), hashed["history.hash"]); // Only the appended bytes are read again.
+        Assert.Equal(rig.Text, await rig.Raw());
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rig.Text))), (await rig.State()).Sha256);
+        var raw = await File.ReadAllBytesAsync(Path.Combine(rig.Folder, "native", rig.Id.ToString("N"), (await rig.State()).File), Ct);
+        Assert.Equal(Encoding.UTF8.GetByteCount(rig.Text), raw.Length);
+    }
+
+    [Fact]
     public async Task ShadowAndFullModesNeverPublishUnverifiedAppendsAndFailuresKeepTheCheckpoint()
     {
         using var rig = new Rig("claude");

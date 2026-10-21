@@ -115,6 +115,9 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
         string? incoming = null;
         string? pendingRaw = null;
         string? pendingIndex = null;
+        // The audit's hash of the committed prefix, continued over the appended bytes so the prefix is read only once.
+        IncrementalHash? prefixHash = null;
+        long prefixHashed = -1;
         try
         {
             var folder = Folder(id);
@@ -195,7 +198,9 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
                     {
                         // Sampled appends have no whole-file fingerprint. Compute one only for the audit.
                         using var hashTiming = Diagnostics.CaptureOperations.Start("history.hash-prefix", session: id, bytes: offset);
-                        hash = await HashFileAsync(Path.Combine(folder, old!.File), offset, ct);
+                        prefixHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                        prefixHashed = await AppendFileAsync(prefixHash, Path.Combine(folder, old!.File), 0, offset, ct);
+                        hash = Convert.ToHexString(prefixHash.GetCurrentHash());
                     }
                     received = await transfer(offset, hash, output, ct);
                     if (sampled && !received.PrefixMatches)
@@ -241,8 +246,16 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
             }
             if (received.FullyVerified)
             {
-                using var timing = Diagnostics.CaptureOperations.Start("history.hash", session: id, bytes: size);
-                state.Sha256 = await HashFileAsync(path, null, ct);
+                // Writing kept the committed prefix (it truncated to it and appended), so the prefix hash read above still
+                // describes it on disk: only the appended bytes are read back. Otherwise hash the whole assembled file.
+                var continued = reusable && prefixHash is not null && prefixHashed == offset;
+                using var timing = Diagnostics.CaptureOperations.Start("history.hash", session: id, bytes: continued ? size - offset : size);
+                if (continued)
+                {
+                    await AppendFileAsync(prefixHash!, path, offset, null, ct);
+                    state.Sha256 = Convert.ToHexString(prefixHash!.GetHashAndReset());
+                }
+                else state.Sha256 = await HashFileAsync(path, null, ct);
                 if (received.SnapshotSha256 is not null && !string.Equals(received.SnapshotSha256, state.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new IOException("Native history changed during transfer; synchronization will retry.");
                 using var input = File.OpenRead(path);
@@ -285,7 +298,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
                 if (pendingRaw is not null) File.Delete(pendingRaw);
                 if (pendingIndex is not null) File.Delete(pendingIndex);
             }
-            finally { gate.Release(); }
+            finally { prefixHash?.Dispose(); gate.Release(); }
         }
     }
 
@@ -305,22 +318,30 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
     /// </summary>
     internal static async Task<string> HashFileAsync(string path, long? length, CancellationToken ct)
     {
-        using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.SequentialScan);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        await AppendFileAsync(hash, path, 0, length, ct);
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
+    /// <summary>Adds a file's bytes from <paramref name="start"/> (at most <paramref name="length"/>) to a hash; returns how many.</summary>
+    internal static async Task<long> AppendFileAsync(IncrementalHash hash, string path, long start, long? length, CancellationToken ct)
+    {
+        using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.SequentialScan);
         var buffer = ArrayPool<byte>.Shared.Rent(HashChunkBytes);
+        long hashed = 0;
         try
         {
-            for (long position = 0; length is not { } end || position < end;)
+            while (length is not { } end || hashed < end)
             {
-                var count = (int)Math.Min(HashChunkBytes, (length ?? long.MaxValue) - position);
-                var read = await RandomAccess.ReadAsync(handle, buffer.AsMemory(0, count), position, ct);
+                var count = (int)Math.Min(HashChunkBytes, (length ?? long.MaxValue) - hashed);
+                var read = await RandomAccess.ReadAsync(handle, buffer.AsMemory(0, count), start + hashed, ct);
                 if (read == 0) break;
                 hash.AppendData(buffer, 0, read);
-                position += read;
+                hashed += read;
             }
         }
         finally { ArrayPool<byte>.Shared.Return(buffer); }
-        return Convert.ToHexString(hash.GetHashAndReset());
+        return hashed;
     }
 
     private sealed class PrefixStream(Stream input, long length) : Stream
