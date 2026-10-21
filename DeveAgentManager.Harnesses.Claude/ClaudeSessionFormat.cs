@@ -223,7 +223,15 @@ public sealed class ClaudeSessionFormat : ISessionFormat
 
     public string Write(DeveSession session, string sessionId, string workingDirectory)
     {
-        var output = new StringBuilder();
+        using var output = new StringWriter();
+        Write(session, sessionId, workingDirectory, output);
+        return output.ToString();
+    }
+
+    public void Export(DeveSession session, string sessionId, string workingDirectory, TextWriter output) => Write(session, sessionId, workingDirectory, output);
+
+    public void Write(DeveSession session, string sessionId, string workingDirectory, TextWriter output)
+    {
         // Children of entries that are not written (another harness's extras) attach to the last line written before.
         var written = new Dictionary<string, string>();
         string? previous = null;
@@ -266,7 +274,6 @@ public sealed class ClaudeSessionFormat : ISessionFormat
             Append(output, line);
         }
 
-        return output.ToString();
     }
 
     /// <summary>A native Claude message, including completed historical calls and tool results.</summary>

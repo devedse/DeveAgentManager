@@ -286,6 +286,8 @@
 </MudContainer>
 
 @code {
+    protected override bool ShowsRunnerUsage => true;
+
     [Parameter]
     public Guid RunnerId { get; set; }
 

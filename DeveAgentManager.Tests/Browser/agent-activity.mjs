@@ -141,6 +141,8 @@ await page.getByRole('button',{name:'Explain Example agent status: Finished'}).w
 await page.waitForTimeout(5500);
 assert.equal(seen.length,0,'background/unfocused terminal acknowledged completion');
 await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'visible'}); document.hasFocus=()=>false;document.dispatchEvent(new Event('visibilitychange'));});
+// Later page loads are a shown tab again (the hidden init script above runs for every load; hidden tabs don't poll).
+await page.addInitScript(()=>{ Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'visible'}); });
 await page.waitForTimeout(5500);
 assert.equal(seen.length,0,'unfocused terminal acknowledged completion');
 await page.evaluate(()=>{document.hasFocus=()=>true;});

@@ -58,7 +58,7 @@ public class NativeHistoryTransportTests
         Assert.True(await companions.HasPendingVerificationAsync(saved.Id, state.CompanionManifest, Ct));
         var export = await service.ExportAsync(saved.Id, "grok", Ct);
         Assert.EndsWith(".grok.json", export.FileName);
-        var restored = nativeFormat.Read(export.Content);
+        var restored = nativeFormat.Read(export.ReadAllText());
         Assert.Equal(cache + suffix, nativeFormat.WriteCompanionFiles(restored, GrokTests.Id, "/workspace")["chat_history.jsonl"]);
         state = (await log.SummaryAsync(saved.Id, Ct))!;
         Assert.False(await companions.HasPendingVerificationAsync(saved.Id, state.CompanionManifest, Ct));
@@ -174,7 +174,7 @@ public class NativeHistoryTransportTests
             (await db.Runners.SingleAsync(Ct)).State = RunnerState.Ready; await db.SaveChangesAsync(Ct);
         }
         var export = await service.ExportAsync(saved.Id, "deve", Ct);
-        Assert.Equal(new ClaudeSessionFormat().Read(changed).ToJson(), DeveSession.FromJson(export.Content).ToJson());
+        Assert.Equal(new ClaudeSessionFormat().Read(changed).ToJson(), DeveSession.FromJson(export.ReadAllText()).ToJson());
         Assert.NotEmpty((await native.SummaryAsync(saved.Id, Ct))!.Sha256);
         // A second unverified append must be audited before a shared conversation is copied.
         changed = changed[..95000] + 'C' + changed[95001..] + appended;
@@ -247,7 +247,7 @@ public class NativeHistoryTransportTests
         await File.AppendAllTextAsync(remote, extra, Ct);
         await service.SyncRunnerAsync(runner, Ct);
         var exported = await service.ExportAsync(saved.Id, "deve", Ct);
-        Assert.Equal(new ClaudeSessionFormat().Read(content + extra).Entries.Count, DeveSession.FromJson(exported.Content).Entries.Count);
+        Assert.Equal(new ClaudeSessionFormat().Read(content + extra).Entries.Count, DeveSession.FromJson(exported.ReadAllText()).Entries.Count);
         var previews = await service.ReplyPreviewsAsync(new(User.BootstrapId, "admin", "Admin", UserRoles.ConversationManager), Ct);
         Assert.Equal("Latest reply", Assert.Single(previews).Text);
         var imageStore = new SessionImageStore(options);
@@ -274,7 +274,7 @@ public class NativeHistoryTransportTests
         Assert.Equal(fileBytes, await File.ReadAllBytesAsync(fileStore.DataPath(copy.Id, fileId), Ct));
 
         var foreignExport = await service.ExportAsync(saved.Id, "codex", Ct);
-        var exportedCalls = new CodexSessionFormat().Read(foreignExport.Content).ActivePath().SelectMany(e => e.Content ?? []).Where(b => b.Type == "toolCall").ToList();
+        var exportedCalls = new CodexSessionFormat().Read(foreignExport.ReadAllText()).ActivePath().SelectMany(e => e.Content ?? []).Where(b => b.Type == "toolCall").ToList();
         Assert.Single(exportedCalls);
         Assert.Equal("Bash", exportedCalls[0].Name);
         var brokenFormats = formats.Select(f => f.HarnessId == "codex" ? new LossyFormat(f) : f).ToArray();

@@ -309,7 +309,9 @@
     }
     private string? _vsCodeIcon;
 
-    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.AgentId == AgentId || managerEvent.Kind == ManagerEventKind.RunnerChanged;
+    // Its own Runner's changes (state, harnesses, tools), not every Runner's.
+    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.AgentId == AgentId
+        || managerEvent.Kind == ManagerEventKind.RunnerChanged && (managerEvent.RunnerId is null || managerEvent.RunnerId == _agent?.RunnerId);
 
     protected override async Task LoadAsync()
     {

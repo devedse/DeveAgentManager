@@ -151,9 +151,25 @@ public sealed class RunnerShell(
     internal async Task UploadAtomicAsync(Runner runner, string remotePath, string content, CancellationToken ct)
     {
         var bytes = Encoding.UTF8.GetBytes(content);
-        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
         var temporary = remotePath + ".dam-tmp-" + Guid.NewGuid().ToString("N");
         await UploadAsync(runner, temporary, bytes, "600", ct);
+        await InstallVerifiedAsync(runner, temporary, remotePath, Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)), ct);
+    }
+
+    /// <summary><see cref="UploadAtomicAsync(Runner, string, string, CancellationToken)"/> from a local file, streamed rather than held in memory.</summary>
+    internal async Task UploadAtomicFromFileAsync(Runner runner, string remotePath, string localPath, CancellationToken ct)
+    {
+        var hash = (await Sessions.NativeHistoryStore.HashFileAsync(localPath, null, ct)).ToLowerInvariant();
+        var temporary = remotePath + ".dam-tmp-" + Guid.NewGuid().ToString("N");
+        if (remotePath.Contains('/'))
+            (await RunAsync(runner, $"mkdir -p {ShellQuote.Path(remotePath[..remotePath.LastIndexOf('/')])}", cancellationToken: ct)).EnsureSuccess("Creating the session folder");
+        await using (var source = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, FileOptions.SequentialScan))
+            await UploadFromAsync(runner, temporary, source, ct);
+        await InstallVerifiedAsync(runner, temporary, remotePath, hash, ct);
+    }
+
+    private async Task InstallVerifiedAsync(Runner runner, string temporary, string remotePath, string hash, CancellationToken ct)
+    {
         var path = ShellQuote.Path(temporary);
         // This submission is never retried: transport loss after rename is an uncertain installation, not permission
         // to launch/replay work. Uncommitted temporary files do not match the harness's session-file glob.

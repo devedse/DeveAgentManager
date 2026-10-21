@@ -35,6 +35,12 @@ public interface ISessionFormat
     /// </summary>
     string Write(DeveSession session, string sessionId, string workingDirectory);
 
+    /// <summary>
+    /// <see cref="Write(DeveSession, string, string)"/> to <paramref name="output"/>. Line formats write line by line, so
+    /// a large conversation is never held as one string as well.
+    /// </summary>
+    void Write(DeveSession session, string sessionId, string workingDirectory, TextWriter output) => output.Write(Write(session, sessionId, workingDirectory));
+
     /// <summary>Small metadata and immutable replay checkpoints beside the authoritative log.</summary>
     IReadOnlyList<SessionCompanionFile> CompanionFiles(DeveSession metadata) => [];
 
@@ -45,6 +51,9 @@ public interface ISessionFormat
     void ApplyCompanionFiles(DeveSession session, IReadOnlyDictionary<string, string> contents) { }
 
     string Export(DeveSession session, string sessionId, string workingDirectory) => Write(session, sessionId, workingDirectory);
+
+    /// <summary><see cref="Export(DeveSession, string, string)"/> to <paramref name="output"/>.</summary>
+    void Export(DeveSession session, string sessionId, string workingDirectory, TextWriter output) => output.Write(Export(session, sessionId, workingDirectory));
     string ExportExtension => "jsonl";
     string ExportContentType => "application/x-ndjson";
 }

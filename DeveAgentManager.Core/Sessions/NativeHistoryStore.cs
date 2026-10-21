@@ -129,6 +129,11 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
             var reusable = old is not null && old.Harness == format.HarnessId && old.SourcePath == sourcePath
                 && old.Bytes <= size && File.Exists(Path.Combine(folder, old.File))
                 && new FileInfo(Path.Combine(folder, old.File)).Length >= old.Bytes;
+            // A whole copy instead of the new part is a large operation worth knowing about, with why.
+            if (old is not null && !reusable)
+                logger?.LogInformation("Copying the whole history of session {Session} again ({Size:0.0} MB): {Reason}", id, size / 1048576.0, RebuildReason(old, format, sourcePath, size, folder));
+            else if (old is null && size >= LoggedCopyBytes)
+                logger?.LogInformation("Copying the history of session {Session} for the first time ({Size:0.0} MB)", id, size / 1048576.0);
             if (reusable)
             {
                 try
@@ -208,6 +213,8 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
                 }
                 if (!received.PrefixMatches)
                 {
+                    logger?.LogInformation("The history of session {Session} on the Runner no longer matches the saved copy before {Offset:0.0} MB; copying all {Size:0.0} MB again",
+                        id, offset / 1048576.0, size / 1048576.0);
                     offset = 0; reusable = false;
                     output.SetLength(0); output.Position = 0;
                     received = await transfer(0, null, output, ct);
@@ -310,6 +317,14 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
     }
 
     private const int HashChunkBytes = 1 << 20;
+    private const long LoggedCopyBytes = 16L * 1024 * 1024;
+
+    private static string RebuildReason(State old, ISessionFormat format, string sourcePath, long size, string folder) =>
+        old.Harness != format.HarnessId ? $"its harness changed from {old.Harness} to {format.HarnessId}"
+        : old.SourcePath != sourcePath ? "the Runner's history file is a different one now"
+        : old.Bytes > size ? $"the Runner's copy is smaller than the {old.Bytes / 1048576.0:0.0} MB saved, so it was replaced or shortened"
+        : !File.Exists(Path.Combine(folder, old.File)) ? "the saved copy is missing"
+        : "the saved copy is shorter than recorded";
 
     /// <summary>
     /// SHA-256 of a file's first <paramref name="length"/> bytes (fewer when it is shorter), or of all of it, read 1 MiB at

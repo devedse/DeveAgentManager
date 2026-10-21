@@ -292,8 +292,8 @@ public sealed class RunnerMonitor(
 
                 if (runner.State == RunnerState.Ready && guest is not null) statusCache.SetGuestReading(runner.Id, guest);
                 else if (unreachable) statusCache.ClearGuestReading(runner.Id);
-                // Cards refresh every third pass; the usage graph polls the history itself.
-                if (full && runner.State == RunnerState.Ready) events.RunnerChanged(runner.Id);
+                // Usage displays refresh every third pass; nothing else about the Runner changed, so other pages don't reload.
+                if (full && runner.State == RunnerState.Ready) events.RunnerUsageChanged(runner.Id);
 
                 if (full && runner.State == RunnerState.Ready && runner.Agents.Count > 0)
                     await sessions.TrySyncRunnerAsync(runner, ct);

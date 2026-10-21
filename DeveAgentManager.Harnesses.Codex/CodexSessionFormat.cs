@@ -237,7 +237,15 @@ public sealed class CodexSessionFormat : ISessionFormat
 
     public string Write(DeveSession session, string sessionId, string workingDirectory)
     {
-        var output = new StringBuilder();
+        using var output = new StringWriter();
+        Write(session, sessionId, workingDirectory, output);
+        return output.ToString();
+    }
+
+    public void Export(DeveSession session, string sessionId, string workingDirectory, TextWriter output) => Write(session, sessionId, workingDirectory, output);
+
+    public void Write(DeveSession session, string sessionId, string workingDirectory, TextWriter output)
+    {
         var header = session.Sources.FirstOrDefault(s => s.Harness == HarnessId)?.Header?.DeepClone() as JsonObject
             ?? new JsonObject
             {
@@ -281,7 +289,6 @@ public sealed class CodexSessionFormat : ISessionFormat
             }
         }
 
-        return output.ToString();
     }
 
     /// <summary>

@@ -98,6 +98,8 @@
 </MudContainer>
 
 @code {
+    protected override bool ShowsRunnerUsage => true;
+
     private ManagerInfoDto? _info;
     private CurrentUserDto? _user;
     private List<RunnerDto> _runners = [];

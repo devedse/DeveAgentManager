@@ -47,6 +47,12 @@ public static class JsonLines
 
     public static void Append(StringBuilder output, JsonObject line) => output.Append(line.ToJsonString(LineOptions)).Append('\n');
 
+    public static void Append(TextWriter output, JsonObject line)
+    {
+        output.Write(line.ToJsonString(LineOptions));
+        output.Write('\n');
+    }
+
     public static string? Str(JsonObject? item, string name) =>
         item?[name] is JsonValue value && value.GetValueKind() == JsonValueKind.String ? value.GetValue<string>() : null;
 

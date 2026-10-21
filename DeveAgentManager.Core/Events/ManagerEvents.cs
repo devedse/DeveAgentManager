@@ -13,6 +13,8 @@ public sealed class ManagerEvents
 
     public void RunnerChanged(Guid runnerId) => Publish(new ManagerEvent(ManagerEventKind.RunnerChanged, runnerId));
 
+    public void RunnerUsageChanged(Guid runnerId) => Publish(new ManagerEvent(ManagerEventKind.RunnerUsageChanged, runnerId));
+
     public void AgentChanged(Guid runnerId, Guid agentId) => Publish(new ManagerEvent(ManagerEventKind.AgentChanged, runnerId, agentId));
 
     public void SessionChanged(Guid sessionId, Guid? agentId = null) => Publish(new ManagerEvent(ManagerEventKind.SessionChanged, AgentId: agentId, SessionId: sessionId));

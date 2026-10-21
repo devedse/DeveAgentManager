@@ -105,7 +105,10 @@
         await ReloadAsync();
     }
 
-    protected override bool IsRelevant(ManagerEvent change) => change.Kind == ManagerEventKind.RunnerChanged && change.RunnerId == RunnerId;
+    protected override bool ShowsRunnerUsage => true;
+
+    protected override bool IsRelevant(ManagerEvent change) =>
+        change.Kind is ManagerEventKind.RunnerUsageChanged or ManagerEventKind.RunnerChanged && change.RunnerId == RunnerId;
 
     protected override async Task LoadAsync() => _samples = await Api.GetRunnerUsageAsync(RunnerId, _minutes);
 

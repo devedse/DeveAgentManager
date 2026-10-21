@@ -60,6 +60,9 @@
     </ChildContent>
 </MudMenu>
 @code {
+    // Notifications and their sounds are for when you look elsewhere: keep them current in a hidden tab.
+    protected override bool ReloadWhileHidden => true;
+
     private List<AgentAttentionDto> _items = [];
     private readonly HashSet<string> _dismissing = [];
     private async Task DismissAsync(AgentAttentionDto item)

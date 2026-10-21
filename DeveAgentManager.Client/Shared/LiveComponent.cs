@@ -8,13 +8,16 @@ namespace DeveAgentManager.Client.Shared;
 /// <summary>
 /// A component that loads its data in <see cref="LoadAsync"/> and reloads it (debounced) whenever the Manager reports a
 /// change, so pages update live while Runners are created or agents start. After the live connection was lost (a phone
-/// that slept), it reloads once it is back, so nothing that changed meanwhile is missed.
+/// that slept), it reloads once it is back, so nothing that changed meanwhile is missed. While its tab is hidden it
+/// neither reloads nor polls; it catches up once when the tab is shown again.
 /// </summary>
 public abstract class LiveComponent : ComponentBase, IDisposable
 {
-    private static readonly TimeSpan Debounce = TimeSpan.FromMilliseconds(250);
+    // Changes arrive in bursts (a monitor pass observes every agent of a Runner): one reload covers them.
+    private static readonly TimeSpan Debounce = TimeSpan.FromSeconds(1);
 
     private int _reloadPending;
+    private int _missedWhileHidden;
     private bool _disposed;
     private readonly CancellationTokenSource _refreshStop = new();
 
@@ -28,6 +31,15 @@ public abstract class LiveComponent : ComponentBase, IDisposable
 
     [Inject]
     protected ISnackbar Snackbar { get; set; } = default!;
+
+    [Inject]
+    protected PageVisibility Visibility { get; set; } = default!;
+
+    /// <summary>True for what must stay current in a hidden tab, such as notifications and their sounds.</summary>
+    protected virtual bool ReloadWhileHidden => false;
+
+    /// <summary>True for what shows Runner CPU, memory or disk, refreshed every 15 seconds (<see cref="ManagerEventKind.RunnerUsageChanged"/>).</summary>
+    protected virtual bool ShowsRunnerUsage => false;
 
     /// <summary>True once data loaded successfully; until then show the section as loading (AGENTS.md, "UI: loading states").</summary>
     protected bool Loaded { get; private set; }
@@ -46,6 +58,7 @@ public abstract class LiveComponent : ComponentBase, IDisposable
     {
         Live.Changed += OnManagerEvent;
         Live.Reconnected += OnReconnected;
+        Visibility.Shown += OnShown;
         await SafeLoadAsync();
         if (RefreshInterval is { } interval) _ = RefreshPeriodicallyAsync(interval);
     }
@@ -55,7 +68,11 @@ public abstract class LiveComponent : ComponentBase, IDisposable
         try
         {
             using var timer = new PeriodicTimer(interval);
-            while (await timer.WaitForNextTickAsync(_refreshStop.Token)) await ReloadAsync();
+            while (await timer.WaitForNextTickAsync(_refreshStop.Token))
+            {
+                if (Hidden) Interlocked.Exchange(ref _missedWhileHidden, 1);
+                else await ReloadAsync();
+            }
         }
         catch (OperationCanceledException) when (_refreshStop.IsCancellationRequested) { }
     }
@@ -87,14 +104,28 @@ public abstract class LiveComponent : ComponentBase, IDisposable
         }
     }
 
-    private void OnReconnected() => Schedule();
+    private bool Hidden => !Visibility.Visible && !ReloadWhileHidden;
+
+    private void OnReconnected() => ScheduleWhenShown();
 
     private void OnManagerEvent(ManagerEvent managerEvent)
     {
+        if (managerEvent.Kind == ManagerEventKind.RunnerUsageChanged && !ShowsRunnerUsage) return;
         if (IsRelevant(managerEvent))
         {
-            Schedule();
+            ScheduleWhenShown();
         }
+    }
+
+    private void OnShown()
+    {
+        if (Interlocked.Exchange(ref _missedWhileHidden, 0) == 1) Schedule();
+    }
+
+    private void ScheduleWhenShown()
+    {
+        if (Hidden) Interlocked.Exchange(ref _missedWhileHidden, 1);
+        else Schedule();
     }
 
     private void Schedule()
@@ -108,10 +139,10 @@ public abstract class LiveComponent : ComponentBase, IDisposable
         {
             await Task.Delay(Debounce);
             Interlocked.Exchange(ref _reloadPending, 0);
-            if (!_disposed)
-            {
-                await ReloadAsync();
-            }
+            // Hidden meanwhile: reload once it is shown instead.
+            if (_disposed) return;
+            if (Hidden) Interlocked.Exchange(ref _missedWhileHidden, 1);
+            else await ReloadAsync();
         });
     }
 
@@ -121,6 +152,7 @@ public abstract class LiveComponent : ComponentBase, IDisposable
         _refreshStop.Cancel();
         Live.Changed -= OnManagerEvent;
         Live.Reconnected -= OnReconnected;
+        Visibility.Shown -= OnShown;
         GC.SuppressFinalize(this);
     }
 }

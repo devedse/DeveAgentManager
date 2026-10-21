@@ -379,9 +379,9 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
 
         // Other people's shares are for those who manage the Runner.
         Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync($"/api/runners/{admins.RunnerId}/agent-access")).StatusCode);
-        var list = await managing.GetFromJsonAsync<List<RunnerAgentAccessDto>>($"/api/runners/{admins.RunnerId}/agent-access", ApiJson.Options);
+        var list = (await managing.GetFromJsonAsync<List<RunnerAgentAccessDto>>($"/api/runners/{admins.RunnerId}/agent-access", ApiJson.Options))!;
         // Who can have commands run first, each with every agent and how, read-write first.
-        Assert.Equal([ketty.Id, reader.Id], list!.Select(p => p.UserId));
+        Assert.Equal([ketty.Id, reader.Id], list.Select(p => p.UserId));
         Assert.Equal(("Ketty", false), (list[0].DisplayName, list[0].Disabled));
         Assert.Equal([(admins.AgentId, AgentAccess.Write), (second, AgentAccess.Read)], list[0].Agents.Select(a => (a.AgentId, a.Access)));
         Assert.Equal("b-second", list[1].Agents.Single().AgentName);
@@ -543,6 +543,8 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         var runnerChange = await access.AudienceAsync(new ManagerEvent(ManagerEventKind.RunnerChanged, admins.RunnerId));
         Assert.Contains(watcher.Id, runnerChange!);
         Assert.DoesNotContain(ketty.Id, runnerChange!);
+        // Usage readings go to the same people as the Runner's other changes.
+        Assert.Equal(runnerChange!.Order(), (await access.AudienceAsync(new ManagerEvent(ManagerEventKind.RunnerUsageChanged, admins.RunnerId)))!.Order());
         Assert.Null(await access.AudienceAsync(new ManagerEvent(ManagerEventKind.AgentRemoved, admins.RunnerId, admins.AgentId)));
     }
 

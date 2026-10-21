@@ -1,6 +1,7 @@
 @* The terminals attached to an agent, with a way to disconnect them. Lives in the agent's terminal toolbar. *@
 @implements IAsyncDisposable
 @inject ManagerApi Api
+@inject PageVisibility Visibility
 @inject ISnackbar Snackbar
 
 @if (InMenu)
@@ -115,7 +116,8 @@ else
         {
             while (await timer.WaitForNextTickAsync(_lifetime.Token))
             {
-                await InvokeAsync(RefreshAsync);
+                // Each reading runs a command on the Runner: not for a tab nobody looks at.
+                if (Visibility.Visible) await InvokeAsync(RefreshAsync);
             }
         }
         catch (OperationCanceledException)

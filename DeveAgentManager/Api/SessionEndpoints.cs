@@ -33,8 +33,9 @@ internal static class SessionEndpoints
 
         sessions.MapGet("/{sessionId:guid}/export", async (Guid sessionId, string format, SessionService service, CancellationToken ct) =>
         {
+            // Streamed from its temporary file, which is deleted once sent.
             var export = await service.ExportAsync(sessionId, format, ct);
-            return Results.File(Encoding.UTF8.GetBytes(export.Content), export.ContentType, export.FileName);
+            return Results.File(export.Open(), export.ContentType, export.FileName);
         }).RequireSession(SessionAccess.Read);
 
         sessions.MapPost("/import", async (IFormFile file, CurrentUser user, SessionService service, CancellationToken ct) =>

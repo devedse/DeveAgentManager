@@ -73,7 +73,15 @@ public sealed class PiSessionFormat : ISessionFormat
 
     public string Write(DeveSession session, string sessionId, string workingDirectory)
     {
-        var output = new StringBuilder();
+        using var output = new StringWriter();
+        Write(session, sessionId, workingDirectory, output);
+        return output.ToString();
+    }
+
+    public void Export(DeveSession session, string sessionId, string workingDirectory, TextWriter output) => Write(session, sessionId, workingDirectory, output);
+
+    public void Write(DeveSession session, string sessionId, string workingDirectory, TextWriter output)
+    {
         var header = session.Sources.FirstOrDefault(s => s.Harness == HarnessId)?.Header?.DeepClone() as JsonObject
             ?? new JsonObject { ["type"] = "session", ["version"] = 3, ["timestamp"] = Iso(session.CreatedAt) };
         header["id"] = sessionId;
@@ -129,7 +137,6 @@ public sealed class PiSessionFormat : ISessionFormat
             }
         }
 
-        return output.ToString();
     }
 
     private DeveEntry ReadEntry(JsonObject item)
@@ -459,7 +466,11 @@ public sealed class PiSessionFormat : ISessionFormat
         return array;
     }
 
-    private static void AppendLine(StringBuilder output, JsonObject line) => output.Append(line.ToJsonString(LineOptions)).Append('\n');
+    private static void AppendLine(TextWriter output, JsonObject line)
+    {
+        output.Write(line.ToJsonString(LineOptions));
+        output.Write('\n');
+    }
 
     private static string? Str(JsonObject item, string name) =>
         item[name] is JsonValue value && value.GetValueKind() == JsonValueKind.String ? value.GetValue<string>() : null;

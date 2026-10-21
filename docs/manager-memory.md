@@ -20,8 +20,35 @@ page open and reloaded it after every restart, so the Manager was killed repeate
 - **Fewer reloads.** The conversation page refreshes its facts on every change of its agent (status, activity), but
   fetches the conversation again only when the conversation changed (its sync time, message count, harness or update
   time).
+- **Exports and harness switches** load the conversation once and write the result to a temporary file in
+  `tmp/sessions` (line by line for Claude, Codex and pi), never as one string. A conversion is validated by reading that
+  file back, an export is streamed from it and deleted once sent, and a switch streams it to the Runner and installs it
+  only after its checksum matches.
 
-Exports and harness switches still load the whole conversation; they are rare and explicit.
+## Logged large operations
+
+So a problem can be traced to what the Manager was doing, these are logged at Information level, with sizes:
+
+- Loading a conversation of 16 MB or more to show it, before loading and when done.
+- Every export, before and after, with the exported size and duration.
+- Loading a conversation to continue it in another harness or session, and the file written to the Runner (entries,
+  size, conversion and duration).
+- A whole history copied again instead of only its new part, with why: the Runner's copy no longer matches the saved
+  part, is smaller (replaced or shortened), is a different file, changed harness, or the saved copy is missing.
+- The first copy of a history of 16 MB or more.
+
+## Load from open browser tabs
+
+After a restart every open tab reconnects, and each live section used to reload on every event it received, including
+the usage refresh of every Runner every 15 seconds. Several tabs made about ten requests a second.
+
+- A hidden tab's sections neither poll nor reload; each reloads once when the tab is shown again. Notifications keep
+  polling, so their sounds still play.
+- Runner usage refreshes are their own event (`RunnerUsageChanged`); only Runner cards, the dashboard, the Runner page
+  and its graph reload for them.
+- Bursts of events coalesce into one reload per second per section, and an agent's terminal page reloads for its own
+  Runner's changes only.
+- The screens list of an agent's terminal, which runs a command on the Runner, isn't polled in a hidden tab.
 
 ## .NET heap limit
 
@@ -45,7 +72,10 @@ The kernel's own record is in `dmesg` on the Manager's VM (`Out of memory: Kille
 
 ## Verification
 
-`ManagerMemoryTests` checks streaming and the 413 limit through the API, the start-up report of a killed process with
-its reading and requests, the clean-shutdown mark, request tracking without queries or sockets, and the low-memory
-rules. `Browser/conversation-too-large.mjs` checks the conversation page's explanation, its facts and that each
-conversation is fetched once, on desktop and phone.
+`ManagerMemoryTests` checks streaming and the 413 limit through the API, streamed exports without leftover files,
+identical output from the streaming writers, the start-up report of a killed process with its reading and requests, the
+clean-shutdown mark, request tracking without queries or sockets, and the low-memory rules. `SampledHistoryTests`
+checks the logged reasons for whole copies; `NativeHistoryTransportTests` covers exports and harness switches over real
+SSH. `Browser/conversation-too-large.mjs` checks the conversation page's explanation, its facts and that each
+conversation is fetched once, on desktop and phone; `Browser/hidden-tabs.mjs` checks that a hidden tab makes no requests
+of its own and catches up once when shown.

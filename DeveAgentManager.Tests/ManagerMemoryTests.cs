@@ -65,6 +65,30 @@ public sealed class ManagerMemoryTests
         Assert.Equal("This conversation is 3 MB, more than the 2 MB the Manager shows here.", problem.GetProperty("detail").GetString());
         // The facts about it stay available.
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"/api/sessions/{large}")).StatusCode);
+
+        // Exports are streamed from a temporary file that is gone once sent; the size limit is for showing only.
+        var export = await client.GetAsync($"/api/sessions/{large}/export?format=deve");
+        export.EnsureSuccessStatusCode();
+        Assert.Equal(3 * 1024 * 1024 + 4096, (await DeveSession.ReadAsync(await export.Content.ReadAsStreamAsync())).Entries.Single().Text!.Length);
+        var work = Path.Combine(manager.Services.GetRequiredService<ManagerOptions>().DataDirectory, "tmp", "sessions");
+        Assert.Empty(Directory.Exists(work) ? Directory.GetFiles(work) : []);
+    }
+
+    [Theory]
+    [InlineData("claude")]
+    [InlineData("codex")]
+    [InlineData("pi")]
+    [InlineData("grok")]
+    public void WritingToATextWriterGivesExactlyTheSameFileAsTheString(string harness)
+    {
+        var format = NativeHistoryStoreTests.Format(harness);
+        var session = format.Read(NativeHistoryStoreTests.Sample(harness));
+        using var written = new StringWriter();
+        format.Write(session, "session-id", "/workspace", written);
+        Assert.Equal(format.Write(session, "session-id", "/workspace"), written.ToString());
+        using var exported = new StringWriter();
+        format.Export(session, "session-id", "/workspace", exported);
+        Assert.Equal(format.Export(session, "session-id", "/workspace"), exported.ToString());
     }
 
     [Fact]

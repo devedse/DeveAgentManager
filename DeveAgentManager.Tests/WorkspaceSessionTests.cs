@@ -139,7 +139,7 @@ public sealed class WorkspaceSessionTests
         Assert.True(renamed.SavedSize > 0);
         Assert.Equal(renamed.SavedSize * 2, renamed.TotalSize);
         var export = await rig.Service.ExportAsync(active.Id, "deve", Ct);
-        Assert.Equal("Chosen name", DeveSession.FromJson(export.Content).Title);
+        Assert.Equal("Chosen name", DeveSession.FromJson(export.ReadAllText()).Title);
     }
 
     [Fact]

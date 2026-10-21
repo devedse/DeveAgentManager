@@ -172,6 +172,8 @@
 </MudContainer>
 
 @code {
+    protected override bool ShowsRunnerUsage => true;
+
     protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
     private ManagerInfoDto? _info;
     private CurrentUserDto? _user;

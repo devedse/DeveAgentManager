@@ -135,6 +135,27 @@ public class SampledHistoryTests
     }
 
     [Fact]
+    public async Task WholeCopiesAreLoggedWithWhy_WhenTheRunnersHistoryNoLongerMatchesOrShrank()
+    {
+        var logger = new CapturedLogger<NativeHistoryStore>();
+        using var rig = new Rig("claude") { Logger = logger };
+        await rig.Sync(new(HistorySyncMode.Full));
+        Assert.Empty(logger.Entries); // A small first copy is routine.
+
+        // An edit before the saved part: the new part can't simply be appended.
+        rig.Text = rig.Text.Replace("hello there", "HELLO THERE", StringComparison.Ordinal) + Extra;
+        await rig.Sync(new(HistorySyncMode.Full));
+        Assert.Contains(logger.Entries, e => e.Level == Microsoft.Extensions.Logging.LogLevel.Information
+            && e.Message.Contains("no longer matches the saved copy before") && e.Message.Contains(rig.Id.ToString()));
+
+        // Shorter than what was saved: replaced or shortened on the Runner.
+        rig.Text = NativeHistoryStoreTests.Sample("claude");
+        await rig.Sync(new(HistorySyncMode.Full));
+        Assert.Contains(logger.Entries, e => e.Message.Contains("Copying the whole history of session") && e.Message.Contains("so it was replaced or shortened"));
+        Assert.Equal(rig.Text, await rig.Raw());
+    }
+
+    [Fact]
     public async Task ShadowAndFullModesNeverPublishUnverifiedAppendsAndFailuresKeepTheCheckpoint()
     {
         using var rig = new Rig("claude");
@@ -170,7 +191,8 @@ public class SampledHistoryTests
         public string Folder { get; } = Directory.CreateTempSubdirectory("dam-sampled-history-").FullName;
         public Guid Id { get; } = Guid.NewGuid();
         public TestClock Clock { get; } = new();
-        public NativeHistoryStore Store => store ??= new(Folder, Clock);
+        public Microsoft.Extensions.Logging.ILogger? Logger;
+        public NativeHistoryStore Store => store ??= new(Folder, Clock, Logger);
         private NativeHistoryStore? store;
         public string Text = NativeHistoryStoreTests.Sample(harness) + "\n{\"type\":\"padding\",\"id\":\"padding\",\"timestamp\":\"2026-10-18T12:00:00Z\",\"payload\":\"" + new string('A', 192 * 1024) + "\"}\n";
         public string Identity = "10:100";

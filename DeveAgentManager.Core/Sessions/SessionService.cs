@@ -11,7 +11,17 @@ using Microsoft.Extensions.Logging;
 
 namespace DeveAgentManager.Core.Sessions;
 
-public sealed record SessionExport(string FileName, string ContentType, string Content);
+/// <summary>An export written to a temporary file: <see cref="Open"/> streams it once and deletes it when closed.</summary>
+public sealed record SessionExport(string FileName, string ContentType, string Path, long Bytes)
+{
+    public FileStream Open() => new(Path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 81920, FileOptions.DeleteOnClose);
+
+    internal string ReadAllText()
+    {
+        using var reader = new StreamReader(Open());
+        return reader.ReadToEnd();
+    }
+}
 
 /// <summary>
 /// Keeps a copy of every agent's conversation in the Manager: the harness's session file is synced from the Runner and
@@ -152,10 +162,13 @@ public sealed class SessionService(
         await _wholeLoads.WaitAsync(cancellationToken);
         try
         {
-            if (stored.SavedSize >= LoggedLoadBytes)
-                logger.LogInformation("Loading conversation {Session} ({Size} MB) to show it", sessionId, stored.SavedSize / 1048576);
+            // Logged before loading too: if the Manager runs out of memory, the log still says what it was doing.
+            var large = stored.SavedSize >= LoggedLoadBytes;
+            if (large) logger.LogInformation("Loading conversation {Session} ({Size:0.0} MB saved) to show it", sessionId, Megabytes(stored.SavedSize));
+            var watch = System.Diagnostics.Stopwatch.StartNew();
             var session = await LoadAsync(sessionId, cancellationToken);
             await session.WriteAsync(output, cancellationToken);
+            if (large) logger.LogInformation("Showed conversation {Session} ({Entries} entries) in {Seconds:0.0} s", sessionId, session.Entries.Count, watch.Elapsed.TotalSeconds);
         }
         finally { _wholeLoads.Release(); }
     }
@@ -272,33 +285,10 @@ public sealed class SessionService(
         var format = _formats.GetValueOrDefault(harnessId) ?? throw new InvalidOperationException($"Conversations can't be continued in '{harnessId}' yet.");
         if (stored.MessageCount > 0 && !HasSaved(stored.Id))
             throw new IOException("The saved history is missing. Restore it before switching sessions.");
-        var session = await LoadAsync(stored.Id, cancellationToken);
-        session.Title = stored.Title;
-        var from = session.Sources.LastOrDefault()?.Harness ?? session.Entries.LastOrDefault(e => e.Harness is not null)?.Harness ?? stored.HarnessId;
-        if (session.Entries.Count > 0 && from != harnessId)
-        {
-            session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(harnessId), harnessId);
-        }
-
-        // Nothing to move (e.g. pi writes its file only with the first message): the new harness starts a conversation
-        // of its own under the id, instead of being handed an empty one (claude --resume refuses those).
-        if (session.Entries.Count > 0)
-        {
-            var path = format.GetPath(harnessSessionId, workingDirectory, DateTime.UtcNow);
-            var content = format.Write(session, harnessSessionId, workingDirectory);
-            if (session.Migration is not null && from != harnessId)
-                SessionMigration.ValidateWritten(session, format.Read(content));
-            foreach (var (name, companion) in format.WriteCompanionFiles(session, harnessSessionId, workingDirectory))
-                await shell.UploadAtomicAsync(runner, path[..path.LastIndexOf('/')] + "/" + SessionCompanionStore.ValidatePath(name), companion, cancellationToken);
-            await shell.UploadAtomicAsync(runner, path, content, cancellationToken);
-            if (session.Migration is { } report)
-            {
-                report.TargetSessionId = harnessSessionId;
-                await SaveMigrationAsync(stored.Id, report, cancellationToken);
-                logger.LogInformation("Session {Session} migration v{Version} {From} to {To}: {Preserved} calls, {Archived} archived, {Omitted} omitted exchanges, {Images} omitted images",
-                    stored.Id, report.Version, report.From, report.To, report.PreservedCalls, report.ArchivedExchanges, report.OmittedExchanges, report.OmittedImages);
-            }
-        }
+        logger.LogInformation("Loading conversation {Session} ({Size:0.0} MB saved) to continue it in {Harness} on {Runner}", stored.Id, Megabytes(stored.SavedSize), harnessId, runner.Name);
+        await _wholeLoads.WaitAsync(cancellationToken);
+        try { await WriteForHarnessLockedAsync(runner, stored, format, harnessId, harnessSessionId, workingDirectory, cancellationToken); }
+        finally { _wholeLoads.Release(); }
 
         var trail = (stored.HarnessTrail ?? stored.HarnessId).Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
         if (trail.Count == 0 || trail[^1] != harnessId)
@@ -312,6 +302,52 @@ public sealed class SessionService(
         stored.SourcePath = null;
         stored.SourceSize = 0;
         stored.LastSyncedAt = null;
+    }
+
+    // One whole conversation at a time (_wholeLoads), converted and written for the harness that continues it.
+    private async Task WriteForHarnessLockedAsync(Runner runner, StoredSession stored, ISessionFormat format, string harnessId, string harnessSessionId, string workingDirectory, CancellationToken cancellationToken)
+    {
+        var session = await LoadAsync(stored.Id, cancellationToken);
+        session.Title = stored.Title;
+        var from = session.Sources.LastOrDefault()?.Harness ?? session.Entries.LastOrDefault(e => e.Harness is not null)?.Harness ?? stored.HarnessId;
+        if (session.Entries.Count > 0 && from != harnessId)
+        {
+            session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(harnessId), harnessId);
+        }
+
+        // Nothing to move (e.g. pi writes its file only with the first message): the new harness starts a conversation
+        // of its own under the id, instead of being handed an empty one (claude --resume refuses those).
+        if (session.Entries.Count > 0)
+        {
+            var path = format.GetPath(harnessSessionId, workingDirectory, DateTime.UtcNow);
+            // Written to a local file and streamed to the Runner, never held as one string as well.
+            var local = NewWorkFile("jsonl");
+            try
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                await WriteTextFileAsync(local, output => format.Write(session, harnessSessionId, workingDirectory, output), cancellationToken);
+                if (session.Migration is not null && from != harnessId)
+                {
+                    using var reader = new StreamReader(local);
+                    SessionMigration.ValidateWritten(session, format.Read(reader));
+                }
+
+                foreach (var (name, companion) in format.WriteCompanionFiles(session, harnessSessionId, workingDirectory))
+                    await shell.UploadAtomicAsync(runner, path[..path.LastIndexOf('/')] + "/" + SessionCompanionStore.ValidatePath(name), companion, cancellationToken);
+                await shell.UploadAtomicFromFileAsync(runner, path, local, cancellationToken);
+                logger.LogInformation("Wrote conversation {Session} to {Runner} for {Harness}{Conversion}: {Entries} entries, {Size:0.0} MB in {Seconds:0.0} s",
+                    stored.Id, runner.Name, harnessId, from != harnessId ? $" (converted from {from})" : "", session.Entries.Count,
+                    Megabytes(new FileInfo(local).Length), watch.Elapsed.TotalSeconds);
+            }
+            finally { File.Delete(local); }
+            if (session.Migration is { } report)
+            {
+                report.TargetSessionId = harnessSessionId;
+                await SaveMigrationAsync(stored.Id, report, cancellationToken);
+                logger.LogInformation("Session {Session} migration v{Version} {From} to {To}: {Preserved} calls, {Archived} archived, {Omitted} omitted exchanges, {Images} omitted images",
+                    stored.Id, report.Version, report.From, report.To, report.PreservedCalls, report.ArchivedExchanges, report.OmittedExchanges, report.OmittedImages);
+            }
+        }
     }
 
     private bool HasSaved(Guid id) => _native.Exists(id) || File.Exists(PathFor(id));
@@ -505,31 +541,76 @@ public sealed class SessionService(
         await _wholeLoads.WaitAsync(cancellationToken);
         try
         {
-            if (stored.SavedSize >= LoggedLoadBytes)
-                logger.LogInformation("Exporting conversation {Session} ({Size} MB) as {Format}", sessionId, stored.SavedSize / 1048576, format);
-            return Export(stored, await LoadAsync(sessionId, cancellationToken), format);
+            logger.LogInformation("Exporting conversation {Session} ({Size:0.0} MB saved) as {Format}", sessionId, Megabytes(stored.SavedSize), format);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var export = await ExportAsync(stored, await LoadAsync(sessionId, cancellationToken), format, cancellationToken);
+            logger.LogInformation("Exported conversation {Session} as {Format}: {Size:0.0} MB in {Seconds:0.0} s", sessionId, format, Megabytes(export.Bytes), watch.Elapsed.TotalSeconds);
+            return export;
         }
         finally { _wholeLoads.Release(); }
     }
 
-    private SessionExport Export(StoredSession stored, DeveSession session, string format)
+    // Written to a file, never one string: a large conversation is already held once as a DeveSession.
+    private async Task<SessionExport> ExportAsync(StoredSession stored, DeveSession session, string format, CancellationToken ct)
     {
         session.Title = stored.Title;
         var name = SafeFileName(stored.Title);
-        if (format == "deve")
+        var path = NewWorkFile("export");
+        try
         {
-            return new SessionExport($"{name}.deve.json", "application/json", session.ToJson(indented: true));
+            if (format == "deve")
+            {
+                await using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, FileOptions.Asynchronous))
+                    await JsonSerializer.SerializeAsync(output, session, IndentedJson, ct);
+                return new SessionExport($"{name}.deve.json", "application/json", path, new FileInfo(path).Length);
+            }
+
+            var harnessFormat = _formats.GetValueOrDefault(format) ?? throw new ArgumentException($"Unknown export format '{format}'.");
+            var harnessSessionId = stored.HarnessSessionId ?? stored.Id.ToString("N");
+            var cwd = session.Cwd ?? stored.WorkingDirectory ?? "/";
+            var from = session.Sources.LastOrDefault()?.Harness ?? stored.HarnessId;
+            if (from != format && session.Entries.Count > 0)
+                session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(format), format);
+            await WriteTextFileAsync(path, output => harnessFormat.Export(session, harnessSessionId, cwd, output), ct);
+            if (from != format)
+            {
+                using var reader = new StreamReader(path);
+                SessionMigration.ValidateWritten(session, harnessFormat.Read(reader));
+            }
+
+            return new SessionExport($"{name}.{format}.{harnessFormat.ExportExtension}", harnessFormat.ExportContentType, path, new FileInfo(path).Length);
+        }
+        catch
+        {
+            File.Delete(path);
+            throw;
+        }
+    }
+
+    private static readonly JsonSerializerOptions IndentedJson = new(DeveSession.JsonOptions) { WriteIndented = true };
+
+    private static double Megabytes(long bytes) => bytes / 1048576.0;
+
+    // Exports and conversations for another harness are written here first. Files a crash left behind go after a while.
+    private string NewWorkFile(string extension)
+    {
+        var folder = Path.Combine(options.DataDirectory, "tmp", "sessions");
+        Directory.CreateDirectory(folder);
+        foreach (var stale in Directory.EnumerateFiles(folder).Where(f => File.GetLastWriteTimeUtc(f) < DateTime.UtcNow.AddHours(-6)))
+        {
+            try { File.Delete(stale); }
+            catch (IOException) { } // Still being downloaded.
         }
 
-        var harnessFormat = _formats.GetValueOrDefault(format) ?? throw new ArgumentException($"Unknown export format '{format}'.");
-        var harnessSessionId = stored.HarnessSessionId ?? stored.Id.ToString("N");
-        var cwd = session.Cwd ?? stored.WorkingDirectory ?? "/";
-        var from = session.Sources.LastOrDefault()?.Harness ?? stored.HarnessId;
-        if (from != format && session.Entries.Count > 0)
-            session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(format), format);
-        var content = harnessFormat.Export(session, harnessSessionId, cwd);
-        if (from != format) SessionMigration.ValidateWritten(session, harnessFormat.Read(content));
-        return new SessionExport($"{name}.{format}.{harnessFormat.ExportExtension}", harnessFormat.ExportContentType, content);
+        return Path.Combine(folder, $"{Guid.NewGuid():N}.{extension}");
+    }
+
+    private static async Task WriteTextFileAsync(string path, Action<TextWriter> write, CancellationToken ct)
+    {
+        await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16);
+        await using var writer = new StreamWriter(stream, new UTF8Encoding(false), 1 << 16);
+        write(writer);
+        await writer.FlushAsync(ct);
     }
 
     // Caller holds the operation lock. Never export/continue a sampled checkpoint while its source is unavailable.
