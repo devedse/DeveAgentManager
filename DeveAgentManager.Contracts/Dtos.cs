@@ -69,6 +69,14 @@ public sealed record ScreenAwakeSettings(bool Enabled);
 /// <summary>Someone with access to a Runner besides its owner.</summary>
 public sealed record RunnerMemberDto(Guid UserId, string Username, string DisplayName, RunnerAccess Access, DateTime GrantedAt);
 
+/// <summary>
+/// Someone without access to a Runner whom agents on it are shared with: through a read-write share they can still have
+/// commands run on it. Listed for the people who manage the Runner.
+/// </summary>
+public sealed record RunnerAgentAccessDto(Guid UserId, string Username, string DisplayName, bool Disabled, IReadOnlyList<RunnerAgentShareDto> Agents);
+
+public sealed record RunnerAgentShareDto(Guid AgentId, string AgentName, string OwnerName, AgentAccess Access);
+
 /// <summary>Someone an agent is shared with.</summary>
 public sealed record AgentShareDto(Guid UserId, string Username, string DisplayName, AgentAccess Access, DateTime GrantedAt);
 

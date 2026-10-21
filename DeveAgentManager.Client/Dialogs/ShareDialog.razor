@@ -4,7 +4,7 @@
 @* Who an agent or a conversation is shared with. Its owner adds people, changes how and ends shares; others can leave. *@
 <MudDialog>
     <DialogContent>
-        <AccessList People="People" UserId="Me.Id" Loaded="Loaded" Error="LoadError" Retry="RetryAsync" CanAdd="IsOwner" Busy="_busy" Add="AddAsync">
+        <AccessList People="People" UserId="Me.Id" Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" CanAdd="IsOwner" Busy="_busy" Add="AddAsync">
             <Help>
                 @if (Agent is not null)
                 {

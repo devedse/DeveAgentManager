@@ -8,7 +8,7 @@
         {
             <MudText Typo="Typo.body2" Class="mb-3">@Intro</MudText>
         }
-        <LoadingSection Loaded="@(_users is not null)" Error="_loadError" Retry="LoadAsync" Label="Loading users">
+        <LoadingSection Loaded="@(_users is not null)" Error="@_loadError" Retry="LoadAsync" Label="Loading users">
         <Placeholder><SkeletonForm Fields="1" /></Placeholder>
         <ChildContent>
         @if (_users!.Count == 0)

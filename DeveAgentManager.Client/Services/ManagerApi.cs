@@ -148,6 +148,8 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task<List<RunnerMemberDto>> ListRunnerMembersAsync(Guid runnerId) => GetAsync<List<RunnerMemberDto>>($"api/runners/{runnerId}/members");
 
+    public Task<List<RunnerAgentAccessDto>> ListRunnerAgentAccessAsync(Guid runnerId) => GetAsync<List<RunnerAgentAccessDto>>($"api/runners/{runnerId}/agent-access");
+
     public Task SetRunnerAccessAsync(Guid runnerId, Guid userId, RunnerAccess access) =>
         SendAsync(HttpMethod.Put, $"api/runners/{runnerId}/members/{userId}", new RunnerAccessRequest(access));
 

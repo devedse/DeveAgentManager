@@ -2117,6 +2117,8 @@ html:has(.terminal-layout) body {
 .switch-option:disabled:not(.switch-current) .account-username,
 .switch-option:disabled:not(.switch-current) .account-label-name { color: var(--dam-muted); }
 .access-person .list-main { overflow-wrap: anywhere; }
+.access-through-agents { margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--dam-border); }
+.access-agents { white-space: normal; }
 
     .switch-option:hover:not(:disabled) {
         background: var(--dam-surface-2);

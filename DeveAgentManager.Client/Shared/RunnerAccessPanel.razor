@@ -6,7 +6,7 @@
 
 @* A Runner's people (owner and members) and how to log in to it yourself (its password, keys only, SSH keys). *@
 <div class="panel mb-4">
-    <AccessList People="People" UserId="UserId" Loaded="_membersLoaded" Error="_membersError" Retry="LoadMembersAsync" CanAdd="CanManage" Busy="_busy" Add="AddAsync">
+    <AccessList People="People" UserId="UserId" Loaded="_membersLoaded" Error="@_membersError" Retry="LoadMembersAsync" CanAdd="CanManage" Busy="_busy" Add="AddAsync">
         <Help>
             <p>Use permits running agents, the shell, VS Code and the desktop. Manage also permits setup, power controls, passwords and access changes.</p>
             <p>Everyone uses the same account on the runner and can reach its files and credentials. Removing access removes that person's agents from this runner; their saved conversations remain.</p>
@@ -31,6 +31,53 @@
             }
         </Actions>
     </AccessList>
+    @if (CanManage)
+    {
+        @* Other people's shares, like their agents on this Runner: only for those who manage it. *@
+        <div class="access-list access-through-agents">
+            <div class="panel-header">
+                <div class="help-heading">
+                    <MudText Typo="Typo.subtitle1">Access through agents</MudText>
+                    <HelpTip Label="Access through agents">
+                        <p>These people have no access to this Runner, but agents on it are shared with them.</p>
+                        <p>Read-write lets them prompt an agent and type in its terminal. The agent runs whatever they ask as the Runner's account, so they can reach everything on this Runner: other agents' files, harness logins, GitHub tokens and its password files. Treat read-write as shell access.</p>
+                        <p>Read-only lets them watch the terminal and read the conversations. Anything printed there, such as a token or a password, is visible to them.</p>
+                        <p>Conversation managers can prompt every agent and aren't listed. To end someone's access, change or remove the share in the agent's Sharing.</p>
+                    </HelpTip>
+                </div>
+            </div>
+            <LoadingSection Loaded="_agentAccessLoaded" Error="@_agentAccessError" Retry="LoadAgentAccessAsync" Label="Loading access through agents">
+                <Placeholder><SkeletonList Rows="2" /></Placeholder>
+                <ChildContent>
+                    <div class="list">
+                        @foreach (var person in _agentAccess)
+                        {
+                            var prompts = person.Agents.Any(a => a.Access >= AgentAccess.Write);
+                            <div class="list-row access-person" @key="person.UserId">
+                                <div class="list-avatar list-avatar-icon" title="@(prompts ? "Can have commands run on this Runner" : "Can watch")">
+                                    <MudIcon Icon="@(prompts ? Icons.Material.Rounded.Terminal : Icons.Material.Rounded.Visibility)" Size="Size.Small" />
+                                </div>
+                                <div class="list-main">
+                                    <div class="list-title">@(person.DisplayName == person.Username ? person.DisplayName : $"{person.DisplayName} ({person.Username})")@(person.Disabled ? " · disabled" : "")</div>
+                                    @foreach (var level in person.Agents.GroupBy(a => a.Access).OrderByDescending(g => g.Key))
+                                    {
+                                        <div class="list-subtitle access-agents">
+                                            <strong>@(level.Key >= AgentAccess.Write ? "Read-write, can run commands" : "Read-only, can watch")</strong>:
+                                            @string.Join(", ", level.Select(a => $"{a.AgentName} ({a.OwnerName}'s)"))
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                        @if (_agentAccess.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Class="mud-text-secondary">No agents here are shared with people outside this Runner.</MudText>
+                        }
+                    </div>
+                </ChildContent>
+            </LoadingSection>
+        </div>
+    }
 </div>
 
 <div class="panel mb-4">
@@ -82,6 +129,9 @@
 
 @code {
     private List<RunnerMemberDto> _members = [];
+    private List<RunnerAgentAccessDto> _agentAccess = [];
+    private bool _agentAccessLoaded;
+    private string? _agentAccessError;
     private string? _password;
     private bool _membersLoaded;
     private string? _membersError;
@@ -104,7 +154,24 @@
 
     private bool Ready => Runner.State == RunnerState.Ready && Runner.Operation is null;
 
-    protected override Task OnParametersSetAsync() => LoadMembersAsync();
+    protected override Task OnParametersSetAsync() => Task.WhenAll(LoadMembersAsync(), LoadAgentAccessAsync());
+
+    // Refreshes keep the list on screen until the new one replaces it.
+    private async Task LoadAgentAccessAsync()
+    {
+        if (!CanManage) return;
+        try
+        {
+            _agentAccessError = null;
+            _agentAccess = await Api.ListRunnerAgentAccessAsync(Runner.Id);
+            _agentAccessLoaded = true;
+        }
+        catch (ApiException ex)
+        {
+            _agentAccessError = ex.Message;
+        }
+        catch (HttpRequestException) { _agentAccessError = LoadingSection.Unreachable; }
+    }
 
     private async Task LoadMembersAsync()
     {
@@ -250,6 +317,8 @@
             await action();
             _membersError = null;
             _members = await Api.ListRunnerMembersAsync(Runner.Id);
+            // Someone who just got access here no longer reaches it only through agents.
+            await LoadAgentAccessAsync();
         }
         catch (ApiException ex)
         {

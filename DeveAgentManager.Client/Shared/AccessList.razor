@@ -9,7 +9,7 @@
             <MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.PersonAdd" Disabled="@(!Loaded || Busy)" OnClick="Add">Add user</MudButton>
         }
     </div>
-    <LoadingSection Loaded="Loaded" Error="Error" Retry="Retry" Label="Loading access">
+    <LoadingSection Loaded="Loaded" Error="@Error" Retry="Retry" Label="Loading access">
         <Placeholder><SkeletonList Rows="3" /></Placeholder>
         <ChildContent>
             <div class="list">

@@ -1,3 +1,4 @@
+using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Events;
@@ -26,6 +27,30 @@ public sealed class RunnerMembers(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         return await db.RunnerMembers.AsNoTracking().Include(m => m.User).Where(m => m.RunnerId == runnerId)
             .OrderBy(m => m.User!.Username).ToListAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// The people without access to the Runner whom agents on it are shared with, and how, those who can prompt one
+    /// (read-write) first. Conversation managers reach every agent through their role and aren't listed.
+    /// </summary>
+    public async Task<List<RunnerAgentAccessDto>> ListAgentAccessAsync(Guid runnerId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var shares = await (from share in db.AgentShares
+                            join agent in db.Agents on share.AgentId equals agent.Id
+                            where agent.RunnerId == runnerId
+                                && !db.Runners.Any(r => r.Id == runnerId && r.OwnerId == share.UserId)
+                                && !db.RunnerMembers.Any(m => m.RunnerId == runnerId && m.UserId == share.UserId)
+                            select new
+                            {
+                                share.UserId, share.User!.Username, share.User.DisplayName, share.User.Disabled, share.Access,
+                                AgentId = agent.Id, AgentName = agent.Name, OwnerName = agent.Owner!.DisplayName,
+                            }).ToListAsync(cancellationToken);
+        return shares.GroupBy(s => s.UserId)
+            .Select(g => new RunnerAgentAccessDto(g.Key, g.First().Username, g.First().DisplayName, g.First().Disabled,
+                g.OrderByDescending(s => s.Access).ThenBy(s => s.AgentName, StringComparer.OrdinalIgnoreCase)
+                    .Select(s => new RunnerAgentShareDto(s.AgentId, s.AgentName, s.OwnerName, s.Access)).ToList()))
+            .OrderByDescending(p => p.Agents.Max(a => a.Access)).ThenBy(p => p.Username, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     /// <summary>Gives <paramref name="userId"/> Use or Manage access, or changes theirs.</summary>

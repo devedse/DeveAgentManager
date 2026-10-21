@@ -92,7 +92,9 @@ An agent's owner can share it with other users, **read-only** or **read-write**,
   Runner only while an agent there uses them; they never get an SSH key on it.
 - Reading an agent needs no access to its Runner, and neither does read-write: it covers the agent (its terminal,
   prompts, sessions, login and git identity), not the Runner's shell, VS Code or desktop, which still need Use access.
-  Prompting an agent runs commands on its Runner, so share read-write only with people you trust there.
+  Prompting an agent runs commands on its Runner, so share read-write only with people you trust there. A Runner's
+  owner and managers see these people under **Access through agents** on the Runner page: everyone without access to
+  the Runner whom an agent on it is shared with, per agent and level, read-write first, with a help tip on the risks.
 - Conversation manager (included in Admin) grants full access to all agents and conversations. Other roles do not.
 - Existing admins with all four original roles are upgraded once and their security stamps rotate; sign in again.
 

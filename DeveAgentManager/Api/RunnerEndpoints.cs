@@ -135,6 +135,10 @@ internal static class RunnerEndpoints
             (await members.ListAsync(runnerId, ct)).Select(m => new RunnerMemberDto(m.UserId, m.User!.Username, m.User.DisplayName, m.Access, m.GrantedAt)).ToList())
             .RequireRunner(RunnerAccess.Use);
 
+        // Who reaches the Runner through shared agents: other people's shares, so for those who manage it.
+        runners.MapGet("/{runnerId:guid}/agent-access", (Guid runnerId, RunnerMembers members, CancellationToken ct) => members.ListAgentAccessAsync(runnerId, ct))
+            .RequireRunner(RunnerAccess.Manage);
+
         runners.MapPut("/{runnerId:guid}/members/{userId:guid}", async (Guid runnerId, Guid userId, RunnerAccessRequest request, CurrentUser user, RunnerMembers members, CancellationToken ct) =>
         {
             await members.SetAsync(user, runnerId, userId, request.Access, ct);

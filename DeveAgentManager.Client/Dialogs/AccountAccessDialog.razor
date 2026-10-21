@@ -4,7 +4,7 @@
 
 <MudDialog>
     <DialogContent>
-        <AccessList People="People" UserId="_userId" Loaded="Loaded" Error="LoadError" Retry="RetryAsync" CanAdd="true" Busy="_busy" Add="AddAsync">
+        <AccessList People="People" UserId="_userId" Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" CanAdd="true" Busy="_busy" Add="AddAsync">
             <Help>
                 <p>Use permits choosing this login and making it a personal default. Manage also permits reconnecting, granting access and removing the login. At least one enabled manager must remain.</p>
                 <p>Removing Use stops affected agents. Permission to prompt another person's shared agent is separate.</p>

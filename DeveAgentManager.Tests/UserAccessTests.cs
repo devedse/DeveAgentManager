@@ -346,6 +346,52 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     }
 
     [Fact]
+    public async Task RunnerManagers_SeeWhoReachesTheRunnerOnlyThroughSharedAgents()
+    {
+        // Its own sign-ins, outside the shared fixture's authentication rate-limit window.
+        using var isolatedManager = new ApiSecurityTests.Manager();
+        await new UserAccessTests(isolatedManager).AgentAccessOnRunnerAsync();
+    }
+
+    private async Task AgentAccessOnRunnerAsync()
+    {
+        var admins = await SeedAsync(User.BootstrapId);
+        var second = Guid.NewGuid();
+        await using (var db = await DbAsync())
+        {
+            db.Agents.Add(new Agent { Id = second, RunnerId = admins.RunnerId, OwnerId = User.BootstrapId, Name = "b-second", HarnessId = "claude", State = AgentState.Stopped });
+            await db.SaveChangesAsync();
+        }
+
+        var ketty = await Users.CreateAsync(TestUsers.Admin, NewUsername(), "Ketty", Password, UserRoles.None);
+        var reader = await Users.CreateAsync(TestUsers.Admin, NewUsername(), null, Password, UserRoles.None);
+        var (member, memberId) = await SignedInAsNewUserWithIdAsync();
+        var (managing, managingId) = await SignedInAsNewUserWithIdAsync();
+        var sharing = manager.Services.GetRequiredService<Sharing>();
+        var members = manager.Services.GetRequiredService<RunnerMembers>();
+        await sharing.ShareAgentAsync(TestUsers.Admin, admins.AgentId, ketty.Id, AgentAccess.Write);
+        await sharing.ShareAgentAsync(TestUsers.Admin, second, ketty.Id, AgentAccess.Read);
+        await sharing.ShareAgentAsync(TestUsers.Admin, second, reader.Id, AgentAccess.Read);
+        // Someone with access to the Runner reaches it anyway: not listed, whatever the agent share.
+        await members.SetAsync(TestUsers.Admin, admins.RunnerId, memberId, RunnerAccess.Use);
+        await sharing.ShareAgentAsync(TestUsers.Admin, admins.AgentId, memberId, AgentAccess.Write);
+        await members.SetAsync(TestUsers.Admin, admins.RunnerId, managingId, RunnerAccess.Manage);
+
+        // Other people's shares are for those who manage the Runner.
+        Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync($"/api/runners/{admins.RunnerId}/agent-access")).StatusCode);
+        var list = await managing.GetFromJsonAsync<List<RunnerAgentAccessDto>>($"/api/runners/{admins.RunnerId}/agent-access", ApiJson.Options);
+        // Who can have commands run first, each with every agent and how, read-write first.
+        Assert.Equal([ketty.Id, reader.Id], list!.Select(p => p.UserId));
+        Assert.Equal(("Ketty", false), (list[0].DisplayName, list[0].Disabled));
+        Assert.Equal([(admins.AgentId, AgentAccess.Write), (second, AgentAccess.Read)], list[0].Agents.Select(a => (a.AgentId, a.Access)));
+        Assert.Equal("b-second", list[1].Agents.Single().AgentName);
+
+        // Giving her access to the Runner itself takes her off the list.
+        await members.SetAsync(TestUsers.Admin, admins.RunnerId, ketty.Id, RunnerAccess.Use);
+        Assert.Equal([reader.Id], (await members.ListAgentAccessAsync(admins.RunnerId)).Select(p => p.UserId));
+    }
+
+    [Fact]
     public async Task SharingAConversation_IsReadOnly_AndOnlyTheOwnerSharesIt()
     {
         var admins = await SeedAsync(User.BootstrapId);
