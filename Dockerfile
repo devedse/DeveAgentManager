@@ -14,6 +14,11 @@ ENV DATA_DIR=/data \
 # 70% of the machine's (or container's) memory, so a request that needs too much fails with OutOfMemoryException and
 # is logged, instead of the kernel killing the whole Manager (docs/manager-memory.md).
 
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS typescript
+WORKDIR /src
+COPY package.json package-lock.json tsconfig.browser.json tsconfig.tools.json ./
+RUN npm ci --ignore-scripts
+
 # The app is platform independent, so build once on the build machine for every target platform.
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
@@ -29,6 +34,10 @@ COPY ["DeveAgentManager.Harnesses.Codex/DeveAgentManager.Harnesses.Codex.csproj"
 COPY ["DeveAgentManager.Harnesses.Grok/DeveAgentManager.Harnesses.Grok.csproj", "DeveAgentManager.Harnesses.Grok/"]
 RUN dotnet restore "DeveAgentManager/DeveAgentManager.csproj"
 COPY . .
+COPY --from=typescript /usr/local/bin/node /usr/local/bin/node
+COPY --from=typescript /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
+COPY --from=typescript /src/node_modules /src/node_modules
 ARG BUILD_VERSION
 ARG VER=${BUILD_VERSION:-1.0.0}
 RUN dotnet publish "DeveAgentManager/DeveAgentManager.csproj" -c Release -o /app/publish /p:Version=$VER /p:UseAppHost=false

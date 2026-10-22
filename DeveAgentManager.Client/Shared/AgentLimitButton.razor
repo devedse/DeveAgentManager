@@ -1,6 +1,6 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
-@inject IJSRuntime Js
+@inject BrowserClock Clock
 
 @if (InMenu)
 {
@@ -71,7 +71,7 @@ else
             _limit = await Api.GetAgentLimitAsync(AgentId);
             _limitLoaded = true;
             _limitError = null;
-            _scheduledLocal = _limit?.ContinueAt is { } at ? await Js.InvokeAsync<string>("damSchedule.describe", at) : null;
+            _scheduledLocal = _limit?.ContinueAt is { } at ? await Clock.DescribeAsync(at) : null;
         }
         catch (ApiException ex) { _limitError = ex.Message; }
         catch (HttpRequestException) { _limitError = LoadingSection.Unreachable; }

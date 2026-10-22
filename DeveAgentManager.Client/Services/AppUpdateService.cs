@@ -1,20 +1,19 @@
 using System.Reflection;
 using System.Text.Json;
 using DeveAgentManager.Contracts;
-using Microsoft.JSInterop;
 
 namespace DeveAgentManager.Client.Services;
 
 /// <summary>Checks the deployed build against the assemblies actually running in this browser tab.</summary>
-public sealed class AppUpdateService(IJSRuntime js, ManagerApi api, LiveUpdates live) : IAsyncDisposable
+public sealed class AppUpdateService(ManagerApi api, LiveUpdates live, PageVisibility visibility) : IAsyncDisposable
 {
     private static readonly string CurrentBuild = typeof(AppUpdateService).Assembly
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "dev";
     public static string CurrentVersion => CurrentBuild.Split('+')[0];
     private Task? _initialize;
     private Task? _checking;
-    private IJSObjectReference? _module;
-    private DotNetObjectReference<AppUpdateService>? _self;
+    private readonly CancellationTokenSource _stop = new();
+    private Task? _poll;
     private string? _dismissed;
     private bool _disposed;
 
@@ -25,16 +24,15 @@ public sealed class AppUpdateService(IJSRuntime js, ManagerApi api, LiveUpdates 
 
     private async Task InitializeCoreAsync()
     {
-        _module = await js.InvokeAsync<IJSObjectReference>("import", "./js/app-update.js");
-        _self = DotNetObjectReference.Create(this);
+        await visibility.InitializeAsync();
+        visibility.VisibleObserved += OnReconnected;
+        _poll = PollAsync();
         live.Reconnected += OnReconnected;
-        await _module.InvokeVoidAsync("start", _self);
         await CheckForUpdate();
     }
 
     private void OnReconnected() => _ = CheckForUpdate();
 
-    [JSInvokable]
     public Task CheckForUpdate()
     {
         if (_disposed) return Task.CompletedTask;
@@ -69,9 +67,20 @@ public sealed class AppUpdateService(IJSRuntime js, ManagerApi api, LiveUpdates 
     {
         _disposed = true;
         live.Reconnected -= OnReconnected;
-        if (_module is not null)
-            try { await _module.InvokeVoidAsync("stop"); await _module.DisposeAsync(); }
-            catch (Exception ex) when (ex is JSDisconnectedException or TaskCanceledException) { }
-        _self?.Dispose();
+        visibility.VisibleObserved -= OnReconnected;
+        _stop.Cancel();
+        if (_poll is not null) await _poll;
+        _stop.Dispose();
+    }
+
+    private async Task PollAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_stop.Token))
+                if (visibility.Visible) await CheckForUpdate();
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
     }
 }

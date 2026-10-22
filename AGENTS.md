@@ -64,7 +64,7 @@ GitHub Primer's loading guidance.)
 - **Accessibility.** A placeholder has `role="status"`, `aria-busy="true"` and a visually hidden label; skeleton shapes
   are `aria-hidden`. One label per section, not per row.
 
-`DeveAgentManager.Tests/Browser/loading-states.mjs` checks this with a slow and a failing API.
+`DeveAgentManager.Tests/Browser/loading-states.mts` checks this with a slow and a failing API.
 
 ## UI: hold to confirm
 
@@ -83,14 +83,14 @@ page's header, with the same explanations).
   seconds to confirm", and is read by screen readers.
 - **Keep dialogs** for what can't be undone (deleting) and for actions that need a choice or input.
 
-`DeveAgentManager.Tests/Browser/hold-to-confirm.mjs` checks this with mouse, keyboard and touch.
+`DeveAgentManager.Tests/Browser/hold-to-confirm.mts` checks this with mouse, keyboard and touch.
 
 ## UI: agent order
 
 Every list of agents puts the one that replied last first: sort with `AgentOrder.ByLastReply()`
 (`DeveAgentManager.Client/Shared/AgentOrder.cs`), including lists cut short such as the dashboard's. Agents that never
 replied come after, newest first. Lists grouped by agent, such as sessions, order the groups the same way.
-`DeveAgentManager.Tests/Browser/agent-order.mjs` checks the pages that list agents.
+`DeveAgentManager.Tests/Browser/agent-order.mts` checks the pages that list agents.
 
 ## Documentation privacy
 
@@ -113,3 +113,21 @@ never treat a sampled checkpoint as fully verified. Same-size edits, truncation,
 must preserve the last good checkpoint or rebuild safely. Test bounded reads, delayed-edit recovery, format,
 metadata and active-branch parity plus real SSH transfer and copy/switch/export behavior. See
 [docs/lean-session-sync.md](docs/lean-session-sync.md).
+
+## Browser code
+
+Prefer C# for application logic. Browser APIs, DOM measurements and adapters for JavaScript libraries belong in
+`DeveAgentManager/Browser/*.ts`; browser tests use `DeveAgentManager.Tests/Browser/*.mts`, and Node unit fixtures use
+`DeveAgentManager.Tests/Js/*.cts`. Do not edit generated JavaScript in `wwwroot/js` or `.typescript`, and do not rewrite
+vendored libraries under `wwwroot/lib`.
+
+`dotnet build` compiles TypeScript before static asset discovery (Node 22+ and npm required; dependencies are pinned
+in the root package-lock.json). `npm ci --ignore-scripts` installs the toolchain, `npm run check` type-checks without
+writing output, and `npm run build` emits browser `.js` and test/tool `.mjs`/`.cjs`. Run a browser test with
+`node .typescript/DeveAgentManager.Tests/Browser/hold-to-confirm.mjs`. The Docker build installs Node only in its build
+stage. Keep browser interop types explicit; migration currently allows implicit parameter types for older adapters
+and dynamic test fixtures. Do not bypass compiler errors with `@ts-nocheck` or `noCheck`.
+
+Timezone discovery stays in TypeScript; `BrowserClock.cs` owns conversion and invalid/ambiguous-time validation.
+`AppUpdateService.cs` owns the update timer and reuses `PageVisibility`. Early theme and editor authentication scripts
+are compiled TypeScript embedded in the Manager assembly, preserving their existing nonce and separate-origin flows.

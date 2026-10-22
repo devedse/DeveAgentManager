@@ -11,3 +11,7 @@ prompts.jsonl
 2026-*.txt
 Dockerfile
 docker-compose*.yml
+
+**/node_modules/
+.typescript/
+DeveAgentManager/wwwroot/js/

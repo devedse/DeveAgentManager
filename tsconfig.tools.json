@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "skipLibCheck": true,
+    "noEmitOnError": true,
+    "strict": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": ".",
+    "outDir": ".typescript"
+  },
+  "include": [
+    "DeveAgentManager.Tests/Browser/*.mts",
+    "DeveAgentManager.Tests/Js/*.cts",
+    "tools/security-browser/*.mts",
+    "tools/browser-dependencies/*.mts",
+    "DeveAgentManager.Tests/Browser/*.d.ts"
+  ]
+}

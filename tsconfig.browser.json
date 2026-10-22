@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "skipLibCheck": true,
+    "noEmitOnError": true,
+    "strict": false,
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "rootDir": "DeveAgentManager/Browser",
+    "outDir": "DeveAgentManager/wwwroot/js"
+  },
+  "include": [
+    "DeveAgentManager/Browser/**/*.ts"
+  ]
+}

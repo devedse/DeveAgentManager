@@ -203,7 +203,7 @@ wildcard DNS/certificate support on the chosen provider; this implementation has
 - Targeted HTTP tests: exact hosts, proxy spoofing, local/public separation, two users/two Runners, missing/null and
   same-site Origins, atomic ticket replay, destination binding, session revocation/expiry, credential stripping,
   TOTP vector/replay/recovery, bounded throttling and the full existing authorization regression suite.
-- Published production browser test: `tools/security-browser/check.mjs` boots an isolated Manager and HTTPS proxy,
+- Published production browser test: `.typescript/tools/security-browser/check.mjs` boots an isolated Manager and HTTPS proxy,
   loads Blazor under CSP, submits legitimate forms, checks hardened cookies and runs a hostile sibling-origin page.
   The hostile page is an explicit fixture, not a claim that live code-server or every extension has been audited.
 - NuGet audit fails on high/critical transitive advisories and audit-source failures through Directory.Build.props.

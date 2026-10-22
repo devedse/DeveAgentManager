@@ -90,16 +90,7 @@ public static class AccountSecurity
     }
 
     /// <summary>Light or dark like the Portal (My settings → Appearance), before anything paints.</summary>
-    public const string ThemeScript = """
-        (function () {
-            var mode = "system";
-            try { mode = localStorage.getItem("dam-theme") || "system"; } catch (e) { }
-            var dark = mode === "dark" || (mode !== "light" && !(window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches));
-            document.documentElement.dataset.theme = dark ? "dark" : "light";
-            var meta = document.querySelector('meta[name="theme-color"]');
-            if (meta) meta.content = dark ? "#0d1017" : "#f5f6fa";
-        })();
-        """;
+    public static readonly string ThemeScript = BrowserScripts.Read("theme-startup");
 
     private static string RecoveryCodesPage(HttpContext context, string[] codes) => $$"""
         <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

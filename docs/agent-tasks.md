@@ -85,7 +85,7 @@ treats it as untrusted text.
   restore and concurrent updates.
 - `dotnet test --solution DeveAgentManager.slnx`: `AgentTasksTests` checks parsing and bounds, and collects, restores
   and clears over a real isolated SSH server; `UserAccessTests` checks read and read-write access.
-- `node DeveAgentManager.Tests/Browser/agent-tasks.mjs` against a development Manager on `http://127.0.0.1:5099`
+- `node .typescript/DeveAgentManager.Tests/Browser/agent-tasks.mjs` against a development Manager on `http://127.0.0.1:5099`
   (see [agent activity](agent-activity.md#verification) for the setup; the password there is test-only): the ring,
   the dot until the dropdown is closed and after reloads, task states and times, inline Clear for read-write only, the
   ⋮ menu dialog on a phone, and light and dark themes. Screenshots go to `/tmp`.

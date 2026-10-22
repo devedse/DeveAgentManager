@@ -21,8 +21,11 @@ jobs:
           node-version: 22
       - name: Verify and audit vendored browser addons
         run: |
+          npm ci --ignore-scripts
+          npm run build
+          npm audit --audit-level=high
           npm ci --prefix tools/browser-dependencies --ignore-scripts
-          node tools/browser-dependencies/verify.mjs
+          node .typescript/tools/browser-dependencies/verify.mjs
           npm audit --prefix tools/browser-dependencies --audit-level=high
   container:
     runs-on: ubuntu-latest
@@ -44,7 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [portal, cpu-startup]
+        suite: [portal, interop, cpu-startup]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
@@ -57,12 +60,12 @@ jobs:
       - run: npm audit --prefix tools/security-browser --audit-level=high
       - run: npx --prefix tools/security-browser playwright install --with-deps chromium
       - run: dotnet publish DeveAgentManager/DeveAgentManager.csproj -c Release -o .validation/publish
-      - run: node tools/security-browser/check.mjs
+      - run: node .typescript/tools/security-browser/check.mjs
         if: matrix.suite == 'portal'
       - name: Check browser suite
         env:
           BROWSER_SUITE: ${{ matrix.suite }}
-        run: node tools/security-browser/continuations.mjs "$BROWSER_SUITE"
+        run: node .typescript/tools/security-browser/continuations.mjs "$BROWSER_SUITE"
   passive-scan:
     runs-on: ubuntu-latest
     steps:

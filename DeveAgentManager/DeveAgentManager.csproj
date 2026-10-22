@@ -37,4 +37,18 @@
     <ProjectReference Include="..\DeveAgentManager.Harnesses.Grok\DeveAgentManager.Harnesses.Grok.csproj" />
   </ItemGroup>
 
+  <!-- Compile before static web assets are discovered, including on a clean checkout. -->
+  <Target Name="RestoreTypeScriptDependencies" Condition="'$(DesignTimeBuild)' != 'true'"
+          Inputs="$(MSBuildProjectDirectory)/../package.json;$(MSBuildProjectDirectory)/../package-lock.json"
+          Outputs="$(MSBuildProjectDirectory)/../node_modules/.package-lock.json">
+    <Exec WorkingDirectory="$(MSBuildProjectDirectory)/.." Command="npm ci --ignore-scripts" />
+  </Target>
+  <Target Name="CompileBrowserTypeScript" BeforeTargets="PrepareForBuild" DependsOnTargets="RestoreTypeScriptDependencies" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec WorkingDirectory="$(MSBuildProjectDirectory)/.." Command="npm run build" />
+    <ItemGroup>
+      <EmbeddedResource Include="wwwroot/js/theme-startup.js" LogicalName="BrowserScripts.theme-startup.js" />
+      <EmbeddedResource Include="wwwroot/js/editor-auth.js" LogicalName="BrowserScripts.editor-auth.js" />
+      <Content Include="wwwroot/js/**/*.js" Exclude="@(Content)" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
 </Project>

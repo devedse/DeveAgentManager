@@ -1,0 +1,41 @@
+// Browser test instrumentation and external library globals.
+declare var activitySoundStates: any;
+declare var damTheme: any;
+declare var updateVisibility: any;
+declare var untrusted: any;
+declare var placeholderPeak: any;
+declare var placeholderSeen: any;
+declare var placeholderVisits: any;
+declare var placeholderEarliest: any;
+declare var wakeTest: any;
+declare var executed: any;
+declare var imageAnimations: any;
+declare var __copied: any;
+declare var __refuse: any;
+declare var __opened: any;
+declare var XtermBlazor: any;
+declare var adapter: any;
+declare var DamTouchInput: any;
+declare var terminalInput: any;
+declare var ime: any;
+interface Window {
+    activitySoundStates: any;
+    damTheme: any;
+    updateVisibility: any;
+    untrusted: any;
+    placeholderPeak: any;
+    placeholderSeen: any;
+    placeholderVisits: any;
+    placeholderEarliest: any;
+    wakeTest: any;
+    executed: any;
+    imageAnimations: any;
+    __copied: any;
+    __refuse: any;
+    __opened: any;
+    XtermBlazor: any;
+    adapter: any;
+    DamTouchInput: any;
+    terminalInput: any;
+    ime: any;
+}

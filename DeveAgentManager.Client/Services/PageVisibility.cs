@@ -18,6 +18,9 @@ public sealed class PageVisibility(IJSRuntime js) : IAsyncDisposable
     /// <summary>The tab was hidden and is shown again.</summary>
     public event Action? Shown;
 
+    /// <summary>Every visible report, including pageshow when restoring a page that was already marked visible.</summary>
+    public event Action? VisibleObserved;
+
     public Task InitializeAsync() => _initialize ??= InitializeCoreAsync();
 
     private async Task InitializeCoreAsync()
@@ -40,6 +43,7 @@ public sealed class PageVisibility(IJSRuntime js) : IAsyncDisposable
         var shown = visible && !Visible;
         Visible = visible;
         if (shown) Shown?.Invoke();
+        if (visible) VisibleObserved?.Invoke();
     }
 
     public async ValueTask DisposeAsync()

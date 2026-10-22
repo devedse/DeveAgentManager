@@ -360,6 +360,8 @@ Runner setup logs and the audit log remain on their existing pages.
 
 ## Development
 
+Requires the .NET 10 SDK, Node 22+ and npm.
+
 ```bash
 dotnet run --project DeveAgentManager       # http://localhost:5099, data in DeveAgentManager/data
 dotnet test --solution DeveAgentManager.slnx
@@ -391,3 +393,16 @@ The detailed native profiler probe is a separate manual workflow for runtime or 
 portable recorder by default; its experimental native engine remains opt-in.
 No secrets are needed; the workflow uses the built-in `GITHUB_TOKEN`. Run it manually (`workflow_dispatch`) to pick
 self-hosted .NET and AMD64 runners. ARM64 builds always run on native GitHub hardware.
+
+### Browser sources and TypeScript
+
+Application logic stays in C# where possible: update polling and scheduled-time conversion use .NET. Browser API and
+DOM adapters are TypeScript in `DeveAgentManager/Browser`; Playwright tests use `.mts` and Node fixtures use `.cts`.
+Vendored xterm and PDF.js assets remain unchanged upstream JavaScript.
+
+Building now requires Node 22+ and npm alongside the .NET SDK. `dotnet build` installs the pinned root npm dependencies
+when missing and compiles TypeScript before collecting browser assets. Run `npm ci --ignore-scripts` after dependency
+changes; `npm run check` checks types, and `npm run build` generates the files. Compiler errors fail the build.
+Generated browser scripts go to `DeveAgentManager/wwwroot/js`; tests and tools go under `.typescript`, for example
+`node .typescript/DeveAgentManager.Tests/Browser/hold-to-confirm.mjs`. Neither output directory is committed. Docker
+includes the compiler in its build stage only, so deployed containers still run without Node.

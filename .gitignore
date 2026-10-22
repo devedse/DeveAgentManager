@@ -436,3 +436,7 @@ FodyWeavers.xsd
 *.db-wal
 
 /.validation/
+
+# TypeScript compiler output
+/.typescript/
+/DeveAgentManager/wwwroot/js/
