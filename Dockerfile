@@ -46,7 +46,18 @@ RUN dotnet publish "DeveAgentManager/DeveAgentManager.csproj" -c Release -o /app
 FROM base AS cpu-diagnostics
 ARG TARGETARCH
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends python3 binutils && rm -rf /var/lib/apt/lists/*
+# Mirrors can change indexes between download and verification. Retry the complete verified transaction;
+# never disable package hash verification or continue with a partially downloaded index.
+RUN set -eu; \
+    for attempt in 1 2 3; do \
+      if apt-get update -o APT::Update::Error-Mode=any -o Acquire::Retries=3 \
+          && apt-get install -y --no-install-recommends -o Acquire::Retries=3 python3 binutils; then \
+        rm -rf /var/lib/apt/lists/*; exit 0; \
+      fi; \
+      rm -rf /var/lib/apt/lists/*; \
+      if [ "$attempt" = 3 ]; then exit 1; fi; \
+      sleep "$((attempt * 5))"; \
+    done
 COPY tools/cpu-profiler/download-profiler.py tools/cpu-profiler/download-symbols.py /cpu-tools/
 RUN python3 /cpu-tools/download-profiler.py
 RUN python3 /cpu-tools/download-symbols.py

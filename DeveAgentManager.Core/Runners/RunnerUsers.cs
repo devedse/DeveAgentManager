@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using DeveAgentManager.Core.Accounts;
@@ -28,6 +29,9 @@ public sealed class RunnerUsers(
     UserSettingsStore settings,
     ILogger<RunnerUsers> logger)
 {
+    // Take the snapshot while holding this gate: an older sync must not recreate files after access was removed.
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _syncGates = new();
+
     private const string KeysBegin = "# >>> DeveAgentManager: keys of the people with access to this Runner >>>";
     private const string KeysEnd = "# <<< DeveAgentManager <<<";
 
@@ -41,6 +45,14 @@ public sealed class RunnerUsers(
     /// shells start, so a change to their settings applies from the next start even on a Runner that wasn't reachable.
     /// </summary>
     public async Task EnsureAsync(Runner runner, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var gate = _syncGates.GetOrAdd(runner.Id, _ => new(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try { await EnsureCoreAsync(runner, userId, cancellationToken); }
+        finally { gate.Release(); }
+    }
+
+    private async Task EnsureCoreAsync(Runner runner, Guid userId, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var username = await db.Users.Where(u => u.Id == userId).Select(u => u.Username).FirstOrDefaultAsync(cancellationToken)
@@ -86,11 +98,19 @@ public sealed class RunnerUsers(
     /// </summary>
     public async Task SyncAsync(Runner runner, CancellationToken cancellationToken = default)
     {
+        var gate = _syncGates.GetOrAdd(runner.Id, _ => new(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try { await SyncCoreAsync(runner, cancellationToken); }
+        finally { gate.Release(); }
+    }
+
+    private async Task SyncCoreAsync(Runner runner, CancellationToken cancellationToken)
+    {
         var users = await UsersWithAccessAsync(runner.Id, cancellationToken);
         var identities = (await GitIdentitiesAsync(runner.Id, cancellationToken)).Except(users.Select(u => u.Id)).ToList();
         foreach (var id in users.Select(u => u.Id).Concat(identities))
         {
-            await EnsureAsync(runner, id, cancellationToken);
+            await EnsureCoreAsync(runner, id, cancellationToken);
         }
 
         var keep = string.Join(' ', users.Select(u => u.Id).Concat(identities).Select(id => id.ToString("N")));

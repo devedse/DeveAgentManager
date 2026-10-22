@@ -1,3 +1,5 @@
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using DeveAgentManager.Contracts;
 using DeveAgentManager.Core;
 using DeveAgentManager.Core.Abstractions;
@@ -32,6 +34,8 @@ public sealed class AgentGitIdentityTests
         collection.AddLogging();
         collection.AddSingleton<IHarness>(new Harness(launches));
         collection.AddDeveAgentManagerCore(new ManagerOptions { DataDirectory = ssh.Root + "/manager", AdminPassword = "test-only-password" });
+        var delayedSync = new DelayedIdentitySync();
+        collection.AddDbContextFactory<ManagerDbContext>(options => options.AddInterceptors(delayedSync));
         collection.AddSingleton(ssh.Shell);
         await using var services = collection.BuildServiceProvider();
         var factory = services.GetRequiredService<IDbContextFactory<ManagerDbContext>>();
@@ -86,6 +90,12 @@ public sealed class AgentGitIdentityTests
             await agents.EnforceGitIdentitiesAsync(Ct);
             Assert.Equal(AgentState.Running, (await SavedAsync()).State);
 
+            // Pause an older sync after it chose the still-permitted identity, before writing its files.
+            // Revocation and the next sync must not let those stale writes recreate her directory afterwards.
+            delayedSync.HoldNext();
+            var staleSync = services.GetRequiredService<RunnerUsers>().SyncAsync(ssh.Runner, Ct);
+            await delayedSync.Paused.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
             // Her share ends: the next start uses the owner's, and the harness still running with hers is stopped.
             await services.GetRequiredService<Sharing>().UnshareAgentAsync(ketty, agent.Id, other.Id, Ct);
             Assert.Null((await SavedAsync()).GitIdentityUserId);
@@ -96,7 +106,15 @@ public sealed class AgentGitIdentityTests
             Assert.Contains("no longer available", stopped.StateMessage);
             var pane = await ssh.Shell.RunAsync(ssh.Runner, $"tmux display-message -p -t {ShellQuote.Quote("=" + agent.TmuxSession + ":")} '#{{pane_dead}}' 2>/dev/null || echo gone", cancellationToken: Ct);
             Assert.Contains(pane.Output.Trim(), new[] { "1", "gone" });
-            await services.GetRequiredService<RunnerUsers>().SyncAsync(ssh.Runner, Ct);
+            var cleanup = services.GetRequiredService<RunnerUsers>().SyncAsync(ssh.Runner, Ct);
+            try
+            {
+                // A cleanup that overtakes the blocked sync could report success and then lose to its stale uploads.
+                await Task.WhenAny(cleanup, Task.Delay(1000, Ct));
+                Assert.False(cleanup.IsCompleted);
+            }
+            finally { delayedSync.Resume.TrySetResult(); }
+            await Task.WhenAll(staleSync, cleanup);
             Assert.False(Directory.Exists(kettyFolder));
 
             await agents.StartAsync(agent.Id, cancellationToken: Ct);
@@ -106,7 +124,30 @@ public sealed class AgentGitIdentityTests
         }
         finally
         {
+            delayedSync.Resume.TrySetResult();
             await ssh.Shell.RunAsync(ssh.Runner, "tmux kill-session -t " + ShellQuote.Quote("=" + agent.TmuxSession) + " 2>/dev/null || true", cancellationToken: CancellationToken.None);
+        }
+    }
+
+    // EnsureCore reads a username only after Sync has captured the set of permitted identities.
+    private sealed class DelayedIdentitySync : DbCommandInterceptor
+    {
+        private int _hold;
+        public TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void HoldNext() => Volatile.Write(ref _hold, 1);
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.StartsWith("SELECT \"u\".\"Username\"", StringComparison.Ordinal)
+                && Interlocked.Exchange(ref _hold, 0) == 1)
+            {
+                Paused.TrySetResult();
+                await Resume.Task.WaitAsync(cancellationToken);
+            }
+            return result;
         }
     }
 
