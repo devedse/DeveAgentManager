@@ -34,6 +34,8 @@ internal static class RunnerEndpoints
             .RequireRunner(RunnerAccess.Manage);
         runners.MapPost("/{runnerId:guid}/stop", (Guid runnerId, RunnerService service) => ManagerApi.Accepted(() => service.Stop(runnerId)))
             .RequireRunner(RunnerAccess.Manage);
+        runners.MapPost("/{runnerId:guid}/restart", (Guid runnerId, RunnerService service) => ManagerApi.Accepted(() => _ = service.Restart(runnerId)))
+            .RequireRunner(RunnerAccess.Manage);
         runners.MapPost("/{runnerId:guid}/setup", (Guid runnerId, RunnerService service) => ManagerApi.Accepted(() => service.RerunSetup(runnerId)))
             .RequireRunner(RunnerAccess.Manage);
         runners.MapPost("/{runnerId:guid}/cancel", (Guid runnerId, RunnerService service) => ManagerApi.Accepted(() => service.Cancel(runnerId)))

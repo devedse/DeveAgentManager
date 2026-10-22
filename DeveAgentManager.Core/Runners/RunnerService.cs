@@ -277,24 +277,38 @@ public sealed partial class RunnerService(
 
     public void Stop(Guid runnerId) => StartOperation(runnerId, "Stopping", async (op, cancellation) =>
     {
+        await ShutDownAsync(op, "stopped", cancellation);
+        await op.SetStateAsync(RunnerState.Stopped, null);
+        op.Log.Success("Runner stopped");
+    });
+
+    /// <summary>Shuts the machine down and starts it again, as Stop and then Start: running agents stop.</summary>
+    public Task<string?> Restart(Guid runnerId) => StartOperation(runnerId, "Restarting", async (op, cancellation) =>
+    {
+        await ShutDownAsync(op, "restarted", cancellation);
+        op.Log.Info("Runner stopped; starting it again");
+        await BringOnlineAsync(op, GetProvider(op.Runner), runSetup: op.Runner.SetupVersion is null, cancellation);
+    });
+
+    // The conversations are saved first: the shutdown ends every harness on the machine.
+    private async Task ShutDownAsync(RunnerOperation op, string what, CancellationToken cancellation)
+    {
         var provider = GetProvider(op.Runner);
         if (!provider.Capabilities.CanStartStop)
         {
-            throw new InvalidOperationException($"{provider.DisplayName} Runners can't be stopped from the Manager.");
+            throw new InvalidOperationException($"{provider.DisplayName} Runners can't be {what} from the Manager.");
         }
 
         if (op.Runner.State == RunnerState.Ready)
         {
-            await sessions.TrySyncRunnerAsync(op.Runner, cancellation, finalOperation: "stopping the Runner");
+            await sessions.TrySyncRunnerAsync(op.Runner, cancellation, finalOperation: what == "stopped" ? "stopping the Runner" : "restarting the Runner");
         }
 
         await op.SetStateAsync(RunnerState.Stopping, "Shutting down");
         shell.Invalidate(op.Runner.Id);
         await provider.StopMachineAsync(op.Runner.ToMachine(), op.Log, cancellation);
         await agents.MarkAllStoppedAsync(op.Runner.Id, cancellation);
-        await op.SetStateAsync(RunnerState.Stopped, null);
-        op.Log.Success("Runner stopped");
-    });
+    }
 
     /// <summary>Removes the Runner. With <paramref name="destroyMachine"/> the machine itself is deleted too (Proxmox VM).</summary>
     public void Delete(CurrentUser actor, Guid runnerId, bool destroyMachine) => StartOperation(runnerId, "Deleting", async (op, cancellation) =>

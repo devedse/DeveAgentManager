@@ -42,13 +42,14 @@
                 var status = runner.Status;
                 var operation = runner.Operation;
                 var provider = _info?.Providers.FirstOrDefault(p => p.Id == runner.ProviderId);
-                <a class="runner-card" href="runners/@runner.Id">
+                @* The name is the link, stretched over the card; the buttons sit above it. *@
+                <div class="runner-card">
                     <div class="runner-card-header">
                         <div class="runner-card-icon">
                             <MudIcon Icon="@(runner.Kind == RunnerKind.Desktop ? Icons.Material.Rounded.DesktopWindows : Icons.Material.Rounded.Dns)" />
                         </div>
                         <div class="runner-card-titles">
-                            <div class="runner-card-name">@runner.Name</div>
+                            <a class="runner-card-name runner-card-link" href="runners/@runner.Id">@runner.Name</a>
                             <div class="runner-card-provider">@(provider?.DisplayName ?? runner.ProviderId)@(runner.MachineId is not null && runner.ProviderId != "existing" ? $" · VM {runner.MachineId}" : "")</div>
                         </div>
                         <StatusPill Style="StateStyles.For(runner.State)" Text="@operation" />
@@ -88,7 +89,14 @@
                     {
                         <div class="runner-card-versions">@runner.InstalledVersions</div>
                     }
-                </a>
+
+                    @if (runner.Access >= RunnerAccess.Manage)
+                    {
+                        <div class="runner-card-actions">
+                            <RunnerPowerActions Runner="runner" Provider="provider" Variant="Variant.Text" Size="Size.Small" UpdateClass="runner-card-update" />
+                        </div>
+                    }
+                </div>
             }
         </div>
 

@@ -1,0 +1,68 @@
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+
+@* Start or Stop, Restart and Update all for a Runner, each held for 3 seconds to confirm (HoldButton), with the same
+   explanations on the Runners page's cards and the Runner page's header. Only for people who manage the Runner;
+   starting, stopping and restarting only where the provider can power the machine (not existing machines). *@
+@if (Runner.Access >= RunnerAccess.Manage)
+{
+    @if (Provider?.Capabilities.CanStartStop == true)
+    {
+        @if (Runner.State is RunnerState.Stopped or RunnerState.Error)
+        {
+            <HoldButton Text="Start" ActiveText="Starting" Icon="@Icons.Material.Rounded.PlayArrow" Color="Color.Success" Variant="Variant" Size="Size"
+                        Disabled="Busy" Help="Starts the VM and connects to it. Agents stay stopped until you start them."
+                        OnConfirmed="() => RunAsync(() => Api.StartRunnerAsync(Runner.Id))" />
+        }
+        else
+        {
+            <HoldButton Text="Stop" ActiveText="Stopping" Icon="@Icons.Material.Rounded.Stop" Variant="Variant" Size="Size" Disabled="!Ready"
+                        Help="@StopHelp"
+                        OnConfirmed="() => RunAsync(() => Api.StopRunnerAsync(Runner.Id))" />
+        }
+        <HoldButton Text="Restart" ActiveText="Restarting" Icon="@Icons.Material.Rounded.RestartAlt" Variant="Variant" Size="Size" Disabled="!Ready"
+                    Help="@RestartHelp"
+                    OnConfirmed="() => RunAsync(() => Api.RestartRunnerAsync(Runner.Id))" />
+    }
+    <HoldButton Text="Update all" ActiveText="Updating" Icon="@Icons.Material.Rounded.SystemUpdateAlt" Variant="Variant" Size="Size"
+                Disabled="@(Busy || Runner.State == RunnerState.Stopped)" Class="@UpdateClass"
+                Help="Re-runs the setup script: the latest harnesses and tools, the shared Setup Profile, and each person's git identity, GitHub token, environment and SSH keys. Running agents keep running; restart them to use the updates."
+                OnConfirmed="() => RunAsync(() => Api.RerunSetupAsync(Runner.Id))" />
+}
+
+@code {
+    [Parameter, EditorRequired] public RunnerDto Runner { get; set; } = default!;
+    [Parameter] public ProviderDto? Provider { get; set; }
+    [Parameter] public Variant Variant { get; set; } = Variant.Outlined;
+    [Parameter] public Size Size { get; set; } = Size.Medium;
+    /// <summary>On the Update all button, e.g. to push it to the end of a row.</summary>
+    [Parameter] public string? UpdateClass { get; set; }
+    /// <summary>After an operation was started, e.g. to show the setup log.</summary>
+    [Parameter] public EventCallback Started { get; set; }
+
+    private bool Busy => Runner.Operation is not null;
+    private bool Ready => Runner.State == RunnerState.Ready && !Busy;
+
+    private int Running => Runner.Agents.Count(a => a.State == AgentState.Running);
+    private string Agents => Running == 1 ? "its running agent" : $"its {Running} running agents";
+    private string Saved => Running == 1 ? "Its conversation is saved first" : "Their conversations are saved first";
+
+    private string StopHelp => Running == 0
+        ? "Shuts the VM down. Start it again whenever you like."
+        : $"Shuts the VM down, which stops {Agents}. {Saved} and can be resumed later.";
+
+    private string RestartHelp => Running == 0
+        ? "Shuts the VM down and starts it again."
+        : $"Shuts the VM down and starts it again, which stops {Agents}. {Saved}; start {(Running == 1 ? "it" : "them")} again afterwards.";
+
+    private async Task RunAsync(Func<Task> start)
+    {
+        try
+        {
+            await start();
+            await Started.InvokeAsync();
+        }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+    }
+}

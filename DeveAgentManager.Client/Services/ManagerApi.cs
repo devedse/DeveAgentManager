@@ -129,6 +129,8 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task StopRunnerAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/stop");
 
+    public Task RestartRunnerAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/restart");
+
     public Task CancelOperationAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/cancel");
 
     public Task RerunSetupAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/setup");

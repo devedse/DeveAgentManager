@@ -40,17 +40,7 @@
                 {
                     <MudButton Href="@($"runners/{_runner.Id}/vscode")" Variant="Variant.Outlined" StartIcon="@(Tool("vscode")?.Icon ?? Icons.Material.Rounded.Code)" Disabled="!ready">VS Code</MudButton>
                 }
-                @if (manage && provider?.Capabilities.CanStartStop == true)
-                {
-                    @if (_runner.State is RunnerState.Stopped or RunnerState.Error)
-                    {
-                        <MudButton Variant="Variant.Outlined" Color="Color.Success" StartIcon="@Icons.Material.Rounded.PlayArrow" Disabled="operation is not null" OnClick="() => RunAsync(() => Api.StartRunnerAsync(RunnerId))">Start</MudButton>
-                    }
-                    else
-                    {
-                        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Stop" Disabled="!ready" OnClick="StopAsync">Stop</MudButton>
-                    }
-                }
+                <RunnerPowerActions Runner="_runner" Provider="provider" Started="() => _tab = 1" />
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" Disabled="!ready" OnClick="NewAgentAsync">New agent</MudButton>
             </Actions>
         </PageHeader>
@@ -60,7 +50,7 @@
             <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-4">
                 <div class="alert-title">Something went wrong</div>
                 <div>@_runner.StateMessage</div>
-                <div class="alert-hint">Check the setup log, then use <b>Re-run setup</b> under Operations (or <b>Start</b>) to try again.</div>
+                <div class="alert-hint">Check the setup log, then use <b>Update all</b> (or <b>Start</b>) to try again.</div>
             </MudAlert>
         }
         else if (operation is not null || StateStyles.For(_runner.State).Busy)
@@ -81,7 +71,7 @@
         {
             <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4" Dense="true">
                 This Runner was set up with setup script version @_runner.SetupVersion; the current version is @_info!.SetupVersion.
-                Use <b>Re-run setup</b> under Operations to update it.
+                Use <b>Update all</b> to update it.
             </MudAlert>
         }
 
@@ -254,7 +244,7 @@
                             <MudIcon Icon="@Icons.Material.Rounded.Build" Class="operation-icon" />
                             <div class="operation-text">
                                 <div class="operation-name help-heading"><span>Re-run setup</span><HelpTip Label="Re-run setup">Everything again: tools, tmux and git config, the shared Setup Profile, harnesses and their packages, and each person's own git identity, GitHub token, environment and SSH keys. Safe to repeat.</HelpTip></div>
-                                <div class="operation-description">@SetupVersionText</div>
+                                <div class="operation-description">Same as Update all. @SetupVersionText</div>
                             </div>
                             <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="operation is not null || _runner.State == RunnerState.Stopped" OnClick="RerunSetupAsync">Run</MudButton>
                         </div>
@@ -448,19 +438,6 @@
 
     private async Task NewAgentAsync() =>
         await Dialogs.ShowAsync<NewAgentDialog>("New agent", new DialogParameters<NewAgentDialog> { { d => d.RunnerId, RunnerId } });
-
-    private async Task StopAsync()
-    {
-        var running = _runner!.Agents.Count(a => a.State == AgentState.Running);
-        var confirmed = await Dialogs.ShowMessageBoxAsync(
-            $"Stop '{_runner.Name}'?",
-            running > 0 ? $"The VM is shut down, which stops {running} running {(running == 1 ? "agent" : "agents")}. Their conversations can be resumed later." : "The VM is shut down. You can start it again later.",
-            yesText: "Stop", cancelText: "Cancel");
-        if (confirmed == true)
-        {
-            await RunAsync(() => Api.StopRunnerAsync(RunnerId));
-        }
-    }
 
     private async Task ForgetHostKeyAsync()
     {

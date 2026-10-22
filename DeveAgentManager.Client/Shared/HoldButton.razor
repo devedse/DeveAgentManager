@@ -1,0 +1,203 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+@* A button for disruptive but recoverable actions (AGENTS.md, "UI: hold to confirm"): press and hold it for a few
+   seconds instead of confirming in a dialog. A click only shows "Hold 3 seconds to confirm", which fades again when
+   released; holding fills the button and counts down, and at 0 it shows ActiveText ("Stopping…") and runs OnConfirmed.
+   Releasing, leaving the button, scrolling or Escape cancels. Space and Enter can be held too. *@
+<span class="hold-button @Class" @ref="_root" style="--hold-seconds: @(Seconds)s"
+      @onpointerdown="PressAsync" @onpointerup="ReleaseAsync" @onpointercancel="ReleaseAsync" @onpointerleave="LeaveAsync"
+      @onpointerenter="Enter" @onkeydown="KeyDownAsync" @onkeyup="KeyUpAsync" @onfocusin="FocusIn" @onfocusout="FocusOut"
+      @oncontextmenu:preventDefault="true" @onclick:preventDefault="true" @onclick:stopPropagation="true">
+    <MudTooltip Visible="TipVisible" ShowOnHover="false" ShowOnFocus="false" ShowOnClick="false" Placement="Placement.Bottom" Arrow="true" Class="help-tooltip">
+        <ChildContent>
+            <MudButton Variant="Variant" Color="Color" Size="Size" StartIcon="@Icon" Disabled="Disabled" Ripple="false"
+                       Class="@($"hold-button-control {(_phase == Phase.Holding ? "hold-button-holding" : "")}")" aria-describedby="@_hintId">@Text</MudButton>
+        </ChildContent>
+        <TooltipContent>
+            <div class="help-tip-content">
+                @if (Help is not null)
+                {
+                    <p>@Help</p>
+                }
+                <p><b>Hold for @Seconds seconds to confirm.</b></p>
+            </div>
+        </TooltipContent>
+    </MudTooltip>
+    <span id="@_hintId" class="visually-hidden">@Help Hold for @Seconds seconds to confirm.</span>
+    @if (_phase != Phase.Idle)
+    {
+        <span class="hold-bubble hold-bubble-@_phase.ToString().ToLowerInvariant() @(_leaving ? "hold-bubble-leaving" : "")" role="status">
+            @if (_phase == Phase.Confirmed)
+            {
+                <MudIcon Icon="@Icons.Material.Rounded.CheckCircle" Size="Size.Small" Class="hold-bubble-done" />
+            }
+            else
+            {
+                <span class="hold-count" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle class="hold-count-track" cx="12" cy="12" r="10" /><circle class="hold-count-value" cx="12" cy="12" r="10" pathLength="100" /></svg>
+                    <span>@_remaining</span>
+                </span>
+            }
+            <span class="hold-bubble-text">@(_phase == Phase.Confirmed ? $"{ActiveText}…" : $"Hold {Seconds} seconds to confirm")</span>
+        </span>
+    }
+</span>
+
+@code {
+    /// <summary>The button's label, e.g. "Stop".</summary>
+    [Parameter, EditorRequired] public string Text { get; set; } = "";
+    /// <summary>Shown once confirmed while <see cref="OnConfirmed"/> runs, e.g. "Stopping".</summary>
+    [Parameter, EditorRequired] public string ActiveText { get; set; } = "";
+    /// <summary>What it does, in the tooltip on hover and keyboard focus, and for screen readers.</summary>
+    [Parameter] public string? Help { get; set; }
+    [Parameter] public EventCallback OnConfirmed { get; set; }
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public Color Color { get; set; } = Color.Default;
+    [Parameter] public Variant Variant { get; set; } = Variant.Outlined;
+    [Parameter] public Size Size { get; set; } = Size.Medium;
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public int Seconds { get; set; } = 3;
+
+    private enum Phase { Idle, Holding, Released, Confirmed }
+
+    // A short click keeps the hint up long enough to read; the bubble then fades out (as long as its CSS transition).
+    private static readonly TimeSpan HintAtLeast = TimeSpan.FromMilliseconds(1200);
+    private static readonly TimeSpan ConfirmedAtLeast = TimeSpan.FromMilliseconds(1500);
+    private const int FadeMilliseconds = 400;
+
+    private readonly string _hintId = $"hold-{Guid.NewGuid():N}";
+    private ElementReference _root;
+    private IJSObjectReference? _module;
+    private Phase _phase;
+    private int _remaining;
+    private bool _leaving, _place, _hovered, _keyboardFocus, _keyHeld;
+    private DateTime _shownAt, _pointerDownAt;
+    private CancellationTokenSource? _hold;
+    // Each press or release supersedes the timers of the one before.
+    private int _generation;
+
+    private bool TipVisible => _phase == Phase.Idle && !Disabled && (_hovered || _keyboardFocus);
+
+    private void Enter(PointerEventArgs e) => _hovered = e.PointerType == "mouse";
+
+    private Task LeaveAsync(PointerEventArgs e)
+    {
+        _hovered = false;
+        return ReleaseAsync();
+    }
+
+    private void FocusIn() => _keyboardFocus = DateTime.UtcNow - _pointerDownAt > TimeSpan.FromMilliseconds(500);
+    private void FocusOut() => _keyboardFocus = false;
+
+    private Task PressAsync(PointerEventArgs e)
+    {
+        _pointerDownAt = DateTime.UtcNow;
+        return e.PointerType == "mouse" && e.Button != 0 ? Task.CompletedTask : HoldAsync();
+    }
+
+    private Task KeyDownAsync(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") return ReleaseAsync();
+        if (e.Key is not (" " or "Enter") || e.Repeat || _keyHeld) return Task.CompletedTask;
+        _keyHeld = true;
+        return HoldAsync();
+    }
+
+    private Task KeyUpAsync(KeyboardEventArgs e)
+    {
+        if (e.Key is not (" " or "Enter")) return Task.CompletedTask;
+        _keyHeld = false;
+        return ReleaseAsync();
+    }
+
+    private async Task HoldAsync()
+    {
+        if (Disabled || _phase is Phase.Holding or Phase.Confirmed) return;
+        var generation = ++_generation;
+        _hold?.Cancel();
+        _hold = new CancellationTokenSource();
+        var token = _hold.Token;
+        _place = _phase == Phase.Idle;
+        _phase = Phase.Holding;
+        _leaving = false;
+        _remaining = Seconds;
+        _shownAt = DateTime.UtcNow;
+        StateHasChanged();
+        try
+        {
+            while (_remaining > 0)
+            {
+                await Task.Delay(1000, token);
+                _remaining--;
+                if (_remaining > 0) StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException) { return; }
+
+        _phase = Phase.Confirmed;
+        _shownAt = DateTime.UtcNow;
+        StateHasChanged();
+        try { await OnConfirmed.InvokeAsync(); }
+        finally
+        {
+            var shown = DateTime.UtcNow - _shownAt;
+            if (shown < ConfirmedAtLeast) await Task.Delay(ConfirmedAtLeast - shown);
+            if (generation == _generation) await FadeAsync(generation);
+        }
+    }
+
+    private async Task ReleaseAsync()
+    {
+        if (_phase != Phase.Holding) return;
+        _hold?.Cancel();
+        _phase = Phase.Released;
+        var generation = ++_generation;
+        StateHasChanged();
+        var shown = DateTime.UtcNow - _shownAt;
+        if (shown < HintAtLeast) await Task.Delay(HintAtLeast - shown);
+        if (generation == _generation) await FadeAsync(generation);
+    }
+
+    private async Task FadeAsync(int generation)
+    {
+        _leaving = true;
+        StateHasChanged();
+        await Task.Delay(FadeMilliseconds);
+        if (generation != _generation) return;
+        _phase = Phase.Idle;
+        _leaving = false;
+        StateHasChanged();
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Disabled while held (the Runner got busy): nothing to confirm any more.
+        if (Disabled && _phase == Phase.Holding) _ = ReleaseAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            if (firstRender) _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/hold-button.js");
+            if (_place && _module is not null)
+            {
+                _place = false;
+                await _module.InvokeVoidAsync("place", _root);
+            }
+        }
+        catch (JSDisconnectedException) { }
+        catch (JSException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _generation++;
+        _hold?.Cancel();
+        _hold?.Dispose();
+        try { if (_module is not null) await _module.DisposeAsync(); }
+        catch (JSDisconnectedException) { }
+    }
+}

@@ -66,6 +66,25 @@ GitHub Primer's loading guidance.)
 
 `DeveAgentManager.Tests/Browser/loading-states.mjs` checks this with a slow and a failing API.
 
+## UI: hold to confirm
+
+Disruptive actions that lose nothing for good, where a confirmation dialog would only slow people down, use
+`<HoldButton>` (`DeveAgentManager.Client/Shared/HoldButton.razor`): press and hold it for 3 seconds. For now that is only
+a Runner's Start, Stop, Restart and Update all (`RunnerPowerActions`, on the Runners page's cards and in the Runner
+page's header, with the same explanations).
+
+- **A click does nothing.** It shows "Hold 3 seconds to confirm" in a bubble on the button, which fades away once
+  released, so it's clear nothing was confirmed.
+- **Holding** fills the button and counts down 3, 2, 1 in the bubble. At 0 the bubble says what is happening
+  (`ActiveText`, e.g. "Stopping…") and `OnConfirmed` runs.
+- **Cancelling.** Releasing, moving off the button, scrolling (pointer cancel), Escape or the button becoming disabled
+  before 0 cancels. Space and Enter can be held instead of a mouse button or finger.
+- **Explain it.** `Help` says what the action does; it shows in a tooltip on hover and keyboard focus, with "Hold for 3
+  seconds to confirm", and is read by screen readers.
+- **Keep dialogs** for what can't be undone (deleting) and for actions that need a choice or input.
+
+`DeveAgentManager.Tests/Browser/hold-to-confirm.mjs` checks this with mouse, keyboard and touch.
+
 ## UI: agent order
 
 Every list of agents puts the one that replied last first: sort with `AgentOrder.ByLastReply()`

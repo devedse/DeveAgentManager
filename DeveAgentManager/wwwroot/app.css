@@ -701,6 +701,7 @@ a {
 }
 
 .runner-card {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -745,6 +746,41 @@ a {
     font-weight: 700;
     font-size: 1.05rem;
 }
+
+/* The name links to the Runner and covers the whole card; the action buttons sit above it. */
+.runner-card-link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+}
+
+    .runner-card-link::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: var(--dam-radius);
+    }
+
+    .runner-card-link:focus-visible { outline: none; }
+    .runner-card-link:focus-visible::after { outline: 2px solid var(--dam-primary); outline-offset: 2px; }
+
+.runner-card-actions {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin: auto -8px -10px;
+    padding: 6px 0 0;
+    border-top: 1px solid var(--dam-border);
+}
+
+.runner-card-update { margin-left: auto; }
+
+/* A hovered card is lifted (transform), so its hold bubble would otherwise sit under the next card. */
+.runner-card:has(.hold-bubble) { z-index: 2; }
 
 .runner-card-provider {
     color: var(--dam-muted);
@@ -3161,7 +3197,8 @@ body:has(.terminal-layout) .agent-attention-popover {
 .help-tip { display: inline-flex; flex: 0 0 auto; vertical-align: middle; }
 .help-tip .help-tip-button { color: var(--mud-palette-text-secondary); padding: 6px; }
 .help-tip .help-tip-button:focus-visible { outline: 2px solid var(--mud-palette-primary); outline-offset: 2px; }
-.help-tooltip { max-width: min(360px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; white-space: normal; }
+/* MudBlazor's popover positioning sets an inline max-width: none, which would stretch long help across the page. */
+.help-tooltip { max-width: min(360px, calc(100vw - 32px)) !important; max-height: calc(100dvh - 32px); overflow-y: auto; white-space: normal; }
 .help-tip-content { font-size: .875rem; line-height: 1.5; text-align: left; overflow-wrap: anywhere; }
 .help-tip-content p + p { margin-top: 8px; }
 .help-heading .section-title { margin-bottom: 0; }
@@ -3570,4 +3607,138 @@ span.skeleton { display: inline-block; vertical-align: middle; }
     align-items: center;
     gap: 4px;
     color: var(--dam-text);
+}
+
+/* Hold to confirm (HoldButton, AGENTS.md "UI: hold to confirm"): the button fills while held, and a bubble above it
+   says to hold, counts down and then says what is happening. Released early, the bubble fades out. */
+.hold-button {
+    position: relative;
+    display: inline-flex;
+    touch-action: manipulation;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.hold-button-control {
+    background-image: linear-gradient(color-mix(in srgb, currentColor 22%, transparent), color-mix(in srgb, currentColor 22%, transparent));
+    background-repeat: no-repeat;
+    background-size: 0% 100%;
+    transition: background-size 250ms ease, background-color 250ms ease, border-color 250ms ease, color 250ms ease;
+}
+
+    .hold-button-control.hold-button-holding {
+        background-size: 100% 100%;
+        transition: background-size var(--hold-seconds) linear;
+    }
+
+.hold-bubble {
+    --hold-arrow: var(--dam-border-strong);
+    position: absolute;
+    bottom: calc(100% + 10px);
+    left: 50%;
+    z-index: 1400;
+    translate: calc(-50% + var(--hold-shift, 0px)) 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px 7px 8px;
+    border: 1px solid var(--dam-border-strong);
+    border-radius: 10px;
+    background: var(--dam-surface-3);
+    color: var(--dam-text);
+    box-shadow: 0 14px 34px -10px rgba(0, 0, 0, 0.55);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    pointer-events: none;
+    animation: hold-bubble-in 160ms ease-out backwards;
+    transition: opacity 400ms ease, transform 400ms ease;
+}
+
+    .hold-bubble::after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        left: calc(50% - var(--hold-shift, 0px));
+        width: 10px;
+        height: 10px;
+        translate: -50% -50%;
+        rotate: 45deg;
+        background: inherit;
+        border-right: 1px solid var(--hold-arrow);
+        border-bottom: 1px solid var(--hold-arrow);
+    }
+
+    .hold-bubble.hold-bubble-below {
+        top: calc(100% + 10px);
+        bottom: auto;
+    }
+
+        .hold-bubble.hold-bubble-below::after {
+            top: auto;
+            bottom: 100%;
+            translate: -50% 50%;
+            border: 0;
+            border-left: 1px solid var(--hold-arrow);
+            border-top: 1px solid var(--hold-arrow);
+        }
+
+    .hold-bubble.hold-bubble-leaving {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+
+.hold-count {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--dam-primary-text);
+}
+
+    .hold-count svg {
+        position: absolute;
+        inset: 0;
+        rotate: -90deg;
+    }
+
+    .hold-count circle {
+        fill: none;
+        stroke-width: 2.5;
+    }
+
+.hold-count-track { stroke: color-mix(in srgb, var(--dam-muted) 30%, transparent); }
+
+.hold-count-value {
+    stroke: var(--dam-primary);
+    stroke-linecap: round;
+    stroke-dasharray: 100;
+    stroke-dashoffset: 100;
+}
+
+.hold-bubble-holding .hold-count-value { animation: hold-count var(--hold-seconds) linear forwards; }
+.hold-bubble-released { color: var(--dam-muted); }
+.hold-bubble-done { color: var(--dam-success); }
+
+@keyframes hold-bubble-in {
+    from { opacity: 0; transform: translateY(4px) scale(0.96); }
+}
+
+@keyframes hold-count {
+    to { stroke-dashoffset: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .hold-bubble { animation-name: hold-fade-in; }
+    .hold-bubble.hold-bubble-leaving { transform: none; }
+}
+
+@keyframes hold-fade-in {
+    from { opacity: 0; }
 }

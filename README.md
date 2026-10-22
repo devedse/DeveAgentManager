@@ -50,6 +50,9 @@ when you close the tab.
 - On a Runner's page, **Re-run setup** runs the whole setup again, and **Update pi** only installs the latest pi,
   updates its packages and applies Manager settings → pi. Every step is idempotent, so both are safe to repeat. Running agents
   keep running and use the new versions after a restart.
+- Each Runner card on the Runners page and the top of a Runner's page have **Start** or **Stop**, **Restart** (stop,
+  then start; running agents stop as with Stop) and **Update all** (the same as Re-run setup). Each is held for 3
+  seconds to confirm instead of asking in a dialog; hovering one says what it does.
 
 See [PLAN.md](PLAN.md) for where this is going (Jobs API, projects).
 
