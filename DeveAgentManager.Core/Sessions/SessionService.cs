@@ -212,6 +212,11 @@ public sealed class SessionService(
     public async Task AttachToAgentAsync(Runner runner, Agent agent, Guid? continueSessionId, CancellationToken cancellationToken)
     {
         using var lease = await LockAsync(cancellationToken);
+        await AttachToAgentLockedAsync(runner, agent, continueSessionId, cancellationToken);
+    }
+
+    internal async Task AttachToAgentLockedAsync(Runner runner, Agent agent, Guid? continueSessionId, CancellationToken cancellationToken)
+    {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         StoredSession stored;
         if (continueSessionId is { } existingId)

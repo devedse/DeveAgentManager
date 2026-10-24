@@ -8,6 +8,9 @@ when you close the tab.
 - **Runner**: a machine that hosts agents. Proxmox Runners are full clones of a template VM.
 - **Agent**: a harness ([pi](https://pi.dev), [Claude Code](https://code.claude.com),
   [Codex](https://github.com/openai/codex) or [Grok Build](https://docs.x.ai/build/overview)) running in its own tmux session and working folder on a Runner.
+- **Project**: a repository or folder grouping Main and independent workspace agents on one Runner. New Git worktrees
+  have their own branches and agents; switching views leaves other agents running. Move project transfers the complete
+  repository and all managed worktrees. See [workspace behaviour and rollback](docs/project-workspaces.md).
 - **Users**: everyone signs in with a username and password of their own and has personal or shared harness logins, a GitHub
   token, git identity, environment variables and SSH keys (**My settings**). Roles: *settings manager*, *user
   manager*, *runner creator*, *runner manager*, *conversation manager*, *log viewer* and *harness login manager*; *Admin* is all of them. A Runner has an owner and people with *Use*

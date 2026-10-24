@@ -137,8 +137,25 @@ public class RunnerActivity
     public string? Error { get; set; }
 }
 
+/// <summary>A repository or folder on one Runner. Existing agents migrate to separate projects.</summary>
+public class Project
+{
+    public Guid Id { get; set; }
+    public Guid RunnerId { get; set; }
+    public Guid OwnerId { get; set; }
+    public string Name { get; set; } = "";
+    public string RootDirectory { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+    public List<Agent> Agents { get; set; } = [];
+}
+
 public class Agent
 {
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public bool IsWorktree { get; set; }
+    /// <summary>Durable creation intent; Start verifies an interrupted creation without repeating Git mutations.</summary>
+    public string? WorkspaceCreationJson { get; set; }
     /// <summary>Durable move intent and rollback checkpoints; credentials are never included.</summary>
     public string? MoveJson { get; set; }
     /// <summary>The latest completed move result, retained after its rollback checkpoints are cleared.</summary>

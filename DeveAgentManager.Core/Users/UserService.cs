@@ -310,6 +310,7 @@ public sealed partial class UserService(
             }
 
             await db.SaveChangesAsync(cancellationToken);
+            await db.Projects.Where(p => p.OwnerId == userId).ExecuteUpdateAsync(s => s.SetProperty(p => p.OwnerId, heir.Id), cancellationToken);
             await db.AgentShares.Where(s => s.UserId == heir.Id && db.Agents.Any(a => a.Id == s.AgentId && a.OwnerId == userId)).ExecuteDeleteAsync(cancellationToken);
             foreach (var agent in await db.Agents.Where(a => a.OwnerId == userId).ToListAsync(cancellationToken))
             {

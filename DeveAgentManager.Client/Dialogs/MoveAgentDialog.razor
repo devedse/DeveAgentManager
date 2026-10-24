@@ -5,11 +5,11 @@
     <DialogContent>
         <div class="help-heading">
             <MudText Typo="Typo.subtitle1">Destination runner</MudText>
-            <HelpTip Label="Moving an agent">
-                <p>The agent stops, then its working folder, native history, pasted uploads and runner-local attachments transfer to the destination. Saved screenshots, shared documents, conversations and sharing keep the same agent identity.</p>
+            <HelpTip Label="Moving a project">
+                <p>All project agents stop, then Main, every managed worktree, native histories and referenced attachments transfer together. Conversations, sharing and shared files keep their identities.</p>
                 <p>The working path stays the same. Existing destination folders are never overwritten. Choose a ready runner with the same SSH username, the required harness and permission to use it.</p>
-                <p>A running agent resumes after file verification. A failed transfer falls back to the source. If the Manager cannot establish whether a process stopped or started, it retains the source and offers recovery instead of starting a second copy.</p>
-                <p>Linked Git worktrees and folders shared with other agents must be separated first. Source files are removed after the destination starts successfully.</p>
+                <p>Only agents that were running resume after file verification. A failed transfer falls back to the source. If the Manager cannot establish whether a process stopped or started, it retains the source and offers recovery instead of starting a second copy.</p>
+                <p>Managed linked worktrees move with their complete repository. External worktrees and folders shared with another project are blocked. Source files are removed after all required destination agents start successfully.</p>
             </HelpTip>
         </div>
         <LoadingSection Loaded="_runnersLoaded" Error="@_runnersError" Retry="LoadRunnersAsync" Label="Loading destination runners">
@@ -34,9 +34,9 @@
         <div class="help-heading mt-4">
             <MudText Typo="Typo.subtitle1">Processes</MudText>
             <HelpTip Label="Stopping processes for a move">
-                <p>These processes were started by this agent and are still running outside its current terminal. They may use the working folder, so they must stop before files can move.</p>
+                <p>These processes were started by agents in this project and are still running outside its current terminal. They may use the working folder, so they must stop before files can move.</p>
                 <p>Stop processes and move asks the listed processes to exit, waits ten seconds, then force-stops any that remain. In-memory work can be lost. Their files stay, but these background commands are not restarted on either runner if the move succeeds or falls back.</p>
-                <p>The Manager rechecks the process identities and ownership before stopping them. New processes require another review. The agent's live terminal and other agents' processes are excluded.</p>
+                <p>The Manager rechecks the process identities and ownership before stopping them. New processes require another review. The project's live terminals and other projects' processes are excluded.</p>
             </HelpTip>
             <MudIconButton Icon="@Icons.Material.Rounded.Refresh" Size="Size.Small" Disabled="_busy || _checking" OnClick="RefreshProcessesAsync" aria-label="Refresh background processes" />
         </div>
@@ -72,7 +72,7 @@
     </DialogContent>
     <DialogActions>
         <MudButton Disabled="_busy" OnClick="() => Dialog.Cancel()">Cancel</MudButton>
-        <MudButton Variant="Variant.Filled" Color="@(_processes.Count > 0 ? Color.Error : Color.Primary)" Disabled="@(_busy || _checking || !_processesLoaded || _processesError is not null || _target is null)" OnClick="MoveAsync">@(_busy ? "Starting move…" : _processes.Count > 0 ? "Stop processes and move" : "Move agent")</MudButton>
+        <MudButton Variant="Variant.Filled" Color="@(_processes.Count > 0 ? Color.Error : Color.Primary)" Disabled="@(_busy || _checking || !_processesLoaded || _processesError is not null || _target is null)" OnClick="MoveAsync">@(_busy ? "Starting move…" : _processes.Count > 0 ? "Stop processes and move" : "Move project")</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -94,9 +94,10 @@
         {
             _runnersError = null;
             var runners = await Api.ListRunnersAsync();
+            var workspaces = (await Api.ListAgentsAsync()).Where(a => WorkspaceGroups.ProjectKey(a) == WorkspaceGroups.ProjectKey(Agent)).ToList();
             var current = runners.FirstOrDefault(r => r.Id == Agent.RunnerId);
             _runners = runners.Where(r => r.Id != Agent.RunnerId && r.State == RunnerState.Ready && r.Operation is null
-                && r.Access >= RunnerAccess.Use && r.Username == current?.Username && r.HarnessIds.Contains(Agent.HarnessId))
+                && r.Access >= RunnerAccess.Use && r.Username == current?.Username && workspaces.All(a => r.HarnessIds.Contains(a.HarnessId)))
                 .OrderBy(r => r.Name).ToList();
             _runnersLoaded = true;
         }
@@ -140,6 +141,6 @@
         finally { _busy = false; }
     }
     public static async Task ShowAsync(IDialogService dialogs, AgentDto agent) =>
-        await (await dialogs.ShowAsync<MoveAgentDialog>($"Move {agent.Name}", new DialogParameters<MoveAgentDialog> { { d => d.Agent, agent } },
+        await (await dialogs.ShowAsync<MoveAgentDialog>($"Move project {WorkspaceGroups.ProjectName(agent)}", new DialogParameters<MoveAgentDialog> { { d => d.Agent, agent } },
             new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small })).Result;
 }

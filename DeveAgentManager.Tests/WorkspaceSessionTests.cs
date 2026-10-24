@@ -19,6 +19,40 @@ public sealed class WorkspaceSessionTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
+    public async Task ProjectMigrationPreservesLiveIdentityAndCanBeRevertedWithoutRemovingAgentsOrConversations()
+    {
+        using var rig = new Rig();
+        await using var db = rig.Factory.CreateDbContext();
+        var migrations = db.Database.GetMigrations().ToArray();
+        var project = Array.FindIndex(migrations, m => m.EndsWith("_ProjectWorkspaces", StringComparison.Ordinal));
+        await db.GetService<IMigrator>().MigrateAsync(migrations[project - 1], Ct);
+        await InsertAsync(db, "Runners", new() { ["Id"] = rig.Runner.Id, ["OwnerId"] = User.BootstrapId, ["Name"] = "test-runner", ["State"] = "Ready" });
+        await InsertAsync(db, "Agents", new() { ["Id"] = rig.Agent.Id, ["OwnerId"] = User.BootstrapId, ["RunnerId"] = rig.Runner.Id,
+            ["Name"] = "project", ["WorkingDirectory"] = "/work/example", ["HarnessId"] = "pi", ["TmuxSession"] = "same-live-terminal", ["HarnessSessionId"] = "same-native-id", ["State"] = "Running" });
+        var session = Guid.NewGuid();
+        await InsertAsync(db, "Sessions", new() { ["Id"] = session, ["OwnerId"] = User.BootstrapId, ["AgentId"] = rig.Agent.Id,
+            ["WorkspaceAgentId"] = rig.Agent.Id, ["Title"] = "Existing conversation", ["HarnessId"] = "pi" });
+        await db.Database.MigrateAsync(Ct);
+        var agent = await db.Agents.AsNoTracking().SingleAsync(Ct);
+        Assert.Equal((rig.Agent.Id, "same-live-terminal", "same-native-id", AgentState.Running), (agent.ProjectId, agent.TmuxSession, agent.HarnessSessionId, agent.State));
+        Assert.Equal("/work/example", (await db.Projects.SingleAsync(Ct)).RootDirectory);
+        Assert.Equal(session, (await db.Sessions.AsNoTracking().SingleAsync(Ct)).Id);
+        // Runner deletion must cascade through both Projects and Agents without a foreign-key ordering failure.
+        var deleteRunner = new Runner { Id = Guid.NewGuid(), Name = "delete-test", OwnerId = User.BootstrapId };
+        var deleteProject = new Project { Id = Guid.NewGuid(), RunnerId = deleteRunner.Id, OwnerId = User.BootstrapId, Name = "delete-test" };
+        db.Runners.Add(deleteRunner); db.Projects.Add(deleteProject);
+        db.Agents.Add(new Agent { Id = Guid.NewGuid(), RunnerId = deleteRunner.Id, OwnerId = User.BootstrapId, Project = deleteProject, Name = "delete-test" });
+        await db.SaveChangesAsync(Ct);
+        db.Runners.Remove(deleteRunner); await db.SaveChangesAsync(Ct);
+        db.ChangeTracker.Clear();
+        await db.GetService<IMigrator>().MigrateAsync(migrations[project - 1], Ct);
+        Assert.Equal(1L, await db.Database.SqlQueryRaw<long>("SELECT COUNT(*) AS Value FROM Agents").SingleAsync(Ct));
+        Assert.Equal(1L, await db.Database.SqlQueryRaw<long>("SELECT COUNT(*) AS Value FROM Sessions").SingleAsync(Ct));
+        await db.Database.MigrateAsync(Ct);
+        Assert.Equal(rig.Agent.Id, (await db.Projects.AsNoTracking().SingleAsync(Ct)).Id);
+    }
+
+    [Fact]
     public async Task NewAndSelectedSessionsKeepWorkspaceAndOnlyOneActiveConversation()
     {
         using var rig = new Rig();

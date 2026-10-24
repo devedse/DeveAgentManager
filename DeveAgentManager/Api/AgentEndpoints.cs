@@ -27,6 +27,12 @@ internal static class AgentEndpoints
             return DtoMapper.Agent(created, user);
         }).ForAnyUser();
 
+        agents.MapPost("/{agentId:guid}/worktrees", async (Guid agentId, CreateWorktreeRequest request, CurrentUser user, AgentService service, CancellationToken ct) =>
+        {
+            var agent = await service.CreateWorktreeAsync(user, agentId, request, ct);
+            return DtoMapper.Agent((await service.GetAsync(agent.Id, ct))!, user);
+        }).RequireAgent(AgentAccess.Owner);
+
         agents.MapPost("/{agentId:guid}/start", async (Guid agentId, bool? restart, AgentService service, CancellationToken ct) =>
         {
             await service.StartAsync(agentId, restart ?? false, ct);

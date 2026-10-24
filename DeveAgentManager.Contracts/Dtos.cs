@@ -198,7 +198,11 @@ public sealed record AgentDto(
     string? RunningAccountUsername = null,
     bool CanUseRunner = false,
     AgentGitIdentityDto? GitIdentity = null,
-    AgentGitIdentityDto? RunningGitIdentity = null);
+    AgentGitIdentityDto? RunningGitIdentity = null,
+    Guid? ProjectId = null,
+    string? ProjectName = null,
+    bool IsWorktree = false,
+    bool WorkspaceCreationPending = false);
 
 /// <summary>
 /// An agent's task list (dam-tools tasks), shown next to its terminal. <see cref="Revision"/> grows with every change,

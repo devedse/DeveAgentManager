@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Data;
+using DeveAgentManager.Core.Ssh;
 using DeveAgentManager.Contracts;
 using Xunit;
 
@@ -11,6 +12,64 @@ namespace DeveAgentManager.Tests;
 public sealed class AgentMoveFilesTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Theory(Timeout = 120_000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompleteRepositoryMovePreservesWorktreesDirtyFilesRuntimeHistoriesAndRollback(bool rollback)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipWhen(!OperatingSystem.IsLinux() || !File.Exists("/usr/sbin/sshd"), "Requires isolated OpenSSH.");
+        await using var ssh = await RunnerShellIntegrationTests.Fixture.StartAsync();
+        var home = ssh.Root + "/project-home";
+        var root = home + "/work/project";
+        Directory.CreateDirectory(root);
+        await File.WriteAllTextAsync(root + "/app.txt", "committed", Ct);
+        var git = "git -C " + ShellQuote.Quote(root);
+        (await ssh.Shell.RunAsync(ssh.Runner, git + " init -b main && " + git + " add app.txt && " + git + " -c user.name=Test -c user.email=test@example.com commit -m initial", cancellationToken: Ct)).EnsureSuccess("Test repository");
+        var owner = Guid.NewGuid().ToString("N"); var main = Guid.NewGuid(); var child = Guid.NewGuid();
+        var path = root + ".dam-worktrees/" + main.ToString("N") + "/" + child.ToString("N");
+        var intent = new AgentService.WorktreeIntent(root, path, "feature/test", "HEAD", child.ToString("N"));
+        (await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorktreeCommand(intent, "create"), cancellationToken: Ct)).EnsureSuccess("Test worktree");
+        // A second create must refuse the recorded operation without touching dirty files.
+        await File.WriteAllTextAsync(root + "/app.txt", "dirty Main", Ct);
+        await File.WriteAllTextAsync(path + "/app.txt", "dirty worktree", Ct);
+        await File.WriteAllBytesAsync(path + "/untracked.bin", [0, 1, 255], Ct);
+        var repeated = await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorktreeCommand(intent, "create"), cancellationToken: Ct);
+        Assert.False(repeated.Succeeded);
+        (await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorktreeCommand(intent, "verify"), cancellationToken: Ct)).EnsureSuccess("Verify after lost response");
+        var runtime = home + "/.deveagentmanager/agent-runtime/" + owner + "/" + child.ToString("N") + "/native";
+        Directory.CreateDirectory(runtime);
+        await File.WriteAllTextAsync(runtime + "/history.jsonl", "{\"test\":\"exact history\"}\n", Ct);
+        var move = new AgentMoveState(Guid.NewGuid().ToString("N"), main, Guid.NewGuid(), Guid.NewGuid(), root, owner, main.ToString("N"), AgentState.Stopped, false, Home: home,
+            Workspaces: [new(main, root, owner, main.ToString("N"), "test-main", AgentState.Stopped, false),
+                new(child, path, owner, child.ToString("N"), "test-child", AgentState.Running, true)]);
+        async Task<string> Phase(string phase) => (await ssh.Shell.RunAsync(ssh.Runner, AgentService.MoveCommand(phase, move), cancellationToken: Ct)).EnsureSuccess("Project move " + phase).Output.Trim();
+        await Phase("preflight");
+        move = move with { ArchiveSha256 = await Phase("pack") };
+        var remote = home + "/.deveagentmanager/moves/" + move.Id + "/bundle.tar";
+        var local = ssh.Root + "/project-transfer.tar"; File.Copy(remote, local);
+        var original = home + "-source"; Directory.Move(home, original);
+        Directory.CreateDirectory(Path.GetDirectoryName(remote)!); File.Copy(local, remote);
+        await Phase("unpack"); await Phase("install"); await Phase("verify-worktrees");
+        Assert.Equal("dirty Main", await File.ReadAllTextAsync(root + "/app.txt", Ct));
+        Assert.Equal("dirty worktree", await File.ReadAllTextAsync(path + "/app.txt", Ct));
+        Assert.Equal(new byte[] { 0, 1, 255 }, await File.ReadAllBytesAsync(path + "/untracked.bin", Ct));
+        Assert.Equal("{\"test\":\"exact history\"}\n", await File.ReadAllTextAsync(runtime + "/history.jsonl", Ct));
+        if (rollback)
+        {
+            await Phase("cleanup-target");
+            Assert.False(Directory.Exists(root)); Assert.False(Directory.Exists(path));
+            Assert.True(Directory.Exists(original + "/work/project"));
+        }
+        else
+        {
+            Directory.Move(home, home + "-destination"); Directory.Move(original, home);
+            await Phase("verify-source"); await Phase("cleanup-source");
+            Assert.False(Directory.Exists(root)); Assert.False(Directory.Exists(path));
+            Assert.True(Directory.Exists(home + "-destination/work/project"));
+        }
+    }
 
     [Theory(Timeout = 120_000)]
     [InlineData(false)]

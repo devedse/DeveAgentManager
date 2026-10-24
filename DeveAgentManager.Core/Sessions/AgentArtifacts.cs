@@ -81,9 +81,24 @@ public sealed class AgentArtifacts(IDbContextFactory<ManagerDbContext> factory, 
             if (actor is not null && !await db.Agents.AnyAsync(a => a.Id == scope, ct)
                 && !actor.Has(UserRoles.ConversationManager)
                 && await db.Sessions.AnyAsync(s => s.Id == session && s.OwnerId != actor.Id, ct)) return [session];
+            if (await db.Agents.AnyAsync(a => a.Id == scope, ct))
+                return await ProjectSourcesAsync(db, scope.Value, actor, ct);
             return sources;
         }
         finally { _gate.Release(); }
+    }
+
+    private async Task<List<Guid>> ProjectSourcesAsync(ManagerDbContext db, Guid agentId, CurrentUser? actor, CancellationToken ct)
+    {
+        var project = await db.Agents.Where(a => a.Id == agentId).Select(a => a.ProjectId).SingleOrDefaultAsync(ct);
+        var agents = project is null ? new List<Guid> { agentId } : await db.Agents.Where(a => a.ProjectId == project).Select(a => a.Id).ToListAsync(ct);
+        var sources = new HashSet<Guid>();
+        foreach (var id in agents)
+        {
+            if (actor is not null && await access.AgentAsync(actor, id, ct) < AgentAccess.Read) continue;
+            sources.UnionWith(await BindAsync(db, id, ct));
+        }
+        return sources.Order().ToList();
     }
 
     public async Task<List<SessionFileDto>> ListFilesAsync(Guid session, CurrentUser? actor, CancellationToken ct) =>
@@ -160,7 +175,7 @@ public sealed class AgentArtifacts(IDbContextFactory<ManagerDbContext> factory, 
         if (await access.AgentAsync(actor, agent, ct) < AgentAccess.Read) throw new KeyNotFoundException("Agent not found or not shared with you.");
         List<Guid> sources;
         await _gate.WaitAsync(ct);
-        try { await using var db = await factory.CreateDbContextAsync(ct); sources = await BindAsync(db, agent, ct); }
+        try { await using var db = await factory.CreateDbContextAsync(ct); sources = await ProjectSourcesAsync(db, agent, actor, ct); }
         finally { _gate.Release(); }
         return (await FilesAsync(sources, ct), await ImagesAsync(sources, ct));
     }

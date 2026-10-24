@@ -92,6 +92,17 @@ Every list of agents puts the one that replied last first: sort with `AgentOrder
 replied come after, newest first. Lists grouped by agent, such as sessions, order the groups the same way.
 `DeveAgentManager.Tests/Browser/agent-order.mts` checks the pages that list agents.
 
+## Projects and workspace agents
+
+A Project groups Main and managed Git worktree agents on one Runner. Each workspace agent retains its own runtime,
+login, conversation, tasks, notifications and continuation policy. Opening a workspace never changes execution.
+Start/Stop/Restart target one agent; Move project targets Main and every managed worktree, including stopped ones.
+Keep project sharing consistent across current and future workspaces; a standalone conversation share stays narrow.
+Project groups order by their latest child reply, then children use `AgentOrder.ByLastReply()`.
+Creation intent and ownership markers reconcile interrupted Git work without repeating creation or launch. Preserve
+the one-workspace compact view and stopped/error distinctions. See [docs/project-workspaces.md](docs/project-workspaces.md)
+for UI rules, transfer/recovery, compatibility limits and database rollback.
+
 ## Documentation privacy
 
 Use reserved example domains (`example.com`, `example.org`, `.test`), placeholder credentials, and generic paths in
