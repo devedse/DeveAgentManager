@@ -167,17 +167,17 @@ try {
     }
     await page.goto(base + '/agents/' + agent.id);
     await page.getByLabel('More actions', { exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Move to another runner…', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Move project to another runner…', exact: true }).click();
     await page.getByRole('dialog').getByRole('combobox', { name: 'Runner', exact: true }).click();
     await page.getByRole('option', { name: target.name, exact: true }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Move agent', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Move project', exact: true }).click();
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
     assert.ok(mutations.some(m => m.path === '/api/agents/' + agent.id + '/move' && m.body.runnerId === target.id));
     const vite = { identity: { pid: 642, startTicks: 123456, bootId: id(900) }, name: 'vite.js (node)', workingDirectory: '/work/test-project' };
     const worker = { identity: { pid: 643, startTicks: 123457, bootId: id(900) }, name: 'python3', workingDirectory: '/work/test-project/a-folder-with-a-long-name-that-must-wrap-on-phones' };
     const openMove = async () => {
         await page.getByLabel('More actions', { exact: true }).click();
-        await page.getByRole('menuitem', { name: 'Move to another runner…', exact: true }).click();
+        await page.getByRole('menuitem', { name: 'Move project to another runner…', exact: true }).click();
         await page.getByRole('dialog').getByRole('combobox', { name: 'Runner', exact: true }).click();
         await page.getByRole('option', { name: target.name, exact: true }).click();
     };
@@ -191,7 +191,7 @@ try {
         moveDialog = page.getByRole('dialog');
         await moveDialog.locator('[role="status"]', { hasText: 'Checking background processes' }).waitFor({ state: 'attached' });
         assert.equal(await moveDialog.getByText('No blocking processes.').count(), 0);
-        assert.equal(await moveDialog.getByRole('button', { name: 'Move agent', exact: true }).isDisabled(), true);
+        assert.equal(await moveDialog.getByRole('button', { name: 'Move project', exact: true }).isDisabled(), true);
     } finally {
         processGate = null;
         releaseProcesses();

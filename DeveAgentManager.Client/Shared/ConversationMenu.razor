@@ -8,7 +8,7 @@
 else
 {
     <MudMenu @ref="_menu" AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft" Dense="true" @bind-Open="_open" @bind-Open:after="LoadAsync" Class="conversation-picker">
-        <ActivatorContent><MudButton OnClick="@context.ToggleAsync" StartIcon="@Icons.Material.Rounded.Forum" EndIcon="@Icons.Material.Rounded.ExpandMore" Size="Size.Small" aria-label="Conversations">Conversations</MudButton></ActivatorContent>
+        <ActivatorContent><MudButton OnClick="@context.ToggleAsync" StartIcon="@Icons.Material.Rounded.Forum" EndIcon="@Icons.Material.Rounded.ExpandMore" Size="Size.Small" Class="conversation-picker-button" aria-label="Conversations" title="Conversations"><span class="conversation-picker-label">Conversations</span></MudButton></ActivatorContent>
         <ChildContent>@Entries</ChildContent>
     </MudMenu>
 }

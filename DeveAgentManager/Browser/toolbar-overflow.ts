@@ -44,7 +44,11 @@ function layout(state: ToolbarState) {
     // Start from everything shown; all of this happens before the browser paints.
     for (const item of found) item.element.hidden = false;
     const name = toolbar.querySelector(state.nameSelector);
+    // A dropdown can clip its own contents, making scrollWidth look as though its title fits.
+    // Also check the name row so the picker and status cannot spill into the action buttons.
+    const nameRow = name?.parentElement;
     const fits = () => toolbar.scrollWidth <= toolbar.clientWidth + 1
+        && (!nameRow || nameRow.scrollWidth <= nameRow.clientWidth + 1)
         && !(name && name.scrollWidth > name.clientWidth + 1 && name.clientWidth < minName);
     const hidden = [];
     for (const item of found) {

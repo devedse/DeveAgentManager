@@ -3753,14 +3753,17 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .workspace-menu-heading { padding: 8px 16px; font-weight: 600; }
 .workspace-menu-row { min-width: 220px; max-width: min(380px, 75vw); }
 .workspace-menu-row > span { overflow: hidden; text-overflow: ellipsis; }
-.workspace-picker { min-width: 0; max-width: 100%; }
-.workspace-picker-button { max-width: 100%; text-transform: none !important; }
+.workspace-picker { min-width: 72px; max-width: 100%; }
+.workspace-picker-button { min-width: 0; max-width: 100%; padding: 0; text-transform: none !important; }
 .workspace-picker .mud-menu-activator { max-width: 100%; min-width: 0; }
 .workspace-picker-button .mud-button-label { overflow: hidden; white-space: nowrap; justify-content: flex-start; }
 .workspace-picker-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .workspace-picker-current { overflow: hidden; text-overflow: ellipsis; }
-.workspace-picker-button .mud-button-end-icon { flex-shrink: 0; }
+.workspace-picker-button .mud-button-icon-end { flex-shrink: 0; }
 .workspace-picker-current { color: var(--dam-muted); font-weight: normal; }
+.conversation-picker-button:has(.conversation-picker-label[hidden]) { min-width: 0; padding: 6px; }
+.conversation-picker-button:has(.conversation-picker-label[hidden]) .mud-button-icon-start { margin: 0; }
+.conversation-picker-button:has(.conversation-picker-label[hidden]) .mud-button-icon-end { display: none; }
 .conversation-menu-row { display: flex; align-items: center; max-width: min(420px, 90vw); }
 .conversation-menu-row .mud-menu-item { flex: 1; min-width: 0; }
 .workspace-branch { color: var(--dam-muted); }
