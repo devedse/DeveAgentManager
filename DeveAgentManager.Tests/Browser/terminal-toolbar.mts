@@ -11,7 +11,7 @@ const now = new Date().toISOString();
 // What leaves the toolbar first (AgentTerminal.ToolbarOverflow), with the menu entry each one becomes.
 const priority = [
     ['hint', null], ['avatar', null], ['switch-label', null], ['viewers', 'Screens (2)'], ['quick', 'Quick commands'],
-    ['images', 'Shared images (3)'], ['files', 'Shared files (1)'], ['tasks', 'Tasks (1/2)'], ['awake', 'Keep screen awake'], ['limit', 'Schedule continue'], ['sessions', 'Switch session'],
+    ['images', 'Shared images (3)'], ['files', 'Shared files (1)'], ['tasks', 'Tasks (1/2)'], ['awake', 'Keep screen awake'], ['limit', 'Schedule continue'], ['sessions', 'Conversations'],
 ];
 const selectors = { hint: '.terminal-hint', avatar: '.terminal-avatar', 'switch-label': '.switch-chip-label' };
 const fixed = ['Conversation', 'Sharing', 'Git identity…', 'Runner desktop', 'VS Code', 'Restart the harness', 'Stop the agent'];
@@ -113,7 +113,7 @@ async function run(touch) {
         assert.ok(!previousShown || shown.every(key => previousShown.includes(key)), `${label}: a narrower toolbar must not show a button the wider one didn't`);
         previousShown = shown;
         if (width === 1600) assert.equal(hidden, 0, `${label}: everything fits on a wide screen ${JSON.stringify(s.items)}`);
-        if (width >= 390) assert.equal(s.items.sessions, 'toolbar', `${label}: the session button stays on phones`);
+        if (width >= 600) assert.equal(s.items.sessions, 'toolbar', `${label}: the conversations dropdown stays on wider screens`);
 
         // Everything that left the toolbar is in the menu, and nothing else is; the fixed actions always are, Restart and Stop last.
         if ([1600, 1100, 900, 768, 600, 390, 320].includes(width)) {

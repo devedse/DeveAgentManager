@@ -8,6 +8,7 @@
             <Help>
                 @if (Agent is not null)
                 {
+                    <p>Access applies to this project and all of its workspaces, including workspaces created later. Leaving or removing access applies to the whole project.</p>
                     <p>Read-only permits watching the terminal and reading conversations. Read-write also permits typing in the terminal and prompting the agent with its current login. It needs no access to the agent's Runner, and doesn't give its shell, VS Code or desktop.</p>
                     <p>The agent runs commands on its Runner with its git identity and GitHub token, the owner's unless someone switched it (Git identity in the agent's menu). A read-write user's prompts commit and push as that person. Share read-write only with people you would let run commands as you on that Runner.</p>
                 }

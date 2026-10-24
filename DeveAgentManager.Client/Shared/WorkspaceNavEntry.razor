@@ -1,0 +1,14 @@
+<MudNavLink Href="@($"agents/{Agent.Id}")" Match="NavLinkMatch.All" Class="nav-agent">
+    <div class="nav-agent-row">
+        <span class="nav-agent-avatar"><AgentAvatar Agent="Agent" Class="nav-avatar" />
+            <span class="nav-agent-dot @(Agent.State == AgentState.Error ? "warning" : Agent.State != AgentState.Running ? "" : Agent.Working ? "working" : "live")" title="@(Agent.Activity?.Reason ?? StateStyles.For(Agent).Text)"></span>
+        </span>
+        <span class="nav-agent-name">@(Child ? WorkspaceGroups.WorkspaceName(Agent) : WorkspaceGroups.ProjectName(Agent))</span>
+        <span class="nav-agent-meta">@(Child ? Agent.RepositoryBranch ?? StateStyles.For(Agent).Text : Agent.RunnerName)</span>
+    </div>
+</MudNavLink>
+
+@code {
+    [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
+    [Parameter] public bool Child { get; set; }
+}

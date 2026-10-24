@@ -39,9 +39,9 @@ try {
  await page.goto(base+`/agents/${id}`);
  await page.locator('.terminal-name').waitFor({timeout:60000});
  const openSessions=async()=>{
-  const button=page.getByLabel('Switch session',{exact:true});
-  if(await button.isVisible()) await button.click();
-  else {await page.getByLabel('More actions',{exact:true}).click();await page.getByRole('menuitem',{name:'Switch session',exact:true}).click();}
+  const button=page.locator('button[aria-label="Conversations"]');
+  if(await button.isVisible()) { await button.click(); await page.getByRole('menuitem',{name:'Manage conversations…',exact:true}).click(); }
+  else {await page.getByLabel('More actions',{exact:true}).click();await page.locator('.mud-popover-open').getByText('Conversations',{exact:true}).last().click();await page.getByRole('menuitem',{name:'Manage conversations…',exact:true}).click();}
  };
  for(const width of [320,390,600,740,1280]) {
   await page.setViewportSize({width,height:844});await page.waitForTimeout(300);
@@ -92,4 +92,4 @@ try {
  await page.screenshot({path:'/tmp/dam-sessions-page-phone.png'});
  assert.deepEqual(errors,[]);
  console.log('Passed: header and picker fit 320–1280px; native harness selection, new chats, rename, confirmed deletion and grouped sessions page.');
-} finally {await browser.close();}
+} catch (error) { const page = browser.contexts()[0]?.pages()[0]; if (page) { await page.screenshot({path:'/tmp/dam-workspace-conversation-failure.png'}); console.error((await page.locator('.mud-popover-open').allInnerTexts()).join(' | ')); } throw error; } finally {await browser.close();}

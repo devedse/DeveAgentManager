@@ -18,6 +18,9 @@ public sealed record CreateAgentRequest(
     Guid? ContinueSessionId = null,
     Guid? AccountId = null);
 
+public sealed record CreateWorktreeRequest(string Name, string Branch, string? BaseRevision = null,
+    string? HarnessId = null, Guid? AccountId = null, bool Start = false);
+
 /// <summary>A terminal attached to an agent's tmux session.</summary>
 /// <param name="Tty">The client's tty on the Runner, e.g. /dev/pts/3.</param>
 /// <param name="Watching">Joined while others were attached and hasn't typed yet: doesn't change the terminal's size.</param>

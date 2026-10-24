@@ -22,7 +22,7 @@ else
                     <AgentAvatar Agent="agent" />
                     <div class="list-main">
                         <div class="list-title">
-                            @agent.Name
+                            @(WorkspaceLabels ? WorkspaceGroups.WorkspaceName(agent) : agent.IsWorktree ? $"{WorkspaceGroups.ProjectName(agent)} · {agent.Name}" : agent.ProjectName ?? agent.Name)
                             @if (ShowOwner || agent.SharedWithMe || agent.Access != AgentAccess.Owner)
                             {
                                 <span class="account-badge" title="@ShareText(agent)">@agent.OwnerName</span>
@@ -34,6 +34,7 @@ else
                                 <span>@agent.RunnerName · </span>
                             }
                             <span class="mono">@(agent.RepositoryUrl ?? agent.WorkingDirectory)</span>
+                            @if (agent.RepositoryBranch is { } branch) { <span class="workspace-branch"> · @branch</span> }
                         </div>
                         <div class="list-subtitle agent-account">
                             @if (agent.State is AgentState.Running or AgentState.Starting)
@@ -109,15 +110,18 @@ else
                             </MudMenuItem>
                             @if (agent.Access == AgentAccess.Owner)
                             {
+                                @if (agent.CanUseRunner)
+                                { <MudMenuItem Icon="@Icons.Material.Rounded.Add" Disabled="agent.MovePending" OnClick="() => NewWorkspaceAsync(agent)">New workspace…</MudMenuItem> }
                                 @if (agent.MovePending)
                                 {
                                     <MudMenuItem Icon="@Icons.Material.Rounded.Restore" Disabled="agent.State == AgentState.Moving" OnClick="() => RecoverMoveAsync(agent)">Recover move / finish cleanup</MudMenuItem>
                                 }
                                 else
                                 {
-                                    <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, agent)">Move to another runner…</MudMenuItem>
+                                    <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, agent)">Move project to another runner…</MudMenuItem>
                                 }
-                                <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="agent.MovePending" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem>
+                                @if (!agent.IsWorktree)
+                                { <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="agent.MovePending" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem> }
                             }
                         </MudMenu>
                     }
@@ -138,6 +142,7 @@ else
 
     [Parameter]
     public bool ShowOwner { get; set; }
+    [Parameter] public bool WorkspaceLabels { get; set; }
 
     [Parameter]
     public string EmptyText { get; set; } = "Start an agent to work on a repository.";
@@ -182,6 +187,7 @@ else
 
     private Task PickIconAsync(AgentDto agent) =>
         Dialogs.ShowAsync<AgentIconDialog>("Icon", new DialogParameters<AgentIconDialog> { { d => d.Agent, agent } }, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+    private Task NewWorkspaceAsync(AgentDto agent) => Dialogs.ShowAsync<NewWorktreeDialog>("New workspace", new DialogParameters<NewWorktreeDialog> { { d => d.Source, agent } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
 
     private async Task ShareAsync(AgentDto agent) => await ShareDialog.ShowAsync(Dialogs, agent, await Me.GetAsync());
 

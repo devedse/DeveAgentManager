@@ -50,6 +50,30 @@ public sealed class AgentArtifactTests : IDisposable
     }
 
     [Fact]
+    public async Task ProjectFilesAreSharedAcrossWorkspacesButConversationOnlySharesStayNarrow()
+    {
+        var (main, _, current) = await SeedAsync();
+        var childId = Guid.NewGuid(); var childSession = Guid.NewGuid(); var reader = Guid.NewGuid();
+        await using (var db = Db.CreateDbContext())
+        {
+            db.Projects.Add(new() { Id = main.Id, RunnerId = main.RunnerId, OwnerId = main.OwnerId, Name = "project" });
+            (await db.Agents.SingleAsync(Ct)).ProjectId = main.Id;
+            db.Agents.Add(new() { Id = childId, RunnerId = main.RunnerId, OwnerId = main.OwnerId, Name = "child", ProjectId = main.Id, IsWorktree = true });
+            db.Sessions.Add(new() { Id = childSession, AgentId = childId, WorkspaceAgentId = childId, OwnerId = main.OwnerId });
+            db.Users.Add(new() { Id = reader, Username = "conversation-reader", DisplayName = "Conversation reader" });
+            db.SessionShares.Add(new() { SessionId = current, UserId = reader });
+            await db.SaveChangesAsync(Ct);
+        }
+        var mainFile = await SaveAsync(current, "Main file"); var childFile = await SaveAsync(childSession, "Child file");
+        var files = await Collection.ListFilesAsync(current, TestUsers.Admin, Ct);
+        Assert.Equal(2, files.Count); Assert.Contains(files, f => f.Id == childFile.Id);
+        Assert.Equal(2, (await Collection.ListFilesAsync(childSession, TestUsers.Admin, Ct)).Count);
+        var shared = await Collection.ListFilesAsync(current, TestUsers.Plain(reader), Ct);
+        Assert.Equal(mainFile.Id, Assert.Single(shared).Id);
+        Assert.Equal(2, (await Collection.ForAgentAsync(TestUsers.Admin, childId, Ct)).Files.Count);
+    }
+
+    [Fact]
     public async Task LegacyArtifactsSurviveSessionDeletionRestartAndNewSessionsWithoutCopyingBytes()
     {
         var (agent, old, current) = await SeedAsync();

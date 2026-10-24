@@ -183,6 +183,7 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     public Task<AgentDto?> GetAgentAsync(Guid agentId) => FindAsync<AgentDto>($"api/agents/{agentId}");
 
     public Task<AgentDto> CreateAgentAsync(CreateAgentRequest request) => SendAsync<AgentDto>(HttpMethod.Post, "api/agents", request);
+    public Task<AgentDto> CreateWorktreeAsync(Guid agentId, CreateWorktreeRequest request) => SendAsync<AgentDto>(HttpMethod.Post, $"api/agents/{agentId}/worktrees", request);
 
     public Task StartAgentAsync(Guid agentId, bool restart = false) => SendAsync(HttpMethod.Post, $"api/agents/{agentId}/start?restart={restart.ToString().ToLowerInvariant()}");
 

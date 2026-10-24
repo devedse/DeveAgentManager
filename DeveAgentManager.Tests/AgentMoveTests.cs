@@ -442,6 +442,61 @@ public sealed class AgentMoveTests
         await Assert.ThrowsAsync<AgentMoveBusyException>(() => f.Agents.EnsureRunnerNotMovingAsync(f.Target.Id, Ct, deleting: true));
     }
 
+    [Fact(Timeout = 120_000)]
+    public async Task WorktreeAgentsAreIndependentAndMovesAlwaysCoverTheWholeProject()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var f = await Fixture.CreateAsync();
+        var git = "git -C " + ShellQuote.Quote(f.Agent.WorkingDirectory);
+        (await f.Ssh.Shell.RunAsync(f.Source, git + " init -b main && " + git + " add data.txt && " + git + " -c user.name=Test -c user.email=test@example.com commit -m initial", cancellationToken: Ct)).EnsureSuccess("Test repository");
+        await File.WriteAllTextAsync(f.Agent.WorkingDirectory + "/data.txt", "dirty Main", Ct);
+        var first = await f.Agents.CreateWorktreeAsync(TestUsers.Admin, f.Agent.Id, new("feature-one", "feature/one"), Ct);
+        var second = await f.Agents.CreateWorktreeAsync(TestUsers.Admin, first.Id, new("feature-two", "feature/two", Start: true), Ct);
+        try
+        {
+            Assert.Equal(AgentState.Stopped, first.State);
+            Assert.Equal(AgentState.Running, second.State);
+            Assert.NotEqual(first.TmuxSession, second.TmuxSession);
+            Assert.Equal("original workspace", await File.ReadAllTextAsync(first.WorkingDirectory + "/data.txt", Ct));
+            Assert.Equal("dirty Main", await File.ReadAllTextAsync(f.Agent.WorkingDirectory + "/data.txt", Ct));
+            await using var db = await f.Factory.CreateDbContextAsync(Ct);
+            Assert.Equal(1, await db.Projects.CountAsync(Ct));
+            Assert.Equal(3, await db.Agents.Where(a => a.ProjectId == f.Agent.Id).CountAsync(Ct));
+            Assert.Equal(3, await db.Sessions.Select(s => s.AgentId).Distinct().CountAsync(Ct));
+            Assert.Equal(3, await db.AgentShares.Where(s => s.UserId == f.Other.Id).CountAsync(Ct));
+            await f.Agents.StopAsync(first.Id, Ct);
+            Assert.Equal(AgentState.Running, (await f.Agents.GetAsync(second.Id, Ct))!.State);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => f.Agents.DeleteAsync(f.Agent.Id, Ct));
+            await f.Services.GetRequiredService<Sharing>().ShareAgentAsync(TestUsers.Admin, first.Id, f.Other.Id, AgentAccess.Read, Ct);
+            Assert.All(await db.AgentShares.AsNoTracking().ToListAsync(Ct), share => Assert.Equal(AgentAccess.Read, share.Access));
+            // Opening either workspace is read-only; neither restarts nor changes the other's conversation.
+            var launches = await File.ReadAllTextAsync(f.Ssh.Root + "/launches", Ct);
+            await f.Agents.GetAsync(first.Id, Ct); await f.Agents.GetAsync(second.Id, Ct);
+            Assert.Equal(launches, await File.ReadAllTextAsync(f.Ssh.Root + "/launches", Ct));
+            await f.Agents.RequestMoveAsync(TestUsers.Admin, second.Id, f.Target.Id, Ct);
+            var rows = await db.Agents.AsNoTracking().ToListAsync(Ct);
+            Assert.Single(rows.Select(a => a.MoveJson).Distinct());
+            var move = JsonSerializer.Deserialize<AgentMoveState>(rows[0].MoveJson!)!;
+            Assert.Equal(f.Agent.Id, move.AgentId);
+            Assert.Equal(3, move.Workspaces!.Count);
+            Assert.True(move.Workspaces.Single(w => w.AgentId == second.Id).Resume);
+            Assert.False(move.Workspaces.Single(w => w.AgentId == first.Id).Resume);
+            // Destination conflict must restore the entire group without launching previously stopped workspaces.
+            await f.Agents.ExecuteMoveAsync(move, f.Ssh.Root + "/transport", Ct);
+            rows = await db.Agents.AsNoTracking().ToListAsync(Ct);
+            Assert.All(rows, row => { Assert.Null(row.MoveJson); Assert.Equal(f.Source.Id, row.RunnerId); });
+            Assert.Equal(AgentState.Running, rows.Single(a => a.Id == second.Id).State);
+            Assert.Equal(AgentState.Stopped, rows.Single(a => a.Id == first.Id).State);
+            await f.Services.GetRequiredService<Sharing>().UnshareAgentAsync(TestUsers.Admin, first.Id, f.Other.Id, Ct);
+            Assert.Empty(await db.AgentShares.AsNoTracking().ToListAsync(Ct));
+        }
+        finally
+        {
+            foreach (var child in new[] { first, second })
+                await f.Ssh.Shell.RunAsync(f.Source, "tmux kill-session -t " + ShellQuote.Quote("=" + child.TmuxSession) + " 2>/dev/null || true", cancellationToken: CancellationToken.None);
+        }
+    }
+
     private sealed class Harness(string launches) : IHarness
     {
         public string Id => "move-test";

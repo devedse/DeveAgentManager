@@ -1,0 +1,48 @@
+@inject ManagerApi Api
+@inject IDialogService Dialogs
+
+<MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft" Dense="true" @bind-Open="_open" @bind-Open:after="LoadAsync" Class="@($"workspace-picker terminal-name {(Agent.IsWorktree ? "workspace-picker-child" : "")}")">
+    <ActivatorContent>
+        <MudButton OnClick="@context.ToggleAsync" EndIcon="@Icons.Material.Rounded.ExpandMore" Class="workspace-picker-button" aria-label="Choose workspace">
+            <span class="workspace-picker-project">@WorkspaceGroups.ProjectName(Agent)</span><span class="workspace-picker-separator"> · </span><span class="workspace-picker-current">@WorkspaceGroups.WorkspaceName(Agent)</span>
+        </MudButton>
+    </ActivatorContent>
+    <ChildContent>
+        <div class="workspace-menu-heading help-heading">Workspaces <HelpTip Label="Workspaces"><p>Each workspace has its own agent. Opening another terminal leaves the others running. Stopped workspaces open without starting.</p></HelpTip></div>
+        @if (_error is not null) { <MudMenuItem OnClick="LoadAsync" AutoClose="false" title="@_error">Couldn't load. Retry</MudMenuItem> }
+        else if (!_loaded) { <MenuLoading Label="Loading workspaces" /> }
+        else
+        {
+            @foreach (var agent in _agents.Where(a => !WorkspaceGroups.QuietStopped(a)).ByLastReply()) { @Entry(agent) }
+            @if (_agents.Any(WorkspaceGroups.QuietStopped))
+            {
+                <MudMenuItem OnClick="() => _showStopped = !_showStopped" AutoClose="false" Icon="@(_showStopped ? Icons.Material.Rounded.ExpandLess : Icons.Material.Rounded.ExpandMore)">Stopped (@_agents.Count(WorkspaceGroups.QuietStopped))</MudMenuItem>
+                @if (_showStopped) { @foreach (var agent in _agents.Where(WorkspaceGroups.QuietStopped).ByLastReply()) { @Entry(agent) } }
+            }
+            <MudDivider />
+            @if (Agent.Access == AgentAccess.Owner && Agent.CanUseRunner)
+            { <MudMenuItem Icon="@Icons.Material.Rounded.Add" Disabled="Agent.MovePending" OnClick="NewAsync">New workspace…</MudMenuItem> }
+            <MudMenuItem Href="@($"agents?project={WorkspaceGroups.ProjectKey(Agent)}")" Icon="@Icons.Material.Rounded.FolderOpen">Manage workspaces</MudMenuItem>
+        }
+    </ChildContent>
+</MudMenu>
+
+@code {
+    [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
+    private bool _open, _loaded, _showStopped;
+    private string? _error;
+    private IReadOnlyList<AgentDto> _agents = [];
+    private RenderFragment Entry(AgentDto agent) => @<MudMenuItem Href="@($"agents/{agent.Id}")" Icon="@(agent.Id == Agent.Id ? Icons.Material.Rounded.Check : Icons.Material.Rounded.Terminal)">
+        <div class="workspace-menu-row"><span>@WorkspaceGroups.WorkspaceName(agent)</span><AgentStatus Agent="agent" /></div>
+        <small class="mono">@(agent.RepositoryBranch ?? "Folder")</small>
+    </MudMenuItem>;
+    private async Task LoadAsync()
+    {
+        if (!_open) return;
+        _loaded = false; _error = null;
+        try { _agents = (await Api.ListAgentsAsync()).Where(a => a.Access >= AgentAccess.Read && WorkspaceGroups.ProjectKey(a) == WorkspaceGroups.ProjectKey(Agent)).ToList(); _showStopped |= WorkspaceGroups.QuietStopped(Agent); _loaded = true; }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
+    }
+    private Task NewAsync() => Dialogs.ShowAsync<NewWorktreeDialog>("New workspace", new DialogParameters<NewWorktreeDialog> { { d => d.Source, Agent } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+}

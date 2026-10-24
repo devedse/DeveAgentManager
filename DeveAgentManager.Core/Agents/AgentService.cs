@@ -55,7 +55,7 @@ public sealed partial class AgentService(
     }
 
     private static IQueryable<Agent> WithAccess(IQueryable<Agent> agents) => agents.AsNoTracking().AsSplitQuery()
-        .Include(a => a.Runner).ThenInclude(r => r!.Members)
+        .Include(a => a.Project).Include(a => a.Runner).ThenInclude(r => r!.Members)
         .Include(a => a.Account).ThenInclude(a => a!.CreatedBy).Include(a => a.Owner).Include(a => a.Shares).ThenInclude(s => s.User);
 
     /// <summary>
@@ -112,6 +112,9 @@ public sealed partial class AgentService(
         };
 
         using var workspaceLease = await ReserveWorkspaceAsync(runner.Id, name, workingDirectory, cancellationToken);
+        var existingFolders = await db.Agents.Where(a => a.RunnerId == runner.Id).Select(a => a.WorkingDirectory).ToListAsync(cancellationToken);
+        if (existingFolders.Any(path => OverlappingFolders(path, workingDirectory)))
+            throw new InvalidOperationException("Another agent already owns this folder or a parent folder. Open that workspace or create a separate worktree.");
 
         var agentId = Guid.NewGuid();
         var now = DateTime.UtcNow;
@@ -137,6 +140,8 @@ public sealed partial class AgentService(
             && (await sessions.GetAsync(continueId, cancellationToken))?.HarnessId != agent.HarnessId;
         await PrepareWorkspaceAsync(runner, agent, request.Mode, cancellationToken);
 
+        agent.Project = new Project { Id = agent.Id, RunnerId = runner.Id, OwnerId = actor.Id,
+            Name = agent.Name, RootDirectory = agent.WorkingDirectory, CreatedAt = now };
         db.Agents.Add(agent);
         await db.SaveChangesAsync(cancellationToken);
         try
@@ -186,6 +191,7 @@ public sealed partial class AgentService(
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         RequireNotMoving(agent);
         var runner = RequireReady(agent.Runner!);
+        await VerifyWorkspaceAsync(runner, agent, cancellationToken);
         await LaunchAsync(runner, agent, restart, cancellationToken);
         if (restart || agent.State != AgentState.Running) AgentActivityTracker.Reset(agent);
         agent.State = AgentState.Running;
@@ -393,6 +399,10 @@ public sealed partial class AgentService(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         if (agent.MoveJson is not null) throw new InvalidOperationException("Finish the agent move before deleting it.");
+        if (agent.IsWorktree)
+            throw new InvalidOperationException("Stop this managed workspace to retain it. Removing managed worktrees requires a separate review of files and branches; it cannot be forgotten independently of its repository.");
+        if (!agent.IsWorktree && agent.ProjectId is { } projectId && await db.Agents.AnyAsync(a => a.ProjectId == projectId && a.Id != agent.Id, cancellationToken))
+            throw new InvalidOperationException("Keep Main while the project has other workspaces. Stop or delete the other agents first; their files are preserved.");
         if (agent.Runner!.State == RunnerState.Ready)
         {
             // Keep the latest conversation: the session stays in the Manager after the agent is gone.
@@ -898,6 +908,8 @@ public sealed partial class AgentService(
             ? TransferModel((await settings.GetSetupProfileAsync(cancellationToken)).GetHarness("claude").DefaultModel)
             : null;
         var instructions = runner.SetupVersion >= Runners.RunnerSetupService.AgentToolsSetupVersion ? LaunchInstructions : null;
+        if (agent.IsWorktree)
+            instructions = (instructions ?? "") + $" This agent owns the Git worktree at {agent.WorkingDirectory}. Its assigned branch is {agent.RepositoryBranch}. Commit and push work to the assigned branch, including when repository instructions normally target the default branch. Do not change another workspace or reset shared branches. If you change branches explicitly, keep all subsequent work in this workspace.";
         var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model, instructions));
 
         // The git identity's environment (the owner's unless switched: git config, GitHub token and variables), then the
@@ -909,6 +921,8 @@ public sealed partial class AgentService(
         var ownerEnvironment = $". \"{Runners.RunnerUsers.EnvironmentFile(identity)}\"; ";
         var account = await accounts.ResolveAsync(agent, cancellationToken);
         var accountEnvironment = "";
+        if (agent.IsWorktree && agent.HarnessId == "pi")
+            accountEnvironment = await accounts.PreparePiWorkspaceAsync(runner, agent, cancellationToken);
         if (account is not null)
         {
             if (loginActor is not null) await RequireOwnLoginAsync(loginActor, harness, account.Id, cancellationToken);

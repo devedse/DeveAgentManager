@@ -55,7 +55,7 @@ async function runSuite(scripts, capture = false) {
 
 if (suite === 'all' || suite === 'portal') {
     await runSuite(['auto-continue-dialog.mjs', 'agent-activity.mjs', 'session-migration.mjs',
-        'workspace-sessions.mjs', 'file-viewer.mjs', 'html-viewer.mjs', 'pdf-viewer.mjs', 'history-sync-settings.mjs',
+        'workspace-sessions.mjs', 'project-workspaces.mjs', 'file-viewer.mjs', 'html-viewer.mjs', 'pdf-viewer.mjs', 'history-sync-settings.mjs',
         'loading-states.mjs', 'agent-order.mjs', 'grok.mjs', 'access-management.mjs']);
 }
 if (suite === 'all' || suite === 'interop') {

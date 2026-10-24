@@ -32,7 +32,7 @@
             }
             <div class="terminal-title">
                 <div class="terminal-name-row">
-                    <span class="terminal-name" title="@_agent.Name">@_agent.Name</span>
+                    <WorkspaceMenu Agent="_agent" @key="_agent.Id" />
                     <AgentStatus Agent="_agent" Class="terminal-status" />
                 </div>
                 <span class="terminal-context"><HarnessLogo HarnessId="@_agent.HarnessId" Class="context-logo" />@(_agent.AccountName is { } account ? $"{account} · " : "")@if (AgentTable.CommitsAs(_agent) is { } git)
@@ -40,11 +40,9 @@
                         <span title="@AgentTable.GitIdentityTitle(git)">Git: @AgentTable.GitIdentityText(git) · </span>
                     }@_agent.RunnerName · <span class="mono">@(_sessionTitle ?? _agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
             </div>
-            @if (write)
+            @if (read)
             {
-                <span class="toolbar-item" data-toolbar="sessions">
-                    <MudIconButton Icon="@Icons.Material.Rounded.FolderOpen" Size="Size.Small" Class="session-picker-button" aria-label="Switch session" title="@(_sessionTitle ?? "Sessions")" OnClick="OpenSessionsAsync" />
-                </span>
+                <span class="toolbar-item" data-toolbar="sessions"><ConversationMenu Agent="_agent" SessionId="_sessionId" Changed="OnSwitchedAsync" Manage="OpenSessionsAsync" @key="_agent.Id" /></span>
             }
             <CpuTraceIndicator />
             <AttentionMenu />
@@ -75,9 +73,9 @@
                     </ActivatorContent>
                     <ChildContent>
                         @* What the toolbar has no room for, in toolbar order. *@
-                        @if (write && Overflowed("sessions"))
+                        @if (read && Overflowed("sessions"))
                         {
-                            <MudMenuItem Icon="@Icons.Material.Rounded.FolderOpen" OnClick="OpenSessionsAsync">Switch session</MudMenuItem>
+                            <ConversationMenu Agent="_agent" SessionId="_sessionId" Changed="OnSwitchedAsync" Manage="OpenSessionsAsync" InMenu="true" />
                         }
                         @if (_sessionId is { } menuSessionId)
                         {
@@ -133,7 +131,7 @@
                             }
                             else
                             {
-                                <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="_agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, _agent)">Move to another runner…</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="_agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, _agent)">Move project to another runner…</MudMenuItem>
                             }
                         }
                         @* A read-write share covers the agent; the desktop and VS Code are the Runner's. *@

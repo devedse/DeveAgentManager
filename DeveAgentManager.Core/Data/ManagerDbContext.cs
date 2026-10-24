@@ -9,6 +9,7 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
     public DbSet<Runner> Runners => Set<Runner>();
 
     public DbSet<Agent> Agents => Set<Agent>();
+    public DbSet<Project> Projects => Set<Project>();
 
     public DbSet<SettingEntry> Settings => Set<SettingEntry>();
 
@@ -116,6 +117,14 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
             icon.Property(i => i.Path).HasMaxLength(1024);
             icon.Property(i => i.ContentType).HasMaxLength(64);
             icon.HasOne<Agent>().WithOne().HasForeignKey<AgentIcon>(i => i.AgentId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Project>(project =>
+        {
+            project.HasKey(p => p.Id);
+            project.HasOne<Runner>().WithMany().HasForeignKey(p => p.RunnerId).OnDelete(DeleteBehavior.Cascade);
+            project.HasOne<User>().WithMany().HasForeignKey(p => p.OwnerId).OnDelete(DeleteBehavior.Restrict);
+            project.HasMany(p => p.Agents).WithOne(a => a.Project).HasForeignKey(a => a.ProjectId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Agent>(agent =>
