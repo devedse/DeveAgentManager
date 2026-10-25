@@ -21,6 +21,11 @@
                     <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.DriveFileMove" Disabled="@(owner.RunnerState != RunnerState.Ready)" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, owner)">Move project</MudButton>
                 }
             }
+            @if (_main is { Access: >= AgentAccess.Read } shared)
+            {
+                @* Owners share it; others see who else has it and can leave. *@
+                <MudButton Variant="Variant.Outlined" StartIcon="@(shared.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="() => ShareAsync(shared)">@(shared.Access == AgentAccess.Owner ? "Share project" : "Sharing")</MudButton>
+            }
         </Actions>
     </PageHeader>
 
@@ -119,6 +124,8 @@
         catch (ApiException ex) { _keptError = ex.Message; }
         catch (HttpRequestException) { _keptError = LoadingSection.Unreachable; }
     }
+
+    private async Task ShareAsync(AgentDto main) => await ShareDialog.ShowAsync(Dialogs, main, await Me.GetAsync());
 
     private async Task RecoverMoveAsync(AgentDto main)
     {

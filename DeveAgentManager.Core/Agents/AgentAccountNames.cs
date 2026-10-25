@@ -3,7 +3,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DeveAgentManager.Core.Agents;
 
-/// <summary>Resolve display names in one query, without loading login credentials or guessing a live default.</summary>
+/// <summary>
+/// Resolve display names in one query, without loading login credentials or guessing a live default; and how many
+/// workspaces each agent's project has.
+/// </summary>
 public static class AgentAccountNames
 {
     public static async Task LoadAsync(ManagerDbContext db, IEnumerable<Agent> agents, CancellationToken ct)
@@ -15,6 +18,7 @@ public static class AgentAccountNames
             agent.RunningAccountUsername = null;
         }
         await LoadGitIdentitiesAsync(db, items, ct);
+        await LoadWorkspaceCountsAsync(db, items, ct);
         var ids = items.Where(a => a.RunningAccountId != null).Select(a => a.RunningAccountId!.Value).Distinct().ToArray();
         if (ids.Length == 0) return;
         var names = await db.Accounts.AsNoTracking().Where(a => ids.Contains(a.Id))
@@ -26,6 +30,15 @@ public static class AgentAccountNames
             agent.RunningAccountName = account.Name;
             agent.RunningAccountUsername = account.Username;
         }
+    }
+
+    // Main can't be deleted while it has workspaces, and moving either moves them all.
+    private static async Task LoadWorkspaceCountsAsync(ManagerDbContext db, List<Agent> agents, CancellationToken ct)
+    {
+        var projects = agents.Where(a => a.ProjectId != null).Select(a => a.ProjectId!.Value).Distinct().ToArray();
+        var counts = projects.Length == 0 ? [] : await db.Agents.AsNoTracking().Where(a => a.IsClone && a.ProjectId != null && projects.Contains(a.ProjectId.Value))
+            .GroupBy(a => a.ProjectId!.Value).Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(g => g.Key, g => g.Count, ct);
+        foreach (var agent in agents) agent.ProjectWorkspaces = agent.ProjectId is { } project ? counts.GetValueOrDefault(project) : 0;
     }
 
     // Whose git identity each agent commits with, now and from its next start. A deleted user stays unnamed.

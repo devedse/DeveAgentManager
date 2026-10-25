@@ -147,11 +147,8 @@
         catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
         finally { _busy = false; }
     }
-    /// <summary>
-    /// For an agent's own menu. A workspace's moves its whole project; Main's is just "Move", like an agent without
-    /// workspaces: the dialog says when workspaces move with it. A project's heading has "Move project" instead.
-    /// </summary>
-    public static string MenuLabel(AgentDto agent) => agent.IsClone ? "Move project to another runner…" : "Move to another runner…";
+    /// <summary>For an agent's own menu: in a project with workspaces it moves them all. A project's heading has "Move project".</summary>
+    public static string MenuLabel(AgentDto agent) => agent.IsClone || agent.Workspaces > 0 ? "Move project to another runner…" : "Move to another runner…";
 
     public static async Task ShowAsync(IDialogService dialogs, AgentDto agent) =>
         await (await dialogs.ShowAsync<MoveAgentDialog>($"Move {WorkspaceGroups.ProjectName(agent)} to another runner", new DialogParameters<MoveAgentDialog> { { d => d.Agent, agent } },

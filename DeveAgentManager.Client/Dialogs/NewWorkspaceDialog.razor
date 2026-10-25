@@ -26,7 +26,7 @@
                     <div class="help-heading mt-3"><MudText Typo="Typo.subtitle2">Start from</MudText>
                         <HelpTip Label="Start from">
                             <p>Main's branch takes the repository's main branch as Main has it, committed work only. Pull first fetches the remote's latest version instead.</p>
-                            <p>This workspace's last commit takes the branch and commit of the workspace you're in. Current code adds its changed and new files that aren't committed yet. Exact copy also copies ignored files such as node_modules, build output and .env.</p>
+                            <p>@From's last commit takes the branch and commit of @From, the workspace this was opened from. Current code adds its changed and new files that aren't committed yet. Exact copy also copies its ignored files such as node_modules, build output and .env.</p>
                             <p>A copied Python virtual environment usually breaks, because it contains absolute paths. .NET rebuilds its obj folders on the next build.</p>
                         </HelpTip></div>
                     <MudRadioGroup T="WorkspaceStart" @bind-Value="_start" Class="workspace-start">
@@ -76,12 +76,14 @@
     [Parameter] public SessionDto? ResumeSession { get; set; }
     [Parameter] public KeptFolderDto? KeptFolder { get; set; }
 
-    private static readonly (WorkspaceStart Start, string Label)[] Starts =
+    /// <summary>The workspace it copies from: the one it was opened from, or Main from a project's heading.</summary>
+    private string From => WorkspaceGroups.WorkspaceName(Source);
+    private (WorkspaceStart Start, string Label)[] Starts =>
     [
         (WorkspaceStart.MainBranch, "Main's branch"),
-        (WorkspaceStart.LastCommit, "This workspace's last commit"),
-        (WorkspaceStart.CurrentCode, "This workspace's current code"),
-        (WorkspaceStart.ExactCopy, "Exact copy, including ignored files"),
+        (WorkspaceStart.LastCommit, $"{From}'s last commit"),
+        (WorkspaceStart.CurrentCode, $"{From}'s current code"),
+        (WorkspaceStart.ExactCopy, $"Exact copy of {From}, including ignored files"),
     ];
     private readonly CancellationTokenSource _closed = new();
     private readonly Dictionary<WorkspaceStart, WorkspaceEstimateDto?> _estimates = [];

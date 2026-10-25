@@ -60,7 +60,8 @@
 
     /// <summary>Shows who the agent is shared with; true when the user left the share (so it is gone for them).</summary>
     public static Task<bool> ShowAsync(IDialogService dialogs, AgentDto agent, CurrentUserDto me) =>
-        ShowAsync(dialogs, agent.Access == AgentAccess.Owner ? $"Access to {agent.Name}" : $"{agent.OwnerName}'s {agent.Name}",
+        // Access covers the whole project, whichever workspace it was opened from.
+        ShowAsync(dialogs, agent.Access == AgentAccess.Owner ? $"Access to {WorkspaceGroups.ProjectName(agent)}" : $"{agent.OwnerName}'s {WorkspaceGroups.ProjectName(agent)}",
             new DialogParameters<ShareDialog> { { d => d.Agent, agent }, { d => d.Me, me } });
 
     /// <summary>Shows who the conversation is shared with; true when the user left the share.</summary>

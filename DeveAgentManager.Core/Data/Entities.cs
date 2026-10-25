@@ -196,6 +196,10 @@ public class Agent
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public (string Username, string DisplayName)? GitIdentityName { get; set; }
 
+    /// <summary>How many workspaces besides Main its project has, for the Portal (AgentAccountNames fills it in).</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public int ProjectWorkspaces { get; set; }
+
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public (string Username, string DisplayName)? RunningGitIdentityName { get; set; }
 

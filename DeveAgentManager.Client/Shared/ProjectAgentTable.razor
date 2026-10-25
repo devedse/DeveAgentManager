@@ -1,6 +1,7 @@
 @inject IDialogService Dialogs
 @inject ManagerApi Api
 @inject ISnackbar Snackbar
+@inject SignedInUser Me
 
 @foreach (var group in WorkspaceGroups.Group(Agents))
 {
@@ -33,6 +34,8 @@
                         {
                             <MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.Add" Disabled="main.MovePending" OnClick="() => NewWorkspaceDialog.ShowAsync(Dialogs, main)">New workspace</MudButton>
                         }
+                        @* Owners share it; others see who else has it and can leave. *@
+                        <MudButton Size="Size.Small" StartIcon="@(main.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="() => ShareAsync(main)">@(main.Access == AgentAccess.Owner ? "Share project" : "Sharing")</MudButton>
                         <MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.FolderOpen" Href="@($"projects/{WorkspaceGroups.ProjectKey(main)}")">Manage</MudButton>
                     </div>
                 }
@@ -56,6 +59,8 @@
     [Parameter] public RenderFragment? EmptyContent { get; set; }
     private readonly HashSet<Guid> _revealed = [];
     private readonly HashSet<Guid> _recovering = [];
+
+    private async Task ShareAsync(AgentDto main) => await ShareDialog.ShowAsync(Dialogs, main, await Me.GetAsync());
 
     private async Task RecoverMoveAsync(AgentDto main)
     {

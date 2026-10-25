@@ -148,7 +148,7 @@ public sealed class DtoMapper(
         runnerAccess >= RunnerAccess.Use,
         access >= AgentAccess.Read ? GitIdentity(agent, AgentService.GitIdentity(agent), agent.GitIdentityName) : null,
         access >= AgentAccess.Read ? GitIdentity(agent, AgentService.RunningGitIdentity(agent), agent.RunningGitIdentityName) : null,
-        agent.ProjectId ?? agent.Id, agent.Project?.Name ?? agent.Name, agent.IsClone, agent.WorkspaceCreationJson is not null);
+        agent.ProjectId ?? agent.Id, agent.Project?.Name ?? agent.Name, agent.IsClone, agent.WorkspaceCreationJson is not null, agent.ProjectWorkspaces);
 
     private static AgentGitIdentityDto GitIdentity(Agent agent, Guid userId, (string Username, string DisplayName)? name)
     {

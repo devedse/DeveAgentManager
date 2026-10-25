@@ -11,9 +11,10 @@ dropdown shows the workspace's branch, conversation, harness and login. The Agen
 page list workspaces under their project in the same way.
 
 What applies to the whole project is in the project's heading there and on the project page, once: Move project (or
-Recover move after an interrupted one), New workspace and Manage. They act on Main, whichever workspace replied last.
-A workspace row's menu keeps only what is its own. An agent without workspaces has these in its own menu, as **New
-workspace…** and **Move to another runner…**.
+Recover move after an interrupted one), New workspace, Share project (Sharing for people it is shared with) and
+Manage. They act on Main, whichever workspace replied last. A workspace row's menu keeps only what is its own. An
+agent without workspaces has these in its own menu, as **New workspace…**, **Share...** and **Move to another
+runner…**.
 
 ## Folders
 
@@ -44,8 +45,9 @@ without a remote can still have workspaces, but they cannot push into the branch
 1. **Main's branch** (default): the repository's main branch (origin's default branch, else `main`/`master`, else what
    Main has checked out), committed work only. **Pull first** fetches the remote's latest version instead; it uses the
    Runner user's Git credentials.
-2. **This workspace's last commit:** the branch and commit of the workspace the dialog was opened from.
-3. **This workspace's current code:** the last commit plus the changed, staged and new files that `git status` lists.
+2. **_workspace_'s last commit:** the branch and commit of the workspace the dialog was opened from, named in the
+   dialog: the one whose terminal or menu it came from, or Main from a project's heading.
+3. **_workspace_'s current code:** the last commit plus the changed, staged and new files that `git status` lists.
    Ignored files are skipped. The copies are separate: the source keeps its own uncommitted changes.
 4. **Exact copy:** everything in the folder, including ignored files such as `node_modules`, build output and `.env`.
    A copied Python virtual environment usually breaks, because it contains absolute paths.
@@ -107,7 +109,8 @@ choices are **Cancel**, **Keep files** and **Remove everything**:
 - **Keep files** leaves the folder and lists it on the project page. From there it can be deleted (again after checking
   its marker) or used for a new workspace, which continues in it as it is.
 
-Main is never removed this way; the Main agent can be deleted once the other workspaces are gone. Move project waits
+Main is never removed this way; the Main agent can be deleted once the other workspaces are gone (until then its
+Delete is greyed out). Move project waits
 until kept folders are deleted or reused.
 
 ## Sharing and creation rights

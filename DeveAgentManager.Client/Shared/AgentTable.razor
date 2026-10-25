@@ -104,10 +104,14 @@ else
                                 <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="@(() => StartAsync(agent, true))">Restart</MudMenuItem>
                                 <MudMenuItem Icon="@Icons.Material.Rounded.Image" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => PickIconAsync(agent)">Icon...</MudMenuItem>
                             }
-                            @* Owners share it; others see who else has it and can leave. *@
-                            <MudMenuItem Icon="@(agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="() => ShareAsync(agent)">
-                                @(agent.Access == AgentAccess.Owner ? "Share..." : "Sharing...")
-                            </MudMenuItem>
+                            @* Owners share it; others see who else has it and can leave. Sharing covers the whole project, so
+                               under a project's heading it is there. *@
+                            @if (!InProject)
+                            {
+                                <MudMenuItem Icon="@(agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="() => ShareAsync(agent)">
+                                    @(agent.Access == AgentAccess.Owner ? "Share..." : "Sharing...")
+                                </MudMenuItem>
+                            }
                             @if (agent.Access == AgentAccess.Owner)
                             {
                                 @* Under a project's heading these are there, once for Main and all its workspaces. *@
@@ -126,6 +130,11 @@ else
                                 }
                                 @if (agent.IsClone)
                                 { <MudMenuItem Icon="@Icons.Material.Rounded.DeleteOutline" IconColor="Color.Error" Disabled="@(agent.MovePending || agent.RunnerState != RunnerState.Ready)" OnClick="() => RemoveWorkspaceDialog.ShowAsync(Dialogs, agent)">Remove workspace…</MudMenuItem> }
+                                else if (agent.Workspaces > 0)
+                                {
+                                    @* The Manager keeps Main while the project has other workspaces. *@
+                                    <MudMenuItem Icon="@Icons.Material.Rounded.Delete" Disabled="true">Delete<small class="menu-item-reason">Remove its workspaces first</small></MudMenuItem>
+                                }
                                 else
                                 { <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="agent.MovePending" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem> }
                             }
@@ -150,7 +159,7 @@ else
     public bool ShowOwner { get; set; }
     /// <summary>
     /// Listed under their project's heading (a project group, or the project page): rows are named by workspace, and
-    /// the project's own actions (New workspace, Move, recovering a move) are in that heading instead of in every row.
+    /// the project's own actions (Share, New workspace, Move, recovering a move) are in that heading instead of in every row.
     /// </summary>
     [Parameter] public bool InProject { get; set; }
 

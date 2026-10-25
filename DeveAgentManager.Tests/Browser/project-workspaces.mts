@@ -21,7 +21,7 @@ try {
         runnerName: 'test-runner', runnerState: 'Ready', runnerHarnessIds: ['pi'], runnerToolIds: [], name, harnessId: 'pi',
         workingDirectory: n === 10 || n === 20 ? `/work/${name}` : `/work/example-project.workspaces/${name}`,
         state, loginOwnerId: me.id, loginOwnerName: 'Test user', createdAt: now, updatedAt: now, projectId: id(project), projectName: project === 50 ? 'Example project' : 'Stopped project',
-        isClone: n !== 10 && n !== 20, repositoryBranch: n === 10 || n === 20 ? 'main' : name, canUseRunner: true });
+        isClone: n !== 10 && n !== 20, repositoryBranch: n === 10 || n === 20 ? 'main' : name, canUseRunner: true, workspaces: 1 });
     const agents = [agent(10, 'example-project', 'Running'), agent(11, 'login-fix', 'Stopped'), agent(20, 'stopped-project', 'Stopped', 60), agent(21, 'old-task', 'Stopped', 60)];
     Object.assign(agents[1], { harnessId: 'claude', accountName: 'Work login', accountUsername: 'admin' });
     const session = (n, title, agentId, workspaceAgentId = id(10), folder = '/work/example-project') => ({ id: id(100 + n), ownerId: me.id, ownerName: 'Test user', access: 'Owner', title, harnessId: 'pi', messageCount: 2,
@@ -115,14 +115,25 @@ try {
     for (const row of [0, 1]) {
         const more = project.locator('.agent-row').nth(row).locator('.agent-row-actions .mud-menu button');
         await more.click();
-        await page.getByRole('menuitem', { name: 'Share...', exact: true }).waitFor();
-        for (const entry of [/^New workspace/, /^Move/, /^Recover move/])
+        await page.getByRole('menuitem', { name: 'Icon...', exact: true }).waitFor();
+        for (const entry of [/^New workspace/, /^Move/, /^Recover move/, /^Shar/])
             assert.equal(await page.getByRole('menuitem', { name: entry }).count(), 0, `row ${row} leaves ${entry} to the project heading`);
+        if (row === 1) {
+            // Main: the Manager keeps it while the project has workspaces, so Delete says why it can't.
+            const del = page.getByRole('menuitem', { name: /^Delete/ });
+            assert.equal(await del.getAttribute('aria-disabled'), 'true', 'Main can\'t be deleted while it has workspaces');
+            assert.match(await del.innerText(), /Remove its workspaces first/);
+        } else await page.getByRole('menuitem', { name: 'Remove workspace…', exact: true }).waitFor();
         // Escape doesn't close MudBlazor menus here; ⋮ toggles it closed.
         await more.click();
-        await page.getByRole('menuitem', { name: 'Share...', exact: true }).waitFor({ state: 'hidden' });
+        await page.getByRole('menuitem', { name: 'Icon...', exact: true }).waitFor({ state: 'hidden' });
     }
     const heading = project.locator('.workspace-project-heading');
+    // Sharing covers the whole project: once, in its heading.
+    await heading.getByRole('button', { name: 'Share project', exact: true }).click();
+    await page.getByRole('dialog').getByText('Access to Example project', { exact: true }).waitFor();
+    await page.getByRole('dialog').getByRole('button', { name: 'Done', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
     const asked = (what: RegExp) => page.waitForRequest(request => what.test(new URL(request.url()).pathname));
     let request = asked(/\/move\/processes$/);
     await heading.getByRole('button', { name: 'Move project', exact: true }).click();
@@ -220,7 +231,9 @@ try {
     assert.ok(!exactArrived);
     releaseExact();
     await create.getByText('needs 20 GB, 14 GB free', { exact: true }).waitFor();
-    assert.equal(await create.getByRole('radio', { name: 'Exact copy, including ignored files' }).isDisabled(), true, 'an option larger than the free space is disabled');
+    assert.equal(await create.getByRole('radio', { name: 'Exact copy of Main, including ignored files' }).isDisabled(), true, 'an option larger than the free space is disabled');
+    // Opened from Main's terminal, it copies from Main and says so.
+    await create.getByRole('radio', { name: "Main's current code" }).waitFor();
     await create.getByText('14 GB free · copies are normal copies (this disk has no copy-on-write)', { exact: true }).waitFor();
     failCurrent = false;
     await create.getByText('Size unknown · Retry', { exact: true }).click();
