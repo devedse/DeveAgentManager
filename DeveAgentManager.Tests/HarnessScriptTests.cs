@@ -250,7 +250,8 @@ public sealed class HarnessScriptTests : IDisposable
         var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true, RedirectStandardError = true };
         start.Environment["HOME"] = _home;
         start.Environment["PATH"] = _bin + ":" + Environment.GetEnvironmentVariable("PATH");
-        start.Environment.Remove("CODEX_HOME");
+        // An agent running these tests has its own harness homes; the scripts must use this test's.
+        foreach (var home in new[] { "CODEX_HOME", "CLAUDE_CONFIG_DIR", "GROK_HOME" }) start.Environment.Remove(home);
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
         process.WaitForExit();
