@@ -6,8 +6,9 @@ its own agent: its own public ID, tmux terminal, harness/login, activity, tasks 
 workspaces can run at the same time. A workspace runs one conversation at a time.
 
 Opening a workspace changes only what this viewer sees; it never starts, stops or redirects an agent. Start and Stop
-(▶/■ in the workspace dropdown, on the Agents page and on the project page) target one workspace. The Agents page, the
-dashboard and a Runner's page list workspaces under their project in the same way.
+(▶/■ in the workspace dropdown, on the Agents page and on the project page) target one workspace. Each row in the
+dropdown shows the workspace's branch, conversation, harness and login. The Agents page, the dashboard and a Runner's
+page list workspaces under their project in the same way.
 
 ## Folders
 

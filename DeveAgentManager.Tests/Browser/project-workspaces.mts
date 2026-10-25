@@ -23,6 +23,7 @@ try {
         state, loginOwnerId: me.id, loginOwnerName: 'Test user', createdAt: now, updatedAt: now, projectId: id(project), projectName: project === 50 ? 'Example project' : 'Stopped project',
         isClone: n !== 10 && n !== 20, repositoryBranch: n === 10 || n === 20 ? 'main' : name, canUseRunner: true });
     const agents = [agent(10, 'example-project', 'Running'), agent(11, 'login-fix', 'Stopped'), agent(20, 'stopped-project', 'Stopped', 60), agent(21, 'old-task', 'Stopped', 60)];
+    Object.assign(agents[1], { harnessId: 'claude', accountName: 'Work login', accountUsername: 'admin' });
     const session = (n, title, agentId, workspaceAgentId = id(10), folder = '/work/example-project') => ({ id: id(100 + n), ownerId: me.id, ownerName: 'Test user', access: 'Owner', title, harnessId: 'pi', messageCount: 2,
         agentId, workspaceAgentId, workspaceAccess: 'Owner', projectId: id(50), workingDirectory: folder, repositoryBranch: 'main', createdAt: now, updatedAt: now, sourceSize: 0, savedSize: 0, totalSize: 0 });
     const sessions = [session(0, 'Current conversation', id(10)), session(1, 'Previous conversation', null),
@@ -117,6 +118,10 @@ try {
     // Rows lead with the workspace's name; the branch and the conversation are underneath.
     await page.getByRole('menuitem', { name: /login-fix/ }).getByText('switched-branch', { exact: true }).waitFor();
     await page.getByRole('menuitem', { name: /^Main/ }).getByText('main · Current conversation', { exact: true }).waitFor();
+    // And what each one runs with: its harness, and the login for harnesses that have logins.
+    const runsWith = async (row: RegExp) => (await page.getByRole('menuitem', { name: row }).locator('.workspace-menu-login').innerText()).replace(/\s+/g, ' ').trim();
+    assert.equal(await runsWith(/login-fix/), 'Claude Code · admin · Work login');
+    assert.equal(await runsWith(/^Main/), 'pi', 'a harness without logins shows only its name');
     assert.deepEqual(writes, [], 'opening the dropdown sends no lifecycle commands');
     await page.getByRole('button', { name: 'Stop Main', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Start login-fix', exact: true }).click();

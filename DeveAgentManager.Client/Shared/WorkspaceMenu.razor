@@ -49,6 +49,7 @@
     private IReadOnlyList<AgentDto> _agents = [];
     private IReadOnlyList<SessionDto> _sessions = [];
     private Dictionary<Guid, string?> _branches = [];
+    private IReadOnlyList<HarnessDto> _harnesses = [];
     private readonly HashSet<Guid> _busy = [];
 
     private IEnumerable<SessionDto> Saved => _sessions.Where(s => s.AgentId is null).OrderByDescending(s => s.UpdatedAt);
@@ -57,6 +58,12 @@
         <MudMenuItem Href="@($"agents/{agent.Id}")" Icon="@(agent.Id == Agent.Id ? Icons.Material.Rounded.Check : Icons.Material.Rounded.Terminal)">
             <div class="workspace-menu-row"><span class="workspace-menu-title">@WorkspaceGroups.WorkspaceName(agent)</span><StatusPill Style="StateStyles.For(agent)" /></div>
             <small class="workspace-menu-where">@string.Join(" · ", new[] { Branch(agent), ConversationTitle(agent) }.Where(part => !string.IsNullOrEmpty(part)))</small>
+            <small class="workspace-menu-where workspace-menu-login"><HarnessLogo HarnessId="@agent.HarnessId" Class="context-logo" />@(Harness(agent)?.DisplayName ?? agent.HarnessId)@if (Harness(agent)?.AccountSupport is not null)
+            {
+                @* What it runs with now, or what it would start with. *@
+                var running = agent.State is AgentState.Running or AgentState.Starting;
+                <span class="account-separator"> · </span><AccountIdentity Username="@(running ? agent.RunningAccountUsername : agent.AccountUsername)" Name="@(running ? agent.RunningAccountName ?? "Unknown" : agent.AccountName ?? "Default")" />
+            }</small>
         </MudMenuItem>
         @if (agent.Access >= AgentAccess.Write)
         {
@@ -70,6 +77,7 @@
     /// <summary>What a workspace is working on: its conversation's title.</summary>
     private string? ConversationTitle(AgentDto agent) => _sessions.FirstOrDefault(s => s.AgentId == agent.Id)?.Title;
     private string? Branch(AgentDto agent) => _branches.TryGetValue(agent.Id, out var branch) ? branch : agent.RepositoryBranch;
+    private HarnessDto? Harness(AgentDto agent) => _harnesses.FirstOrDefault(h => h.Id == agent.HarnessId);
 
     private Task LoadAsync() => _open ? LoadCoreAsync() : Task.CompletedTask;
     private Task RetryAsync() { _error = null; return LoadCoreAsync(); }
@@ -82,9 +90,11 @@
         {
             var agents = Api.ListAgentsAsync();
             var sessions = Api.ListSessionsAsync();
+            var info = Api.InfoAsync();
             var key = WorkspaceGroups.ProjectKey(Agent);
             _agents = (await agents).Where(a => a.Access >= AgentAccess.Read && WorkspaceGroups.ProjectKey(a) == key).ToList();
             _sessions = WorkspaceGroups.InProject(await sessions, key, _agents).ToList();
+            _harnesses = (await info).Harnesses;
             _showStopped |= WorkspaceGroups.QuietStopped(Agent);
             _loaded = true;
             _ = RefreshBranchesAsync();
