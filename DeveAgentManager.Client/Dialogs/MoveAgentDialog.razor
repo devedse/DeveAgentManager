@@ -27,7 +27,11 @@
                             <MudSelectItem T="Guid?" Value="runner.Id">@runner.Name</MudSelectItem>
                         }
                     </MudSelect>
-                    <MudText Typo="Typo.caption" Class="mt-2">@Agent.WorkingDirectory</MudText>
+                    <MudText Typo="Typo.caption" Class="mt-2">@(_project.FirstOrDefault(a => !a.IsClone)?.WorkingDirectory ?? Agent.WorkingDirectory)</MudText>
+                }
+                @if (_project.Count(a => a.IsClone) is > 0 and var clones)
+                {
+                    <MudText Typo="Typo.body2" Class="mt-2">Main and its @clones @(clones == 1 ? "workspace move" : "workspaces move") together.</MudText>
                 }
             </ChildContent>
         </LoadingSection>
@@ -72,7 +76,7 @@
     </DialogContent>
     <DialogActions>
         <MudButton Disabled="_busy" OnClick="() => Dialog.Cancel()">Cancel</MudButton>
-        <MudButton Variant="Variant.Filled" Color="@(_processes.Count > 0 ? Color.Error : Color.Primary)" Disabled="@(_busy || _checking || !_processesLoaded || _processesError is not null || _target is null)" OnClick="MoveAsync">@(_busy ? "Starting move…" : _processes.Count > 0 ? "Stop processes and move" : "Move project")</MudButton>
+        <MudButton Variant="Variant.Filled" Color="@(_processes.Count > 0 ? Color.Error : Color.Primary)" Disabled="@(_busy || _checking || !_processesLoaded || _processesError is not null || _target is null)" OnClick="MoveAsync">@(_busy ? "Starting move…" : _processes.Count > 0 ? "Stop processes and move" : "Move")</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -80,6 +84,8 @@
     [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
     [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
     private List<RunnerDto> _runners = [];
+    /// <summary>Main and its workspaces, which all move.</summary>
+    private List<AgentDto> _project = [];
     private Guid? _target;
     private bool _busy;
     private bool _runnersLoaded, _processesLoaded, _checking;
@@ -96,6 +102,7 @@
             var runners = await Api.ListRunnersAsync();
             var workspaces = (await Api.ListAgentsAsync()).Where(a => WorkspaceGroups.ProjectKey(a) == WorkspaceGroups.ProjectKey(Agent)).ToList();
             var current = runners.FirstOrDefault(r => r.Id == Agent.RunnerId);
+            _project = workspaces;
             _runners = runners.Where(r => r.Id != Agent.RunnerId && r.State == RunnerState.Ready && r.Operation is null
                 && r.Access >= RunnerAccess.Use && r.Username == current?.Username && workspaces.All(a => r.HarnessIds.Contains(a.HarnessId)))
                 .OrderBy(r => r.Name).ToList();
@@ -140,7 +147,13 @@
         catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
         finally { _busy = false; }
     }
+    /// <summary>
+    /// For an agent's own menu. A workspace's moves its whole project; Main's is just "Move", like an agent without
+    /// workspaces: the dialog says when workspaces move with it. A project's heading has "Move project" instead.
+    /// </summary>
+    public static string MenuLabel(AgentDto agent) => agent.IsClone ? "Move project to another runner…" : "Move to another runner…";
+
     public static async Task ShowAsync(IDialogService dialogs, AgentDto agent) =>
-        await (await dialogs.ShowAsync<MoveAgentDialog>($"Move project {WorkspaceGroups.ProjectName(agent)}", new DialogParameters<MoveAgentDialog> { { d => d.Agent, agent } },
+        await (await dialogs.ShowAsync<MoveAgentDialog>($"Move {WorkspaceGroups.ProjectName(agent)} to another runner", new DialogParameters<MoveAgentDialog> { { d => d.Agent, agent } },
             new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small })).Result;
 }

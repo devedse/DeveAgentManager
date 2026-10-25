@@ -22,7 +22,7 @@ else
                     <AgentAvatar Agent="agent" />
                     <div class="list-main">
                         <div class="list-title">
-                            @(WorkspaceLabels ? WorkspaceGroups.WorkspaceName(agent) : WorkspaceGroups.DisplayName(agent))
+                            @(InProject ? WorkspaceGroups.WorkspaceName(agent) : WorkspaceGroups.DisplayName(agent))
                             @if (ShowOwner || agent.SharedWithMe || agent.Access != AgentAccess.Owner)
                             {
                                 <span class="account-badge" title="@ShareText(agent)">@agent.OwnerName</span>
@@ -110,15 +110,19 @@ else
                             </MudMenuItem>
                             @if (agent.Access == AgentAccess.Owner)
                             {
-                                @if (agent.CanUseRunner)
-                                { <MudMenuItem Icon="@Icons.Material.Rounded.Add" Disabled="agent.MovePending" OnClick="() => NewWorkspaceAsync(agent)">New workspace…</MudMenuItem> }
-                                @if (agent.MovePending)
+                                @* Under a project's heading these are there, once for Main and all its workspaces. *@
+                                @if (!InProject)
                                 {
-                                    <MudMenuItem Icon="@Icons.Material.Rounded.Restore" Disabled="agent.State == AgentState.Moving" OnClick="() => RecoverMoveAsync(agent)">Recover move / finish cleanup</MudMenuItem>
-                                }
-                                else
-                                {
-                                    <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, agent)">Move project to another runner…</MudMenuItem>
+                                    @if (agent.CanUseRunner)
+                                    { <MudMenuItem Icon="@Icons.Material.Rounded.Add" Disabled="agent.MovePending" OnClick="() => NewWorkspaceAsync(agent)">New workspace…</MudMenuItem> }
+                                    @if (agent.MovePending)
+                                    {
+                                        <MudMenuItem Icon="@Icons.Material.Rounded.Restore" Disabled="agent.State == AgentState.Moving" OnClick="() => RecoverMoveAsync(agent)">Recover move / finish cleanup</MudMenuItem>
+                                    }
+                                    else
+                                    {
+                                        <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, agent)">@MoveAgentDialog.MenuLabel(agent)</MudMenuItem>
+                                    }
                                 }
                                 @if (agent.IsClone)
                                 { <MudMenuItem Icon="@Icons.Material.Rounded.DeleteOutline" IconColor="Color.Error" Disabled="@(agent.MovePending || agent.RunnerState != RunnerState.Ready)" OnClick="() => RemoveWorkspaceDialog.ShowAsync(Dialogs, agent)">Remove workspace…</MudMenuItem> }
@@ -144,7 +148,11 @@ else
 
     [Parameter]
     public bool ShowOwner { get; set; }
-    [Parameter] public bool WorkspaceLabels { get; set; }
+    /// <summary>
+    /// Listed under their project's heading (a project group, or the project page): rows are named by workspace, and
+    /// the project's own actions (New workspace, Move, recovering a move) are in that heading instead of in every row.
+    /// </summary>
+    [Parameter] public bool InProject { get; set; }
 
     [Parameter]
     public string EmptyText { get; set; } = "Start an agent to work on a repository.";

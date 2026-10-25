@@ -10,6 +10,11 @@ Opening a workspace changes only what this viewer sees; it never starts, stops o
 dropdown shows the workspace's branch, conversation, harness and login. The Agents page, the dashboard and a Runner's
 page list workspaces under their project in the same way.
 
+What applies to the whole project is in the project's heading there and on the project page, once: Move project (or
+Recover move after an interrupted one), New workspace and Manage. They act on Main, whichever workspace replied last.
+A workspace row's menu keeps only what is its own. An agent without workspaces has these in its own menu, as **New
+workspace…** and **Move to another runner…**.
+
 ## Folders
 
 ```
@@ -118,8 +123,9 @@ isolation. Pi workspaces use private settings and history directories and keep p
 ## Moving a project
 
 Move project always transfers Main and every workspace folder, including stopped ones, with their private runtimes,
-tasks, native histories, replay data and referenced attachments, to the same absolute paths. Opening the action from
-any workspace has the same project-wide scope. The destination must support all project harnesses. Missing
+tasks, native histories, replay data and referenced attachments, to the same absolute paths. Opening it from a
+workspace's terminal (**Move project to another runner…**) has the same project-wide scope; the dialog says how many
+workspaces move with Main. The destination must support all project harnesses. Missing
 workspaces, a workspace whose marker doesn't match, conflicting destination files, another project's overlapping
 folders and linked Git worktrees made outside the Manager block a move. Hardlinks between clones may become separate
 copies on the destination.

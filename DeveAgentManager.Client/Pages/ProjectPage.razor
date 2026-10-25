@@ -12,7 +12,14 @@
             @if (_main is { Access: AgentAccess.Owner, CanUseRunner: true } owner)
             {
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" Disabled="owner.MovePending" OnClick="() => NewWorkspaceDialog.ShowAsync(Dialogs, owner)">New workspace</MudButton>
-                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.DriveFileMove" Disabled="@(owner.MovePending || owner.RunnerState != RunnerState.Ready)" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, owner)">Move project</MudButton>
+                @if (owner.MovePending)
+                {
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Restore" Disabled="@(owner.State == AgentState.Moving || _busy)" OnClick="() => RecoverMoveAsync(owner)">Recover move / finish cleanup</MudButton>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.DriveFileMove" Disabled="@(owner.RunnerState != RunnerState.Ready)" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, owner)">Move project</MudButton>
+                }
             }
         </Actions>
     </PageHeader>
@@ -29,7 +36,7 @@
                         <MudButton Href="agents" Variant="Variant.Outlined">Back to agents</MudButton>
                     </EmptyState>
                 }
-                else { <AgentTable Agents="_agents" ShowRunner="true" WorkspaceLabels="true" /> }
+                else { <AgentTable Agents="_agents" ShowRunner="true" InProject="true" /> }
             </ChildContent>
         </LoadingSection>
     </section>
@@ -111,6 +118,15 @@
         try { _kept = await Api.ListKeptFoldersAsync(_main!.Id); _keptLoaded = true; }
         catch (ApiException ex) { _keptError = ex.Message; }
         catch (HttpRequestException) { _keptError = LoadingSection.Unreachable; }
+    }
+
+    private async Task RecoverMoveAsync(AgentDto main)
+    {
+        _busy = true;
+        try { await Api.RecoverAgentMoveAsync(main.Id); Snackbar.Add("Move recovery queued", Severity.Success); }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _busy = false; }
     }
 
     private async Task DeleteKeptAsync(KeptFolderDto folder)

@@ -133,7 +133,7 @@
                             }
                             else
                             {
-                                <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="_agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, _agent)">Move project to another runner…</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="_agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, _agent)">@MoveAgentDialog.MenuLabel(_agent)</MudMenuItem>
                             }
                             @if (_agent.IsClone)
                             {

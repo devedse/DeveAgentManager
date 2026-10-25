@@ -1,8 +1,12 @@
 @inject IDialogService Dialogs
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
 
 @foreach (var group in WorkspaceGroups.Group(Agents))
 {
     var first = group[0];
+    // The project's own actions act on Main, whichever workspace replied last.
+    var main = group.FirstOrDefault(a => !a.IsClone) ?? first;
     var visible = group.Where(a => ShowStopped || !WorkspaceGroups.QuietStopped(a) || _revealed.Contains(WorkspaceGroups.ProjectKey(a))).ToList();
     @if (group.Count == 1)
     {
@@ -13,10 +17,27 @@
         <section class="workspace-project" data-project-id="@WorkspaceGroups.ProjectKey(first)" aria-label="@($"Project {WorkspaceGroups.ProjectName(first)}")">
             <div class="workspace-project-heading">
                 <div><strong>@WorkspaceGroups.ProjectName(first)</strong><span class="workspace-project-counts">@group.Count(WorkspaceGroups.Running) running · @group.Count(WorkspaceGroups.QuietStopped) stopped</span></div>
-                @if (first.Access == AgentAccess.Owner && first.CanUseRunner)
-                { <div class="workspace-project-actions"><MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.DriveFileMove" Disabled="first.MovePending" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, first)">Move project</MudButton><MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => NewWorkspaceDialog.ShowAsync(Dialogs, first)">New workspace</MudButton><MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.FolderOpen" Href="@($"projects/{WorkspaceGroups.ProjectKey(first)}")">Manage</MudButton></div> }
+                @if (main.Access >= AgentAccess.Read)
+                {
+                    @* The same conditions as the rows' menus had for these, before they moved here. *@
+                    <div class="workspace-project-actions">
+                        @if (main.Access == AgentAccess.Owner && main.MovePending)
+                        {
+                            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.Restore" Disabled="@(main.State == AgentState.Moving || _recovering.Contains(main.Id))" OnClick="() => RecoverMoveAsync(main)">Recover move</MudButton>
+                        }
+                        else if (main.Access == AgentAccess.Owner)
+                        {
+                            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.DriveFileMove" Disabled="main.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, main)">Move project</MudButton>
+                        }
+                        @if (main.Access == AgentAccess.Owner && main.CanUseRunner)
+                        {
+                            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.Add" Disabled="main.MovePending" OnClick="() => NewWorkspaceDialog.ShowAsync(Dialogs, main)">New workspace</MudButton>
+                        }
+                        <MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.FolderOpen" Href="@($"projects/{WorkspaceGroups.ProjectKey(main)}")">Manage</MudButton>
+                    </div>
+                }
             </div>
-            @if (visible.Count > 0) { <AgentTable Agents="visible" ShowRunner="ShowRunner" ShowOwner="ShowOwner" WorkspaceLabels="true" /> }
+            @if (visible.Count > 0) { <AgentTable Agents="visible" ShowRunner="ShowRunner" ShowOwner="ShowOwner" InProject="true" /> }
             @if (visible.Count < group.Count)
             {
                 <MudButton Size="Size.Small" Class="workspace-show-stopped" OnClick="() => _revealed.Add(WorkspaceGroups.ProjectKey(first))">Show @(group.Count - visible.Count) stopped workspace(s)</MudButton>
@@ -34,4 +55,14 @@
     [Parameter] public string EmptyText { get; set; } = "No agents match.";
     [Parameter] public RenderFragment? EmptyContent { get; set; }
     private readonly HashSet<Guid> _revealed = [];
+    private readonly HashSet<Guid> _recovering = [];
+
+    private async Task RecoverMoveAsync(AgentDto main)
+    {
+        _recovering.Add(main.Id);
+        try { await Api.RecoverAgentMoveAsync(main.Id); Snackbar.Add("Move recovery queued", Severity.Success); }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _recovering.Remove(main.Id); }
+    }
 }

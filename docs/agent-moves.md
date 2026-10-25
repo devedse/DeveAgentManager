@@ -1,6 +1,7 @@
 # Moving an agent between runners
 
-Use **Move to another runner…** in the agent's actions menu. The agent keeps its
+Use **Move to another runner…** in the agent's actions menu, or **Move project** in a project's heading to move Main
+with all its workspaces (see [project-workspaces.md](project-workspaces.md)). The agent keeps its
 ID, conversations, shares, selected login and continuation settings. A running
 agent resumes on the destination; a stopped agent stays stopped.
 
@@ -86,7 +87,7 @@ retained for inspection without blocking a confirmed source fallback.
 
 If process state cannot be established, neither location is launched again
 automatically. The agent shows the failure and **Recover move / finish cleanup**
-allows its owner to retry reconciliation. An already attempted fallback launch
+(**Recover move** in a project's heading) allows its owner to retry reconciliation. An already attempted fallback launch
 is not repeated without this explicit recovery action or observation that the
 source is already alive.
 

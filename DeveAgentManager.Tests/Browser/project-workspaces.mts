@@ -105,6 +105,53 @@ try {
         await page.getByRole('region', { name: 'Project Stopped project', exact: true }).waitFor();
     }
 
+    // The project's own actions are in its heading, once, and act on Main even when a workspace replied last; the
+    // rows leave them out. A workspace's own menu keeps what is its own.
+    Object.assign(agents[1], { lastAssistantMessageAt: new Date().toISOString() });
+    await page.goto(base + '/agents');
+    await page.getByLabel('Show stopped workspaces', { exact: true }).check();
+    await project.locator('.agent-row').nth(1).waitFor({ timeout: 60000 });
+    assert.equal(await project.locator('.agent-row .list-title').first().innerText(), 'login-fix', 'the workspace that replied last comes first');
+    for (const row of [0, 1]) {
+        const more = project.locator('.agent-row').nth(row).locator('.agent-row-actions .mud-menu button');
+        await more.click();
+        await page.getByRole('menuitem', { name: 'Share...', exact: true }).waitFor();
+        for (const entry of [/^New workspace/, /^Move/, /^Recover move/])
+            assert.equal(await page.getByRole('menuitem', { name: entry }).count(), 0, `row ${row} leaves ${entry} to the project heading`);
+        // Escape doesn't close MudBlazor menus here; ⋮ toggles it closed.
+        await more.click();
+        await page.getByRole('menuitem', { name: 'Share...', exact: true }).waitFor({ state: 'hidden' });
+    }
+    const heading = project.locator('.workspace-project-heading');
+    const asked = (what: RegExp) => page.waitForRequest(request => what.test(new URL(request.url()).pathname));
+    let request = asked(/\/move\/processes$/);
+    await heading.getByRole('button', { name: 'Move project', exact: true }).click();
+    assert.equal(new URL((await request).url()).pathname, `/api/agents/${id(10)}/move/processes`, 'Move project moves from Main');
+    const move = page.getByRole('dialog');
+    await move.getByText('Move Example project to another runner', { exact: true }).waitFor();
+    await move.getByText('Main and its 1 workspace move together.', { exact: true }).waitFor();
+    await move.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await move.waitFor({ state: 'hidden' });
+    request = asked(/\/workspaces\/estimate$/);
+    await heading.getByRole('button', { name: 'New workspace', exact: true }).click();
+    assert.equal(new URL((await request).url()).pathname, `/api/agents/${id(10)}/workspaces/estimate`, 'a new workspace starts from Main');
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    // An interrupted move is recovered from the heading too.
+    for (const a of agents.slice(0, 2)) Object.assign(a, { movePending: true, state: 'Error', stateMessage: 'Move failed' });
+    await page.reload();
+    await heading.getByRole('button', { name: 'Recover move', exact: true }).waitFor({ timeout: 60000 });
+    assert.equal(await heading.getByRole('button', { name: 'Move project', exact: true }).count(), 0);
+    assert.equal(writes.length, 0);
+    await heading.getByRole('button', { name: 'Recover move', exact: true }).click();
+    await written(1);
+    assert.deepEqual(writes.map(w => w.path), [`/api/agents/${id(10)}/move/recover`]);
+    writes.length = 0;
+    for (const a of agents.slice(0, 2)) Object.assign(a, { movePending: false, state: 'Stopped', stateMessage: null });
+    agents[0].state = 'Running';
+    Object.assign(agents[1], { lastAssistantMessageAt: null });
+    await page.getByLabel('Show stopped workspaces', { exact: true }).uncheck();
+
     // The dropdown: rows labelled by their conversation, with ▶/■; opening sends nothing.
     await page.goto(base + `/agents/${id(10)}`);
     const picker = page.locator('button[aria-label="Choose workspace"]');
@@ -196,6 +243,8 @@ try {
     // Removing a workspace lists what would be lost and offers Keep files.
     await page.goto(base + `/agents/${id(11)}`);
     await page.getByLabel('More actions', { exact: true }).click();
+    // A workspace's terminal can move its project; the label says it is the whole project.
+    await page.getByRole('menuitem', { name: 'Move project to another runner…', exact: true }).waitFor();
     await page.getByRole('menuitem', { name: 'Remove workspace…', exact: true }).click();
     const remove = page.getByRole('dialog');
     await remove.getByText('3 files have uncommitted changes (Program.cs, app.css, notes.md)', { exact: true }).waitFor();
