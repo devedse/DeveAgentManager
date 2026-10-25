@@ -332,26 +332,35 @@ a {
     margin-left: 8px;
 }
 
-/* Touch screens: the tab bar scrolls with a swipe, like any list, instead of MudBlazor's arrow buttons that move it
-   a page per tap. The arrows go; the bar is scrolled natively (the wrapper's own scroll offset is switched off). */
-@media (pointer: coarse) {
-    .mud-tabs-tabbar .mud-tabs-scroll-button {
-        display: none;
-    }
+/* Tab bars wider than the window scroll natively: with a swipe, the scrollbar, Shift+wheel or the keyboard. MudBlazor's
+   arrow buttons moved the tabs with a transform, and the browser also scrolled a focused tab into view, so in a narrow
+   window a clicked tab moved twice as far, out of sight. The arrows and the transform go; tab-bars.ts brings a tab
+   that is chosen without being focused (a link to one) into view. */
+.mud-tabs-tabbar .mud-tabs-scroll-button {
+    display: none;
+}
 
+.mud-tabs-tabbar .mud-tabs-tabbar-content {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--dam-border) transparent;
+}
+
+.mud-tabs-tabbar .mud-tabs-tabbar-wrapper {
+    transform: none !important;
+}
+
+/* Touch screens swipe; the scrollbar would only take room. */
+@media (pointer: coarse) {
     .mud-tabs-tabbar .mud-tabs-tabbar-content {
-        overflow-x: auto;
-        overscroll-behavior-x: contain;
         scrollbar-width: none;
     }
 
         .mud-tabs-tabbar .mud-tabs-tabbar-content::-webkit-scrollbar {
             display: none;
         }
-
-    .mud-tabs-tabbar .mud-tabs-tabbar-wrapper {
-        transform: none !important;
-    }
 }
 
 .panel-tab-content {
