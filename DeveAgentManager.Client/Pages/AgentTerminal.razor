@@ -55,7 +55,7 @@
             }
             @if (running && write)
             {
-                <span class="toolbar-item" data-toolbar="limit"><AgentLimitButton @key="AgentId" AgentId="AgentId" /></span>
+                <span class="toolbar-item" data-toolbar="limit"><AgentLimitButton @key="AgentId" AgentId="AgentId" Overflowed="@Overflowed("limit")" /></span>
                 <span class="toolbar-item terminal-quick-desktop" data-toolbar="quick"><QuickCommandMenu AgentId="AgentId" HarnessId="@_agent.HarnessId" Disabled="_busy" /></span>
                 <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" />
                 <span class="toolbar-item" data-toolbar="viewers"><AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" /></span>
@@ -63,6 +63,12 @@
             @if (read)
             {
                 <span class="toolbar-item" data-toolbar="awake"><ScreenAwakeButton /></span>
+                <span class="continue-offer-anchor">
+                @if (running && write && Overflowed("limit"))
+                {
+                    @* The usage-limit button is in this menu: its offer to turn on auto-continue drops down from here. *@
+                    <AgentLimitButton @key="(AgentId, nameof(AgentLimitButton.OfferOnly))" AgentId="AgentId" OfferOnly="true" />
+                }
                 <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" Class="terminal-more">
                     <ActivatorContent>
                         <MudIconButton Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" OnClick="@context.ToggleAsync" aria-label="More actions" title="More actions" />
@@ -151,6 +157,7 @@
                         }
                     </ChildContent>
                 </MudMenu>
+                </span>
             }
         }
     </div>

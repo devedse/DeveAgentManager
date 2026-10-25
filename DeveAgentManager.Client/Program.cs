@@ -19,6 +19,7 @@ builder.Services.AddSingleton<LiveUpdates>();
 builder.Services.AddSingleton<PageVisibility>();
 builder.Services.AddSingleton<BrowserClock>();
 builder.Services.AddSingleton<AgentTaskViews>();
+builder.Services.AddSingleton<ContinueOffers>();
 builder.Services.AddSingleton<SignedInUser>();
 builder.Services.AddSingleton<ThemeService>();
 // WebAssembly's scope lasts for the browser app, including navigation between layouts.

@@ -2,7 +2,8 @@ const playwright = (await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright') 
 import assert from 'node:assert/strict';
 
 // The continue dialog in automatic mode shows the usage limit on screen and its detected reset (or that it has none),
-// and switching automatic on shows the next continue straight away, without closing and reopening the dialog.
+// and switching automatic on shows the next continue straight away, without closing and reopening the dialog. A new
+// usage limit offers to switch it on with one click, in a popdown from the button.
 const engine = process.env.DAM_TEST_BROWSER ?? 'chromium';
 const browser = await playwright[engine].launch();
 const base = process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
@@ -25,12 +26,13 @@ try {
         resetAt: reset.toISOString(), continueAt: null, status: 'Detected', detail: null, nativeAutoContinue: false, manual: false, detectedResetAt: reset.toISOString() };
     let limit: Record<string, any> = detected;
     let automatic = { enabled: false, remaining: null, sent: 0, detail: null, available: true };
-    const schedules = [];
+    const schedules = [], automaticRequests = [];
     await context.route('**/api/**', route => {
         const path = new URL(route.request().url()).pathname, method = route.request().method();
         if (path === '/api/me' || path.startsWith('/api/me/')) return route.continue();
         if (path === `/api/agents/${id}/limit/automatic` && method === 'PUT') {
             const request = route.request().postDataJSON();
+            automaticRequests.push(request);
             // As the Manager does: switching on schedules the limit on screen at once.
             automatic = { ...automatic, enabled: request.enabled, remaining: request.remaining ?? null,
                 detail: request.enabled ? (limit.detectedResetAt ? 'Waiting until one minute after the detected reset.' : 'The reset time is uncertain. Switch to a one-time schedule to choose it manually.') : 'Automatic continuation is off.' };
@@ -166,8 +168,119 @@ try {
     await openDialog();
     await dialog.getByText('The reset time needs confirmation.', { exact: true }).waitFor();
     assert.equal(await dialog.getByText(/No reset time was found/).count(), 0, 'an uncertain parsed reset is not described as missing');
+    await page.keyboard.press('Escape');
+
+    // A new limit that automatic mode can handle, while it is off, offers to turn it on with one click: the offer drops
+    // down from the button. Each limit is a new observation (detectedAt), as the Manager records it.
+    let observed = Date.UTC(2029, 11, 31, 9, 0);
+    const newLimit = (changes = {}) => {
+        observed += 60000;
+        limit = { ...detected, detectedAt: new Date(observed).toISOString(), ...changes };
+    };
+    const offer = page.getByRole('status', { name: 'Turn on auto-continue' });
+    const showAgent = async () => {
+        await page.goto(base + `/agents/${id}`);
+        await page.locator('.terminal-toolbar [aria-label="More actions"]').waitFor({ timeout: 60000 });
+        errors.length = 0;
+    };
+    const offered = async () => {
+        await showAgent();
+        await offer.waitFor({ timeout: 10000 });
+        await offer.getByRole('heading', { name: 'Usage limit until 2030-01-02 14:00', exact: true }).waitFor();
+    };
+    const notOffered = async (why) => {
+        await showAgent();
+        await page.locator('[data-toolbar="limit"] button').waitFor();
+        // The offer would appear with the button's status; give it the same time as that.
+        await page.waitForTimeout(1500);
+        assert.equal(await offer.count(), 0, why);
+    };
+    const below = async (anchor) => {
+        // Past its opening transition.
+        await page.waitForTimeout(400);
+        const [a, o] = [await anchor.boundingBox(), await offer.boundingBox()];
+        assert.ok(o.y >= a.y + a.height - 1 && o.y - (a.y + a.height) < 24, 'the offer drops down right under its button');
+        // Lined up with the button's right edge where there's room; on a phone, moved left as far as it needs to.
+        const room = a.x + a.width >= o.width + 8;
+        assert.ok(room ? Math.abs(o.x + o.width - (a.x + a.width)) < 4 : o.x < a.x && o.x + o.width > a.x + a.width, 'the offer is under its button');
+        assert.ok(o.x >= 0 && o.x + o.width <= page.viewportSize().width, 'the offer stays on screen');
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'the offer makes the page scroll sideways');
+    };
+    await page.setViewportSize({ width: 1280, height: 900 });
+    newLimit();
+    automatic = { enabled: false, remaining: null, sent: 0, detail: null, available: true };
+    await offered();
+    await offer.getByText('Turn on auto-continue? It continues at 2030-01-02 14:01.', { exact: true }).waitFor();
+    await below(page.locator('[data-toolbar="limit"] button'));
+    await page.screenshot({ path: '/tmp/dam-auto-continue-offer.png' });
+    let requests = automaticRequests.length;
+    await offer.getByRole('button', { name: 'Turn on', exact: true }).click();
+    await offer.waitFor({ state: 'hidden', timeout: 10000 });
+    assert.deepEqual(automaticRequests.slice(requests), [{ enabled: true, remaining: null }], 'one click switches on unlimited auto-continue');
+    await page.getByRole('button', { name: 'Auto-continue scheduled for 2030-01-02 14:01 (Europe/Amsterdam)', exact: true }).waitFor({ timeout: 10000 });
+
+    // Not now hides it for this limit, also after reloading; the next limit is offered again.
+    newLimit();
+    automatic = { enabled: false, remaining: null, sent: 0, detail: null, available: true };
+    await offered();
+    requests = automaticRequests.length;
+    await offer.getByRole('button', { name: 'Not now' }).click();
+    await offer.waitFor({ state: 'hidden' });
+    await notOffered('Not now hides the offer for the same limit');
+    assert.equal(automaticRequests.length, requests, 'Not now changes nothing');
+    newLimit();
+    await offered();
+
+    // Opening the options answers it too.
+    await page.locator('[data-toolbar="limit"] button').click();
+    await page.getByRole('dialog').waitFor();
+    assert.equal(await offer.count(), 0, 'the offer closes when the options open');
+    await page.keyboard.press('Escape');
+    await notOffered('the options were seen for this limit');
+
+    // A count of continuations left from before is kept, as the dialog's switch keeps it.
+    newLimit();
+    automatic = { enabled: false, remaining: 3, sent: 4, detail: 'Automatic continuation is off.', available: true };
+    await offered();
+    await offer.getByText('Turn on auto-continue? It continues at 2030-01-02 14:01 (3 continuations left).', { exact: true }).waitFor();
+    requests = automaticRequests.length;
+    await offer.getByRole('button', { name: 'Turn on', exact: true }).click();
+    await offer.waitFor({ state: 'hidden', timeout: 10000 });
+    assert.deepEqual(automaticRequests.slice(requests), [{ enabled: true, remaining: 3 }]);
+
+    // Only for what one click can handle.
+    newLimit();
+    automatic = { enabled: true, remaining: null, sent: 0, detail: 'Usage limit detected. Preparing automatic continuation.', available: true };
+    await notOffered('auto-continue is already on');
+    automatic = { enabled: false, remaining: null, sent: 0, detail: null, available: true };
+    newLimit({ message: "You've hit your usage limit", resetAt: null, detectedResetAt: null });
+    await notOffered('without a reset time, automatic mode can only ask for one');
+    newLimit({ nativeAutoContinue: true });
+    await notOffered('Claude continues by itself');
+    newLimit({ status: 'Scheduled', continueAt: new Date(reset.getTime() + 60000).toISOString() });
+    await notOffered('a one-time continue is already scheduled');
+    newLimit();
+    automatic = { enabled: false, remaining: null, sent: 0, detail: null, available: false };
+    await notOffered('pi has no recognized reset times');
+
+    // Phones, in the dark theme: on the button while the toolbar has room for it, otherwise on the ⋮ menu that has it.
+    automatic = { enabled: false, remaining: null, sent: 0, detail: null, available: true };
+    // 280px is a folding phone's outer screen.
+    for (const width of [390, 320, 280]) {
+        await page.setViewportSize({ width, height: 800 });
+        newLimit();
+        await offered();
+        const inMenu = await page.locator('[data-toolbar="limit"]').evaluate(element => element.hidden);
+        await below(inMenu ? page.locator('.terminal-toolbar [aria-label="More actions"]') : page.locator('[data-toolbar="limit"] button'));
+        await page.screenshot({ path: `/tmp/dam-auto-continue-offer-${width}.png` });
+        console.log(`${width}px: the offer drops down from ${inMenu ? 'the ⋮ menu' : 'the usage-limit button'}`);
+        if (width === 280) {
+            await offer.getByRole('button', { name: 'Turn on', exact: true }).click();
+            await offer.waitFor({ state: 'hidden', timeout: 10000 });
+        }
+    }
     assert.deepEqual(errors, []);
-    console.log(`Passed (${engine}): detected/unknown resets, dated DST overlap scheduling with UTC offset, edited picker guards, blocked delivery, unresolved sends and automatic mode, including on phones.`);
+    console.log(`Passed (${engine}): detected/unknown resets, dated DST overlap scheduling with UTC offset, edited picker guards, blocked delivery, unresolved sends and automatic mode, the one-click offer, including on phones.`);
 } finally {
     await browser.close();
 }

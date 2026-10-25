@@ -3096,6 +3096,19 @@ html:has(.terminal-layout) body {
 @keyframes limit-alert-pulse { 50% { opacity: .4; } }
 @media (prefers-reduced-motion: reduce) { .limit-alert-blink { animation: none; } }
 
+/* The offer to turn on auto-continue that drops down from the usage-limit button (or the ⋮ menu) when a limit appears. */
+.continue-offer-anchor { display: inline-flex; align-items: center; }
+.continue-offer-popover { margin-top: 6px; }
+.continue-offer { width: min(340px, calc(100vw - 48px)); box-sizing: border-box; padding: 14px 16px 12px; border: 1px solid var(--dam-border-strong); border-radius: var(--dam-radius); background: var(--dam-surface); color: var(--dam-text); box-shadow: 0 12px 40px color-mix(in srgb, var(--dam-console) 24%, transparent); }
+.continue-offer .help-heading { gap: 4px; margin: -5px 0 2px; }
+.continue-offer h2 { margin: 0; font-size: 1rem; font-weight: 650; }
+.continue-offer-time { white-space: nowrap; }
+.continue-offer p { margin: 0; color: var(--dam-muted); font-size: .875rem; overflow-wrap: anywhere; }
+.continue-offer .continue-offer-error { margin-top: 6px; color: var(--dam-error); }
+.continue-offer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.continue-offer-actions .mud-button-root { border-radius: 9px; }
+.continue-offer-actions .mud-button-text { color: var(--dam-muted); }
+
 .agent-status-button { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; font: inherit; }
 .agent-status-button:focus-visible { outline: 2px solid var(--mud-palette-primary); outline-offset: 4px; border-radius: 14px; }
 .agent-status-extra { color: var(--mud-palette-warning); font-size: .75rem; }
