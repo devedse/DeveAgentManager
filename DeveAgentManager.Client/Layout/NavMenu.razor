@@ -31,8 +31,15 @@
             @if (group.Count == 1) { <WorkspaceNavEntry Agent="group[0]" /> }
             else
             {
+                @* Indented under Agents like a single agent, its workspaces one step further. The menu is too narrow for a
+                   project's name and Runner both, so the Runner is in the title. *@
                 <MudNavGroup Title="@WorkspaceGroups.ProjectName(group[0])" Icon="@Icons.Material.Rounded.FolderOpen" Expanded="true" Class="nav-project">
-                    @foreach (var agent in group) { <WorkspaceNavEntry Agent="agent" Child="true" /> }
+                    <TitleContent>
+                        <span class="nav-project-name" title="@($"{WorkspaceGroups.ProjectName(group[0])} · {group[0].RunnerName}")">@WorkspaceGroups.ProjectName(group[0])</span>
+                    </TitleContent>
+                    <ChildContent>
+                        @foreach (var agent in group) { <WorkspaceNavEntry Agent="agent" Child="true" /> }
+                    </ChildContent>
                 </MudNavGroup>
             }
         }

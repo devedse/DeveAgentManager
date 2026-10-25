@@ -2663,19 +2663,75 @@ html:has(.terminal-layout) body {
         animation: dam-pulse 1.6s ease-in-out infinite;
     }
 
-.nav-agent-name {
-    flex: 1;
+.nav-agent-name, .nav-project-name {
+    flex: 1 1 auto;
     min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
+.nav-project-name {
+    display: block;
+    font-size: 0.82rem;
+}
+
+/* A long Runner or branch name is cut too, so it doesn't leave only a few letters of the agent's name. */
 .nav-agent-meta {
+    flex: 0 0 auto;
+    max-width: 35%;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: var(--dam-faint);
     font-size: 0.72rem;
     white-space: nowrap;
 }
+
+/* A project: its row is indented like a single agent's; its workspaces sit one step further in, along a line from the
+   folder, so an agent listed after the project (maybe one with the same name on another Runner) is clearly not one
+   of them. */
+.app-nav .nav-project > .mud-nav-link {
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+    /* A single agent's 46px and the 12px MudBlazor puts before its avatar. */
+    padding-left: 58px !important;
+    padding-right: 8px !important;
+    min-height: 0;
+    font-weight: 500;
+}
+
+    .app-nav .nav-project > .mud-nav-link .mud-nav-link-icon {
+        font-size: 24px;
+    }
+
+    .app-nav .nav-project > .mud-nav-link .mud-nav-link-text {
+        min-width: 0;
+        margin-left: 8px;
+    }
+
+    /* A smaller collapse arrow leaves the name and Runner more room. */
+    .app-nav .nav-project > .mud-nav-link .mud-nav-link-expand-icon {
+        font-size: 18px;
+        margin-left: 4px;
+    }
+
+.app-nav .nav-project .nav-agent .mud-nav-link {
+    padding-left: 70px !important;
+    padding-right: 16px !important;
+}
+
+.app-nav .nav-project .mud-navgroup-collapse {
+    position: relative;
+}
+
+    .app-nav .nav-project .mud-navgroup-collapse::before {
+        content: "";
+        position: absolute;
+        left: 69px;
+        top: 0;
+        bottom: 12px;
+        border-left: 1px solid var(--dam-border-strong);
+    }
 
 /* ---------- Sessions ---------- */
 
