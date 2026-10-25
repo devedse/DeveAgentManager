@@ -226,6 +226,7 @@ public sealed class SessionService(
         {
             await EnsureVerifiedLockedAsync(existingId, cancellationToken);
             stored = await db.Sessions.FirstOrDefaultAsync(s => s.Id == existingId, cancellationToken) ?? throw new ArgumentException("Session not found.");
+            var ranIn = stored.WorkingDirectory;
             // A saved conversation of the same project resumes in another of its workspaces as it is.
             var sameProject = agent.ProjectId is { } projectId && stored.AgentId is null && stored.OwnerId == agent.OwnerId
                 && (stored.ProjectId == projectId || await db.Agents.AnyAsync(a => a.Id == stored.WorkspaceAgentId && a.ProjectId == projectId, cancellationToken));
@@ -244,7 +245,7 @@ public sealed class SessionService(
                 stored = await CopyAsync(db, stored, agent.OwnerId, cancellationToken);
             }
 
-            await WriteForHarnessAsync(runner, stored, agent.HarnessId, agent.HarnessSessionId, agent.WorkingDirectory, cancellationToken);
+            await WriteForHarnessAsync(runner, stored, agent.HarnessId, agent.HarnessSessionId, agent.WorkingDirectory, ranIn, cancellationToken);
         }
         else
         {
@@ -283,23 +284,24 @@ public sealed class SessionService(
         await BackupAsync(stored, cancellationToken);
 
         stored.TitlePinned = true; // Keep the conversation name across format conversion.
-        await WriteForHarnessAsync(runner, stored, harnessId, harnessSessionId, agent.WorkingDirectory, cancellationToken);
+        await WriteForHarnessAsync(runner, stored, harnessId, harnessSessionId, agent.WorkingDirectory, null, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         events.SessionChanged(stored.Id, agent.Id);
     }
 
     /// <summary>
     /// Writes a stored conversation to a Runner in a harness's format. Its own harness gets it unchanged; another harness
-    /// gets validated structured tool history. Updates the stored session after verified installation.
+    /// gets validated structured tool history. Updates the stored session after verified installation. When it last ran
+    /// in another folder (<paramref name="ranIn"/>), the agent is told where it works now.
     /// </summary>
-    private async Task WriteForHarnessAsync(Runner runner, StoredSession stored, string harnessId, string harnessSessionId, string workingDirectory, CancellationToken cancellationToken)
+    private async Task WriteForHarnessAsync(Runner runner, StoredSession stored, string harnessId, string harnessSessionId, string workingDirectory, string? ranIn, CancellationToken cancellationToken)
     {
         var format = _formats.GetValueOrDefault(harnessId) ?? throw new InvalidOperationException($"Conversations can't be continued in '{harnessId}' yet.");
         if (stored.MessageCount > 0 && !HasSaved(stored.Id))
             throw new IOException("The saved history is missing. Restore it before switching sessions.");
         logger.LogInformation("Loading conversation {Session} ({Size:0.0} MB saved) to continue it in {Harness} on {Runner}", stored.Id, Megabytes(stored.SavedSize), harnessId, runner.Name);
         await _wholeLoads.WaitAsync(cancellationToken);
-        try { await WriteForHarnessLockedAsync(runner, stored, format, harnessId, harnessSessionId, workingDirectory, cancellationToken); }
+        try { await WriteForHarnessLockedAsync(runner, stored, format, harnessId, harnessSessionId, workingDirectory, ranIn, cancellationToken); }
         finally { _wholeLoads.Release(); }
 
         var trail = (stored.HarnessTrail ?? stored.HarnessId).Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
@@ -317,7 +319,7 @@ public sealed class SessionService(
     }
 
     // One whole conversation at a time (_wholeLoads), converted and written for the harness that continues it.
-    private async Task WriteForHarnessLockedAsync(Runner runner, StoredSession stored, ISessionFormat format, string harnessId, string harnessSessionId, string workingDirectory, CancellationToken cancellationToken)
+    private async Task WriteForHarnessLockedAsync(Runner runner, StoredSession stored, ISessionFormat format, string harnessId, string harnessSessionId, string workingDirectory, string? ranIn, CancellationToken cancellationToken)
     {
         var session = await LoadAsync(stored.Id, cancellationToken);
         session.Title = stored.Title;
@@ -326,6 +328,8 @@ public sealed class SessionService(
         {
             session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(harnessId), harnessId);
         }
+
+        NoteFolderChange(session, ranIn, workingDirectory);
 
         // Nothing to move (e.g. pi writes its file only with the first message): the new harness starts a conversation
         // of its own under the id, instead of being handed an empty one (claude --resume refuses those).
@@ -363,6 +367,24 @@ public sealed class SessionService(
     }
 
     private bool HasSaved(Guid id) => _native.Exists(id) || File.Exists(PathFor(id));
+
+    /// <summary>
+    /// When the conversation continues in another folder than <paramref name="ranIn"/>, a note for the agent at the end of
+    /// its active branch: its history names files in the old folder, which may still exist with another agent working in it.
+    /// </summary>
+    internal static void NoteFolderChange(DeveSession session, string? ranIn, string workingDirectory)
+    {
+        if (session.Entries.Count == 0 || ranIn is not { Length: > 0 } || ranIn.TrimEnd('/') == workingDirectory.TrimEnd('/')) return;
+        var parent = session.LeafId ?? session.Entries.LastOrDefault()?.Id;
+        var note = new DeveEntry
+        {
+            Id = Guid.NewGuid().ToString("N"), ParentId = parent, Kind = DeveEntryKind.Message, Role = DeveRole.User,
+            Timestamp = DateTime.UtcNow, Content = [DeveBlock.OfText(ManagerNotes.FolderNote(ranIn, workingDirectory))],
+            MigrationKind = ManagerNotes.FolderKind,
+        };
+        session.Entries.Add(note);
+        session.LeafId = note.Id;
+    }
 
     private async Task BackupAsync(StoredSession stored, CancellationToken ct)
     {
@@ -745,7 +767,7 @@ public sealed class SessionService(
         {
             await EnsureVerifiedLockedAsync(selected.Id, ct);
             await db.Entry(selected).ReloadAsync(ct);
-            await WriteForHarnessAsync(runner, selected, selected.HarnessId, nativeId, agent.WorkingDirectory, ct);
+            await WriteForHarnessAsync(runner, selected, selected.HarnessId, nativeId, agent.WorkingDirectory, selected.WorkingDirectory, ct);
         }
         else { selected.HarnessSessionId = nativeId; db.Sessions.Add(selected); }
         // It now runs here; it stays the project's when this workspace is removed.
@@ -866,6 +888,28 @@ public sealed class SessionService(
             }
             catch (Exception ex) when (ex is IOException or JsonException or FormatException)
             { logger.LogWarning(ex, "Could not read saved message timestamps for session {Session}", saved.Id); }
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Conversations titled with a note the Manager put in front of their first prompt, from before titles skipped those
+    /// notes. A synced preview of that prompt is cut off inside the note, so the title comes from the whole history, once.
+    /// </summary>
+    public async Task RepairNoteTitlesAsync(CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var candidates = await db.Sessions.Where(s => s.Title.StartsWith("(This conversation was moved from ") || s.Title.StartsWith("[DAM ")).ToListAsync(ct);
+        foreach (var saved in candidates.Where(s => ManagerNotes.WithoutNotes(s.Title) is null && HasSaved(s.Id)))
+        {
+            try
+            {
+                var prompt = (await LoadAsync(saved.Id, ct)).FirstPrompt();
+                if (prompt is not null) saved.Title = prompt;
+                else if (!saved.TitlePinned) saved.Title = NewTitle;
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or FormatException)
+            { logger.LogWarning(ex, "Could not read the first prompt of session {Session} for its title", saved.Id); }
         }
         await db.SaveChangesAsync(ct);
     }

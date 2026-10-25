@@ -301,6 +301,28 @@ public sealed class WorkspaceSessionTests
     }
 
     [Fact]
+    public async Task TitlesThatAreAManagerNoteGetTheirFirstPromptOnce()
+    {
+        using var rig = new Rig();
+        await rig.CreateAsync();
+        var current = (await rig.Service.GetForAgentAsync(rig.Agent.Id, Ct))!;
+        const string noteTitle = "(This conversation was moved from Codex to Claude Code by DeveAgentManager. Too…";
+        var history = new DeveSession();
+        history.Entries.Add(new DeveEntry { Id = "u1", Kind = DeveEntryKind.Message, Role = DeveRole.User,
+            Content = [DeveBlock.OfText("(This conversation was moved from Codex to Claude Code by DeveAgentManager. Tool calls from before the move are shown as text; what they changed is in the files.)\nGenerate the maze images")] });
+        Directory.CreateDirectory(rig.Options.SessionsDirectory);
+        await File.WriteAllTextAsync(Path.Combine(rig.Options.SessionsDirectory, $"{current.Id:N}.json"), history.ToJson(), Ct);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            (await db.Sessions.SingleAsync(Ct)).Title = noteTitle;
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await rig.Service.RepairNoteTitlesAsync(Ct);
+        Assert.Equal("Generate the maze images", (await rig.Service.GetAsync(current.Id, Ct))!.Title);
+    }
+
+    [Fact]
     public async Task HarnessMigrationPreservesAutomaticNameAndOriginalBackup()
     {
         using var rig = new Rig();

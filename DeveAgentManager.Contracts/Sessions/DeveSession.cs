@@ -88,14 +88,22 @@ public sealed class DeveSession
     /// <summary>The first thing the user asked, on one line, as a readable title.</summary>
     public string? FirstPrompt(int maxLength = 80)
     {
-        var text = Entries.FirstOrDefault(e => e is { Kind: DeveEntryKind.Message, Role: DeveRole.User } && e.PlainText().Trim().Length > 0)?.PlainText();
-        if (text is null)
+        // The Manager's own notes are skipped. One cut off in a shortened preview hides the prompt after it: unknown.
+        foreach (var entry in Entries.Where(e => e is { Kind: DeveEntryKind.Message, Role: DeveRole.User, MigrationKind: null }))
         {
-            return null;
+            if (ManagerNotes.WithoutNotes(entry.PlainText()) is not { } text)
+            {
+                return null;
+            }
+
+            text = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            if (text.Length > 0)
+            {
+                return text.Length <= maxLength ? text : text[..(maxLength - 1)] + "…";
+            }
         }
 
-        text = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-        return text.Length <= maxLength ? text : text[..(maxLength - 1)] + "…";
+        return null;
     }
 
     /// <summary>Number of leaves besides the active one, i.e. abandoned branches.</summary>

@@ -23,6 +23,8 @@ public sealed class SessionReadCursor
             // Preserve whether there is assistant text, along with enough text for existing previews and titles.
             var parts = e.Text is not null ? new[] { e.Text } : (e.Content ?? [])
                 .Where(b => e.Role == DeveRole.User || b.Type == "text").Select(b => b.Text);
+            // A note the Manager put in front of a prompt would fill the whole snippet.
+            if (e.Role == DeveRole.User) parts = parts.Select(p => p is null ? p : ManagerNotes.WithoutNotes(p) ?? p).ToArray();
             e.Text = Snippet(parts, e.Role == DeveRole.User ? 80 : 281);
             e.Content = null;
             e.Native = null;

@@ -165,6 +165,14 @@ branch moves; abandoned branches remain available in the source. A second move r
 notice. Envelope metadata (`damHistoryKind`, `damToolHistory`) preserves archival provenance and custom-call
 encoding through repeated switches without adding fields to provider message bodies or changing tool arguments.
 
+A conversation that continues in another folder than it last ran in (another workspace, or a new agent) gets a
+folder note at the end of its active branch: a user message between `[DAM workspace change v1]` and
+`[/DAM workspace change]`, with `damHistoryKind` `workspace`. It tells the agent where it works now, that paths under
+the old folder in earlier messages refer to that folder, and to check the new folder's state first. The viewer shows
+it collapsed. Titles and previews leave out the Manager's notes (transfer notices, folder notes and archived records,
+including the older one-line transfer note in front of the first prompt). Titles that were such a note are taken
+from the whole history once, at startup.
+
 Before installation, the destination bytes are read back and checked for paired calls, exact arguments/results,
 error state, encoding hints and user images. A failed writer aborts before upload. The Runner receives a private
 staging file, verifies its SHA-256 and atomically renames it. A cancelled or failed transfer cannot overwrite the

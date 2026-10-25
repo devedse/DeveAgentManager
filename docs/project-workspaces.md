@@ -82,8 +82,13 @@ ran, and `AgentId` where it is active now. A conversation is active in at most o
   workspace they last ran in, and on the Sessions page grouped by project; both pages use the same rows and actions.
   The project page is the place for one project; the Sessions page lists every project's conversations, imported ones
   and those shared with you. Choosing one never does anything by itself:
-  the person picks **Resume here** (which saves and stops the conversation running there, and warns when its last
-  folder or branch differs), **Resume in a new workspace**, or **Read only**. An active conversation opens its workspace.
+  the person picks **Resume here** (which saves and stops the conversation running there), **Resume in a new
+  workspace**, or **Read only**. An active conversation opens its workspace.
+- **Resuming in another workspace.** Its files are that workspace's, so the choice shows a warning when the
+  conversation last ran elsewhere: changes there that weren't committed and pushed aren't in this folder, the branch
+  when it differs, and whether the workspace it ran in still has uncommitted files or unpushed commits. The agent gets
+  a note in the conversation that it now works in this folder, and that paths in earlier messages refer to the other
+  one (see [session-formats.md](session-formats.md)).
 - **Removing a workspace** keeps its conversations with the project. Their access then follows the project's sharing.
   A standalone conversation share stays limited to that conversation.
 

@@ -8,6 +8,7 @@
         <HelpTip Label="Saved conversation">
             <p>Resume here replaces the conversation in this workspace. The conversation running there is saved and can be resumed later. Resume in a new workspace starts it next to the others, so nothing stops.</p>
             <p>A conversation continues in the files of the workspace it resumes in. Its earlier uncommitted changes stay in the folder it last ran in.</p>
+            <p>When it resumes in another folder, the Manager adds a note to the conversation for the agent: where it works now, and that paths in earlier messages refer to the other folder.</p>
         </HelpTip></div></TitleContent>
     <DialogContent>
         <MudText Typo="Typo.body2" Class="mud-text-secondary">Last ran in @WorkspaceGroups.LastRanIn(Session, ProjectAgents)@(Session.RepositoryBranch is { } branch ? $" on {branch}" : "") · @Session.UpdatedAt.Humanize()</MudText>
@@ -21,7 +22,22 @@
                 @if (WorkspaceGroups.Running(here))
                 { <MudText Typo="Typo.caption">@(HereTitle is { } title ? $"“{title}” is saved and stops." : "The conversation running here is saved and stops.")</MudText> }
                 @if (Differs(here))
-                { <MudText Typo="Typo.caption" Class="conversation-chooser-warning">This conversation last ran in @WorkspaceGroups.LastRanIn(Session, ProjectAgents)@(Session.RepositoryBranch is { } last ? $" on {last}" : ""); this workspace is on @(here.RepositoryBranch ?? "another folder").</MudText> }
+                {
+                    var name = WorkspaceGroups.WorkspaceName(here);
+                    <MudAlert Severity="Severity.Warning" Dense="true" Class="conversation-chooser-warning">
+                        <div>This conversation last ran in <b>@WorkspaceGroups.LastRanIn(Session, ProjectAgents)</b>. Here it continues with @name's files: changes it made there that weren't committed and pushed aren't in this folder.</div>
+                        @if (Session.RepositoryBranch is { } last && here.RepositoryBranch is { } current && last != current)
+                        { <div>It was on @last; @name is on @current.</div> }
+                        @if (Previous is { } previous)
+                        {
+                            var previousName = WorkspaceGroups.WorkspaceName(previous);
+                            <LoadingSection Loaded="_previousChanges is not null" Error="@(_previousError is null ? null : $"Couldn't check {previousName} for unsaved work: {_previousError}")" Retry="CheckPreviousAsync" Label="@($"Checking {previousName}")" Class="conversation-chooser-changes">
+                                @if (_previousChanges is { Exists: true } changes)
+                                { <div class="conversation-chooser-changes">@(changes.Uncommitted + changes.Unpushed > 0 ? $"{previousName} still has {Unsaved(changes)}." : $"{previousName} has nothing uncommitted or unpushed.")</div> }
+                            </LoadingSection>
+                        }
+                    </MudAlert>
+                }
             }
             @if (Here is { Access: AgentAccess.Owner, CanUseRunner: true } source)
             {
@@ -43,6 +59,8 @@
     public const string ResumedHere = "here";
     private bool _busy;
     private string? _error;
+    private WorkspaceChangesDto? _previousChanges;
+    private string? _previousError;
 
     /// <returns><see cref="ResumedHere"/> when it now runs in <paramref name="here"/>; otherwise null.</returns>
     public static async Task<string?> ShowAsync(IDialogService dialogs, SessionDto session, AgentDto? here, IReadOnlyList<AgentDto> projectAgents, string? hereTitle = null)
@@ -55,6 +73,27 @@
 
     private bool Differs(AgentDto here) => Session.WorkspaceAgentId != here.Id
         && (Session.RepositoryBranch is { } branch && branch != here.RepositoryBranch || Session.WorkingDirectory is { } folder && folder != here.WorkingDirectory);
+
+    /// <summary>The workspace it last ran in, when it still exists and can be checked for work that isn't saved anywhere else.</summary>
+    private AgentDto? Previous => Here is { } here && Differs(here) && ProjectAgents.FirstOrDefault(a => a.Id == Session.WorkspaceAgentId) is
+        { Access: >= AgentAccess.Write, RunnerState: RunnerState.Ready } previous ? previous : null;
+
+    private static string Unsaved(WorkspaceChangesDto changes) => string.Join(" and ", new[]
+    {
+        changes.Uncommitted > 0 ? $"{changes.Uncommitted} uncommitted {(changes.Uncommitted == 1 ? "file" : "files")}" : null,
+        changes.Unpushed > 0 ? $"{changes.Unpushed} unpushed {(changes.Unpushed == 1 ? "commit" : "commits")}" : null,
+    }.OfType<string>());
+
+    protected override Task OnInitializedAsync() => CheckPreviousAsync();
+
+    private async Task CheckPreviousAsync()
+    {
+        if (Previous is not { } previous) return;
+        _previousError = null;
+        try { _previousChanges = await Api.GetWorkspaceChangesAsync(previous.Id); }
+        catch (ApiException ex) { _previousError = ex.Message; }
+        catch (HttpRequestException) { _previousError = LoadingSection.Unreachable; }
+    }
 
     private async Task ResumeHereAsync()
     {

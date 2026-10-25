@@ -27,7 +27,8 @@ try {
     const session = (n, title, agentId, workspaceAgentId = id(10), folder = '/work/example-project') => ({ id: id(100 + n), ownerId: me.id, ownerName: 'Test user', access: 'Owner', title, harnessId: 'pi', messageCount: 2,
         agentId, workspaceAgentId, workspaceAccess: 'Owner', projectId: id(50), workingDirectory: folder, repositoryBranch: 'main', createdAt: now, updatedAt: now, sourceSize: 0, savedSize: 0, totalSize: 0 });
     const sessions = [session(0, 'Current conversation', id(10)), session(1, 'Previous conversation', null),
-        session(2, 'Removed workspace chat', null, null, '/work/example-project.workspaces/old-fix')];
+        session(2, 'Removed workspace chat', null, null, '/work/example-project.workspaces/old-fix'),
+        { ...session(3, 'Login fix chat', null, id(11), '/work/example-project.workspaces/login-fix'), repositoryBranch: 'login-fix' }];
     const writes: { path: string, body: any }[] = [];
     const login = (n, name) => ({ id: id(300 + n), harnessId: 'pi', name, kind: 'Subscription', isDefault: false, version: 1, agentCount: 0,
         createdAt: now, updatedAt: now, access: 'Use', enabled: true });
@@ -114,13 +115,13 @@ try {
     await page.getByRole('menuitem', { name: /Current conversation/ }).waitFor();
     slowWorkspace = false;
     await page.getByRole('menuitem', { name: /Stopped \(1\)/ }).click();
-    await page.getByRole('menuitem', { name: /login-fix/ }).waitFor();
+    await page.getByRole('menuitem', { name: /^login-fix/ }).waitFor();
     // Rows lead with the workspace's name; the branch and the conversation are underneath.
-    await page.getByRole('menuitem', { name: /login-fix/ }).getByText('switched-branch', { exact: true }).waitFor();
+    await page.getByRole('menuitem', { name: /^login-fix/ }).getByText('switched-branch', { exact: true }).waitFor();
     await page.getByRole('menuitem', { name: /^Main/ }).getByText('main · Current conversation', { exact: true }).waitFor();
     // And what each one runs with: its harness, and the login for harnesses that have logins.
     const runsWith = async (row: RegExp) => (await page.getByRole('menuitem', { name: row }).locator('.workspace-menu-login').innerText()).replace(/\s+/g, ' ').trim();
-    assert.equal(await runsWith(/login-fix/), 'Claude Code · admin · Work login');
+    assert.equal(await runsWith(/^login-fix/), 'Claude Code · admin · Work login');
     assert.equal(await runsWith(/^Main/), 'pi', 'a harness without logins shows only its name');
     assert.deepEqual(writes, [], 'opening the dropdown sends no lifecycle commands');
     await page.getByRole('button', { name: 'Stop Main', exact: true }).waitFor();
@@ -137,11 +138,24 @@ try {
     const chooser = page.getByRole('dialog');
     await chooser.getByRole('button', { name: 'Resume here, in Main' }).waitFor();
     await chooser.getByText('“Current conversation” is saved and stops.', { exact: true }).waitFor();
+    assert.equal(await chooser.locator('.conversation-chooser-warning').count(), 0, 'no warning for the workspace it last ran in');
     assert.equal(writes.length, 1, 'choosing a conversation does nothing by itself');
     await chooser.getByRole('button', { name: 'Resume here, in Main' }).click();
     await chooser.waitFor({ state: 'hidden' });
     await written(2);
     assert.deepEqual(writes.at(-1), { path: `/api/agents/${id(10)}/session`, body: { sessionId: id(101), title: null, update: false } });
+
+    // From another workspace: a warning, its branch, and what is still only in the workspace it last ran in.
+    await picker.click();
+    await page.getByRole('menuitem', { name: /Login fix chat/ }).click();
+    const warning = chooser.locator('.conversation-chooser-warning');
+    await warning.getByText('This conversation last ran in login-fix. Here it continues with Main\'s files: changes it made there that weren\'t committed and pushed aren\'t in this folder.', { exact: true }).waitFor();
+    await warning.getByText('It was on login-fix; Main is on main.', { exact: true }).waitFor();
+    await warning.getByText('login-fix still has 3 uncommitted files and 2 unpushed commits.', { exact: true }).waitFor();
+    await chooser.screenshot({ path: '/tmp/dam-conversation-chooser-warning.png' });
+    await chooser.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await chooser.waitFor({ state: 'hidden' });
+    assert.equal(writes.length, 2, 'checking the other workspace changes nothing');
 
     // New workspace: each start point fills in on its own; too large is disabled; failures retry.
     let exactArrived = false;
@@ -199,8 +213,8 @@ try {
     await conversations.getByText('old-fix (removed)', { exact: true }).waitFor();
     await conversations.getByText('● Active in Main', { exact: true }).waitFor();
     // The same rows as the Sessions page, with its actions.
-    assert.equal(await conversations.getByRole('button', { name: 'Rename session', exact: true }).count(), 3);
-    assert.equal(await conversations.getByRole('button', { name: 'Resume in its project', exact: true }).count(), 2, 'saved conversations can resume');
+    assert.equal(await conversations.getByRole('button', { name: 'Rename session', exact: true }).count(), 4);
+    assert.equal(await conversations.getByRole('button', { name: 'Resume in its project', exact: true }).count(), 3, 'saved conversations can resume');
 
     failWorkspace = true;
     await page.goto(base + `/agents/${id(10)}`);

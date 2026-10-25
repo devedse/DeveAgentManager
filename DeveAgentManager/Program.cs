@@ -77,6 +77,7 @@ await using (var db = await app.Services.GetRequiredService<IDbContextFactory<Ma
 await app.Services.GetRequiredService<UserService>().EnsureAdminAsync();
 await app.Services.GetRequiredService<UserSettingsStore>().MoveSettingsFromBeforeUsersAsync();
 await app.Services.GetRequiredService<DeveAgentManager.Core.Sessions.SessionService>().BackfillMessageTimesAsync();
+await app.Services.GetRequiredService<DeveAgentManager.Core.Sessions.SessionService>().RepairNoteTitlesAsync();
 
 // Settings from before users existed: say so, instead of silently ignoring them.
 foreach (var (setting, instead) in new[]
