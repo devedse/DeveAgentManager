@@ -442,37 +442,97 @@ public sealed class AgentMoveTests
         await Assert.ThrowsAsync<AgentMoveBusyException>(() => f.Agents.EnsureRunnerNotMovingAsync(f.Target.Id, Ct, deleting: true));
     }
 
-    [Fact(Timeout = 120_000)]
-    public async Task WorktreeAgentsAreIndependentAndMovesAlwaysCoverTheWholeProject()
+    [Fact(Timeout = 240_000)]
+    public async Task WorkspaceClonesRunIndependentlyAndMovesAlwaysCoverTheWholeProject()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var f = await Fixture.CreateAsync();
-        var git = "git -C " + ShellQuote.Quote(f.Agent.WorkingDirectory);
-        (await f.Ssh.Shell.RunAsync(f.Source, git + " init -b main && " + git + " add data.txt && " + git + " -c user.name=Test -c user.email=test@example.com commit -m initial", cancellationToken: Ct)).EnsureSuccess("Test repository");
-        await File.WriteAllTextAsync(f.Agent.WorkingDirectory + "/data.txt", "dirty Main", Ct);
-        var first = await f.Agents.CreateWorktreeAsync(TestUsers.Admin, f.Agent.Id, new("feature-one", "feature/one"), Ct);
-        var second = await f.Agents.CreateWorktreeAsync(TestUsers.Admin, first.Id, new("feature-two", "feature/two", Start: true), Ct);
+        var main = f.Agent.WorkingDirectory;
+        var remote = f.Ssh.Root + "/home/remote.git";
+        var upstream = f.Ssh.Root + "/home/upstream";
+        string Git(string folder) => "git -C " + ShellQuote.Quote(folder) + " -c user.name=Test -c user.email=test@example.com";
+        async Task<string> RunAsync(string script) => (await f.Ssh.Shell.RunAsync(f.Source, script, cancellationToken: Ct)).EnsureSuccess("Test repository").Output.Trim();
+        await File.WriteAllTextAsync(main + "/.gitignore", "node_modules/\n", Ct);
+        await RunAsync($"git init -q --bare -b main {ShellQuote.Quote(remote)} && {Git(main)} init -q -b main && {Git(main)} add data.txt .gitignore && {Git(main)} commit -qm initial"
+            + $" && {Git(main)} remote add origin {ShellQuote.Quote(remote)} && {Git(main)} push -q -u origin main"
+            // Someone else pushes, so pulling first gets a commit Main doesn't have yet.
+            + $" && git clone -q {ShellQuote.Quote(remote)} {ShellQuote.Quote(upstream)} && echo pushed > {ShellQuote.Quote(upstream + "/remote.txt")} && {Git(upstream)} add remote.txt && {Git(upstream)} commit -qm remote && {Git(upstream)} push -q");
+        await File.WriteAllTextAsync(main + "/data.txt", "dirty Main", Ct);
+        await File.WriteAllTextAsync(main + "/new.txt", "not committed", Ct);
+        Directory.CreateDirectory(main + "/node_modules");
+        await File.WriteAllTextAsync(main + "/node_modules/package.js", "ignored", Ct);
+
+        var first = await f.Agents.CreateWorkspaceAsync(TestUsers.Admin, f.Agent.Id, new("feature-one", StartAgent: false), Ct);
+        var pulled = await f.Agents.CreateWorkspaceAsync(TestUsers.Admin, f.Agent.Id, new("pulled", WorkspaceStart.MainBranch, Pull: true, StartAgent: false), Ct);
+        var current = await f.Agents.CreateWorkspaceAsync(TestUsers.Admin, f.Agent.Id, new("current", WorkspaceStart.CurrentCode, StartAgent: false), Ct);
+        var exact = await f.Agents.CreateWorkspaceAsync(TestUsers.Admin, f.Agent.Id, new("exact", WorkspaceStart.ExactCopy, StartAgent: false), Ct);
+        var second = await f.Agents.CreateWorkspaceAsync(TestUsers.Admin, first.Id, new("feature-two", WorkspaceStart.LastCommit, NewBranch: "feature/two"), Ct);
+        var again = await f.Agents.CreateWorkspaceAsync(TestUsers.Admin, f.Agent.Id, new("Feature One", StartAgent: false), Ct);
         try
         {
+            var container = main + ".workspaces";
+            Assert.Equal(container + "/feature-one", first.WorkingDirectory);
+            Assert.Equal(("feature-one-2", container + "/feature-one-2"), (again.Name, again.WorkingDirectory));
+            // Main's branch: committed files only; Pull first adds what was pushed meanwhile.
+            Assert.Equal("original workspace", await File.ReadAllTextAsync(first.WorkingDirectory + "/data.txt", Ct));
+            Assert.False(File.Exists(first.WorkingDirectory + "/new.txt") || File.Exists(first.WorkingDirectory + "/remote.txt") || Directory.Exists(first.WorkingDirectory + "/node_modules"));
+            Assert.True(File.Exists(pulled.WorkingDirectory + "/remote.txt"));
+            Assert.Equal(("origin/main", remote), (await RunAsync(Git(first.WorkingDirectory) + " rev-parse --abbrev-ref @{u}"), await RunAsync(Git(first.WorkingDirectory) + " remote get-url origin")));
+            Assert.Equal("main", await RunAsync(Git(first.WorkingDirectory) + " branch --format='%(refname:short)'"));
+            // Current code adds changed and new files; an exact copy also copies ignored ones.
+            Assert.Equal(("dirty Main", "not committed"), (await File.ReadAllTextAsync(current.WorkingDirectory + "/data.txt", Ct), await File.ReadAllTextAsync(current.WorkingDirectory + "/new.txt", Ct)));
+            Assert.False(Directory.Exists(current.WorkingDirectory + "/node_modules"));
+            Assert.Equal("ignored", await File.ReadAllTextAsync(exact.WorkingDirectory + "/node_modules/package.js", Ct));
+            Assert.Equal(["M data.txt", "?? new.txt"], (await RunAsync(Git(exact.WorkingDirectory) + " status --porcelain")).Split('\n').Select(line => line.Trim()));
+            Assert.Equal("feature/two", second.RepositoryBranch);
             Assert.Equal(AgentState.Stopped, first.State);
             Assert.Equal(AgentState.Running, second.State);
             Assert.NotEqual(first.TmuxSession, second.TmuxSession);
-            Assert.Equal("original workspace", await File.ReadAllTextAsync(first.WorkingDirectory + "/data.txt", Ct));
-            Assert.Equal("dirty Main", await File.ReadAllTextAsync(f.Agent.WorkingDirectory + "/data.txt", Ct));
+            Assert.Equal("dirty Main", await File.ReadAllTextAsync(main + "/data.txt", Ct));
             await using var db = await f.Factory.CreateDbContextAsync(Ct);
             Assert.Equal(1, await db.Projects.CountAsync(Ct));
-            Assert.Equal(3, await db.Agents.Where(a => a.ProjectId == f.Agent.Id).CountAsync(Ct));
-            Assert.Equal(3, await db.Sessions.Select(s => s.AgentId).Distinct().CountAsync(Ct));
-            Assert.Equal(3, await db.AgentShares.Where(s => s.UserId == f.Other.Id).CountAsync(Ct));
+            Assert.Equal(7, await db.Agents.Where(a => a.ProjectId == f.Agent.Id).CountAsync(Ct));
+            Assert.Equal(7, await db.Sessions.Where(s => s.ProjectId == f.Agent.Id || s.WorkspaceAgentId == f.Agent.Id).Select(s => s.AgentId).Distinct().CountAsync(Ct));
+            Assert.Equal(7, await db.AgentShares.Where(s => s.UserId == f.Other.Id).CountAsync(Ct));
             await f.Agents.StopAsync(first.Id, Ct);
             Assert.Equal(AgentState.Running, (await f.Agents.GetAsync(second.Id, Ct))!.State);
             await Assert.ThrowsAsync<InvalidOperationException>(() => f.Agents.DeleteAsync(f.Agent.Id, Ct));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => f.Agents.DeleteAsync(first.Id, Ct));
             await f.Services.GetRequiredService<Sharing>().ShareAgentAsync(TestUsers.Admin, first.Id, f.Other.Id, AgentAccess.Read, Ct);
             Assert.All(await db.AgentShares.AsNoTracking().ToListAsync(Ct), share => Assert.Equal(AgentAccess.Read, share.Access));
             // Opening either workspace is read-only; neither restarts nor changes the other's conversation.
             var launches = await File.ReadAllTextAsync(f.Ssh.Root + "/launches", Ct);
             await f.Agents.GetAsync(first.Id, Ct); await f.Agents.GetAsync(second.Id, Ct);
             Assert.Equal(launches, await File.ReadAllTextAsync(f.Ssh.Root + "/launches", Ct));
+            // An agent switching branches shows up without restarting it.
+            await RunAsync(Git(first.WorkingDirectory) + " checkout -qb switched");
+            Assert.Equal("switched", (await f.Agents.RefreshBranchesAsync(f.Agent.Id, Ct))[first.Id]);
+
+            // Removing: Keep files lists the folder, moves wait for it, and only the Manager's own folder is deleted.
+            var changes = await f.Agents.GetWorkspaceChangesAsync(exact.Id, Ct);
+            Assert.Equal((true, 2, 0, "origin/main"), (changes.Exists, changes.Uncommitted, changes.Unpushed, changes.Upstream));
+            await f.Agents.RemoveWorkspaceAsync(exact.Id, keepFiles: true, Ct);
+            Assert.True(File.Exists(exact.WorkingDirectory + "/new.txt"));
+            var kept = Assert.Single(await f.Agents.ListKeptFoldersAsync(f.Agent.Id, Ct));
+            Assert.Equal(exact.WorkingDirectory, kept.Path);
+            Assert.Equal(f.Agent.Id, (await db.Sessions.AsNoTracking().SingleAsync(s => s.WorkingDirectory == exact.WorkingDirectory, Ct)).ProjectId);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => f.Agents.RequestMoveAsync(TestUsers.Admin, second.Id, f.Target.Id, Ct));
+            await f.Agents.DeleteKeptFolderAsync(f.Agent.Id, kept.Path, Ct);
+            Assert.False(Directory.Exists(exact.WorkingDirectory));
+            Assert.Empty(await f.Agents.ListKeptFoldersAsync(f.Agent.Id, Ct));
+            await File.WriteAllTextAsync(current.WorkingDirectory + "/.git/dam-workspace", "{\"Token\":\"someone-else\"}", Ct);
+            await Assert.ThrowsAsync<WorkspaceRefusedException>(() => f.Agents.RemoveWorkspaceAsync(current.Id, keepFiles: false, Ct));
+            Assert.True(Directory.Exists(current.WorkingDirectory));
+            await f.Agents.RemoveWorkspaceAsync(current.Id, keepFiles: true, Ct);
+            await f.Agents.RemoveWorkspaceAsync(pulled.Id, keepFiles: false, Ct);
+            await f.Agents.RemoveWorkspaceAsync(again.Id, keepFiles: false, Ct);
+            Assert.False(Directory.Exists(pulled.WorkingDirectory) || Directory.Exists(again.WorkingDirectory));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => f.Agents.RemoveWorkspaceAsync(f.Agent.Id, keepFiles: false, Ct));
+            // The tampered folder is kept, not deleted: it was not the Manager's to remove.
+            await Assert.ThrowsAsync<WorkspaceRefusedException>(() => f.Agents.DeleteKeptFolderAsync(f.Agent.Id, current.WorkingDirectory, Ct));
+            await File.WriteAllTextAsync(current.WorkingDirectory + "/.git/dam-workspace", JsonSerializer.Serialize(new { Token = current.Id.ToString("N") }), Ct);
+            await f.Agents.DeleteKeptFolderAsync(f.Agent.Id, current.WorkingDirectory, Ct);
+
             await f.Agents.RequestMoveAsync(TestUsers.Admin, second.Id, f.Target.Id, Ct);
             var rows = await db.Agents.AsNoTracking().ToListAsync(Ct);
             Assert.Single(rows.Select(a => a.MoveJson).Distinct());
@@ -492,9 +552,30 @@ public sealed class AgentMoveTests
         }
         finally
         {
-            foreach (var child in new[] { first, second })
+            foreach (var child in new[] { first, pulled, current, exact, second, again })
                 await f.Ssh.Shell.RunAsync(f.Source, "tmux kill-session -t " + ShellQuote.Quote("=" + child.TmuxSession) + " 2>/dev/null || true", cancellationToken: CancellationToken.None);
         }
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task RefusedWorkspaceCreationLeavesNothingBehind()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var f = await Fixture.CreateAsync();
+        var main = f.Agent.WorkingDirectory;
+        var git = "git -C " + ShellQuote.Quote(main) + " -c user.name=Test -c user.email=test@example.com";
+        (await f.Ssh.Shell.RunAsync(f.Source, git + " init -q -b main && " + git + " add data.txt && " + git + " commit -qm initial", cancellationToken: Ct)).EnsureSuccess("Test repository");
+        // No remote: pulling is refused before anything is recorded or created.
+        var refused = await Assert.ThrowsAsync<WorkspaceRefusedException>(() => f.Agents.CreateWorkspaceAsync(TestUsers.Admin, f.Agent.Id, new("pull", Pull: true), Ct));
+        Assert.Contains("no remote", refused.Message, StringComparison.OrdinalIgnoreCase);
+        await Assert.ThrowsAsync<ArgumentException>(() => f.Agents.CreateWorkspaceAsync(TestUsers.Admin, f.Agent.Id, new("-not-a-name"), Ct));
+        await Assert.ThrowsAsync<WorkspaceRefusedException>(() => f.Agents.CreateWorkspaceAsync(TestUsers.Admin, f.Agent.Id, new("branch", NewBranch: "bad..branch"), Ct));
+        await using var db = await f.Factory.CreateDbContextAsync(Ct);
+        Assert.Equal(1, await db.Agents.CountAsync(Ct));
+        Assert.False(Directory.Exists(main + ".workspaces/pull") || Directory.Exists(main + ".workspaces/branch"));
+        var estimate = await f.Agents.EstimateWorkspaceAsync(f.Agent.Id, WorkspaceStart.ExactCopy, Ct);
+        Assert.Equal((1, false), (estimate.Files, estimate.CanPull));
+        Assert.True(estimate.FreeBytes > 0);
     }
 
     private sealed class Harness(string launches) : IHarness

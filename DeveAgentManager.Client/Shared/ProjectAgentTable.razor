@@ -14,7 +14,7 @@
             <div class="workspace-project-heading">
                 <div><strong>@WorkspaceGroups.ProjectName(first)</strong><span class="workspace-project-counts">@group.Count(WorkspaceGroups.Running) running · @group.Count(WorkspaceGroups.QuietStopped) stopped</span></div>
                 @if (first.Access == AgentAccess.Owner && first.CanUseRunner)
-                { <div class="workspace-project-actions"><MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.DriveFileMove" Disabled="first.MovePending" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, first)">Move project</MudButton><MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => NewAsync(first)">New workspace</MudButton></div> }
+                { <div class="workspace-project-actions"><MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.DriveFileMove" Disabled="first.MovePending" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, first)">Move project</MudButton><MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => NewWorkspaceDialog.ShowAsync(Dialogs, first)">New workspace</MudButton><MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.FolderOpen" Href="@($"projects/{WorkspaceGroups.ProjectKey(first)}")">Manage</MudButton></div> }
             </div>
             @if (visible.Count > 0) { <AgentTable Agents="visible" ShowRunner="ShowRunner" ShowOwner="ShowOwner" WorkspaceLabels="true" /> }
             @if (visible.Count < group.Count)
@@ -34,5 +34,4 @@
     [Parameter] public string EmptyText { get; set; } = "No agents match.";
     [Parameter] public RenderFragment? EmptyContent { get; set; }
     private readonly HashSet<Guid> _revealed = [];
-    private Task NewAsync(AgentDto source) => Dialogs.ShowAsync<NewWorktreeDialog>("New workspace", new DialogParameters<NewWorktreeDialog> { { d => d.Source, source } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
 }

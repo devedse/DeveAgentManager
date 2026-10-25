@@ -146,6 +146,8 @@ public class Project
     public string Name { get; set; } = "";
     public string RootDirectory { get; set; } = "";
     public DateTime CreatedAt { get; set; }
+    /// <summary>JSON list of folders kept when their workspace was removed; they can be deleted or reused.</summary>
+    public string? KeptFoldersJson { get; set; }
     public List<Agent> Agents { get; set; } = [];
 }
 
@@ -153,8 +155,9 @@ public class Agent
 {
     public Guid? ProjectId { get; set; }
     public Project? Project { get; set; }
-    public bool IsWorktree { get; set; }
-    /// <summary>Durable creation intent; Start verifies an interrupted creation without repeating Git mutations.</summary>
+    /// <summary>A workspace cloned next to Main, in &lt;main&gt;.workspaces/&lt;name&gt;. Main itself is not a clone.</summary>
+    public bool IsClone { get; set; }
+    /// <summary>Durable creation intent; Start verifies an interrupted creation without repeating it.</summary>
     public string? WorkspaceCreationJson { get; set; }
     /// <summary>Durable move intent and rollback checkpoints; credentials are never included.</summary>
     public string? MoveJson { get; set; }
@@ -282,7 +285,10 @@ public class AgentIcon
 /// </summary>
 public class StoredSession
 {
-    // Workspace ownership survives deactivation; AgentId identifies only the selected conversation.
+    /// <summary>The project the conversation belongs to. It stays when its workspace is removed.</summary>
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+    // The workspace it last ran in; AgentId identifies only where it is active now.
     public Guid? WorkspaceAgentId { get; set; }
     public Agent? WorkspaceAgent { get; set; }
     public bool TitlePinned { get; set; }

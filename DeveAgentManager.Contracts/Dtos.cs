@@ -201,7 +201,7 @@ public sealed record AgentDto(
     AgentGitIdentityDto? RunningGitIdentity = null,
     Guid? ProjectId = null,
     string? ProjectName = null,
-    bool IsWorktree = false,
+    bool IsClone = false,
     bool WorkspaceCreationPending = false);
 
 /// <summary>
@@ -274,7 +274,8 @@ public sealed record SessionDto(
     AgentAccess WorkspaceAccess = AgentAccess.None,
     long SourceSize = 0,
     long SavedSize = 0,
-    long TotalSize = 0);
+    long TotalSize = 0,
+    Guid? ProjectId = null);
 
 public sealed record AccountDto(
     Guid Id,
@@ -424,7 +425,8 @@ public static class ApiHeaders
 
 public sealed record ConfirmPasswordRequest(string Password, string? Code = null);
 
-public sealed record SelectSessionRequest(Guid? SessionId, string? Title = null);
+/// <param name="Update">Pull the workspace's branch first; refused when it has uncommitted or unpushed work.</param>
+public sealed record SelectSessionRequest(Guid? SessionId, string? Title = null, bool Update = false);
 public sealed record RenameSessionRequest(string Title);
 
 public sealed record ManagerLogEntry(long Id, DateTime Timestamp, string Level, string Category, string Message);

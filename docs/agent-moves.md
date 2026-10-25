@@ -30,7 +30,8 @@ not shown because they can contain credentials.
 
 Shared workspaces, parent folders used by
 other agents, symlinked directory parents and linked Git worktrees cannot be
-moved. Use an independent checkout. The source, destination and Manager need
+moved. Use an independent checkout. A project moves with all its workspaces; see
+[project workspaces](project-workspaces.md). The source, destination and Manager need
 space for the temporary transfer archive; the destination also needs staging
 space for the restored files.
 

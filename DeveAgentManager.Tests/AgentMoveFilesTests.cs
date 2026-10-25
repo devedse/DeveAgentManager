@@ -16,7 +16,7 @@ public sealed class AgentMoveFilesTests
     [Theory(Timeout = 120_000)]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task CompleteRepositoryMovePreservesWorktreesDirtyFilesRuntimeHistoriesAndRollback(bool rollback)
+    public async Task ProjectMovePreservesWorkspaceClonesDirtyFilesRuntimeHistoriesAndRollback(bool rollback)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipWhen(!OperatingSystem.IsLinux() || !File.Exists("/usr/sbin/sshd"), "Requires isolated OpenSSH.");
@@ -28,16 +28,23 @@ public sealed class AgentMoveFilesTests
         var git = "git -C " + ShellQuote.Quote(root);
         (await ssh.Shell.RunAsync(ssh.Runner, git + " init -b main && " + git + " add app.txt && " + git + " -c user.name=Test -c user.email=test@example.com commit -m initial", cancellationToken: Ct)).EnsureSuccess("Test repository");
         var owner = Guid.NewGuid().ToString("N"); var main = Guid.NewGuid(); var child = Guid.NewGuid();
-        var path = root + ".dam-worktrees/" + main.ToString("N") + "/" + child.ToString("N");
-        var intent = new AgentService.WorktreeIntent(root, path, "feature/test", "HEAD", child.ToString("N"));
-        (await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorktreeCommand(intent, "create"), cancellationToken: Ct)).EnsureSuccess("Test worktree");
-        // A second create must refuse the recorded operation without touching dirty files.
+        var container = AgentService.WorkspaceContainer(root);
+        var checkedPlan = JsonDocument.Parse((await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorkspaceCommand("preflight", new { Main = root, Source = root, Container = container,
+            Start = "MainBranch", Pull = false, NewBranch = (string?)null, Names = new[] { "feature" }, Token = child.ToString("N") }), cancellationToken: Ct)).EnsureSuccess("Preflight").Output).RootElement;
+        var path = checkedPlan.GetProperty("Path").GetString()!;
+        Assert.Equal(container + "/feature", path);
+        var plan = new AgentService.WorkspacePlan(root, root, container, path, "feature", WorkspaceStart.MainBranch, false, root, "main", null, null, null,
+            checkedPlan.GetProperty("Commit").GetString()!, child.ToString("N"));
+        (await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorkspaceCommand("create", plan), cancellationToken: Ct)).EnsureSuccess("Test workspace");
+        // A second create must refuse the existing folder without touching dirty files.
         await File.WriteAllTextAsync(root + "/app.txt", "dirty Main", Ct);
-        await File.WriteAllTextAsync(path + "/app.txt", "dirty worktree", Ct);
+        await File.WriteAllTextAsync(path + "/app.txt", "dirty workspace", Ct);
         await File.WriteAllBytesAsync(path + "/untracked.bin", [0, 1, 255], Ct);
-        var repeated = await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorktreeCommand(intent, "create"), cancellationToken: Ct);
-        Assert.False(repeated.Succeeded);
-        (await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorktreeCommand(intent, "verify"), cancellationToken: Ct)).EnsureSuccess("Verify after lost response");
+        var repeated = await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorkspaceCommand("create", plan), cancellationToken: Ct);
+        Assert.Equal(3, repeated.ExitCode);
+        Assert.Equal("dirty workspace", await File.ReadAllTextAsync(path + "/app.txt", Ct));
+        (await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorkspaceCommand("verify", new { Path = path, Token = child.ToString("N") }), cancellationToken: Ct)).EnsureSuccess("Verify after lost response");
+        Assert.Equal(3, (await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorkspaceCommand("verify", new { Path = path, Token = main.ToString("N") }), cancellationToken: Ct)).ExitCode);
         var runtime = home + "/.deveagentmanager/agent-runtime/" + owner + "/" + child.ToString("N") + "/native";
         Directory.CreateDirectory(runtime);
         await File.WriteAllTextAsync(runtime + "/history.jsonl", "{\"test\":\"exact history\"}\n", Ct);
@@ -51,11 +58,12 @@ public sealed class AgentMoveFilesTests
         var local = ssh.Root + "/project-transfer.tar"; File.Copy(remote, local);
         var original = home + "-source"; Directory.Move(home, original);
         Directory.CreateDirectory(Path.GetDirectoryName(remote)!); File.Copy(local, remote);
-        await Phase("unpack"); await Phase("install"); await Phase("verify-worktrees");
+        await Phase("unpack"); await Phase("install"); await Phase("verify-workspaces");
         Assert.Equal("dirty Main", await File.ReadAllTextAsync(root + "/app.txt", Ct));
-        Assert.Equal("dirty worktree", await File.ReadAllTextAsync(path + "/app.txt", Ct));
+        Assert.Equal("dirty workspace", await File.ReadAllTextAsync(path + "/app.txt", Ct));
         Assert.Equal(new byte[] { 0, 1, 255 }, await File.ReadAllBytesAsync(path + "/untracked.bin", Ct));
         Assert.Equal("{\"test\":\"exact history\"}\n", await File.ReadAllTextAsync(runtime + "/history.jsonl", Ct));
+        (await ssh.Shell.RunAsync(ssh.Runner, AgentService.WorkspaceCommand("verify", new { Path = path, Token = child.ToString("N") }), cancellationToken: Ct)).EnsureSuccess("Verify after the move");
         if (rollback)
         {
             await Phase("cleanup-target");

@@ -183,7 +183,28 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     public Task<AgentDto?> GetAgentAsync(Guid agentId) => FindAsync<AgentDto>($"api/agents/{agentId}");
 
     public Task<AgentDto> CreateAgentAsync(CreateAgentRequest request) => SendAsync<AgentDto>(HttpMethod.Post, "api/agents", request);
-    public Task<AgentDto> CreateWorktreeAsync(Guid agentId, CreateWorktreeRequest request) => SendAsync<AgentDto>(HttpMethod.Post, $"api/agents/{agentId}/worktrees", request);
+    public Task<AgentDto> CreateWorkspaceAsync(Guid agentId, CreateWorkspaceRequest request) => SendAsync<AgentDto>(HttpMethod.Post, $"api/agents/{agentId}/workspaces", request);
+
+    /// <summary>Canceling (closing the dialog) ends the request, and with it the measurement on the Runner.</summary>
+    public async Task<WorkspaceEstimateDto> EstimateWorkspaceAsync(Guid agentId, WorkspaceStart start, CancellationToken ct)
+    {
+        using var response = await http.GetAsync($"api/agents/{agentId}/workspaces/estimate?start={start}", ct);
+        await EnsureSuccessAsync(response);
+        return (await response.Content.ReadFromJsonAsync<WorkspaceEstimateDto>(ApiJson.Options, ct))!;
+    }
+
+    public Task<Dictionary<Guid, string?>> RefreshWorkspaceBranchesAsync(Guid agentId) =>
+        SendAsync<Dictionary<Guid, string?>>(HttpMethod.Post, $"api/agents/{agentId}/workspaces/branches");
+
+    public Task<WorkspaceChangesDto> GetWorkspaceChangesAsync(Guid agentId) => GetAsync<WorkspaceChangesDto>($"api/agents/{agentId}/workspace/changes");
+
+    public Task RemoveWorkspaceAsync(Guid agentId, bool keepFiles) =>
+        SendAsync(HttpMethod.Post, $"api/agents/{agentId}/workspace/remove", new RemoveWorkspaceRequest(keepFiles));
+
+    public Task<List<KeptFolderDto>> ListKeptFoldersAsync(Guid agentId) => GetAsync<List<KeptFolderDto>>($"api/agents/{agentId}/kept-folders");
+
+    public Task DeleteKeptFolderAsync(Guid agentId, string path) =>
+        SendAsync(HttpMethod.Delete, $"api/agents/{agentId}/kept-folders?path={Uri.EscapeDataString(path)}");
 
     public Task StartAgentAsync(Guid agentId, bool restart = false) => SendAsync(HttpMethod.Post, $"api/agents/{agentId}/start?restart={restart.ToString().ToLowerInvariant()}");
 
@@ -261,8 +282,8 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
         return (await response.Content.ReadFromJsonAsync<SessionDto>(ApiJson.Options))!;
     }
 
-    public Task SelectSessionAsync(Guid agentId, Guid? sessionId, string? title = null) =>
-        SendAsync(HttpMethod.Post, $"api/agents/{agentId}/session", new SelectSessionRequest(sessionId, title));
+    public Task SelectSessionAsync(Guid agentId, Guid? sessionId, string? title = null, bool update = false) =>
+        SendAsync(HttpMethod.Post, $"api/agents/{agentId}/session", new SelectSessionRequest(sessionId, title, update));
     public Task RenameSessionAsync(Guid sessionId, string title) =>
         SendAsync(HttpMethod.Put, $"api/sessions/{sessionId}/title", new RenameSessionRequest(title));
 

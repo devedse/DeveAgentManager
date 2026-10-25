@@ -75,6 +75,53 @@ public sealed class WorkspaceSessionTests
     }
 
     [Fact]
+    public async Task SavedConversationsResumeInAnyWorkspaceOfTheirProjectAndOutliveRemovedWorkspaces()
+    {
+        using var rig = new Rig();
+        await rig.CreateAsync();
+        var project = new Project { Id = rig.Agent.Id, RunnerId = rig.Runner.Id, OwnerId = User.BootstrapId, Name = "workspace", RootDirectory = "/work/example" };
+        Agent Workspace(string name, Guid? projectId) => new() { Id = Guid.NewGuid(), OwnerId = User.BootstrapId, Name = name, Runner = rig.Runner, RunnerId = rig.Runner.Id,
+            ProjectId = projectId, IsClone = projectId is not null, HarnessId = "pi", HarnessSessionId = name, WorkingDirectory = "/work/example.workspaces/" + name, State = AgentState.Stopped };
+        var clone = Workspace("workspace-2", project.Id);
+        var stranger = Workspace("elsewhere", null);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            db.Runners.Attach(rig.Runner);
+            db.Projects.Add(project);
+            (await db.Agents.SingleAsync(a => a.Id == rig.Agent.Id, Ct)).ProjectId = project.Id;
+            db.Agents.AddRange(clone, stranger);
+            await db.SaveChangesAsync(Ct);
+        }
+        rig.Agent.ProjectId = project.Id;
+        var original = (await rig.Service.GetForAgentAsync(rig.Agent.Id, Ct))!;
+        using (await rig.Service.LockAsync(Ct))
+            await rig.Service.SelectLockedAsync(rig.Runner, rig.Agent, null, "Next", "next", Ct);
+        // Saved in Main, it resumes in another workspace of the project and moves there.
+        using (await rig.Service.LockAsync(Ct))
+            await rig.Service.SelectLockedAsync(rig.Runner, clone, original.Id, null, "resumed", Ct);
+        var resumed = (await rig.Service.GetAsync(original.Id, Ct))!;
+        Assert.Equal((clone.Id, clone.Id, project.Id, clone.WorkingDirectory), (resumed.AgentId, resumed.WorkspaceAgentId, resumed.ProjectId, resumed.WorkingDirectory));
+        // Active in one workspace, it cannot be taken over by another; another project never gets it.
+        using (await rig.Service.LockAsync(Ct))
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.SelectLockedAsync(rig.Runner, rig.Agent, original.Id, null, "taken", Ct));
+            await rig.Service.SelectLockedAsync(rig.Runner, clone, null, "Fresh", "fresh", Ct);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.SelectLockedAsync(rig.Runner, stranger, original.Id, null, "stranger", Ct));
+        }
+        // Removing its workspace keeps the conversation with the project, and Main can still resume it.
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            db.Agents.Remove(await db.Agents.SingleAsync(a => a.Id == clone.Id, Ct));
+            await db.SaveChangesAsync(Ct);
+        }
+        var orphan = (await rig.Service.GetAsync(original.Id, Ct))!;
+        Assert.Equal((null, null, project.Id), (orphan.AgentId, orphan.WorkspaceAgentId, orphan.ProjectId));
+        using (await rig.Service.LockAsync(Ct))
+            await rig.Service.SelectLockedAsync(rig.Runner, rig.Agent, original.Id, null, "back-in-main", Ct);
+        Assert.Equal(rig.Agent.Id, (await rig.Service.GetAsync(original.Id, Ct))!.AgentId);
+    }
+
+    [Fact]
     public async Task SelectingAnotherHarnessRestoresIt_AndNewSessionsUseTheRestoredHarness()
     {
         using var rig = new Rig();

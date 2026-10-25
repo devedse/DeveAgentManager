@@ -22,7 +22,7 @@ else
                     <AgentAvatar Agent="agent" />
                     <div class="list-main">
                         <div class="list-title">
-                            @(WorkspaceLabels ? WorkspaceGroups.WorkspaceName(agent) : agent.IsWorktree ? $"{WorkspaceGroups.ProjectName(agent)} · {agent.Name}" : agent.ProjectName ?? agent.Name)
+                            @(WorkspaceLabels ? WorkspaceGroups.WorkspaceName(agent) : agent.IsClone ? $"{WorkspaceGroups.ProjectName(agent)} · {agent.Name}" : agent.ProjectName ?? agent.Name)
                             @if (ShowOwner || agent.SharedWithMe || agent.Access != AgentAccess.Owner)
                             {
                                 <span class="account-badge" title="@ShareText(agent)">@agent.OwnerName</span>
@@ -120,7 +120,9 @@ else
                                 {
                                     <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, agent)">Move project to another runner…</MudMenuItem>
                                 }
-                                @if (!agent.IsWorktree)
+                                @if (agent.IsClone)
+                                { <MudMenuItem Icon="@Icons.Material.Rounded.DeleteOutline" IconColor="Color.Error" Disabled="@(agent.MovePending || agent.RunnerState != RunnerState.Ready)" OnClick="() => RemoveWorkspaceDialog.ShowAsync(Dialogs, agent)">Remove workspace…</MudMenuItem> }
+                                else
                                 { <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="agent.MovePending" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem> }
                             }
                         </MudMenu>
@@ -187,7 +189,7 @@ else
 
     private Task PickIconAsync(AgentDto agent) =>
         Dialogs.ShowAsync<AgentIconDialog>("Icon", new DialogParameters<AgentIconDialog> { { d => d.Agent, agent } }, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
-    private Task NewWorkspaceAsync(AgentDto agent) => Dialogs.ShowAsync<NewWorktreeDialog>("New workspace", new DialogParameters<NewWorktreeDialog> { { d => d.Source, agent } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+    private Task NewWorkspaceAsync(AgentDto agent) => NewWorkspaceDialog.ShowAsync(Dialogs, agent);
 
     private async Task ShareAsync(AgentDto agent) => await ShareDialog.ShowAsync(Dialogs, agent, await Me.GetAsync());
 

@@ -6,10 +6,10 @@
         <div class="help-heading">
             <MudText Typo="Typo.subtitle1">Destination runner</MudText>
             <HelpTip Label="Moving a project">
-                <p>All project agents stop, then Main, every managed worktree, native histories and referenced attachments transfer together. Conversations, sharing and shared files keep their identities.</p>
+                <p>All project agents stop, then Main, every workspace folder, native histories and referenced attachments transfer together. Conversations, sharing and shared files keep their identities.</p>
                 <p>The working path stays the same. Existing destination folders are never overwritten. Choose a ready runner with the same SSH username, the required harness and permission to use it.</p>
                 <p>Only agents that were running resume after file verification. A failed transfer falls back to the source. If the Manager cannot establish whether a process stopped or started, it retains the source and offers recovery instead of starting a second copy.</p>
-                <p>Managed linked worktrees move with their complete repository. External worktrees and folders shared with another project are blocked. Source files are removed after all required destination agents start successfully.</p>
+                <p>Workspaces move with Main, including stopped ones. Kept workspace folders, linked Git worktrees made outside the Manager and folders shared with another project block a move. Source files are removed after all required destination agents start successfully.</p>
             </HelpTip>
         </div>
         <LoadingSection Loaded="_runnersLoaded" Error="@_runnersError" Retry="LoadRunnersAsync" Label="Loading destination runners">

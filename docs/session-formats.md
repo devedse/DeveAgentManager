@@ -201,14 +201,15 @@ change does not restart or rewrite existing agents, and does not guarantee that 
 
 ## Workspaces and selected conversations
 
-Each agent is a workspace (repository, Runner, and working folder). It can own multiple stored sessions,
-with exactly one selected at a time. `WorkspaceAgentId` retains that ownership; nullable `AgentId` selects
-which conversation runs. A unique database index enforces one selected conversation per agent. Existing
-sessions are assigned to their current workspace during migration. This leaves workspace identity separate
-from repository URL, so future worktrees can have distinct working folders without merging their chats.
+Each agent is a workspace (repository, Runner, and working folder) of a project. Conversations belong to the project
+(`ProjectId`), `WorkspaceAgentId` records the workspace a conversation last ran in, and nullable `AgentId` selects
+which conversation runs. A unique database index enforces one selected conversation per agent. Workspace identity
+stays separate from repository URL, so workspaces have distinct folders without merging their chats. See
+[project workspaces](project-workspaces.md).
 
-The folder button in the terminal opens the session picker. It creates, selects, renames, and deletes saved
-sessions. The Sessions page groups them by workspace, with the selected conversation first. Deleting requires
+The workspace dropdown in the terminal starts a new conversation in the workspace and lists the project's saved
+conversations; choosing one offers Resume here, Resume in a new workspace or Read only. The Sessions page groups
+conversations by project, with active ones first, and renames and deletes them. Deleting requires
 confirmation and is allowed only for inactive sessions. It removes Manager history and conversion backups;
 Runner files and repository files are untouched. Deleting a workspace leaves its sessions available for export
 or continuation on a new Runner.
@@ -231,7 +232,7 @@ not rename the repository or guarantee that the harness's own resume menu adopts
 
 The picker shows the latest synced native harness file size, and the total Manager history plus conversion
 backups. These are file bytes, **not** model context-window capacity or remaining tokens. Context usage is not
-inferred from file size. Project files are shared across sessions; switching does not create a worktree.
+inferred from file size. Switching conversations in a workspace keeps its folder; a new workspace is a separate clone.
 
 When transferring a conversation into Claude, the launch explicitly passes the Manager's Claude default
 model with `--model` (or `default` if none is configured). Claude's resume behavior can restore a model

@@ -1,0 +1,95 @@
+@inject ManagerApi Api
+
+<MudDialog>
+    <TitleContent><div class="help-heading"><MudText Typo="Typo.h6">Remove “@WorkspaceGroups.WorkspaceName(Agent)”?</MudText>
+        <HelpTip Label="Removing a workspace">
+            <p>The workspace's agent stops and the workspace leaves the project. Its conversations stay in the project's history and can be resumed in another workspace.</p>
+            <p>Remove everything deletes the folder, including uncommitted files and commits that were never pushed; that cannot be undone. Keep files leaves the folder on the Runner and lists it under Manage workspaces, where you can delete it or use it for a new workspace. Only a folder the Manager created is ever deleted.</p>
+        </HelpTip></div></TitleContent>
+    <DialogContent>
+        <LoadingSection Loaded="@(_changes is not null)" Error="_loadError" Retry="LoadAsync" Label="Checking the workspace for unsaved work">
+            <Placeholder><SkeletonList Rows="2" Avatar="false" /></Placeholder>
+            <ChildContent>
+                @if (_changes is { } changes)
+                {
+                    @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mb-2">@_error</MudAlert> }
+                    @if (!changes.Exists)
+                    {
+                        <MudText Typo="Typo.body2">The agent stops. Its folder is already gone: <span class="mono">@changes.Path</span></MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2">The agent stops and its folder is deleted:</MudText>
+                        <MudText Typo="Typo.body2" Class="mono workspace-remove-path">@changes.Path</MudText>
+                        @if (Clean)
+                        { <MudText Typo="Typo.body2" Class="mt-2">Nothing is uncommitted or unpushed.</MudText> }
+                        else
+                        {
+                            <ul class="workspace-remove-list">
+                                @if (changes.Uncommitted > 0)
+                                { <li>@changes.Uncommitted @(changes.Uncommitted == 1 ? "file has" : "files have") uncommitted changes (@string.Join(", ", changes.Sample)@(changes.Uncommitted > changes.Sample.Count ? $", +{changes.Uncommitted - changes.Sample.Count}" : ""))</li> }
+                                @if (changes.Unpushed > 0)
+                                { <li>@changes.Unpushed @(changes.Unpushed == 1 ? "commit isn't" : "commits aren't") on any remote branch</li> }
+                            </ul>
+                        }
+                    }
+                    <MudText Typo="Typo.body2" Class="mt-2">@ConversationsText</MudText>
+                }
+            </ChildContent>
+        </LoadingSection>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()" Disabled="_busy">Cancel</MudButton>
+        @if (_changes is { Exists: true } && !Clean)
+        {
+            <MudButton OnClick="() => RemoveAsync(keepFiles: true)" Disabled="_busy" Variant="Variant.Outlined">Keep files</MudButton>
+            <MudButton OnClick="() => RemoveAsync(keepFiles: false)" Disabled="_busy" Color="Color.Error" Variant="Variant.Filled">@(_busy ? "Removing…" : "Remove everything")</MudButton>
+        }
+        else
+        {
+            <MudButton OnClick="() => RemoveAsync(keepFiles: false)" Disabled="@(_busy || _changes is null)" Color="Color.Error" Variant="Variant.Filled">@(_busy ? "Removing…" : "Remove workspace")</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
+    private WorkspaceChangesDto? _changes;
+    private string? _loadError, _error;
+    private bool _busy;
+
+    private bool Clean => _changes is { Uncommitted: 0, Unpushed: 0 };
+    private string ConversationsText => _changes?.Conversations switch
+    {
+        null or 0 => "It has no saved conversations.",
+        1 => "Its conversation stays in the project's history.",
+        var count => $"Its {count} conversations stay in the project's history.",
+    };
+
+    public static async Task<bool> ShowAsync(IDialogService dialogs, AgentDto agent)
+    {
+        var dialog = await dialogs.ShowAsync<RemoveWorkspaceDialog>("Remove workspace", new DialogParameters<RemoveWorkspaceDialog> { { d => d.Agent, agent } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        return await dialog.Result is { Canceled: false };
+    }
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loadError = null;
+        try { _changes = await Api.GetWorkspaceChangesAsync(Agent.Id); }
+        catch (ApiException ex) { _loadError = ex.Message; }
+        catch (HttpRequestException) { _loadError = LoadingSection.Unreachable; }
+    }
+
+    private async Task RemoveAsync(bool keepFiles)
+    {
+        _busy = true; _error = null;
+        try { await Api.RemoveWorkspaceAsync(Agent.Id, keepFiles); Dialog.Close(DialogResult.Ok(true)); }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
+        finally { _busy = false; }
+    }
+}

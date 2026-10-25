@@ -27,10 +27,29 @@ internal static class AgentEndpoints
             return DtoMapper.Agent(created, user);
         }).ForAnyUser();
 
-        agents.MapPost("/{agentId:guid}/worktrees", async (Guid agentId, CreateWorktreeRequest request, CurrentUser user, AgentService service, CancellationToken ct) =>
+        // Workspaces: independent clones next to the project's Main folder (see docs/project-workspaces.md).
+        agents.MapPost("/{agentId:guid}/workspaces", async (Guid agentId, CreateWorkspaceRequest request, CurrentUser user, AgentService service, CancellationToken ct) =>
         {
-            var agent = await service.CreateWorktreeAsync(user, agentId, request, ct);
+            var agent = await service.CreateWorkspaceAsync(user, agentId, request, ct);
             return DtoMapper.Agent((await service.GetAsync(agent.Id, ct))!, user);
+        }).RequireAgent(AgentAccess.Owner);
+        agents.MapGet("/{agentId:guid}/workspaces/estimate", (Guid agentId, WorkspaceStart? start, AgentService service, CancellationToken ct) =>
+            service.EstimateWorkspaceAsync(agentId, start ?? WorkspaceStart.MainBranch, ct)).RequireAgent(AgentAccess.Owner);
+        agents.MapPost("/{agentId:guid}/workspaces/branches", (Guid agentId, AgentService service, CancellationToken ct) =>
+            service.RefreshBranchesAsync(agentId, ct)).RequireAgent(AgentAccess.Read);
+        agents.MapGet("/{agentId:guid}/workspace/changes", (Guid agentId, AgentService service, CancellationToken ct) =>
+            service.GetWorkspaceChangesAsync(agentId, ct)).RequireAgent(AgentAccess.Write);
+        agents.MapPost("/{agentId:guid}/workspace/remove", async (Guid agentId, RemoveWorkspaceRequest request, AgentService service, CancellationToken ct) =>
+        {
+            await service.RemoveWorkspaceAsync(agentId, request.KeepFiles, ct);
+            return Results.NoContent();
+        }).RequireAgent(AgentAccess.Owner);
+        agents.MapGet("/{agentId:guid}/kept-folders", (Guid agentId, AgentService service, CancellationToken ct) =>
+            service.ListKeptFoldersAsync(agentId, ct)).RequireAgent(AgentAccess.Read);
+        agents.MapDelete("/{agentId:guid}/kept-folders", async (Guid agentId, string path, AgentService service, CancellationToken ct) =>
+        {
+            await service.DeleteKeptFolderAsync(agentId, path, ct);
+            return Results.NoContent();
         }).RequireAgent(AgentAccess.Owner);
 
         agents.MapPost("/{agentId:guid}/start", async (Guid agentId, bool? restart, AgentService service, CancellationToken ct) =>
@@ -116,7 +135,7 @@ internal static class AgentEndpoints
 
         agents.MapPost("/{agentId:guid}/session", async (Guid agentId, SelectSessionRequest request, AgentService service, CancellationToken ct) =>
         {
-            await service.SelectSessionAsync(agentId, request.SessionId, request.Title, ct);
+            await service.SelectSessionAsync(agentId, request.SessionId, request.Title, ct, request.Update);
             return Results.NoContent();
         }).RequireAgent(AgentAccess.Write);
         agents.MapGet("/{agentId:guid}/session", async (Guid agentId, CurrentUser user, SessionService sessions, CancellationToken ct) =>

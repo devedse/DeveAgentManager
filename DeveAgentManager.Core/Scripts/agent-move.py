@@ -109,9 +109,16 @@ def project_members(c):
 
 
 def workspace_paths(c):
-    paths = {Path(member['Workspace']) for member in project_members(c)}
-    paths.update(Path(member['Workspace'] + '.dam-owner') for member in project_members(c) if member['Workspace'] != c['Workspace'])
-    return paths
+    return {Path(member['Workspace']) for member in project_members(c)}
+
+
+def workspace_owned(path, agent):
+    """A workspace clone carries its agent's marker in its own .git folder (see workspace.py)."""
+    marker = path / '.git' / 'dam-workspace'
+    try:
+        return not marker.is_symlink() and json.loads(marker.read_text()).get('Token') == agent
+    except (OSError, ValueError):
+        return False
 
 
 def roots_for(c, home, workspace, progress):
@@ -346,12 +353,12 @@ def main(phase, c):
             if workspace.resolve().is_relative_to(other) or other.is_relative_to(workspace.resolve()):
                 raise ValueError('Another agent shares the resolved workspace or a parent directory.')
         if workspace.exists() and (workspace / '.git').is_file():
-            raise ValueError('Move the complete repository from Main; an external linked worktree cannot move independently.')
+            raise ValueError('This folder is a linked Git worktree. Move its repository instead.')
         for member in project_members(c):
             path = Path(member['Workspace'])
             safe_parents(path)
-            if not path.is_absolute() or path.is_symlink() or (path != workspace and not str(path).startswith(str(workspace) + '.dam-worktrees/')):
-                raise ValueError('Invalid managed workspace path.')
+            if not path.is_absolute() or path.is_symlink() or (path != workspace and path.parent != Path(str(workspace) + '.workspaces')):
+                raise ValueError('Invalid project workspace path.')
             for other in others or []:
                 other = Path(other).resolve()
                 if path.resolve().is_relative_to(other) or other.is_relative_to(path.resolve()):
@@ -359,33 +366,28 @@ def main(phase, c):
             if c.get('Source'):
                 if not path.is_dir():
                     raise ValueError('A project workspace is missing.')
-                if path != workspace:
-                    marker = Path(str(path) + '.dam-owner')
-                    if marker.is_symlink() or not marker.is_file() or marker.read_text().strip() != member['Agent']:
-                        raise ValueError('Worktree ownership could not be verified.')
-                    common = subprocess.run(['git', '-C', str(path), 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture_output=True, text=True, check=True).stdout.strip()
-                    if Path(common).resolve() != (workspace / '.git').resolve():
-                        raise ValueError('A worktree belongs to another repository.')
-            elif path.exists() or Path(str(path) + '.dam-owner').exists():
-                raise ValueError('A destination workspace or ownership marker already exists.')
-        if c.get('Source') and (workspace / '.git').is_dir():
-            listed = subprocess.run(['git', '-C', str(workspace), 'worktree', 'list', '--porcelain', '-z'], capture_output=True, check=True).stdout.split(b'\0')
-            actual = {Path(os.fsdecode(item[9:])).resolve() for item in listed if item.startswith(b'worktree ')}
-            expected = {Path(member['Workspace']).resolve() for member in project_members(c)}
-            if actual != expected:
-                raise ValueError('The repository has missing or unmanaged linked worktrees. Include them in the project before moving.')
+                if path != workspace and not workspace_owned(path, member['Agent']):
+                    raise ValueError('A workspace folder is not the one the Manager created.')
+            elif path.exists():
+                raise ValueError('A destination workspace already exists.')
+        if c.get('Source'):
+            # Linked worktrees made outside the Manager would break when their repository moves.
+            for member in project_members(c):
+                path = Path(member['Workspace'])
+                if (path / '.git').is_dir():
+                    listed = subprocess.run(['git', '-C', str(path), 'worktree', 'list', '--porcelain', '-z'], capture_output=True, check=True).stdout.split(b'\0')
+                    if len([item for item in listed if item.startswith(b'worktree ')]) > 1:
+                        raise ValueError('A project folder has linked Git worktrees made outside the Manager. Remove them before moving.')
         print(json.dumps(dict(home=str(home), workspace=str(workspace.resolve()))))
         return
-    if phase == 'verify-worktrees':
+    if phase == 'verify-workspaces':
         for member in project_members(c):
             path = Path(member['Workspace'])
-            if path == workspace:
-                continue
-            common = subprocess.run(['git', '-C', str(path), 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture_output=True, text=True, check=True).stdout.strip()
-            if Path(common).resolve() != (workspace / '.git').resolve():
-                raise ValueError('Restored Git worktree links do not match Main.')
-            subprocess.run(['git', '-C', str(path), 'rev-parse', '--verify', 'HEAD'], stdout=subprocess.DEVNULL, check=True)
-        print('worktrees verified')
+            if path != workspace and not workspace_owned(path, member['Agent']):
+                raise ValueError('A restored workspace lost its ownership marker.')
+            if (path / '.git').is_dir():
+                subprocess.run(['git', '-C', str(path), 'rev-parse', '--verify', 'HEAD'], stdout=subprocess.DEVNULL, check=True)
+        print('workspaces verified')
         return
     if phase in ('quiesce', 'check-background'):
         check_background(c, before_stop=phase == 'check-background')

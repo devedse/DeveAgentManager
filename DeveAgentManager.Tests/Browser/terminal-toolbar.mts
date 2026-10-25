@@ -10,11 +10,11 @@ const agentId = '00000000-0000-0000-0000-000000000001', sessionId = '00000000-00
 const now = new Date().toISOString();
 // What leaves the toolbar first (AgentTerminal.ToolbarOverflow), with the menu entry each one becomes.
 const priority = [
-    ['hint', null], ['avatar', null], ['switch-label', null], ['sessions-label', null], ['viewers', 'Screens (2)'], ['quick', 'Quick commands'],
-    ['images', 'Shared images (3)'], ['files', 'Shared files (1)'], ['tasks', 'Tasks (1/2)'], ['awake', 'Keep screen awake'], ['limit', 'Schedule continue'], ['sessions', 'Conversations'],
+    ['hint', null], ['avatar', null], ['switch-label', null], ['viewers', 'Screens (2)'], ['quick', 'Quick commands'],
+    ['images', 'Shared images (3)'], ['files', 'Shared files (1)'], ['tasks', 'Tasks (1/2)'], ['awake', 'Keep screen awake'], ['limit', 'Schedule continue'],
 ];
-const selectors = { hint: '.terminal-hint', avatar: '.terminal-avatar', 'switch-label': '.switch-chip-label', 'sessions-label': '.conversation-picker-label' };
-const fixed = ['Conversation', 'Sharing', 'Git identity…', 'Runner desktop', 'VS Code', 'Restart the harness', 'Stop the agent'];
+const selectors = { hint: '.terminal-hint', avatar: '.terminal-avatar', 'switch-label': '.switch-chip-label' };
+const fixed = ['Conversation', 'New conversation here…', 'Sharing', 'Git identity…', 'Runner desktop', 'VS Code', 'Restart the harness', 'Stop the agent'];
 
 async function run(touch) {
     const context = await browser.newContext({ viewport: { width: 1600, height: 900 }, hasTouch: touch, isMobile: false });
@@ -113,15 +113,6 @@ async function run(touch) {
         assert.ok(!previousShown || shown.every(key => previousShown.includes(key)), `${label}: a narrower toolbar must not show a button the wider one didn't`);
         previousShown = shown;
         if (width === 1600) assert.equal(hidden, 0, `${label}: everything fits on a wide screen ${JSON.stringify(s.items)}`);
-        if (width >= 600) assert.equal(s.items.sessions, 'toolbar', `${label}: the conversations dropdown stays on wider screens`);
-        if (width === 390 && s.items.sessions === 'toolbar') {
-            assert.equal(s.items['sessions-label'], 'menu', `${label}: Conversations uses its compact icon on phones`);
-            const conversations = toolbar.locator('button[aria-label="Conversations"]');
-            await conversations.click();
-            await page.getByRole('menuitem', { name: 'Browse all conversations', exact: true }).waitFor();
-            await conversations.click();
-            await openMenus.first().waitFor({ state: 'detached' });
-        }
 
         // Everything that left the toolbar is in the menu, and nothing else is; the fixed actions always are, Restart and Stop last.
         if ([1600, 1100, 900, 768, 600, 390, 320].includes(width)) {

@@ -147,7 +147,7 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<long?>("IconVersion")
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool>("IsWorktree")
+                    b.Property<bool>("IsClone")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("LastAssistantMessageAt")
@@ -455,6 +455,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KeptFoldersJson")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Name")
@@ -767,6 +770,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<Guid>("OwnerId")
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("ProjectId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("RepositoryBranch")
                         .HasColumnType("TEXT");
 
@@ -810,6 +816,8 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .IsUnique();
 
                     b.HasIndex("OwnerId");
+
+                    b.HasIndex("ProjectId");
 
                     b.HasIndex("WorkspaceAgentId");
 
@@ -1180,6 +1188,11 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("DeveAgentManager.Core.Data.Project", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("DeveAgentManager.Core.Data.Agent", "WorkspaceAgent")
                         .WithMany()
                         .HasForeignKey("WorkspaceAgentId")
@@ -1188,6 +1201,8 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Navigation("Agent");
 
                     b.Navigation("Owner");
+
+                    b.Navigation("Project");
 
                     b.Navigation("WorkspaceAgent");
                 });

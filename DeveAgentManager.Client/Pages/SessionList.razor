@@ -48,17 +48,18 @@
                     <p>No sessions of yours match.</p>
                 }
             <div class="agent-table">
-                @* Agents' workspaces like agents everywhere: the one that replied last first (AgentOrder). *@
-                @foreach (var group in sessions.GroupBy(s => s.WorkspaceAgentId?.ToString() ?? s.RepositoryUrl ?? "Imported")
+                @* Projects like agents everywhere: the one that replied last first (AgentOrder). *@
+                @foreach (var group in sessions.GroupBy(s => s.ProjectId?.ToString() ?? s.WorkspaceAgentId?.ToString() ?? s.RepositoryUrl ?? "Imported")
                     .OrderByDescending(g => g.Max(s => s.Agent?.LastAssistantMessageAt ?? s.UpdatedAt)))
                 {
                     var first = group.First();
+                    var projectAgents = first.ProjectId is { } project ? _agents.Where(a => WorkspaceGroups.ProjectKey(a) == project).ToList() : [];
                     <div class="session-group-heading">
-                        <strong>@(first.WorkspaceName ?? first.RepositoryUrl ?? "Imported sessions")</strong>
+                        <strong>@(projectAgents.FirstOrDefault()?.ProjectName ?? first.WorkspaceName ?? first.RepositoryUrl ?? "Imported sessions")</strong>
                         <span> · @group.Count() @(group.Count() == 1 ? "session" : "sessions")</span>
-                        @if (first.WorkspaceAgentId is { } workspace && first.WorkspaceAccess >= AgentAccess.Write)
+                        @if (first.ProjectId is { } projectKey && projectAgents.Count > 0)
                         {
-                            <MudButton Size="Size.Small" OnClick="() => OpenWorkspaceAsync(workspace)">Manage sessions</MudButton>
+                            <MudButton Size="Size.Small" Href="@($"projects/{projectKey}")">Manage workspaces</MudButton>
                         }
                         <div class="list-subtitle">@string.Join(" · ", new[] { first.RepositoryUrl, first.RunnerName, first.WorkingDirectory }.Where(part => !string.IsNullOrEmpty(part)))</div>
                     </div>
@@ -88,11 +89,11 @@
                                 <div class="list-subtitle">
                                     @if (session.Agent is { } agent)
                                     {
-                                        <span>@agent.Name on @agent.RunnerName</span>
+                                        <span class="session-active-badge">● Active in @WorkspaceGroups.WorkspaceName(agent)</span><span> on @agent.RunnerName</span>
                                     }
                                     else
                                     {
-                                        <span>@(session.WorkspaceAgentId is not null ? $"Saved · {session.WorkspaceName} on {session.RunnerName}" : session.RunnerName is null ? "Imported" : $"No workspace · last on {session.RunnerName}")</span>
+                                        <span>@(session.ProjectId is not null ? $"Saved · last in {WorkspaceGroups.LastRanIn(session, projectAgents)} on {session.RunnerName}" : session.RunnerName is null ? "Imported" : $"No workspace · last on {session.RunnerName}")</span>
                                     }
                                     @if (session.RepositoryUrl is not null)
                                     {
@@ -115,8 +116,8 @@
                         <div class="agent-row-actions">
                             @if (session.Agent is { Access: >= AgentAccess.Read })
                             {
-                                <MudTooltip Text="Open the agent">
-                                    <MudIconButton Href="@($"agents/{session.AgentId}")" Icon="@Icons.Material.Rounded.Terminal" Color="Color.Primary" Size="Size.Small" />
+                                <MudTooltip Text="Open its workspace">
+                                    <MudIconButton Href="@($"agents/{session.AgentId}")" Icon="@Icons.Material.Rounded.Terminal" Color="Color.Primary" Size="Size.Small" aria-label="Open its workspace" />
                                 </MudTooltip>
                             }
                             else if (ContinueText(session) is { } continueText)
@@ -150,11 +151,14 @@
 
 @code {
     private List<SessionDto> _sessions = [];
+    private List<AgentDto> _agents = [];
+    [SupplyParameterFromQuery(Name = "project")] public Guid? ProjectId { get; set; }
     private string? _search;
     private Guid _userId;
     private bool _importing;
 
     private IEnumerable<SessionDto> Filtered => _sessions
+        .Where(s => ProjectId is null || s.ProjectId == ProjectId)
         .Where(s => string.IsNullOrWhiteSpace(_search)
                     || s.Title.Contains(_search, StringComparison.OrdinalIgnoreCase)
                     || (s.RepositoryUrl?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
@@ -163,10 +167,10 @@
 
     /// <summary>
     /// How the user can continue a conversation that isn't running where they can open it, or null when they can't: in its
-    /// workspace with read-write access to that agent, or else in a new agent of their own (a copy, for someone else's).
+    /// project with read-write access to it, or else in a new agent of their own (a copy, for someone else's).
     /// </summary>
     public static string? ContinueText(SessionDto session) =>
-        session.WorkspaceAgentId is not null && session.WorkspaceAccess >= AgentAccess.Write ? "Continue in its workspace"
+        session.ProjectId is not null && session.WorkspaceAccess >= AgentAccess.Write ? "Resume in its project"
         : session.Access != SessionAccess.Owner ? "Continue a copy on a Runner"
         : session.WorkspaceAgentId is null ? "Continue on a Runner"
         : null;
@@ -176,7 +180,9 @@
     protected override async Task LoadAsync()
     {
         _userId = (await Me.GetAsync()).Id;
+        var agents = Api.ListAgentsAsync();
         _sessions = await Api.ListSessionsAsync();
+        _agents = await agents;
     }
 
     private async Task ImportAsync(IBrowserFile? file)
@@ -205,20 +211,13 @@
 
     private async Task ContinueAsync(SessionDto session)
     {
-        if (session.WorkspaceAgentId is { } workspace && session.WorkspaceAccess >= AgentAccess.Write) await OpenWorkspaceAsync(workspace);
-        else await Dialogs.ShowAsync<NewAgentDialog>("Continue session", new DialogParameters<NewAgentDialog> { { d => d.ContinueSession, session } });
+        await ConversationResume.ContinueAsync(Api, Dialogs, session, _sessions);
+        await ReloadAsync();
     }
 
     private async Task ShareAsync(SessionDto session)
     {
         await ShareDialog.ShowAsync(Dialogs, session, await Me.GetAsync());
-        await ReloadAsync();
-    }
-    private async Task OpenWorkspaceAsync(Guid workspace)
-    {
-        if (await Api.GetAgentAsync(workspace) is not { } agent) return;
-        var dialog = await Dialogs.ShowAsync<SessionPickerDialog>("Sessions", new DialogParameters<SessionPickerDialog> { { d => d.Agent, agent } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
-        if (await dialog.Result is { Canceled: false }) Navigation.NavigateTo($"agents/{workspace}");
         await ReloadAsync();
     }
     private async Task RenameAsync(SessionDto session)

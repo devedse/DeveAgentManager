@@ -136,7 +136,10 @@ public sealed class SessionService(
         .Include(s => s.Agent).ThenInclude(a => a!.Owner)
         .Include(s => s.Agent).ThenInclude(a => a!.Account).ThenInclude(a => a!.CreatedBy)
         .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Shares)
-        .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Runner).ThenInclude(r => r!.Members);
+        .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Runner).ThenInclude(r => r!.Members)
+        // After its workspace is removed, a conversation's access follows its project's sharing.
+        .Include(s => s.Project).ThenInclude(p => p!.Agents).ThenInclude(a => a.Shares)
+        .Include(s => s.Project).ThenInclude(p => p!.Agents).ThenInclude(a => a.Runner).ThenInclude(r => r!.Members);
 
     public async Task<StoredSession?> GetForAgentAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
@@ -223,15 +226,18 @@ public sealed class SessionService(
         {
             await EnsureVerifiedLockedAsync(existingId, cancellationToken);
             stored = await db.Sessions.FirstOrDefaultAsync(s => s.Id == existingId, cancellationToken) ?? throw new ArgumentException("Session not found.");
-            if (stored.OwnerId != agent.OwnerId)
+            // A saved conversation of the same project resumes in another of its workspaces as it is.
+            var sameProject = agent.ProjectId is { } projectId && stored.AgentId is null && stored.OwnerId == agent.OwnerId
+                && (stored.ProjectId == projectId || await db.Agents.AnyAsync(a => a.Id == stored.WorkspaceAgentId && a.ProjectId == projectId, cancellationToken));
+            if (!sameProject && stored.OwnerId != agent.OwnerId)
             {
                 stored = await CopyAsync(db, stored, agent.OwnerId, cancellationToken);
             }
-            else if (stored.AgentId is not null || stored.WorkspaceAgentId is not null)
+            else if (!sameProject && (stored.AgentId is not null || stored.WorkspaceAgentId is not null))
             {
                 throw new InvalidOperationException("This session already belongs to a running agent. Open that agent instead.");
             }
-            else if (await _artifacts.HasCollectionAsync(stored.Id, cancellationToken))
+            else if (!sameProject && await _artifacts.HasCollectionAsync(stored.Id, cancellationToken))
             {
                 // A deleted agent's archives still reference this source folder. Continue an independent copy so
                 // future publications by the new agent cannot appear in the old agent's remaining archives.
@@ -249,6 +255,7 @@ public sealed class SessionService(
 
         stored.AgentId = agent.Id;
         stored.WorkspaceAgentId = agent.Id;
+        stored.ProjectId = agent.ProjectId ?? stored.ProjectId;
         stored.HarnessTrail ??= agent.HarnessId;
         stored.HarnessId = agent.HarnessId;
         stored.HarnessSessionId = agent.HarnessSessionId;
@@ -725,10 +732,12 @@ public sealed class SessionService(
         {
             Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Title = string.IsNullOrWhiteSpace(title) ? "New session" : ValidateTitle(title),
             TitlePinned = !string.IsNullOrWhiteSpace(title), CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
-            HarnessId = agent.HarnessId, WorkspaceAgentId = agent.Id
+            HarnessId = agent.HarnessId, WorkspaceAgentId = agent.Id, ProjectId = agent.ProjectId
         };
-        if (selected.WorkspaceAgentId != agent.Id) throw new InvalidOperationException("Choose a session from this workspace.");
-        if (selected.AgentId != null && selected.AgentId != agent.Id) throw new InvalidOperationException("Session is already active elsewhere.");
+        if (selected.WorkspaceAgentId != agent.Id && (agent.ProjectId is null || selected.ProjectId != agent.ProjectId
+            && !await db.Agents.AnyAsync(a => a.Id == selected.WorkspaceAgentId && a.ProjectId == agent.ProjectId, ct)))
+            throw new InvalidOperationException("Choose a conversation from this project.");
+        if (selected.AgentId != null && selected.AgentId != agent.Id) throw new InvalidOperationException("This conversation is active in another workspace.");
         var changesHarness = selected.HarnessId != agent.HarnessId;
         if (changesHarness && agent.LoginStopPending) throw new InvalidOperationException("Wait for pending login enforcement before changing harnesses.");
         var accountId = changesHarness ? null : agent.AccountId;
@@ -739,6 +748,9 @@ public sealed class SessionService(
             await WriteForHarnessAsync(runner, selected, selected.HarnessId, nativeId, agent.WorkingDirectory, ct);
         }
         else { selected.HarnessSessionId = nativeId; db.Sessions.Add(selected); }
+        // It now runs here; it stays the project's when this workspace is removed.
+        selected.WorkspaceAgentId = agent.Id;
+        selected.ProjectId = agent.ProjectId ?? selected.ProjectId;
         selected.WorkingDirectory = agent.WorkingDirectory;
         selected.RepositoryUrl = agent.RepositoryUrl;
         selected.RepositoryBranch = agent.RepositoryBranch;

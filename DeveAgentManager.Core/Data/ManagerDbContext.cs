@@ -182,6 +182,7 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
             session.HasKey(s => s.Id);
             session.HasIndex(s => s.AgentId).IsUnique();
             session.HasOne(s => s.WorkspaceAgent).WithMany().HasForeignKey(s => s.WorkspaceAgentId).OnDelete(DeleteBehavior.SetNull);
+            session.HasOne(s => s.Project).WithMany().HasForeignKey(s => s.ProjectId).OnDelete(DeleteBehavior.SetNull);
             session.HasOne(s => s.Agent).WithMany().HasForeignKey(s => s.AgentId).OnDelete(DeleteBehavior.SetNull);
             session.HasOne(s => s.Owner).WithMany().HasForeignKey(s => s.OwnerId).OnDelete(DeleteBehavior.Restrict);
             session.HasMany(s => s.Shares).WithOne().HasForeignKey(s => s.SessionId).OnDelete(DeleteBehavior.Cascade);

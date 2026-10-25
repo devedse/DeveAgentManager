@@ -58,7 +58,7 @@ public sealed class AgentArtifactTests : IDisposable
         {
             db.Projects.Add(new() { Id = main.Id, RunnerId = main.RunnerId, OwnerId = main.OwnerId, Name = "project" });
             (await db.Agents.SingleAsync(Ct)).ProjectId = main.Id;
-            db.Agents.Add(new() { Id = childId, RunnerId = main.RunnerId, OwnerId = main.OwnerId, Name = "child", ProjectId = main.Id, IsWorktree = true });
+            db.Agents.Add(new() { Id = childId, RunnerId = main.RunnerId, OwnerId = main.OwnerId, Name = "child", ProjectId = main.Id, IsClone = true });
             db.Sessions.Add(new() { Id = childSession, AgentId = childId, WorkspaceAgentId = childId, OwnerId = main.OwnerId });
             db.Users.Add(new() { Id = reader, Username = "conversation-reader", DisplayName = "Conversation reader" });
             db.SessionShares.Add(new() { SessionId = current, UserId = reader });

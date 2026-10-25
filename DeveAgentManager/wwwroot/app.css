@@ -3176,11 +3176,6 @@ body:has(.terminal-layout) .agent-attention-popover {
 
 /* Keep status and workspace controls inside the viewport, even with long session names. */
 .terminal-name-row > .agent-status-button { flex-shrink: 0; }
-.session-picker-list { margin: 12px 0; }
-.session-picker-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--mud-palette-divider); }
-.session-picker-summary { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
-.session-picker-summary small { display: block; color: var(--mud-palette-text-secondary); }
-.session-picker-actions { display: flex; flex-wrap: wrap; align-items: center; }
 .session-group-heading { padding: 16px; overflow-wrap: anywhere; border-bottom: 1px solid var(--mud-palette-divider); }
 @media (max-width: 600px) {
     .terminal-toolbar { gap: 2px; }
@@ -3189,7 +3184,6 @@ body:has(.terminal-layout) .agent-attention-popover {
     .terminal-name-row .agent-status-button { flex: 0 0 auto; }
 }
 
-.session-workspace-name { overflow-wrap: anywhere; }
 
 /* Explanations beside headings, with bounded help on phones as well as desktops. */
 .help-heading { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -3753,6 +3747,12 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .workspace-menu-heading { padding: 8px 16px; font-weight: 600; }
 .workspace-menu-row { min-width: 220px; max-width: min(380px, 75vw); }
 .workspace-menu-row > span { overflow: hidden; text-overflow: ellipsis; }
+.workspace-menu-row .status-pill { flex-shrink: 0; }
+/* It opens at the picker, about 40px in on phones: titles truncate rather than pushing the menu off screen. */
+/* MudBlazor sets an inline max-width: none on popovers. */
+.workspace-menu-popover { max-width: calc(100vw - 48px) !important; }
+.workspace-menu-popover .mud-menu-item-text { min-width: 0; overflow: hidden; }
+@media (max-width: 600px) { .workspace-menu-popover .workspace-menu-row { min-width: 0; } }
 .workspace-picker { min-width: 72px; max-width: 100%; }
 .workspace-picker-button { min-width: 0; max-width: 100%; padding: 0; text-transform: none !important; }
 .workspace-picker .mud-menu-activator { max-width: 100%; min-width: 0; }
@@ -3761,12 +3761,24 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .workspace-picker-current { overflow: hidden; text-overflow: ellipsis; }
 .workspace-picker-button .mud-button-icon-end { flex-shrink: 0; }
 .workspace-picker-current { color: var(--dam-muted); font-weight: normal; }
-.conversation-picker-button:has(.conversation-picker-label[hidden]) { min-width: 0; padding: 6px; }
-.conversation-picker-button:has(.conversation-picker-label[hidden]) .mud-button-icon-start { margin: 0; }
-.conversation-picker-button:has(.conversation-picker-label[hidden]) .mud-button-icon-end { display: none; }
-.conversation-menu-row { display: flex; align-items: center; max-width: min(420px, 90vw); }
-.conversation-menu-row .mud-menu-item { flex: 1; min-width: 0; }
+.workspace-menu-entry { display: flex; align-items: center; max-width: min(440px, 92vw); padding-right: 8px; }
+.workspace-menu-entry .mud-menu-item { flex: 1; min-width: 0; }
+.workspace-menu-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-menu-where { display: block; color: var(--dam-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-branch { color: var(--dam-muted); }
+.workspace-start { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.workspace-start-option { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.workspace-start-option .mud-radio { min-width: 0; }
+.workspace-start-size { color: var(--dam-muted); font-size: .8rem; margin-left: auto; text-align: right; }
+.workspace-start-pull { margin-left: 32px; }
+.workspace-start-disk { display: block; color: var(--dam-muted); margin-top: 4px; overflow-wrap: anywhere; }
+.workspace-remove-path { overflow-wrap: anywhere; }
+.workspace-remove-list { margin: 8px 0 0 20px; overflow-wrap: anywhere; }
+.conversation-chooser-title { overflow-wrap: anywhere; }
+.conversation-chooser-options { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 16px; }
+.conversation-chooser-options .mud-button-root { max-width: 100%; text-align: left; }
+.conversation-chooser-warning { color: var(--dam-warning); }
+.session-active-badge { color: var(--mud-palette-success); font-weight: 600; }
 @media (max-width: 600px) {
     .workspace-project-counts { display: block; margin-left: 0; }
     .workspace-project .agent-table { padding-left: 0; }

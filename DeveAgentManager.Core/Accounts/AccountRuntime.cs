@@ -49,7 +49,7 @@ public sealed partial class AccountService
     internal static string RuntimeScript(Agent agent, Guid accountId)
     {
         var data = JsonSerializer.Serialize(new { Owner = agent.OwnerId.ToString("N"), Agent = agent.Id.ToString("N"),
-            Harness = agent.HarnessId, Session = agent.HarnessSessionId, WorkingDirectory = agent.WorkingDirectory, Account = accountId.ToString("N"), Worktree = agent.IsWorktree });
+            Harness = agent.HarnessId, Session = agent.HarnessSessionId, WorkingDirectory = agent.WorkingDirectory, Account = accountId.ToString("N"), Private = agent.IsClone });
         return $$"""
             python3 - <<'DAM_RUNTIME'
             import pathlib,json,shutil,os
@@ -66,7 +66,7 @@ public sealed partial class AccountService
                 src=shared/name
                 dst=root/name
                 if src.exists() and not dst.exists():
-                    if d.get('Worktree') and name in ('config.toml','settings.json'):
+                    if d.get('Private') and name in ('config.toml','settings.json'):
                         shutil.copy2(src,dst); os.chmod(dst,0o600)
                     else: dst.symlink_to(src)
             if d['Harness']=='codex':

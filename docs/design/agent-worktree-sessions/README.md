@@ -1,8 +1,9 @@
 # Multiple concurrent sessions per agent with Git worktrees
 
-The hierarchy was revised during implementation: a Project groups workspace agents, and each agent has its own
-conversations. See [the current design and rollback notes](../../project-workspaces.md). The proposal and static
-mockups below preserve the earlier agent-as-project terminology and do not describe the current UI exactly.
+Superseded. The implementation uses independent clones next to Main instead of Git worktrees: a Project groups
+workspace agents, several run at once, and conversations belong to the project. See
+[the current design and rollback notes](../../project-workspaces.md). The proposal and static mockups below are kept
+as history and do not describe the current behaviour.
 
 Design proposal only. The images are static mockups; this document does not implement the feature.
 

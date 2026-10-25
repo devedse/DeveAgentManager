@@ -32,7 +32,7 @@
             }
             <div class="terminal-title">
                 <div class="terminal-name-row">
-                    <WorkspaceMenu Agent="_agent" @key="_agent.Id" />
+                    <WorkspaceMenu Agent="_agent" Changed="OnSwitchedAsync" @key="_agent.Id" />
                     <AgentStatus Agent="_agent" Class="terminal-status" />
                 </div>
                 <span class="terminal-context"><HarnessLogo HarnessId="@_agent.HarnessId" Class="context-logo" />@(_agent.AccountName is { } account ? $"{account} · " : "")@if (AgentTable.CommitsAs(_agent) is { } git)
@@ -40,10 +40,6 @@
                         <span title="@AgentTable.GitIdentityTitle(git)">Git: @AgentTable.GitIdentityText(git) · </span>
                     }@_agent.RunnerName · <span class="mono">@(_sessionTitle ?? _agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
             </div>
-            @if (read)
-            {
-                <span class="toolbar-item" data-toolbar="sessions"><ConversationMenu Agent="_agent" SessionId="_sessionId" Changed="OnSwitchedAsync" Manage="OpenSessionsAsync" @key="_agent.Id" /></span>
-            }
             <CpuTraceIndicator />
             <AttentionMenu />
             <AgentSeenWatcher @key="(AgentId, nameof(AgentSeenWatcher))" Agent="_agent" />
@@ -73,10 +69,6 @@
                     </ActivatorContent>
                     <ChildContent>
                         @* What the toolbar has no room for, in toolbar order. *@
-                        @if (read && Overflowed("sessions"))
-                        {
-                            <ConversationMenu Agent="_agent" SessionId="_sessionId" Changed="OnSwitchedAsync" Manage="OpenSessionsAsync" InMenu="true" />
-                        }
                         @if (_sessionId is { } menuSessionId)
                         {
                             @if (Overflowed("images"))
@@ -121,6 +113,10 @@
                         {
                             <MudMenuItem Icon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{conversationId}")">Conversation</MudMenuItem>
                         }
+                        @if (write)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.AddComment" Disabled="@(_busy || _agent.MovePending)" OnClick="NewConversationAsync">New conversation here…</MudMenuItem>
+                        }
                         <MudMenuItem Icon="@(_agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="ShareAsync">Sharing</MudMenuItem>
                         <MudMenuItem Icon="@Icons.Material.Rounded.Badge" OnClick="GitIdentityAsync">Git identity…</MudMenuItem>
                         @if (_agent.Access == AgentAccess.Owner)
@@ -132,6 +128,10 @@
                             else
                             {
                                 <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="_agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, _agent)">Move project to another runner…</MudMenuItem>
+                            }
+                            @if (_agent.IsClone)
+                            {
+                                <MudMenuItem Icon="@Icons.Material.Rounded.DeleteOutline" IconColor="Color.Error" Disabled="@(_agent.MovePending || _agent.RunnerState != RunnerState.Ready)" OnClick="RemoveWorkspaceAsync">Remove workspace…</MudMenuItem>
                             }
                         }
                         @* A read-write share covers the agent; the desktop and VS Code are the Runner's. *@
@@ -268,15 +268,13 @@
     private DotNetObjectReference<AgentTerminal>? _toolbarSelf;
     private HashSet<string> _overflow = [];
 
-    /// <summary>What leaves the toolbar first when it runs out of room. Only the last eight get an entry in the ⋮ menu.</summary>
+    /// <summary>What leaves the toolbar first when it runs out of room. Only the last seven get an entry in the ⋮ menu.</summary>
     private static readonly object[] ToolbarOverflow =
     [
         new { key = "hint", selector = ".terminal-hint" },
         new { key = "avatar", selector = ".terminal-avatar" },
         // The harness/account button keeps its icon.
         new { key = "switch-label", selector = ".switch-chip-label" },
-        // Keep both dropdowns accessible before moving status controls into the menu.
-        new { key = "sessions-label", selector = ".conversation-picker-label" },
         new { key = "viewers", selector = "[data-toolbar='viewers']" },
         new { key = "quick", selector = "[data-toolbar='quick']" },
         new { key = "images", selector = "[data-toolbar='images']" },
@@ -284,10 +282,9 @@
         new { key = "tasks", selector = "[data-toolbar='tasks']" },
         new { key = "awake", selector = "[data-toolbar='awake']" },
         new { key = "limit", selector = "[data-toolbar='limit']" },
-        new { key = "sessions", selector = "[data-toolbar='sessions']" },
     ];
 
-    private static readonly string[] MenuEntries = ["viewers", "quick", "images", "files", "tasks", "awake", "limit", "sessions"];
+    private static readonly string[] MenuEntries = ["viewers", "quick", "images", "files", "tasks", "awake", "limit"];
 
     private bool Overflowed(string key) => _overflow.Contains(key);
 
@@ -361,12 +358,14 @@
         await ReloadAsync();
     }
 
-    private async Task OpenSessionsAsync()
+    private async Task NewConversationAsync()
     {
-        if (_agent is null) return;
-        var dialog = await Dialogs.ShowAsync<SessionPickerDialog>("Sessions", new DialogParameters<SessionPickerDialog> { { d => d.Agent, _agent } },
-            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
-        if (await dialog.Result is { Canceled: false }) await OnSwitchedAsync();
+        if (_agent is not null && await NewConversationDialog.ShowAsync(Dialogs, _agent)) await OnSwitchedAsync();
+    }
+
+    private async Task RemoveWorkspaceAsync()
+    {
+        if (_agent is not null && await RemoveWorkspaceDialog.ShowAsync(Dialogs, _agent)) Navigation.NavigateTo($"projects/{WorkspaceGroups.ProjectKey(_agent)}");
     }
 
     private async Task ShareAsync()

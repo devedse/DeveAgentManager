@@ -1,0 +1,78 @@
+@inject ManagerApi Api
+@inject IDialogService Dialogs
+@inject NavigationManager Navigation
+
+@* What to do with a saved conversation: nothing happens until one of these is chosen. *@
+<MudDialog>
+    <TitleContent><div class="help-heading"><MudText Typo="Typo.h6" Class="conversation-chooser-title">@Session.Title</MudText>
+        <HelpTip Label="Saved conversation">
+            <p>Resume here replaces the conversation in this workspace. The conversation running there is saved and can be resumed later. Resume in a new workspace starts it next to the others, so nothing stops.</p>
+            <p>A conversation continues in the files of the workspace it resumes in. Its earlier uncommitted changes stay in the folder it last ran in.</p>
+        </HelpTip></div></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">Last ran in @WorkspaceGroups.LastRanIn(Session, ProjectAgents)@(Session.RepositoryBranch is { } branch ? $" on {branch}" : "") · @Session.UpdatedAt.Humanize()</MudText>
+        @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-2">@_error</MudAlert> }
+        <div class="conversation-chooser-options">
+            @if (Here is { Access: >= AgentAccess.Write } here)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" Disabled="@(_busy || here.MovePending || here.RunnerState != RunnerState.Ready)" OnClick="ResumeHereAsync">
+                    @(_busy ? "Resuming…" : $"Resume here, in {WorkspaceGroups.WorkspaceName(here)}")
+                </MudButton>
+                @if (WorkspaceGroups.Running(here))
+                { <MudText Typo="Typo.caption">@(HereTitle is { } title ? $"“{title}” is saved and stops." : "The conversation running here is saved and stops.")</MudText> }
+                @if (Differs(here))
+                { <MudText Typo="Typo.caption" Class="conversation-chooser-warning">This conversation last ran in @WorkspaceGroups.LastRanIn(Session, ProjectAgents)@(Session.RepositoryBranch is { } last ? $" on {last}" : ""); this workspace is on @(here.RepositoryBranch ?? "another folder").</MudText> }
+            }
+            @if (Here is { Access: AgentAccess.Owner, CanUseRunner: true } source)
+            {
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.AddBox" Disabled="@(_busy || source.MovePending)" OnClick="NewWorkspaceAsync">Resume in a new workspace…</MudButton>
+            }
+            <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{Session.Id}")" Disabled="_busy">Read only</MudButton>
+        </div>
+    </DialogContent>
+    <DialogActions><MudButton OnClick="() => Dialog.Cancel()" Disabled="_busy">Cancel</MudButton></DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public SessionDto Session { get; set; } = default!;
+    /// <summary>The workspace "here" means; null when none of the project's workspaces is open.</summary>
+    [Parameter] public AgentDto? Here { get; set; }
+    [Parameter] public IReadOnlyList<AgentDto> ProjectAgents { get; set; } = [];
+    [Parameter] public string? HereTitle { get; set; }
+    public const string ResumedHere = "here";
+    private bool _busy;
+    private string? _error;
+
+    /// <returns><see cref="ResumedHere"/> when it now runs in <paramref name="here"/>; otherwise null.</returns>
+    public static async Task<string?> ShowAsync(IDialogService dialogs, SessionDto session, AgentDto? here, IReadOnlyList<AgentDto> projectAgents, string? hereTitle = null)
+    {
+        var dialog = await dialogs.ShowAsync<ConversationChooserDialog>("Saved conversation", new DialogParameters<ConversationChooserDialog>
+            { { d => d.Session, session }, { d => d.Here, here }, { d => d.ProjectAgents, projectAgents }, { d => d.HereTitle, hereTitle } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        return await dialog.Result is { Canceled: false, Data: string choice } ? choice : null;
+    }
+
+    private bool Differs(AgentDto here) => Session.WorkspaceAgentId != here.Id
+        && (Session.RepositoryBranch is { } branch && branch != here.RepositoryBranch || Session.WorkingDirectory is { } folder && folder != here.WorkingDirectory);
+
+    private async Task ResumeHereAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            await Api.SelectSessionAsync(Here!.Id, Session.Id);
+            Dialog.Close(DialogResult.Ok(ResumedHere));
+            Navigation.NavigateTo($"agents/{Here.Id}");
+        }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
+        finally { _busy = false; }
+    }
+
+    private async Task NewWorkspaceAsync()
+    {
+        Dialog.Close(DialogResult.Ok("new"));
+        await NewWorkspaceDialog.ShowAsync(Dialogs, Here!, Session);
+    }
+}

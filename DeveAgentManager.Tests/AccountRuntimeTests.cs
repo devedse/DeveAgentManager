@@ -55,8 +55,8 @@ public class AccountRuntimeTests
         {
             var home = temp.FullName;
             var account = Guid.NewGuid();
-            var first = new Agent { Id = Guid.NewGuid(), OwnerId = Guid.NewGuid(), HarnessId = harness, HarnessSessionId = Guid.NewGuid().ToString(), IsWorktree = true };
-            var second = new Agent { Id = Guid.NewGuid(), OwnerId = Guid.NewGuid(), HarnessId = harness, HarnessSessionId = Guid.NewGuid().ToString(), IsWorktree = true };
+            var first = new Agent { Id = Guid.NewGuid(), OwnerId = Guid.NewGuid(), HarnessId = harness, HarnessSessionId = Guid.NewGuid().ToString(), IsClone = true };
+            var second = new Agent { Id = Guid.NewGuid(), OwnerId = Guid.NewGuid(), HarnessId = harness, HarnessSessionId = Guid.NewGuid().ToString(), IsClone = true };
             string Relative(Agent a) => harness == "codex" ? $"sessions/2026/01/01/rollout-test-{a.HarnessSessionId}.jsonl" : harness == "grok" ? $"sessions/test/{a.HarnessSessionId}/updates.jsonl" : $"projects/test/{a.HarnessSessionId}.jsonl";
             var shared = Path.Combine(home, "." + harness);
             Directory.CreateDirectory(shared);

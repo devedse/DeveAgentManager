@@ -42,10 +42,10 @@ public sealed partial class AgentService
     private static IEnumerable<MoveWorkspace> MoveWorkspaces(AgentMoveState move) => move.Workspaces is { Count: > 0 } workspaces ? workspaces :
         [new(move.AgentId, move.Workspace, move.Owner, move.Agent, move.TmuxSession ?? "", move.PreviousState, move.Resume)];
     private static MoveWorkspace WorkspaceState(Agent agent) => new(agent.Id, agent.WorkingDirectory, agent.OwnerId.ToString("N"), agent.Id.ToString("N"), agent.TmuxSession, agent.State, agent.State is AgentState.Running or AgentState.Starting);
-    private static readonly string MoveScript = ReadMoveScript();
-    private static string ReadMoveScript()
+    private static readonly string MoveScript = ReadScript("agent-move.py");
+    private static string ReadScript(string name)
     {
-        using var stream = typeof(AgentService).Assembly.GetManifestResourceStream("DeveAgentManager.Core.Scripts.agent-move.py")!;
+        using var stream = typeof(AgentService).Assembly.GetManifestResourceStream("DeveAgentManager.Core.Scripts." + name)!;
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
@@ -85,7 +85,7 @@ public sealed partial class AgentService
         var runner = RequireReady(agent.Runner!);
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var workspaces = await db.Agents.Where(a => a.Id == agent.Id || agent.ProjectId != null && a.ProjectId == agent.ProjectId).ToListAsync(ct);
-        var main = workspaces.FirstOrDefault(a => !a.IsWorktree) ?? agent;
+        var main = workspaces.FirstOrDefault(a => !a.IsClone) ?? agent;
         var move = new AgentMoveState(Guid.NewGuid().ToString("N"), agent.Id, agent.RunnerId, agent.RunnerId,
             main.WorkingDirectory, agent.OwnerId.ToString("N"), agent.Id.ToString("N"), agent.State, false, TmuxSession: agent.TmuxSession, Workspaces: workspaces.Count > 1 ? workspaces.Select(WorkspaceState).ToArray() : null);
         return await ReadMoveProcessesAsync(runner, move, ct);
@@ -112,7 +112,9 @@ public sealed partial class AgentService
             var workspaces = await db.Agents.Where(a => a.Id == agent.Id || agent.ProjectId != null && a.ProjectId == agent.ProjectId).ToListAsync(ct);
             if (workspaces.Any(a => a.RunnerId != agent.RunnerId || a.OwnerId != agent.OwnerId || a.MoveJson != null || a.WorkspaceCreationJson != null))
                 throw new InvalidOperationException("Finish workspace creation, moves or recovery in this project first.");
-            agent = workspaces.FirstOrDefault(a => !a.IsWorktree) ?? throw new InvalidOperationException("The project's Main workspace is missing.");
+            agent = workspaces.FirstOrDefault(a => !a.IsClone) ?? throw new InvalidOperationException("The project's Main workspace is missing.");
+            if (await db.Projects.AnyAsync(p => p.Id == agent.ProjectId && p.KeptFoldersJson != null && p.KeptFoldersJson != "[]", ct))
+                throw new InvalidOperationException("Delete or reuse the project's kept workspace folders first (Manage workspaces).");
             await db.Entry(agent).Reference(a => a.Runner).LoadAsync(ct);
             var workspaceIds = workspaces.Select(a => a.Id).ToArray();
             if (agent.MoveJson is not null) throw new InvalidOperationException("Finish the previous move or its cleanup first.");
@@ -382,7 +384,7 @@ public sealed partial class AgentService
             move = move with { Phase = "Installing" };
             move = await StartMoveStepAsync(move, "install", ct);
             await MovePhaseAsync(target, "install", move, ct);
-            await MovePhaseAsync(target, "verify-worktrees", move, ct);
+            await MovePhaseAsync(target, "verify-workspaces", move, ct);
             await MovePhaseAsync(source, "verify-source", move, ct);
             move = await ReadMoveStepsAsync(move, ct);
             using (await sessions.LockAsync(ct))
