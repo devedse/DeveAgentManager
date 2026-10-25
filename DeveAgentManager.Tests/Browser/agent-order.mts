@@ -99,11 +99,15 @@ try {
         await page.setViewportSize({ width: 1400, height: 1000 });
     }
     const originalAgents = [...agents];
-    for (let n = 0; n < 9; n++) agents.push({ ...agents[0], id: `00000000-0000-0000-0000-0000000002${n}0`, name: `recent-other-${n}`, lastAssistantMessageAt: at(0) });
+    // Stopped and more recent than the running one: the cap fills with them, but never hides a running agent.
+    for (let n = 0; n < 9; n++) agents.push({ ...agents[0], id: `00000000-0000-0000-0000-0000000002${n}0`, name: `recent-other-${n}`, lastAssistantMessageAt: at(0), state: 'Stopped' });
     await page.goto(base + '/');
     await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.list-title').first().waitFor({ timeout: 60000 });
     assert.equal(await page.getByRole('region', { name: 'Your agents', exact: true }).locator('.agent-row').count(), 3, 'dashboard cap cannot hide own agents behind administrative agents');
-    assert.equal(await page.getByRole('region', { name: 'Other users’ agents', exact: true }).locator('.agent-row').count(), 8);
+    const otherRows = page.getByRole('region', { name: 'Other users’ agents', exact: true }).locator('.agent-row');
+    assert.equal(await otherRows.count(), 8);
+    assert.equal(await otherRows.locator('.list-title', { hasText: 'an-hour-ago' }).count(), 1, 'the running agent stays although eight stopped ones replied later');
+    assert.equal(await otherRows.last().locator('.list-title').innerText().then(text => text.includes('an-hour-ago')), true, 'the shortened list keeps last-reply order');
     agents.splice(0, agents.length, ...originalAgents);
     await page.goto(base + '/agents');
     await own.locator('.list-title').first().waitFor({ timeout: 60000 });

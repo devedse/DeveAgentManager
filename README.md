@@ -8,6 +8,9 @@ when you close the tab.
 - **Runner**: a machine that hosts agents. Proxmox Runners are full clones of a template VM.
 - **Agent**: a harness ([pi](https://pi.dev), [Claude Code](https://code.claude.com),
   [Codex](https://github.com/openai/codex) or [Grok Build](https://docs.x.ai/build/overview)) running in its own tmux session and working folder on a Runner.
+- **Project**: a repository or folder grouping Main and its workspaces on one Runner. A workspace is an independent clone
+  next to Main with its own agent and conversation; several run at once and each starts and stops on its own. Move
+  project transfers Main and every workspace. See [workspace behaviour and rollback](docs/project-workspaces.md).
 - **Users**: everyone signs in with a username and password of their own and has personal or shared harness logins, a GitHub
   token, git identity, environment variables and SSH keys (**My settings**). Roles: *settings manager*, *user
   manager*, *runner creator*, *runner manager*, *conversation manager*, *log viewer* and *harness login manager*; *Admin* is all of them. A Runner has an owner and people with *Use*
@@ -39,9 +42,10 @@ when you close the tab.
   Per harness (**Manager settings → pi**): packages (pi extensions, skills, themes, e.g. `npm:pi-web-access`), the default
   model and thinking level, and extra settings merged into `~/.pi/agent/settings.json`. **Save and apply to Runners**
   updates the ready Runners right away. Packages removed from the list are removed from the Runners.
-  **Manager settings → Claude Code / Codex / Grok**: the default model and effort for new agents. Empty (the default) lets the
-  harness choose, which follows new models by itself. Claude takes aliases like `opus`, and Codex lists the models its
-  catalog offers on your Runner.
+  **Manager settings → Claude Code / Codex / Grok**: the default model and effort for new conversations. Empty (the
+  default) lets the harness choose, which follows new models by itself. Claude takes aliases like `opus`, and Codex lists
+  the models its catalog offers on your Runner. Each user can choose their own under **My settings → Models**, or follow
+  the Manager's default. See [default models](docs/model-defaults.md).
 - **VS Code** (opt-in per Runner: tick it in **New Runner**, or **Install VS Code** on the Runner page): VS Code in the
   browser ([code-server](https://github.com/coder/code-server)) to browse files, edit and see git changes. The Runner
   page opens it in the Runner's home folder, an agent's terminal in the agent's folder. It opens inside the Portal,
@@ -333,7 +337,9 @@ file. Keep `/data` on a local disk; SQLite's write-ahead log doesn't work on net
   also images such as screenshots and files copied in your file manager, such as a log. Files can be dropped on the
   terminal too, and images picked with the **📎 Image** key (on phones: gallery, camera, screenshots). They are stored
   on the Runner in `~/.deveagentmanager/uploads`, and their path is pasted into the terminal, like pi's own Ctrl+V does
-  locally. The harness sends a PNG, JPEG, WebP or GIF image to the model; the agent reads other files. Up to 25 MB.
+  locally. The harness sends a PNG, JPEG, WebP or GIF image to the model; the agent reads other files. Up to 500 MB;
+  a large file waits on the Manager's disk (`terminal-uploads` in its data folder) while it arrives, and what you type
+  meanwhile follows once it is sent.
 - **Copying** out of a terminal goes to your device's clipboard: select text with the mouse (tmux copies it when you
   let go), or use the harness's own copy, such as Claude Code's `/copy`. Programs copy with OSC 52, which the browser
   accepts only within 5 seconds of a key, tap or click in that terminal, so a program can't fill your clipboard by

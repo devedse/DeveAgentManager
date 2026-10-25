@@ -55,11 +55,11 @@ async function runSuite(scripts, capture = false) {
 
 if (suite === 'all' || suite === 'portal') {
     await runSuite(['auto-continue-dialog.mjs', 'agent-activity.mjs', 'session-migration.mjs',
-        'workspace-sessions.mjs', 'file-viewer.mjs', 'html-viewer.mjs', 'pdf-viewer.mjs', 'history-sync-settings.mjs',
-        'loading-states.mjs', 'agent-order.mjs', 'grok.mjs', 'access-management.mjs']);
+        'workspace-sessions.mjs', 'project-workspaces.mjs', 'file-viewer.mjs', 'html-viewer.mjs', 'pdf-viewer.mjs', 'history-sync-settings.mjs',
+        'loading-states.mjs', 'agent-order.mjs', 'grok.mjs', 'access-management.mjs', 'model-defaults.mjs', 'tab-bars.mjs', 'nav-projects.mjs']);
 }
 if (suite === 'all' || suite === 'interop') {
-    await runSuite(['app-update.mjs', 'hold-to-confirm.mjs', 'touch-input.mjs', 'terminal-toolbar.mjs',
+    await runSuite(['app-update.mjs', 'hold-to-confirm.mjs', 'touch-input.mjs', 'terminal-toolbar.mjs', 'file-paste.mjs',
         'terminal-copy.mjs', 'screen-awake.mjs', 'hidden-tabs.mjs', 'shared-images.mjs']);
 }
 // Its startup/uptime assertions require a fresh host, not the shared host after earlier regressions.

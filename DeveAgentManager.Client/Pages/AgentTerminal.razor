@@ -32,7 +32,7 @@
             }
             <div class="terminal-title">
                 <div class="terminal-name-row">
-                    <span class="terminal-name" title="@_agent.Name">@_agent.Name</span>
+                    <WorkspaceMenu Agent="_agent" Changed="OnSwitchedAsync" @key="_agent.Id" />
                     <AgentStatus Agent="_agent" Class="terminal-status" />
                 </div>
                 <span class="terminal-context"><HarnessLogo HarnessId="@_agent.HarnessId" Class="context-logo" />@(_agent.AccountName is { } account ? $"{account} · " : "")@if (AgentTable.CommitsAs(_agent) is { } git)
@@ -40,12 +40,6 @@
                         <span title="@AgentTable.GitIdentityTitle(git)">Git: @AgentTable.GitIdentityText(git) · </span>
                     }@_agent.RunnerName · <span class="mono">@(_sessionTitle ?? _agent.RepositoryUrl ?? _agent.WorkingDirectory)</span></span>
             </div>
-            @if (write)
-            {
-                <span class="toolbar-item" data-toolbar="sessions">
-                    <MudIconButton Icon="@Icons.Material.Rounded.FolderOpen" Size="Size.Small" Class="session-picker-button" aria-label="Switch session" title="@(_sessionTitle ?? "Sessions")" OnClick="OpenSessionsAsync" />
-                </span>
-            }
             <CpuTraceIndicator />
             <AttentionMenu />
             <AgentSeenWatcher @key="(AgentId, nameof(AgentSeenWatcher))" Agent="_agent" />
@@ -61,7 +55,7 @@
             }
             @if (running && write)
             {
-                <span class="toolbar-item" data-toolbar="limit"><AgentLimitButton @key="AgentId" AgentId="AgentId" /></span>
+                <span class="toolbar-item" data-toolbar="limit"><AgentLimitButton @key="AgentId" AgentId="AgentId" Overflowed="@Overflowed("limit")" /></span>
                 <span class="toolbar-item terminal-quick-desktop" data-toolbar="quick"><QuickCommandMenu AgentId="AgentId" HarnessId="@_agent.HarnessId" Disabled="_busy" /></span>
                 <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" />
                 <span class="toolbar-item" data-toolbar="viewers"><AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" /></span>
@@ -69,16 +63,18 @@
             @if (read)
             {
                 <span class="toolbar-item" data-toolbar="awake"><ScreenAwakeButton /></span>
+                <span class="continue-offer-anchor">
+                @if (running && write && Overflowed("limit"))
+                {
+                    @* The usage-limit button is in this menu: its offer to turn on auto-continue drops down from here. *@
+                    <AgentLimitButton @key="(AgentId, nameof(AgentLimitButton.OfferOnly))" AgentId="AgentId" OfferOnly="true" />
+                }
                 <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" Class="terminal-more">
                     <ActivatorContent>
                         <MudIconButton Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" OnClick="@context.ToggleAsync" aria-label="More actions" title="More actions" />
                     </ActivatorContent>
                     <ChildContent>
                         @* What the toolbar has no room for, in toolbar order. *@
-                        @if (write && Overflowed("sessions"))
-                        {
-                            <MudMenuItem Icon="@Icons.Material.Rounded.FolderOpen" OnClick="OpenSessionsAsync">Switch session</MudMenuItem>
-                        }
                         @if (_sessionId is { } menuSessionId)
                         {
                             @if (Overflowed("images"))
@@ -123,6 +119,10 @@
                         {
                             <MudMenuItem Icon="@Icons.Material.Rounded.Forum" Href="@($"sessions/{conversationId}")">Conversation</MudMenuItem>
                         }
+                        @if (write)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.AddComment" Disabled="@(_busy || _agent.MovePending)" OnClick="NewConversationAsync">New conversation here…</MudMenuItem>
+                        }
                         <MudMenuItem Icon="@(_agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="ShareAsync">Sharing</MudMenuItem>
                         <MudMenuItem Icon="@Icons.Material.Rounded.Badge" OnClick="GitIdentityAsync">Git identity…</MudMenuItem>
                         @if (_agent.Access == AgentAccess.Owner)
@@ -133,7 +133,11 @@
                             }
                             else
                             {
-                                <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="_agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, _agent)">Move to another runner…</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="_agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, _agent)">@MoveAgentDialog.MenuLabel(_agent)</MudMenuItem>
+                            }
+                            @if (_agent.IsClone)
+                            {
+                                <MudMenuItem Icon="@Icons.Material.Rounded.DeleteOutline" IconColor="Color.Error" Disabled="@(_agent.MovePending || _agent.RunnerState != RunnerState.Ready)" OnClick="RemoveWorkspaceAsync">Remove workspace…</MudMenuItem>
                             }
                         }
                         @* A read-write share covers the agent; the desktop and VS Code are the Runner's. *@
@@ -153,6 +157,7 @@
                         }
                     </ChildContent>
                 </MudMenu>
+                </span>
             }
         }
     </div>
@@ -270,7 +275,7 @@
     private DotNetObjectReference<AgentTerminal>? _toolbarSelf;
     private HashSet<string> _overflow = [];
 
-    /// <summary>What leaves the toolbar first when it runs out of room. Only the last eight get an entry in the ⋮ menu.</summary>
+    /// <summary>What leaves the toolbar first when it runs out of room. Only the last seven get an entry in the ⋮ menu.</summary>
     private static readonly object[] ToolbarOverflow =
     [
         new { key = "hint", selector = ".terminal-hint" },
@@ -284,10 +289,9 @@
         new { key = "tasks", selector = "[data-toolbar='tasks']" },
         new { key = "awake", selector = "[data-toolbar='awake']" },
         new { key = "limit", selector = "[data-toolbar='limit']" },
-        new { key = "sessions", selector = "[data-toolbar='sessions']" },
     ];
 
-    private static readonly string[] MenuEntries = ["viewers", "quick", "images", "files", "tasks", "awake", "limit", "sessions"];
+    private static readonly string[] MenuEntries = ["viewers", "quick", "images", "files", "tasks", "awake", "limit"];
 
     private bool Overflowed(string key) => _overflow.Contains(key);
 
@@ -361,12 +365,14 @@
         await ReloadAsync();
     }
 
-    private async Task OpenSessionsAsync()
+    private async Task NewConversationAsync()
     {
-        if (_agent is null) return;
-        var dialog = await Dialogs.ShowAsync<SessionPickerDialog>("Sessions", new DialogParameters<SessionPickerDialog> { { d => d.Agent, _agent } },
-            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
-        if (await dialog.Result is { Canceled: false }) await OnSwitchedAsync();
+        if (_agent is not null && await NewConversationDialog.ShowAsync(Dialogs, _agent)) await OnSwitchedAsync();
+    }
+
+    private async Task RemoveWorkspaceAsync()
+    {
+        if (_agent is not null && await RemoveWorkspaceDialog.ShowAsync(Dialogs, _agent)) Navigation.NavigateTo($"projects/{WorkspaceGroups.ProjectKey(_agent)}");
     }
 
     private async Task ShareAsync()

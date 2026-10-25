@@ -10,8 +10,6 @@ using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Ssh;
 using DeveAgentManager.Core.Users;
-// A pasted file (its name, which may be empty, and bytes) to the terminal's Runner; returns its path there.
-using ImageUploader = System.Func<string, byte[], System.Threading.CancellationToken, System.Threading.Tasks.Task<string>>;
 
 namespace DeveAgentManager.Api;
 
@@ -30,6 +28,9 @@ namespace DeveAgentManager.Api;
 /// </summary>
 public static partial class TerminalSocketEndpoint
 {
+    /// <summary>Where a pasted file waits while it arrives, and what stores it on the terminal's Runner (returning its path).</summary>
+    private sealed record FileUploads(Func<FileStream> NewBuffer, Func<string, Stream, CancellationToken, Task<string>> Upload);
+
     private const string DoneMarker = "__DAM_LOGIN_OK__";
 
     public static void MapTerminalSocket(this IEndpointRouteBuilder app) =>
@@ -78,7 +79,8 @@ public static partial class TerminalSocketEndpoint
                         using (Watch(async (current, ct) => await access.AgentAsync(current, agentId, ct) >= needed && (readOnly || await access.CanPromptAgentAsync(agentId, ct))))
                         {
                             await session.RunAsync(await terminals.OpenAgentAsync(agentId, readOnly, columns, rows, context.RequestAborted), agentId, agents, login: null,
-                                readOnly ? null : (name, bytes, ct) => terminals.UploadAsync(agentId, null, name, bytes, ct), readOnly, revoked.Token, WhyEnding);
+                                readOnly ? null : new FileUploads(terminals.NewUploadBuffer, (name, content, ct) => terminals.UploadAsync(agentId, null, name, content, ct)),
+                                readOnly, revoked.Token, WhyEnding);
                         }
 
                         break;
@@ -92,7 +94,8 @@ public static partial class TerminalSocketEndpoint
                         using (Watch(async (current, ct) => await access.RunnerAsync(current, runnerId, ct) >= RunnerAccess.Use))
                         {
                             await session.RunAsync(await terminals.OpenShellAsync(runnerId, user.Id, columns, rows, context.RequestAborted), null, agents, login: null,
-                                (name, bytes, ct) => terminals.UploadAsync(null, runnerId, name, bytes, ct), readOnly: false, revoked.Token, WhyEnding);
+                                new FileUploads(terminals.NewUploadBuffer, (name, content, ct) => terminals.UploadAsync(null, runnerId, name, content, ct)), readOnly: false,
+                                revoked.Token, WhyEnding);
                         }
 
                         break;
@@ -112,7 +115,7 @@ public static partial class TerminalSocketEndpoint
                         {
                             // Wide, so a token is printed on one line (the harness's login command also sets it with stty).
                             await session.RunAsync(await terminals.OpenCommandAsync(runnerId, login.Command, 500, rows, context.RequestAborted), null, agents, login,
-                                uploadImage: null, readOnly: false, revoked.Token, WhyEnding);
+                                uploads: null, readOnly: false, revoked.Token, WhyEnding);
                         }
 
                         break;
@@ -148,14 +151,14 @@ public static partial class TerminalSocketEndpoint
 
         /// <param name="readOnly">Drops what the user types or pastes (the terminal is only watched).</param>
         /// <param name="ending">Ends the terminal from this side (access ended, the Manager stops); <paramref name="whyEnding"/> says why.</param>
-        public async Task RunAsync(TerminalConnection connection, Guid? agentId, AgentService agents, LoginWatcher? login, ImageUploader? uploadImage, bool readOnly,
+        public async Task RunAsync(TerminalConnection connection, Guid? agentId, AgentService agents, LoginWatcher? login, FileUploads? uploads, bool readOnly,
             CancellationToken ending, Func<(string Reason, string? Message)>? whyEnding = null)
         {
             using (connection)
             using (var pumps = CancellationTokenSource.CreateLinkedTokenSource(socketAborted))
             {
                 var output = Task.Factory.StartNew(() => PumpOutputAsync(connection, login, pumps.Token), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
-                var input = PumpInputAsync(connection, agentId, agents, login is null, uploadImage, readOnly, pumps.Token);
+                var input = PumpInputAsync(connection, agentId, agents, login is null, uploads, readOnly, pumps.Token);
                 var ended = Task.Delay(Timeout.Infinite, ending);
                 var first = await Task.WhenAny(output, input, ended);
                 if (first != input)
@@ -218,13 +221,14 @@ public static partial class TerminalSocketEndpoint
             }
         }
 
-        private async Task PumpInputAsync(TerminalConnection connection, Guid? agentId, AgentService agents, bool forwardResize, ImageUploader? uploadImage, bool readOnly,
+        private async Task PumpInputAsync(TerminalConnection connection, Guid? agentId, AgentService agents, bool forwardResize, FileUploads? uploads, bool readOnly,
             CancellationToken cancellationToken)
         {
             var buffer = new byte[64 * 1024];
             var sizeClaimed = false;
-            // An image being received: its announced bytes arrive in binary frames, which are not terminal input.
-            (JsonNode? Id, string Name, MemoryStream Bytes, long Size)? image = null;
+            // A file being received: its announced bytes arrive in binary frames, which are not terminal input. On disk
+            // until it is complete, so a large one isn't held in memory.
+            (JsonNode? Id, string Name, FileStream Bytes, long Size)? image = null;
             try
             {
                 while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
@@ -255,12 +259,12 @@ public static partial class TerminalSocketEndpoint
                             throw new InvalidDataException("More image bytes than announced.");
                         }
 
-                        receiving.Bytes.Write(bytes);
+                        await receiving.Bytes.WriteAsync(bytes, cancellationToken);
                         if (receiving.Bytes.Length == receiving.Size)
                         {
                             image = null;
                             // Stored while the terminal goes on; the answer names the image it is for.
-                            _ = UploadImageAsync(uploadImage!, receiving.Id, receiving.Name, receiving.Bytes, cancellationToken);
+                            _ = UploadImageAsync(uploads!, receiving.Id, receiving.Name, receiving.Bytes, cancellationToken);
                         }
                     }
                     else if (received.MessageType == WebSocketMessageType.Binary && readOnly)
@@ -290,12 +294,12 @@ public static partial class TerminalSocketEndpoint
                         // The browser checks the size first, so a wrong one isn't from the Portal: stop rather than type the
                         // image's bytes into the terminal.
                         var size = (long?)control["size"] ?? 0;
-                        if (uploadImage is null || image is not null || size <= 0 || size > TerminalService.MaxUploadBytes)
+                        if (uploads is null || image is not null || size <= 0 || size > TerminalService.MaxUploadBytes)
                         {
                             throw new InvalidDataException("Unexpected image.");
                         }
 
-                        image = (control["id"]?.DeepClone(), (string?)control["name"] ?? "", new MemoryStream((int)size), size);
+                        image = (control["id"]?.DeepClone(), (string?)control["name"] ?? "", uploads.NewBuffer(), size);
                     }
                 }
             }
@@ -303,16 +307,27 @@ public static partial class TerminalSocketEndpoint
             {
                 // The browser went away or sent something that isn't a terminal message.
             }
+            catch (IOException ex)
+            {
+                // No room on the Manager's disk for a file being pasted: the terminal reconnects, and the browser says so.
+                logger.LogWarning(ex, "Couldn't store a file pasted into a terminal");
+            }
+            finally
+            {
+                // A file that didn't arrive completely; the browser sends it again on its next connection.
+                if (image is { } partial) await partial.Bytes.DisposeAsync();
+            }
         }
 
-        private async Task UploadImageAsync(ImageUploader uploadImage, JsonNode? id, string name, MemoryStream bytes, CancellationToken cancellationToken)
+        private async Task UploadImageAsync(FileUploads uploads, JsonNode? id, string name, FileStream bytes, CancellationToken cancellationToken)
         {
             var answer = new JsonObject { ["type"] = TerminalSocket.Image, ["id"] = id };
             try
             {
-                using (bytes)
+                await using (bytes)
                 {
-                    answer["path"] = await uploadImage(name, bytes.ToArray(), cancellationToken);
+                    bytes.Position = 0;
+                    answer["path"] = await uploads.Upload(name, bytes, cancellationToken);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

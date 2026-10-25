@@ -332,26 +332,35 @@ a {
     margin-left: 8px;
 }
 
-/* Touch screens: the tab bar scrolls with a swipe, like any list, instead of MudBlazor's arrow buttons that move it
-   a page per tap. The arrows go; the bar is scrolled natively (the wrapper's own scroll offset is switched off). */
-@media (pointer: coarse) {
-    .mud-tabs-tabbar .mud-tabs-scroll-button {
-        display: none;
-    }
+/* Tab bars wider than the window scroll natively: with a swipe, the scrollbar, Shift+wheel or the keyboard. MudBlazor's
+   arrow buttons moved the tabs with a transform, and the browser also scrolled a focused tab into view, so in a narrow
+   window a clicked tab moved twice as far, out of sight. The arrows and the transform go; tab-bars.ts brings a tab
+   that is chosen without being focused (a link to one) into view. */
+.mud-tabs-tabbar .mud-tabs-scroll-button {
+    display: none;
+}
 
+.mud-tabs-tabbar .mud-tabs-tabbar-content {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--dam-border) transparent;
+}
+
+.mud-tabs-tabbar .mud-tabs-tabbar-wrapper {
+    transform: none !important;
+}
+
+/* Touch screens swipe; the scrollbar would only take room. */
+@media (pointer: coarse) {
     .mud-tabs-tabbar .mud-tabs-tabbar-content {
-        overflow-x: auto;
-        overscroll-behavior-x: contain;
         scrollbar-width: none;
     }
 
         .mud-tabs-tabbar .mud-tabs-tabbar-content::-webkit-scrollbar {
             display: none;
         }
-
-    .mud-tabs-tabbar .mud-tabs-tabbar-wrapper {
-        transform: none !important;
-    }
 }
 
 .panel-tab-content {
@@ -1753,6 +1762,43 @@ html:has(.terminal-layout) body {
         background-color: transparent !important;
     }
 
+/* Files being pasted into the terminal, one row each. */
+.terminal-uploads {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    /* Above the terminal and its Copy button, below the connecting overlay. */
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: min(300px, calc(100% - 24px));
+    pointer-events: none;
+}
+.terminal-upload {
+    --upload-tone: var(--dam-info);
+    pointer-events: auto;
+    padding: 6px 10px 8px;
+    border: 1px solid color-mix(in srgb, var(--upload-tone) 55%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--dam-surface) 92%, var(--upload-tone));
+    color: var(--dam-text);
+    font-size: .8rem;
+    box-shadow: 0 4px 14px rgb(0 0 0 / 25%);
+}
+.terminal-upload-done { --upload-tone: var(--dam-success); animation: terminal-upload-fade .5s ease 1s forwards; }
+.terminal-upload-error { --upload-tone: var(--dam-error); }
+.terminal-upload-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.terminal-upload-row .mud-icon-root { color: var(--upload-tone); flex-shrink: 0; }
+.terminal-upload-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-upload-size { color: var(--dam-muted); flex-shrink: 0; }
+.terminal-upload-close { border: 0; background: none; color: var(--dam-muted); cursor: pointer; padding: 0 2px; font: inherit; }
+.terminal-upload-bar { height: 4px; margin-top: 6px; border-radius: 2px; background: color-mix(in srgb, var(--upload-tone) 20%, transparent); overflow: hidden; }
+.terminal-upload-bar > div { height: 100%; background: var(--upload-tone); transition: width .2s ease; }
+.terminal-upload-reason { margin-top: 4px; overflow-wrap: anywhere; }
+@keyframes terminal-upload-fade { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .terminal-upload-done { animation: none; } .terminal-upload-bar > div { transition: none; } }
+
 .terminal-overlay {
     position: absolute;
     inset: 0;
@@ -2270,6 +2316,22 @@ html:has(.terminal-layout) body {
     max-width: 200px;
 }
 
+/* My settings → Models: the model field takes the room and the effort field fits "Manager default"; each takes the
+   whole row on phones. MudBlazor puts Class on an inner element, so these are its wrappers. */
+.model-default .form-row > :first-child {
+    flex: 1 1 320px;
+}
+
+.model-default .form-row > :last-child {
+    flex: 0 1 240px;
+}
+
+@media (max-width: 600px) {
+    .model-default .form-row > :last-child {
+        flex: 1 1 100%;
+    }
+}
+
 /* ---------- Login ---------- */
 
 .login-page {
@@ -2601,19 +2663,75 @@ html:has(.terminal-layout) body {
         animation: dam-pulse 1.6s ease-in-out infinite;
     }
 
-.nav-agent-name {
-    flex: 1;
+.nav-agent-name, .nav-project-name {
+    flex: 1 1 auto;
     min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
+.nav-project-name {
+    display: block;
+    font-size: 0.82rem;
+}
+
+/* A long Runner or branch name is cut too, so it doesn't leave only a few letters of the agent's name. */
 .nav-agent-meta {
+    flex: 0 0 auto;
+    max-width: 35%;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: var(--dam-faint);
     font-size: 0.72rem;
     white-space: nowrap;
 }
+
+/* A project: its row is indented like a single agent's; its workspaces sit one step further in, along a line from the
+   folder, so an agent listed after the project (maybe one with the same name on another Runner) is clearly not one
+   of them. */
+.app-nav .nav-project > .mud-nav-link {
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+    /* A single agent's 46px and the 12px MudBlazor puts before its avatar. */
+    padding-left: 58px !important;
+    padding-right: 8px !important;
+    min-height: 0;
+    font-weight: 500;
+}
+
+    .app-nav .nav-project > .mud-nav-link .mud-nav-link-icon {
+        font-size: 24px;
+    }
+
+    .app-nav .nav-project > .mud-nav-link .mud-nav-link-text {
+        min-width: 0;
+        margin-left: 8px;
+    }
+
+    /* A smaller collapse arrow leaves the name and Runner more room. */
+    .app-nav .nav-project > .mud-nav-link .mud-nav-link-expand-icon {
+        font-size: 18px;
+        margin-left: 4px;
+    }
+
+.app-nav .nav-project .nav-agent .mud-nav-link {
+    padding-left: 70px !important;
+    padding-right: 16px !important;
+}
+
+.app-nav .nav-project .mud-navgroup-collapse {
+    position: relative;
+}
+
+    .app-nav .nav-project .mud-navgroup-collapse::before {
+        content: "";
+        position: absolute;
+        left: 69px;
+        top: 0;
+        bottom: 12px;
+        border-left: 1px solid var(--dam-border-strong);
+    }
 
 /* ---------- Sessions ---------- */
 
@@ -3059,6 +3177,19 @@ html:has(.terminal-layout) body {
 @keyframes limit-alert-pulse { 50% { opacity: .4; } }
 @media (prefers-reduced-motion: reduce) { .limit-alert-blink { animation: none; } }
 
+/* The offer to turn on auto-continue that drops down from the usage-limit button (or the ⋮ menu) when a limit appears. */
+.continue-offer-anchor { display: inline-flex; align-items: center; }
+.continue-offer-popover { margin-top: 6px; }
+.continue-offer { width: min(340px, calc(100vw - 48px)); box-sizing: border-box; padding: 14px 16px 12px; border: 1px solid var(--dam-border-strong); border-radius: var(--dam-radius); background: var(--dam-surface); color: var(--dam-text); box-shadow: 0 12px 40px color-mix(in srgb, var(--dam-console) 24%, transparent); }
+.continue-offer .help-heading { gap: 4px; margin: -5px 0 2px; }
+.continue-offer h2 { margin: 0; font-size: 1rem; font-weight: 650; }
+.continue-offer-time { white-space: nowrap; }
+.continue-offer p { margin: 0; color: var(--dam-muted); font-size: .875rem; overflow-wrap: anywhere; }
+.continue-offer .continue-offer-error { margin-top: 6px; color: var(--dam-error); }
+.continue-offer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.continue-offer-actions .mud-button-root { border-radius: 9px; }
+.continue-offer-actions .mud-button-text { color: var(--dam-muted); }
+
 .agent-status-button { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; font: inherit; }
 .agent-status-button:focus-visible { outline: 2px solid var(--mud-palette-primary); outline-offset: 4px; border-radius: 14px; }
 .agent-status-extra { color: var(--mud-palette-warning); font-size: .75rem; }
@@ -3114,7 +3245,7 @@ html:has(.terminal-layout) body {
 .activity-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
 .reply-preview { margin-top: 12px; padding: 12px; background: var(--dam-surface-2); border-radius: 8px; overflow-wrap: anywhere; }
 .diagnostic-entry { padding: 10px 0; border-bottom: 1px solid var(--dam-border); overflow-wrap: anywhere; }
-.diagnostic-entry small { color: var(--dam-text-secondary); }
+.diagnostic-entry small { color: var(--dam-muted); }
 .terminal-quick-desktop .terminal-key { width: 36px; }
 @media (pointer: coarse), (max-width: 700px) { .terminal-quick-desktop { display: none; } }
 
@@ -3176,11 +3307,6 @@ body:has(.terminal-layout) .agent-attention-popover {
 
 /* Keep status and workspace controls inside the viewport, even with long session names. */
 .terminal-name-row > .agent-status-button { flex-shrink: 0; }
-.session-picker-list { margin: 12px 0; }
-.session-picker-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--mud-palette-divider); }
-.session-picker-summary { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
-.session-picker-summary small { display: block; color: var(--mud-palette-text-secondary); }
-.session-picker-actions { display: flex; flex-wrap: wrap; align-items: center; }
 .session-group-heading { padding: 16px; overflow-wrap: anywhere; border-bottom: 1px solid var(--mud-palette-divider); }
 @media (max-width: 600px) {
     .terminal-toolbar { gap: 2px; }
@@ -3189,7 +3315,6 @@ body:has(.terminal-layout) .agent-attention-popover {
     .terminal-name-row .agent-status-button { flex: 0 0 auto; }
 }
 
-.session-workspace-name { overflow-wrap: anywhere; }
 
 /* Explanations beside headings, with bounded help on phones as well as desktops. */
 .help-heading { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -3741,4 +3866,57 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 
 @keyframes hold-fade-in {
     from { opacity: 0; }
+}
+/* Project grouping stays compact until a project has several workspaces. */
+.workspace-project { border-bottom: 1px solid var(--dam-border); padding: 12px 0; }
+.workspace-project-heading, .workspace-menu-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.workspace-project-heading { padding: 4px 16px; flex-wrap: wrap; }
+.workspace-project-counts { color: var(--dam-muted); font-size: .8rem; margin-left: 12px; }
+.workspace-project-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.workspace-project .agent-table { padding-left: 12px; }
+.workspace-show-stopped { margin: 4px 16px; }
+.workspace-menu-heading { padding: 8px 16px; font-weight: 600; }
+.workspace-menu-row { min-width: 220px; max-width: min(380px, 75vw); }
+.workspace-menu-row > span { overflow: hidden; text-overflow: ellipsis; }
+.workspace-menu-row .status-pill { flex-shrink: 0; }
+/* It opens at the picker, about 40px in on phones: titles truncate rather than pushing the menu off screen. */
+/* MudBlazor sets an inline max-width: none on popovers. */
+.workspace-menu-popover { max-width: calc(100vw - 48px) !important; }
+.workspace-menu-popover .mud-menu-item-text { min-width: 0; overflow: hidden; }
+@media (max-width: 600px) { .workspace-menu-popover .workspace-menu-row { min-width: 0; } }
+.workspace-picker { min-width: 72px; max-width: 100%; }
+.workspace-picker-button { min-width: 0; max-width: 100%; padding: 0; text-transform: none !important; }
+.workspace-picker .mud-menu-activator { max-width: 100%; min-width: 0; }
+.workspace-picker-button .mud-button-label { overflow: hidden; white-space: nowrap; justify-content: flex-start; }
+.workspace-picker-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.workspace-picker-current { overflow: hidden; text-overflow: ellipsis; }
+.workspace-picker-button .mud-button-icon-end { flex-shrink: 0; }
+.workspace-picker-current { color: var(--dam-muted); font-weight: normal; }
+.workspace-menu-entry { display: flex; align-items: center; max-width: min(440px, 92vw); padding-right: 8px; }
+.workspace-menu-entry .mud-menu-item { flex: 1; min-width: 0; }
+.workspace-menu-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Why a menu entry is disabled, under its name. */
+.menu-item-reason { display: block; font-size: .75rem; line-height: 1.3; }
+.workspace-menu-where { display: block; color: var(--dam-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-branch { color: var(--dam-muted); }
+.workspace-start { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.workspace-start-option { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.workspace-start-option .mud-radio { min-width: 0; }
+.workspace-start-size { color: var(--dam-muted); font-size: .8rem; margin-left: auto; text-align: right; }
+.workspace-start-pull { margin-left: 32px; }
+.workspace-start-disk { display: block; color: var(--dam-muted); margin-top: 4px; overflow-wrap: anywhere; }
+.workspace-remove-path { overflow-wrap: anywhere; }
+.workspace-remove-list { margin: 8px 0 0 20px; overflow-wrap: anywhere; }
+.conversation-chooser-title { overflow-wrap: anywhere; }
+.conversation-chooser-options { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 16px; }
+.conversation-chooser-options .mud-button-root { max-width: 100%; text-align: left; }
+.conversation-chooser-warning { align-self: stretch; }
+.conversation-chooser-warning .mud-alert-message > * + * { margin-top: 4px; }
+.session-active-badge { color: var(--mud-palette-success); font-weight: 600; }
+@media (max-width: 600px) {
+    .workspace-project-counts { display: block; margin-left: 0; }
+    .workspace-project .agent-table { padding-left: 0; }
+    .workspace-picker:not(.workspace-picker-child) .workspace-picker-current,
+    .workspace-picker-separator,
+    .workspace-picker-child .workspace-picker-project { display: none; }
 }

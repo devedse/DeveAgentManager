@@ -9,6 +9,7 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
     public DbSet<Runner> Runners => Set<Runner>();
 
     public DbSet<Agent> Agents => Set<Agent>();
+    public DbSet<Project> Projects => Set<Project>();
 
     public DbSet<SettingEntry> Settings => Set<SettingEntry>();
 
@@ -118,6 +119,14 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
             icon.HasOne<Agent>().WithOne().HasForeignKey<AgentIcon>(i => i.AgentId).OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<Project>(project =>
+        {
+            project.HasKey(p => p.Id);
+            project.HasOne<Runner>().WithMany().HasForeignKey(p => p.RunnerId).OnDelete(DeleteBehavior.Cascade);
+            project.HasOne<User>().WithMany().HasForeignKey(p => p.OwnerId).OnDelete(DeleteBehavior.Restrict);
+            project.HasMany(p => p.Agents).WithOne(a => a.Project).HasForeignKey(a => a.ProjectId).OnDelete(DeleteBehavior.Restrict);
+        });
+
         modelBuilder.Entity<Agent>(agent =>
         {
             agent.HasKey(a => a.Id);
@@ -173,6 +182,7 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
             session.HasKey(s => s.Id);
             session.HasIndex(s => s.AgentId).IsUnique();
             session.HasOne(s => s.WorkspaceAgent).WithMany().HasForeignKey(s => s.WorkspaceAgentId).OnDelete(DeleteBehavior.SetNull);
+            session.HasOne(s => s.Project).WithMany().HasForeignKey(s => s.ProjectId).OnDelete(DeleteBehavior.SetNull);
             session.HasOne(s => s.Agent).WithMany().HasForeignKey(s => s.AgentId).OnDelete(DeleteBehavior.SetNull);
             session.HasOne(s => s.Owner).WithMany().HasForeignKey(s => s.OwnerId).OnDelete(DeleteBehavior.Restrict);
             session.HasMany(s => s.Shares).WithOne().HasForeignKey(s => s.SessionId).OnDelete(DeleteBehavior.Cascade);

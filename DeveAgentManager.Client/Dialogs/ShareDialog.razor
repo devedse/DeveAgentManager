@@ -8,6 +8,7 @@
             <Help>
                 @if (Agent is not null)
                 {
+                    <p>Access applies to this project and all of its workspaces, including workspaces created later. Leaving or removing access applies to the whole project.</p>
                     <p>Read-only permits watching the terminal and reading conversations. Read-write also permits typing in the terminal and prompting the agent with its current login. It needs no access to the agent's Runner, and doesn't give its shell, VS Code or desktop.</p>
                     <p>The agent runs commands on its Runner with its git identity and GitHub token, the owner's unless someone switched it (Git identity in the agent's menu). A read-write user's prompts commit and push as that person. Share read-write only with people you would let run commands as you on that Runner.</p>
                 }
@@ -59,7 +60,8 @@
 
     /// <summary>Shows who the agent is shared with; true when the user left the share (so it is gone for them).</summary>
     public static Task<bool> ShowAsync(IDialogService dialogs, AgentDto agent, CurrentUserDto me) =>
-        ShowAsync(dialogs, agent.Access == AgentAccess.Owner ? $"Access to {agent.Name}" : $"{agent.OwnerName}'s {agent.Name}",
+        // Access covers the whole project, whichever workspace it was opened from.
+        ShowAsync(dialogs, agent.Access == AgentAccess.Owner ? $"Access to {WorkspaceGroups.ProjectName(agent)}" : $"{agent.OwnerName}'s {WorkspaceGroups.ProjectName(agent)}",
             new DialogParameters<ShareDialog> { { d => d.Agent, agent }, { d => d.Me, me } });
 
     /// <summary>Shows who the conversation is shared with; true when the user left the share.</summary>

@@ -20,7 +20,7 @@ public sealed class PiSessionFormat : ISessionFormat
     public string HarnessId => PiHarness.HarnessId;
 
     public string LocateCommand(string sessionId) =>
-        $"f=$(ls -1 \"$HOME\"/.pi/agent/sessions/*/*_{ShellQuote.Quote(sessionId)}.jsonl 2>/dev/null | head -n1); " +
+        $"f=$(ls -1t \"$HOME\"/.pi/agent/sessions/*/*_{ShellQuote.Quote(sessionId)}.jsonl \"$HOME\"/.deveagentmanager/agent-runtime/*/*/pi/sessions/*/*_{ShellQuote.Quote(sessionId)}.jsonl 2>/dev/null | head -n1); " +
         "if [ -n \"$f\" ]; then printf '%s %s\\n' \"$(stat -L -c %s \"$f\")\" \"$f\"; fi";
 
     public string GetPath(string sessionId, string workingDirectory, DateTime createdAt) =>

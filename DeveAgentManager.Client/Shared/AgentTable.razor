@@ -22,7 +22,7 @@ else
                     <AgentAvatar Agent="agent" />
                     <div class="list-main">
                         <div class="list-title">
-                            @agent.Name
+                            @(InProject ? WorkspaceGroups.WorkspaceName(agent) : WorkspaceGroups.DisplayName(agent))
                             @if (ShowOwner || agent.SharedWithMe || agent.Access != AgentAccess.Owner)
                             {
                                 <span class="account-badge" title="@ShareText(agent)">@agent.OwnerName</span>
@@ -34,6 +34,7 @@ else
                                 <span>@agent.RunnerName · </span>
                             }
                             <span class="mono">@(agent.RepositoryUrl ?? agent.WorkingDirectory)</span>
+                            @if (agent.RepositoryBranch is { } branch) { <span class="workspace-branch"> · @branch</span> }
                         </div>
                         <div class="list-subtitle agent-account">
                             @if (agent.State is AgentState.Running or AgentState.Starting)
@@ -103,21 +104,39 @@ else
                                 <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="@(() => StartAsync(agent, true))">Restart</MudMenuItem>
                                 <MudMenuItem Icon="@Icons.Material.Rounded.Image" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => PickIconAsync(agent)">Icon...</MudMenuItem>
                             }
-                            @* Owners share it; others see who else has it and can leave. *@
-                            <MudMenuItem Icon="@(agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="() => ShareAsync(agent)">
-                                @(agent.Access == AgentAccess.Owner ? "Share..." : "Sharing...")
-                            </MudMenuItem>
+                            @* Owners share it; others see who else has it and can leave. Sharing covers the whole project, so
+                               under a project's heading it is there. *@
+                            @if (!InProject)
+                            {
+                                <MudMenuItem Icon="@(agent.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="() => ShareAsync(agent)">
+                                    @(agent.Access == AgentAccess.Owner ? "Share..." : "Sharing...")
+                                </MudMenuItem>
+                            }
                             @if (agent.Access == AgentAccess.Owner)
                             {
-                                @if (agent.MovePending)
+                                @* Under a project's heading these are there, once for Main and all its workspaces. *@
+                                @if (!InProject)
                                 {
-                                    <MudMenuItem Icon="@Icons.Material.Rounded.Restore" Disabled="agent.State == AgentState.Moving" OnClick="() => RecoverMoveAsync(agent)">Recover move / finish cleanup</MudMenuItem>
+                                    @if (agent.CanUseRunner)
+                                    { <MudMenuItem Icon="@Icons.Material.Rounded.Add" Disabled="agent.MovePending" OnClick="() => NewWorkspaceAsync(agent)">New workspace…</MudMenuItem> }
+                                    @if (agent.MovePending)
+                                    {
+                                        <MudMenuItem Icon="@Icons.Material.Rounded.Restore" Disabled="agent.State == AgentState.Moving" OnClick="() => RecoverMoveAsync(agent)">Recover move / finish cleanup</MudMenuItem>
+                                    }
+                                    else
+                                    {
+                                        <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, agent)">@MoveAgentDialog.MenuLabel(agent)</MudMenuItem>
+                                    }
+                                }
+                                @if (agent.IsClone)
+                                { <MudMenuItem Icon="@Icons.Material.Rounded.DeleteOutline" IconColor="Color.Error" Disabled="@(agent.MovePending || agent.RunnerState != RunnerState.Ready)" OnClick="() => RemoveWorkspaceDialog.ShowAsync(Dialogs, agent)">Remove workspace…</MudMenuItem> }
+                                else if (agent.Workspaces > 0)
+                                {
+                                    @* The Manager keeps Main while the project has other workspaces. *@
+                                    <MudMenuItem Icon="@Icons.Material.Rounded.Delete" Disabled="true">Delete<small class="menu-item-reason">Remove its workspaces first</small></MudMenuItem>
                                 }
                                 else
-                                {
-                                    <MudMenuItem Icon="@Icons.Material.Rounded.DriveFileMove" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, agent)">Move to another runner…</MudMenuItem>
-                                }
-                                <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="agent.MovePending" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem>
+                                { <MudMenuItem Icon="@Icons.Material.Rounded.Delete" IconColor="Color.Error" Disabled="agent.MovePending" OnClick="() => DeleteAsync(agent)">Delete</MudMenuItem> }
                             }
                         </MudMenu>
                     }
@@ -138,6 +157,11 @@ else
 
     [Parameter]
     public bool ShowOwner { get; set; }
+    /// <summary>
+    /// Listed under their project's heading (a project group, or the project page): rows are named by workspace, and
+    /// the project's own actions (Share, New workspace, Move, recovering a move) are in that heading instead of in every row.
+    /// </summary>
+    [Parameter] public bool InProject { get; set; }
 
     [Parameter]
     public string EmptyText { get; set; } = "Start an agent to work on a repository.";
@@ -182,6 +206,7 @@ else
 
     private Task PickIconAsync(AgentDto agent) =>
         Dialogs.ShowAsync<AgentIconDialog>("Icon", new DialogParameters<AgentIconDialog> { { d => d.Agent, agent } }, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+    private Task NewWorkspaceAsync(AgentDto agent) => NewWorkspaceDialog.ShowAsync(Dialogs, agent);
 
     private async Task ShareAsync(AgentDto agent) => await ShareDialog.ShowAsync(Dialogs, agent, await Me.GetAsync());
 

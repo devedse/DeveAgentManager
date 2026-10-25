@@ -7,7 +7,8 @@ using Microsoft.EntityFrameworkCore;
 namespace DeveAgentManager.Core.Runners;
 
 /// <summary>Opens browser terminals: a shell on a Runner, or attached to an agent's tmux session.</summary>
-public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactory, RunnerShell shell, AgentService agents, RunnerUsers users)
+public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactory, RunnerShell shell, AgentService agents, RunnerUsers users,
+    Configuration.ManagerOptions? options = null)
 {
     /// <summary>A shell with <paramref name="userId"/>'s environment: their git identity, GitHub token and variables.</summary>
     public async Task<TerminalConnection> OpenShellAsync(Guid runnerId, Guid userId, int columns, int rows, CancellationToken cancellationToken)
@@ -48,8 +49,8 @@ public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactor
         return await OpenAsync(runner, command, columns, rows, cancellationToken);
     }
 
-    /// <summary>Largest file (an image, a log, …) that can be pasted into a terminal.</summary>
-    public const long MaxUploadBytes = 25 * 1024 * 1024;
+    /// <summary>Largest file (an image, a log, a build, …) that can be pasted into a terminal.</summary>
+    public const long MaxUploadBytes = 500L * 1024 * 1024;
 
     /// <summary>The image types harnesses can send to a model (pi: PNG, JPEG, WebP and GIF).</summary>
     private static readonly Dictionary<string, string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -68,15 +69,39 @@ public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactor
     /// The terminal then gets the path as text, like pi's own Ctrl+V does with an image from the local clipboard: the
     /// harness sends an image to the model from that file, and the agent can read any other file.
     /// </summary>
-    public async Task<string> UploadAsync(Guid? agentId, Guid? runnerId, string? fileName, byte[] bytes, CancellationToken cancellationToken)
+    /// <param name="content">The whole file, from its start; seekable (an <see cref="NewUploadBuffer"/>).</param>
+    public async Task<string> UploadAsync(Guid? agentId, Guid? runnerId, string? fileName, Stream content, CancellationToken cancellationToken)
     {
-        if (bytes.Length == 0 || bytes.Length > MaxUploadBytes)
+        if (content.Length == 0 || content.Length > MaxUploadBytes)
         {
             throw new ArgumentException($"Files can be up to {MaxUploadBytes / 1024 / 1024} MB, and not empty.");
         }
 
+        // Its first bytes tell whether it is an image.
+        var head = new byte[16];
+        var read = await content.ReadAtLeastAsync(head, head.Length, throwOnEndOfStream: false, cancellationToken);
+        content.Position = 0;
         var runner = await FindRunnerAsync(agentId, runnerId, cancellationToken);
-        return await shell.UploadAsync(runner, $"{UploadFolder}/{UploadName(fileName, bytes, DateTime.Now)}", bytes, "600", cancellationToken);
+        return await shell.UploadAsync(runner, $"{UploadFolder}/{UploadName(fileName, head.AsSpan(0, read), DateTime.Now)}", content, "600", cancellationToken);
+    }
+
+    /// <summary>
+    /// Where a file pasted into a terminal waits while it arrives, before it goes to the Runner: on disk, so a large one
+    /// isn't held in memory. Deleted when closed; one is only left behind by a crash, and <see cref="ClearUploadBuffers"/>
+    /// removes those at start.
+    /// </summary>
+    public FileStream NewUploadBuffer()
+    {
+        var folder = (options ?? throw new InvalidOperationException("Terminal uploads need the Manager's data folder.")).TerminalUploadsDirectory;
+        if (OperatingSystem.IsWindows()) Directory.CreateDirectory(folder);
+        else Directory.CreateDirectory(folder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return new FileStream(Path.Combine(folder, Guid.NewGuid().ToString("N")), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
+            FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+    }
+
+    public static void ClearUploadBuffers(Configuration.ManagerOptions options)
+    {
+        if (Directory.Exists(options.TerminalUploadsDirectory)) Directory.Delete(options.TerminalUploadsDirectory, recursive: true);
     }
 
     /// <summary>

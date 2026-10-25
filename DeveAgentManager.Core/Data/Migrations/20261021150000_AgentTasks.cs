@@ -5,7 +5,7 @@ namespace DeveAgentManager.Core.Data.Migrations;
 
 [DbContext(typeof(ManagerDbContext))]
 [Migration("20261021150000_AgentTasks")]
-public sealed class AgentTasks : Migration
+public sealed partial class AgentTasks : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {

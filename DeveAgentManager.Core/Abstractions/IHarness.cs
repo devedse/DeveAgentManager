@@ -89,7 +89,13 @@ public sealed class AccountRenewalException(string message, bool permanent) : Ex
 /// <param name="Script">Bash run after the files are written (e.g. links to shared folders).</param>
 public sealed record HarnessAccountSetup(IReadOnlyList<(string Path, string Content, string Mode)> Files, string Environment, string? Script);
 
-/// <param name="Model">An explicit model for this launch, e.g. when importing a conversation whose recorded model is not a real user choice.</param>
+/// <param name="Model">The model a conversation starts with: the owner's choice in My settings, else the Manager's default; null lets
+/// the harness choose. A resumed conversation keeps what it ran with where the harness records it (see docs/model-defaults.md).</param>
 /// <param name="Instructions">Added to the harness's system prompt for this launch, never written to a file. Harnesses record it
 /// when a conversation starts, so a resumed conversation keeps the text it started with.</param>
-public sealed record HarnessLaunch(string SessionId, string DisplayName, string WorkingDirectory, string? Model = null, string? Instructions = null);
+/// <param name="Effort">The reasoning effort or thinking level, chosen like <paramref name="Model"/>.</param>
+/// <param name="Provider">pi: the provider of <paramref name="Model"/>, when it is the Manager's default.</param>
+/// <param name="Transferred">The conversation was just converted from another harness: the model and effort it recorded are not a
+/// choice made here, so the defaults apply although the conversation exists.</param>
+public sealed record HarnessLaunch(string SessionId, string DisplayName, string WorkingDirectory, string? Model = null, string? Instructions = null,
+    string? Effort = null, string? Provider = null, bool Transferred = false);

@@ -1,0 +1,196 @@
+@implements IDisposable
+@inject ManagerApi Api
+@inject NavigationManager Navigation
+
+<MudDialog>
+    <TitleContent><div class="help-heading"><MudText Typo="Typo.h6">New workspace</MudText>
+        <HelpTip Label="New workspace">
+            <p>Creates a folder next to Main with its own agent and conversation. It is an independent clone of the repository, so the agent pulls, commits and pushes as in any checkout. Other workspaces keep running.</p>
+            <p>Git shares the history with Main through hardlinks. Working files are written fresh, or copied with copy-on-write where the disk supports it. Remove the workspace later from its menu; that checks for uncommitted and unpushed work first.</p>
+        </HelpTip></div></TitleContent>
+    <DialogContent>
+        <LoadingSection Loaded="_loaded" Error="@_loadError" Retry="LoadAsync" Label="Loading harnesses and logins">
+            <Placeholder><SkeletonForm Fields="4" /></Placeholder>
+            <ChildContent>
+                @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mb-2">@_error</MudAlert> }
+                @if (_estimateErrors.Count == Starts.Length && _estimateErrors.Values.Distinct().Count() == 1)
+                { <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2">@_estimateErrors.Values.First()</MudAlert> }
+                @if (ResumeSession is { } resume) { <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2">Resumes “@resume.Title”.</MudAlert> }
+                <MudTextField @bind-Value="_name" Label="Name (optional)" Placeholder="workspace-2" HelperText="Names the folder next to Main. A taken name gets a number." Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" />
+                @if (KeptFolder is { } kept)
+                {
+                    <MudText Typo="Typo.body2" Class="mt-3">Uses the kept folder <span class="mono">@kept.Path</span> as it is.</MudText>
+                }
+                else
+                {
+                    <div class="help-heading mt-3"><MudText Typo="Typo.subtitle2">Start from</MudText>
+                        <HelpTip Label="Start from">
+                            <p>Main's branch takes the repository's main branch as Main has it, committed work only. Pull first fetches the remote's latest version instead.</p>
+                            <p>@From's last commit takes the branch and commit of @From, the workspace this was opened from. Current code adds its changed and new files that aren't committed yet. Exact copy also copies its ignored files such as node_modules, build output and .env.</p>
+                            <p>A copied Python virtual environment usually breaks, because it contains absolute paths. .NET rebuilds its obj folders on the next build.</p>
+                        </HelpTip></div>
+                    <MudRadioGroup T="WorkspaceStart" @bind-Value="_start" Class="workspace-start">
+                        @foreach (var (start, label) in Starts)
+                        {
+                            <div class="workspace-start-option">
+                                <MudRadio T="WorkspaceStart" Value="start" Color="Color.Primary" Disabled="@(_busy || TooLarge(start))">@label@(start == WorkspaceStart.MainBranch && _estimates.GetValueOrDefault(start)?.Branch is { } main ? $" ({main})" : "")</MudRadio>
+                                <span class="workspace-start-size">
+                                    @if (_estimateErrors.TryGetValue(start, out var why))
+                                    { <MudLink Typo="Typo.caption" OnClick="() => EstimateAsync(start)" title="@why">Size unknown · Retry</MudLink> }
+                                    else if (_estimates.GetValueOrDefault(start) is null)
+                                    { <span class="loading-placeholder" role="status" aria-busy="true">Calculating…</span> }
+                                    else { @SizeText(start) }
+                                </span>
+                            </div>
+                            @if (start == WorkspaceStart.MainBranch)
+                            {
+                                <MudSwitch T="bool" @bind-Value="_pull" Label="Pull first" Color="Color.Primary" Class="workspace-start-pull"
+                                           Disabled="@(_busy || _start != WorkspaceStart.MainBranch || _estimates.GetValueOrDefault(start) is { CanPull: false })" />
+                            }
+                        }
+                    </MudRadioGroup>
+                    <MudText Typo="Typo.caption" Class="workspace-start-disk">@DiskText</MudText>
+                    <MudTextField @bind-Value="_branch" Label="New branch (optional)" HelperText="@BranchHelp" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" Class="mt-2" />
+                }
+                @* What this workspace uses comes first, marked (current). *@
+                <MudSelect T="string" @bind-Value="_harness" @bind-Value:after="HarnessChanged" Label="Harness" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" Class="mt-2">
+                    @foreach (var harness in _harnesses.OrderByDescending(h => h.Id == Source.HarnessId))
+                    { <MudSelectItem T="string" Value="harness.Id">@harness.DisplayName@(harness.Id == Source.HarnessId ? " (current)" : "")</MudSelectItem> }
+                </MudSelect>
+                <MudSelect T="Guid?" @bind-Value="_account" Label="Harness login" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy">
+                    @foreach (var (id, name) in Logins)
+                    { <MudSelectItem T="Guid?" Value="id">@name@(SameHarness && id == Source.AccountId ? " (current)" : "")</MudSelectItem> }
+                </MudSelect>
+                <MudSwitch T="bool" @bind-Value="_startAgent" Label="Start the agent right away" Disabled="_busy" Color="Color.Primary" />
+            </ChildContent>
+        </LoadingSection>
+    </DialogContent>
+    <DialogActions><MudButton OnClick="() => Dialog.Cancel()" Disabled="_busy">Cancel</MudButton>
+        <MudButton OnClick="CreateAsync" Disabled="@(_busy || !_loaded || KeptFolder is null && TooLarge(_start))" Color="Color.Primary" Variant="Variant.Filled">@(_busy ? "Creating…" : "Create workspace")</MudButton></DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    /// <summary>The workspace this one starts from (any workspace of the project).</summary>
+    [Parameter, EditorRequired] public AgentDto Source { get; set; } = default!;
+    [Parameter] public SessionDto? ResumeSession { get; set; }
+    [Parameter] public KeptFolderDto? KeptFolder { get; set; }
+
+    /// <summary>The workspace it copies from: the one it was opened from, or Main from a project's heading.</summary>
+    private string From => WorkspaceGroups.WorkspaceName(Source);
+    private (WorkspaceStart Start, string Label)[] Starts =>
+    [
+        (WorkspaceStart.MainBranch, "Main's branch"),
+        (WorkspaceStart.LastCommit, $"{From}'s last commit"),
+        (WorkspaceStart.CurrentCode, $"{From}'s current code"),
+        (WorkspaceStart.ExactCopy, $"Exact copy of {From}, including ignored files"),
+    ];
+    private readonly CancellationTokenSource _closed = new();
+    private readonly Dictionary<WorkspaceStart, WorkspaceEstimateDto?> _estimates = [];
+    private readonly Dictionary<WorkspaceStart, string> _estimateErrors = [];
+    private WorkspaceStart _start = WorkspaceStart.MainBranch;
+    private string? _name, _branch;
+    private string _harness = "";
+    private Guid? _account;
+    private bool _busy, _loaded, _pull, _startAgent = true;
+    private string? _error, _loadError;
+    private IReadOnlyList<HarnessDto> _harnesses = [];
+    private IReadOnlyList<AccountDto> _accounts = [];
+
+    public static async Task ShowAsync(IDialogService dialogs, AgentDto source, SessionDto? resume = null, KeptFolderDto? kept = null) =>
+        await dialogs.ShowAsync<NewWorkspaceDialog>(resume is null ? "New workspace" : "Resume in a new workspace",
+            new DialogParameters<NewWorkspaceDialog> { { d => d.Source, source }, { d => d.ResumeSession, resume }, { d => d.KeptFolder, kept } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+
+    protected override Task OnInitializedAsync()
+    {
+        _harness = ResumeSession?.HarnessId ?? Source.HarnessId;
+        _name = KeptFolder?.Name;
+        if (KeptFolder is null) foreach (var (start, _) in Starts) _ = EstimateAsync(start);
+        return LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loadError = null;
+        try
+        {
+            _harnesses = (await Api.InfoAsync()).Harnesses.Where(h => Source.RunnerHarnessIds.Contains(h.Id)).ToList();
+            if (_harnesses.All(h => h.Id != _harness)) _harness = Source.HarnessId;
+            _accounts = await Api.ListAccountsAsync();
+            HarnessChanged();
+            _loaded = true;
+        }
+        catch (ApiException ex) { _loadError = ex.Message; }
+        catch (HttpRequestException) { _loadError = LoadingSection.Unreachable; }
+    }
+
+    private bool SameHarness => _harness == Source.HarnessId;
+    private IEnumerable<AccountDto> Usable => _accounts.Where(a => a.Enabled && a.Access >= AccountAccess.Use && a.HarnessId == _harness);
+
+    /// <summary>The logins for the chosen harness; with this workspace's harness, the one it uses comes first.</summary>
+    private IEnumerable<(Guid? Id, string Name)> Logins
+    {
+        get
+        {
+            IEnumerable<(Guid? Id, string Name)> logins = Usable.Select(a => ((Guid?)a.Id, a.Name)).Prepend(((Guid?)null, "Owner's permitted default"));
+            return SameHarness ? logins.OrderByDescending(l => l.Id == Source.AccountId) : logins;
+        }
+    }
+
+    // This workspace's login for its own harness; the owner's default for another one.
+    private void HarnessChanged() => _account = SameHarness && Usable.Any(a => a.Id == Source.AccountId) ? Source.AccountId : null;
+
+    // Each start point fills in on its own; the exact copy measures the whole folder and can take a while.
+    private async Task EstimateAsync(WorkspaceStart start)
+    {
+        _estimateErrors.Remove(start);
+        _estimates[start] = null;
+        StateHasChanged();
+        try { _estimates[start] = await Api.EstimateWorkspaceAsync(Source.Id, start, _closed.Token); }
+        catch (OperationCanceledException) { return; }
+        catch (ApiException ex) { _estimateErrors[start] = ex.Message; }
+        catch (HttpRequestException) { _estimateErrors[start] = LoadingSection.Unreachable; }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private string SizeText(WorkspaceStart start)
+    {
+        var estimate = _estimates[start]!;
+        var size = $"{(start == WorkspaceStart.MainBranch && _pull ? "about " : "")}{ByteCount.Text(estimate.Bytes)} · {estimate.Files:N0} files";
+        return TooLarge(start) ? $"needs {ByteCount.Text(estimate.Bytes)}, {ByteCount.Text(estimate.FreeBytes)} free" : size;
+    }
+
+    /// <summary>Only a known size can rule an option out; while it's calculating, every option stays available.</summary>
+    private bool TooLarge(WorkspaceStart start) => _estimates.GetValueOrDefault(start) is { } estimate && estimate.Bytes > estimate.FreeBytes;
+
+    private string DiskText => _estimates.Values.FirstOrDefault(e => e is not null) is { } any
+        ? $"{ByteCount.Text(any.FreeBytes)} free · {(any.CopyOnWrite ? "copies are instant and use no extra space at first (copy-on-write)" : "copies are normal copies (this disk has no copy-on-write)")}"
+        : "Checking the disk…";
+
+    private string BranchHelp => _estimates.GetValueOrDefault(_start == WorkspaceStart.MainBranch ? WorkspaceStart.MainBranch : WorkspaceStart.LastCommit)?.Branch is { } branch
+        ? $"Leave empty to work on {branch}, and pull and push it as usual."
+        : "Leave empty to work on the same branch, and pull and push it as usual.";
+
+    private async Task CreateAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            var agent = await Api.CreateWorkspaceAsync(Source.Id, new(string.IsNullOrWhiteSpace(_name) ? null : _name.Trim(), _start,
+                _pull && _start == WorkspaceStart.MainBranch, string.IsNullOrWhiteSpace(_branch) ? null : _branch.Trim(), _harness,
+                _accounts.Any(a => a.Id == _account && a.HarnessId == _harness) ? _account : null, _startAgent, ResumeSession?.Id, KeptFolder?.Path));
+            Dialog.Close(DialogResult.Ok(agent.Id));
+            Navigation.NavigateTo($"agents/{agent.Id}");
+        }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable + " Check the project's workspaces before trying again; creation may have finished."; }
+        finally { _busy = false; }
+    }
+
+    public void Dispose()
+    {
+        _closed.Cancel();
+        _closed.Dispose();
+    }
+}

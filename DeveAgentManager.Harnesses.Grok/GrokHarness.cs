@@ -47,16 +47,24 @@ public sealed class GrokHarness(HttpMessageHandler? tokenHandler = null) : IHarn
     {
         var id = ShellQuote.Quote(launch.SessionId);
         var socketId = Guid.Parse(launch.SessionId).ToString("N");
-        var flags = (string.IsNullOrWhiteSpace(launch.Model) ? "" : " --model " + ShellQuote.Quote(launch.Model))
-            + (string.IsNullOrWhiteSpace(launch.Instructions) ? "" : " --rules " + ShellQuote.Quote(launch.Instructions));
-        var script = $"""
+        var flags = string.IsNullOrWhiteSpace(launch.Instructions) ? "" : " --rules " + ShellQuote.Quote(launch.Instructions);
+        // The conversation keeps its model (current_model_id) but not its effort, so the model is given when it starts
+        // here and the effort at every start. Versions before the effort flag would refuse to start with it.
+        var model = string.IsNullOrWhiteSpace(launch.Model) ? "" : "model=(--model " + ShellQuote.Quote(launch.Model.Trim()) + ")";
+        var starts = launch.Transferred ? "true" : "[ \"$mode\" = --session-id ]";
+        var defaults = (model.Length == 0 ? "" : $"\nif {starts}; then {model}; fi")
+            + (string.IsNullOrWhiteSpace(launch.Effort) ? ""
+                : $"\nif grok --help 2>/dev/null | grep -- '--reasoning-effort' >/dev/null; then effort=(--reasoning-effort {ShellQuote.Quote(launch.Effort.Trim())}); fi");
+        var script = $$"""
             set -euo pipefail
             export GROK_DISABLE_AUTOUPDATER=1
-            socket_dir="/tmp/dam-grok-$(id -u)-{socketId}"
+            socket_dir="/tmp/dam-grok-$(id -u)-{{socketId}}"
             mkdir -p -m 700 "$socket_dir"
-            if [ -f "{SettingsFile}" ]; then export GROK_CONFIG_PATH="{SettingsFile}"; fi
-            mode=$(python3 "{PrepareScript}" {id} {ShellQuote.Quote(launch.DisplayName)})
-            exec grok --leader-socket "$socket_dir/leader.sock" --trust --always-approve --fullscreen "$mode" {id}{flags}
+            if [ -f "{{SettingsFile}}" ]; then export GROK_CONFIG_PATH="{{SettingsFile}}"; fi
+            mode=$(python3 "{{PrepareScript}}" {{id}} {{ShellQuote.Quote(launch.DisplayName)}})
+            model=()
+            effort=(){{defaults}}
+            exec grok --leader-socket "$socket_dir/leader.sock" --trust --always-approve --fullscreen "$mode" {{id}} "${model[@]}" "${effort[@]}"{{flags}}
             """;
         return "bash -c " + ShellQuote.Quote(script);
     }

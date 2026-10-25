@@ -10,6 +10,31 @@
         <Xterm @ref="_xterm" Options="_options" Addons="_addons" Class="terminal-xterm" OnFirstRender="OnFirstRenderAsync" OnTitleChange="OnTitleChange" />
     </div>
 
+    @* Files being pasted: top right over the terminal, clear of the toolbar and the keys. Blue while sending, green once
+       stored (then it fades), red with the reason when it failed. *@
+    @if (_uploads.Count > 0)
+    {
+        <div class="terminal-uploads" role="status" aria-live="polite">
+            @foreach (var upload in _uploads)
+            {
+                <div class="terminal-upload terminal-upload-@upload.Phase" @key="upload.Id">
+                    <div class="terminal-upload-row">
+                        <MudIcon Icon="@(upload.Phase switch { "done" => Icons.Material.Rounded.CheckCircle, "error" => Icons.Material.Rounded.ErrorOutline, _ => Icons.Material.Rounded.Upload })" Size="Size.Small" />
+                        <span class="terminal-upload-name">@upload.Name</span>
+                        <span class="terminal-upload-size">@ByteCount.Text(upload.Size)</span>
+                        @if (upload.Phase == "error")
+                        { <button type="button" class="terminal-upload-close" aria-label="@($"Dismiss {upload.Name}")" @onclick="() => _uploads.Remove(upload)">✕</button> }
+                    </div>
+                    @if (upload.Phase == "error")
+                    { <div class="terminal-upload-reason">@upload.Error</div> }
+                    else
+                    { <div class="terminal-upload-bar" aria-hidden="true"><div style="width: @((upload.Progress * 100).ToString("0", System.Globalization.CultureInfo.InvariantCulture))%"></div></div> }
+                    <span class="visually-hidden">@(upload.Phase switch { "done" => $"Uploaded {upload.Name}", "error" => $"Couldn't upload {upload.Name}: {upload.Error}", "queued" => $"{upload.Name} is waiting to upload", _ => $"Uploading {upload.Name}: {upload.Progress:P0}" })</span>
+                </div>
+            }
+        </div>
+    }
+
     @if (_overlay is not null)
     {
         <div class="terminal-overlay">
@@ -96,7 +121,17 @@
     };
 
     private Xterm _xterm = default!;
-    private Snackbar? _uploading;
+    private sealed class Upload
+    {
+        public int Id { get; init; }
+        public string Name { get; init; } = "";
+        public long Size { get; init; }
+        public string Phase { get; set; } = "queued";
+        public double Progress { get; set; }
+        public string? Error { get; set; }
+    }
+    private readonly List<Upload> _uploads = [];
+    private bool _disposed;
     private int _autoReconnects;
     private DateTime _readyAt;
     // The Manager said it is restarting: keep saying so while connecting again, until it is back.
@@ -245,27 +280,27 @@
     [JSInvokable]
     public Task OnLoginResult(bool ok, string message) => LoginFinished.InvokeAsync((ok, message));
 
-    /// <summary>Progress of a file (an image, a log, …) pasted into the terminal: "uploading" (with its name), "error" (with why), "done".</summary>
+    /// <summary>
+    /// Progress of a file (an image, a log, …) pasted into the terminal, one per file: "queued", "sending" (with the
+    /// fraction sent), "done" (stored on the Runner) or "error" (with why). Done fades after a moment; an error stays a while.
+    /// </summary>
     [JSInvokable]
-    public void OnImageStatus(string phase, string text)
+    public void OnUploadProgress(int id, string phase, string name, long size, double fraction, string? error)
     {
-        switch (phase)
-        {
-            case "uploading":
-                _uploading = Snackbar.Add($"Uploading {text}...", Severity.Info, options => options.VisibleStateDuration = 60_000);
-                break;
-            case "error":
-                Snackbar.Add($"Could not send the file: {text}", Severity.Error);
-                break;
-            default:
-                if (_uploading is not null)
-                {
-                    Snackbar.Remove(_uploading);
-                    _uploading = null;
-                }
+        var upload = _uploads.FirstOrDefault(u => u.Id == id);
+        if (upload is null) _uploads.Add(upload = new Upload { Id = id, Name = name, Size = size });
+        upload.Phase = phase;
+        upload.Progress = Math.Clamp(fraction, 0, 1);
+        upload.Error = error;
+        if (phase is "done" or "error") _ = DismissAsync(upload, phase == "done" ? TimeSpan.FromSeconds(1.5) : TimeSpan.FromSeconds(10));
+        StateHasChanged();
+    }
 
-                break;
-        }
+    private async Task DismissAsync(Upload upload, TimeSpan after)
+    {
+        await Task.Delay(after);
+        if (_disposed || !_uploads.Remove(upload)) return;
+        await InvokeAsync(StateHasChanged);
     }
 
     /// <summary>
@@ -322,6 +357,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        _disposed = true;
         try
         {
             await JS.InvokeVoidAsync("damTerminal.dispose", _xterm.Id);

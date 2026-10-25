@@ -42,10 +42,27 @@ public sealed class PiHarness : IHarness
 
     /// <summary>
     /// <c>--session-id</c> opens the session with that id or creates it, so the same command both starts and resumes.
+    /// pi records model and thinking level changes in the conversation and resumes with them. So the defaults are given
+    /// when a conversation starts, or right after a switch from another harness (its recorded models aren't a choice made
+    /// in pi); settings.json has the Manager's for anything else.
     /// </summary>
-    public string BuildLaunchCommand(HarnessLaunch launch) =>
-        $"pi --session-id {ShellQuote.Quote(launch.SessionId)} --name {ShellQuote.Quote(launch.DisplayName)}"
-        + (string.IsNullOrWhiteSpace(launch.Instructions) ? "" : " --append-system-prompt " + ShellQuote.Quote(launch.Instructions));
+    public string BuildLaunchCommand(HarnessLaunch launch)
+    {
+        var id = ShellQuote.Quote(launch.SessionId);
+        var command = $"pi --session-id {id} --name {ShellQuote.Quote(launch.DisplayName)}"
+            + (string.IsNullOrWhiteSpace(launch.Instructions) ? "" : " --append-system-prompt " + ShellQuote.Quote(launch.Instructions));
+        var model = string.IsNullOrWhiteSpace(launch.Model) ? ""
+            : (string.IsNullOrWhiteSpace(launch.Provider) ? "" : " --provider " + ShellQuote.Quote(launch.Provider.Trim())) + " --model " + ShellQuote.Quote(launch.Model.Trim());
+        var defaults = model + (string.IsNullOrWhiteSpace(launch.Effort) ? "" : " --thinking " + ShellQuote.Quote(launch.Effort.Trim()));
+        if (defaults.Length == 0) return command;
+        if (launch.Transferred) return command + defaults;
+        var script = $$"""
+            start=()
+            if ! ls "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"/sessions/*/*_{{id}}.jsonl >/dev/null 2>&1; then start=({{defaults.TrimStart()}}); fi
+            exec {{command}} "${start[@]}"
+            """;
+        return "bash -c " + ShellQuote.Quote(script);
+    }
 
     public IReadOnlyList<string> ConfigFiles { get; } = ["~/.pi/agent/auth.json", "~/.pi/agent/settings.json"];
 

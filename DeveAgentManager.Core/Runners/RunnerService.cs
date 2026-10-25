@@ -90,6 +90,7 @@ public sealed partial class RunnerService(
 
     private static IQueryable<Runner> WithAccess(IQueryable<Runner> runners) => runners.AsNoTracking().AsSplitQuery()
         .Include(r => r.Owner).Include(r => r.Members).ThenInclude(m => m.User)
+        .Include(r => r.Agents).ThenInclude(a => a.Project)
         .Include(r => r.Agents).ThenInclude(a => a.Shares)
         .Include(r => r.Agents).ThenInclude(a => a.Owner)
         .Include(r => r.Agents).ThenInclude(a => a.Account).ThenInclude(a => a!.CreatedBy);

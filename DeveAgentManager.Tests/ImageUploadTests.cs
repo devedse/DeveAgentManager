@@ -57,8 +57,53 @@ public class ImageUploadTests
     [Fact]
     public async Task RefusesEmptyAndTooBigFiles()
     {
-        await Assert.ThrowsAsync<ArgumentException>(() => Service().UploadAsync(null, Guid.NewGuid(), "a.log", [], CancellationToken.None));
-        var tooBig = new byte[TerminalService.MaxUploadBytes + 1];
-        await Assert.ThrowsAsync<ArgumentException>(() => Service().UploadAsync(null, Guid.NewGuid(), "a.log", tooBig, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() => Service().UploadAsync(null, Guid.NewGuid(), "a.log", new MemoryStream(), CancellationToken.None));
+        // Refused on its length, before anything is read.
+        await Assert.ThrowsAsync<ArgumentException>(() => Service().UploadAsync(null, Guid.NewGuid(), "a.log", new LengthOnly(TerminalService.MaxUploadBytes + 1),
+            CancellationToken.None));
+        Assert.Equal(500L * 1024 * 1024, TerminalService.MaxUploadBytes);
+    }
+
+    [Fact]
+    public async Task AFileWaitsOnDiskWhileItArrives_AndIsGoneOnceClosed()
+    {
+        var data = Directory.CreateTempSubdirectory("dam-uploads-").FullName;
+        try
+        {
+            var options = new DeveAgentManager.Core.Configuration.ManagerOptions { DataDirectory = data };
+            var service = new TerminalService(null!, null!, null!, null!, options);
+            string path;
+            await using (var buffer = service.NewUploadBuffer())
+            {
+                path = buffer.Name;
+                await buffer.WriteAsync(Png);
+                Assert.StartsWith(options.TerminalUploadsDirectory, path);
+                Assert.True(File.Exists(path));
+            }
+
+            Assert.False(File.Exists(path));
+            // One left behind by a crash is removed at the next start.
+            File.WriteAllText(Path.Combine(options.TerminalUploadsDirectory, "left-over"), "x");
+            TerminalService.ClearUploadBuffers(options);
+            Assert.False(Directory.Exists(options.TerminalUploadsDirectory));
+        }
+        finally
+        {
+            Directory.Delete(data, true);
+        }
+    }
+
+    private sealed class LengthOnly(long length) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => length;
+        public override long Position { get; set; }
+        public override int Read(byte[] buffer, int offset, int count) => throw new InvalidOperationException("Read before the size check.");
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() { }
     }
 }

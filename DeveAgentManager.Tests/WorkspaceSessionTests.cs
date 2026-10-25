@@ -19,6 +19,40 @@ public sealed class WorkspaceSessionTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
+    public async Task ProjectMigrationPreservesLiveIdentityAndCanBeRevertedWithoutRemovingAgentsOrConversations()
+    {
+        using var rig = new Rig();
+        await using var db = rig.Factory.CreateDbContext();
+        var migrations = db.Database.GetMigrations().ToArray();
+        var project = Array.FindIndex(migrations, m => m.EndsWith("_ProjectWorkspaces", StringComparison.Ordinal));
+        await db.GetService<IMigrator>().MigrateAsync(migrations[project - 1], Ct);
+        await InsertAsync(db, "Runners", new() { ["Id"] = rig.Runner.Id, ["OwnerId"] = User.BootstrapId, ["Name"] = "test-runner", ["State"] = "Ready" });
+        await InsertAsync(db, "Agents", new() { ["Id"] = rig.Agent.Id, ["OwnerId"] = User.BootstrapId, ["RunnerId"] = rig.Runner.Id,
+            ["Name"] = "project", ["WorkingDirectory"] = "/work/example", ["HarnessId"] = "pi", ["TmuxSession"] = "same-live-terminal", ["HarnessSessionId"] = "same-native-id", ["State"] = "Running" });
+        var session = Guid.NewGuid();
+        await InsertAsync(db, "Sessions", new() { ["Id"] = session, ["OwnerId"] = User.BootstrapId, ["AgentId"] = rig.Agent.Id,
+            ["WorkspaceAgentId"] = rig.Agent.Id, ["Title"] = "Existing conversation", ["HarnessId"] = "pi" });
+        await db.Database.MigrateAsync(Ct);
+        var agent = await db.Agents.AsNoTracking().SingleAsync(Ct);
+        Assert.Equal((rig.Agent.Id, "same-live-terminal", "same-native-id", AgentState.Running), (agent.ProjectId, agent.TmuxSession, agent.HarnessSessionId, agent.State));
+        Assert.Equal("/work/example", (await db.Projects.SingleAsync(Ct)).RootDirectory);
+        Assert.Equal(session, (await db.Sessions.AsNoTracking().SingleAsync(Ct)).Id);
+        // Runner deletion must cascade through both Projects and Agents without a foreign-key ordering failure.
+        var deleteRunner = new Runner { Id = Guid.NewGuid(), Name = "delete-test", OwnerId = User.BootstrapId };
+        var deleteProject = new Project { Id = Guid.NewGuid(), RunnerId = deleteRunner.Id, OwnerId = User.BootstrapId, Name = "delete-test" };
+        db.Runners.Add(deleteRunner); db.Projects.Add(deleteProject);
+        db.Agents.Add(new Agent { Id = Guid.NewGuid(), RunnerId = deleteRunner.Id, OwnerId = User.BootstrapId, Project = deleteProject, Name = "delete-test" });
+        await db.SaveChangesAsync(Ct);
+        db.Runners.Remove(deleteRunner); await db.SaveChangesAsync(Ct);
+        db.ChangeTracker.Clear();
+        await db.GetService<IMigrator>().MigrateAsync(migrations[project - 1], Ct);
+        Assert.Equal(1L, await db.Database.SqlQueryRaw<long>("SELECT COUNT(*) AS Value FROM Agents").SingleAsync(Ct));
+        Assert.Equal(1L, await db.Database.SqlQueryRaw<long>("SELECT COUNT(*) AS Value FROM Sessions").SingleAsync(Ct));
+        await db.Database.MigrateAsync(Ct);
+        Assert.Equal(rig.Agent.Id, (await db.Projects.AsNoTracking().SingleAsync(Ct)).Id);
+    }
+
+    [Fact]
     public async Task NewAndSelectedSessionsKeepWorkspaceAndOnlyOneActiveConversation()
     {
         using var rig = new Rig();
@@ -38,6 +72,69 @@ public sealed class WorkspaceSessionTests
         Assert.Single(await db.Sessions.Where(s => s.AgentId == rig.Agent.Id).ToListAsync(Ct));
         Assert.Equal("restored-native", (await db.Agents.SingleAsync(Ct)).HarnessSessionId);
         Assert.Null((await db.Agents.SingleAsync(Ct)).LastAssistantMessageAt);
+    }
+
+    [Fact]
+    public async Task SavedConversationsResumeInAnyWorkspaceOfTheirProjectAndOutliveRemovedWorkspaces()
+    {
+        using var rig = new Rig();
+        await rig.CreateAsync();
+        var project = new Project { Id = rig.Agent.Id, RunnerId = rig.Runner.Id, OwnerId = User.BootstrapId, Name = "workspace", RootDirectory = "/work/example" };
+        Agent Workspace(string name, Guid? projectId) => new() { Id = Guid.NewGuid(), OwnerId = User.BootstrapId, Name = name, Runner = rig.Runner, RunnerId = rig.Runner.Id,
+            ProjectId = projectId, IsClone = projectId is not null, HarnessId = "pi", HarnessSessionId = name, WorkingDirectory = "/work/example.workspaces/" + name, State = AgentState.Stopped };
+        var clone = Workspace("workspace-2", project.Id);
+        var stranger = Workspace("elsewhere", null);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            db.Runners.Attach(rig.Runner);
+            db.Projects.Add(project);
+            (await db.Agents.SingleAsync(a => a.Id == rig.Agent.Id, Ct)).ProjectId = project.Id;
+            db.Agents.AddRange(clone, stranger);
+            await db.SaveChangesAsync(Ct);
+        }
+        rig.Agent.ProjectId = project.Id;
+        var original = (await rig.Service.GetForAgentAsync(rig.Agent.Id, Ct))!;
+        using (await rig.Service.LockAsync(Ct))
+            await rig.Service.SelectLockedAsync(rig.Runner, rig.Agent, null, "Next", "next", Ct);
+        // Saved in Main, it resumes in another workspace of the project and moves there.
+        using (await rig.Service.LockAsync(Ct))
+            await rig.Service.SelectLockedAsync(rig.Runner, clone, original.Id, null, "resumed", Ct);
+        var resumed = (await rig.Service.GetAsync(original.Id, Ct))!;
+        Assert.Equal((clone.Id, clone.Id, project.Id, clone.WorkingDirectory), (resumed.AgentId, resumed.WorkspaceAgentId, resumed.ProjectId, resumed.WorkingDirectory));
+        // Active in one workspace, it cannot be taken over by another; another project never gets it.
+        using (await rig.Service.LockAsync(Ct))
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.SelectLockedAsync(rig.Runner, rig.Agent, original.Id, null, "taken", Ct));
+            await rig.Service.SelectLockedAsync(rig.Runner, clone, null, "Fresh", "fresh", Ct);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Service.SelectLockedAsync(rig.Runner, stranger, original.Id, null, "stranger", Ct));
+        }
+        // Removing its workspace keeps the conversation with the project, and Main can still resume it.
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            db.Agents.Remove(await db.Agents.SingleAsync(a => a.Id == clone.Id, Ct));
+            await db.SaveChangesAsync(Ct);
+        }
+        var orphan = (await rig.Service.GetAsync(original.Id, Ct))!;
+        Assert.Equal((null, null, project.Id), (orphan.AgentId, orphan.WorkspaceAgentId, orphan.ProjectId));
+        using (await rig.Service.LockAsync(Ct))
+            await rig.Service.SelectLockedAsync(rig.Runner, rig.Agent, original.Id, null, "back-in-main", Ct);
+        Assert.Equal(rig.Agent.Id, (await rig.Service.GetAsync(original.Id, Ct))!.AgentId);
+    }
+
+    [Fact]
+    public void TheHarnessNameNamesTheWorkspaceNotItsConversation()
+    {
+        // Agents start their harness with --name <workspace>; until the first prompt, that is not the conversation's title.
+        var stored = new StoredSession { Title = "testworkspace" };
+        SessionService.Apply(stored, new DeveSession { Title = "testworkspace" }, "testworkspace");
+        Assert.Equal(SessionService.NewTitle, stored.Title);
+        var prompted = new DeveSession { Title = "testworkspace" };
+        prompted.Entries.Add(new DeveEntry { Id = "u1", Kind = DeveEntryKind.Message, Role = DeveRole.User, Content = [DeveBlock.OfText("Fix the toolbar on phones")] });
+        SessionService.Apply(stored, prompted, "testworkspace");
+        Assert.Equal("Fix the toolbar on phones", stored.Title);
+        var pinned = new StoredSession { Title = "testworkspace", TitlePinned = true };
+        SessionService.Apply(pinned, new DeveSession { Title = "testworkspace" }, "testworkspace");
+        Assert.Equal("testworkspace", pinned.Title);
     }
 
     [Fact]
@@ -201,6 +298,28 @@ public sealed class WorkspaceSessionTests
         using (await rig.Service.LockAsync(Ct))
             await Assert.ThrowsAsync<IOException>(() => rig.Service.SelectLockedAsync(rig.Runner, rig.Agent, brokenId, null, "new", Ct));
         Assert.Equal(original.Id, (await rig.Service.GetForAgentAsync(rig.Agent.Id, Ct))!.Id);
+    }
+
+    [Fact]
+    public async Task TitlesThatAreAManagerNoteGetTheirFirstPromptOnce()
+    {
+        using var rig = new Rig();
+        await rig.CreateAsync();
+        var current = (await rig.Service.GetForAgentAsync(rig.Agent.Id, Ct))!;
+        const string noteTitle = "(This conversation was moved from Codex to Claude Code by DeveAgentManager. Too…";
+        var history = new DeveSession();
+        history.Entries.Add(new DeveEntry { Id = "u1", Kind = DeveEntryKind.Message, Role = DeveRole.User,
+            Content = [DeveBlock.OfText("(This conversation was moved from Codex to Claude Code by DeveAgentManager. Tool calls from before the move are shown as text; what they changed is in the files.)\nGenerate the maze images")] });
+        Directory.CreateDirectory(rig.Options.SessionsDirectory);
+        await File.WriteAllTextAsync(Path.Combine(rig.Options.SessionsDirectory, $"{current.Id:N}.json"), history.ToJson(), Ct);
+        await using (var db = rig.Factory.CreateDbContext())
+        {
+            (await db.Sessions.SingleAsync(Ct)).Title = noteTitle;
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await rig.Service.RepairNoteTitlesAsync(Ct);
+        Assert.Equal("Generate the maze images", (await rig.Service.GetAsync(current.Id, Ct))!.Title);
     }
 
     [Fact]

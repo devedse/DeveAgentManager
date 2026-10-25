@@ -81,19 +81,31 @@ public sealed class ClaudeHarness : IHarness
 
     public string NewSessionId(Guid agentId) => agentId.ToString();
 
-    /// <summary><c>--session-id</c> only creates a conversation ("already in use" otherwise), so a restart uses <c>--resume</c>.</summary>
+    /// <summary>
+    /// <c>--session-id</c> only creates a conversation ("already in use" otherwise), so a restart uses <c>--resume</c>.
+    /// A resumed conversation keeps its model (Claude restores it from the transcript), except right after a switch from
+    /// another harness: the converted messages carry a compatibility model, so the default is given ("default": the
+    /// login's own). The effort is given at every start: Claude doesn't restore it, and only reads a top-level
+    /// <c>effortLevel</c> in settings.json for older models.
+    /// </summary>
     public string BuildLaunchCommand(HarnessLaunch launch)
     {
         var id = ShellQuote.Quote(launch.SessionId);
         var name = ShellQuote.Quote(launch.DisplayName);
         var model = string.IsNullOrWhiteSpace(launch.Model) ? "" : " --model " + ShellQuote.Quote(launch.Model.Trim());
-        model += string.IsNullOrWhiteSpace(launch.Instructions) ? "" : " --append-system-prompt " + ShellQuote.Quote(launch.Instructions);
+        if (launch.Transferred && model.Length == 0) model = " --model default";
+        var resumed = launch.Transferred ? model : "";
+        var instructions = string.IsNullOrWhiteSpace(launch.Instructions) ? "" : " --append-system-prompt " + ShellQuote.Quote(launch.Instructions);
+        // Versions before the flag would refuse to start with it.
+        var effort = string.IsNullOrWhiteSpace(launch.Effort) ? ""
+            : $"\nif claude --help 2>/dev/null | grep -q -- '--effort'; then effort=(--effort {ShellQuote.Quote(launch.Effort.Trim())}); fi";
         var script = $$"""
             node "{{PrepareScript}}" 2>/dev/null || true
+            effort=(){{effort}}
             if ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/{{id}}.jsonl >/dev/null 2>&1; then
-              exec claude --dangerously-skip-permissions --resume {{id}} --name {{name}}{{model}}
+              exec claude --dangerously-skip-permissions --resume {{id}} --name {{name}}{{resumed}} "${effort[@]}"{{instructions}}
             fi
-            exec claude --dangerously-skip-permissions --session-id {{id}} --name {{name}}{{model}}
+            exec claude --dangerously-skip-permissions --session-id {{id}} --name {{name}}{{model}} "${effort[@]}"{{instructions}}
             """;
         return "bash -c " + ShellQuote.Quote(script);
     }

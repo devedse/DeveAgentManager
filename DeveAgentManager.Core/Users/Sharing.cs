@@ -26,55 +26,64 @@ public sealed class Sharing(IDbContextFactory<ManagerDbContext> dbFactory, Audit
             throw new ArgumentException("Choose read-only or read-write.");
         }
 
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var agent = await db.Agents.Include(a => a.Shares).FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken) ?? throw new KeyNotFoundException("Agent not found.");
-        RequireOwner(actor, agent.OwnerId, "agent");
-        var user = await RequireOtherUserAsync(db, actor, userId, cancellationToken);
-        var share = agent.Shares.FirstOrDefault(s => s.UserId == userId);
-        if (share?.Access == access)
+        await Agents.AgentService.ProjectGate.WaitAsync(cancellationToken);
+        try
         {
-            return;
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+            var agent = await db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken) ?? throw new KeyNotFoundException("Agent not found.");
+            RequireOwner(actor, agent.OwnerId, "project");
+            var user = await RequireOtherUserAsync(db, actor, userId, cancellationToken);
+            var workspaces = await db.Agents.Include(a => a.Shares)
+                .Where(a => a.Id == agentId || agent.ProjectId != null && a.ProjectId == agent.ProjectId).ToListAsync(cancellationToken);
+            foreach (var workspace in workspaces)
+            {
+                var share = workspace.Shares.FirstOrDefault(s => s.UserId == userId);
+                if (share is null)
+                {
+                    share = new AgentShare { AgentId = workspace.Id, UserId = userId };
+                    db.AgentShares.Add(share);
+                }
+                share.Access = access;
+                share.GrantedById = actor.Id;
+                share.GrantedAt = DateTime.UtcNow;
+            }
+            await db.SaveChangesAsync(cancellationToken);
+            await audit.RecordAsync(actor, AuditActions.AgentShared, $"Project {agent.Name}", $"{user.Username}: {(access == AgentAccess.Write ? "read-write" : "read-only")}", cancellationToken);
+            foreach (var workspace in workspaces)
+            {
+                events.Publish(new ManagerEvent(ManagerEventKind.AccessChanged, workspace.RunnerId, workspace.Id, UserId: userId));
+                events.AgentChanged(workspace.RunnerId, workspace.Id);
+            }
         }
-
-        if (share is null)
-        {
-            share = new AgentShare { AgentId = agentId, UserId = userId };
-            db.AgentShares.Add(share);
-        }
-
-        share.Access = access;
-        share.GrantedById = actor.Id;
-        share.GrantedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
-        await audit.RecordAsync(actor, AuditActions.AgentShared, $"Agent {agent.Name}", $"{user.Username}: {(access == AgentAccess.Write ? "read-write" : "read-only")}", cancellationToken);
-        events.Publish(new ManagerEvent(ManagerEventKind.AccessChanged, agent.RunnerId, agentId, UserId: userId));
-        events.AgentChanged(agent.RunnerId, agentId);
+        finally { Agents.AgentService.ProjectGate.Release(); }
     }
 
-    /// <summary>Ends a share: the owner for anyone, or someone for their own.</summary>
+    /// <summary>Ends a project share: the owner for anyone, or someone for their own.</summary>
     public async Task UnshareAgentAsync(CurrentUser actor, Guid agentId, Guid userId, CancellationToken cancellationToken = default)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var agent = await db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken) ?? throw new KeyNotFoundException("Agent not found.");
-        if (userId != actor.Id)
+        await Agents.AgentService.ProjectGate.WaitAsync(cancellationToken);
+        try
         {
-            RequireOwner(actor, agent.OwnerId, "agent");
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+            var agent = await db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken) ?? throw new KeyNotFoundException("Agent not found.");
+            if (userId != actor.Id) RequireOwner(actor, agent.OwnerId, "project");
+            var workspaces = await db.Agents.Include(a => a.Shares)
+                .Where(a => a.Id == agentId || agent.ProjectId != null && a.ProjectId == agent.ProjectId).ToListAsync(cancellationToken);
+            if (!workspaces.Any(a => a.Shares.Any(s => s.UserId == userId))) throw new KeyNotFoundException("This project isn't shared with that user.");
+            foreach (var workspace in workspaces)
+            {
+                db.AgentShares.RemoveRange(workspace.Shares.Where(s => s.UserId == userId));
+                if (workspace.GitIdentityUserId == userId) workspace.GitIdentityUserId = null;
+            }
+            await db.SaveChangesAsync(cancellationToken);
+            await audit.RecordAsync(actor, AuditActions.AgentUnshared, $"Project {agent.Name}", userId == actor.Id ? "Left project" : "Project access removed", cancellationToken);
+            foreach (var workspace in workspaces)
+            {
+                events.Publish(new ManagerEvent(ManagerEventKind.AccessChanged, workspace.RunnerId, workspace.Id, UserId: userId));
+                events.AgentChanged(workspace.RunnerId, workspace.Id);
+            }
         }
-
-        var share = await db.AgentShares.Include(s => s.User).FirstOrDefaultAsync(s => s.AgentId == agentId && s.UserId == userId, cancellationToken)
-            ?? throw new KeyNotFoundException("This agent isn't shared with that user.");
-        db.AgentShares.Remove(share);
-        // Their git identity goes with their share: the next start uses the owner's, and a harness still running with
-        // theirs is stopped (AgentService.EnforceGitIdentitiesAsync).
-        if (agent.GitIdentityUserId == userId)
-        {
-            agent.GitIdentityUserId = null;
-        }
-
-        await db.SaveChangesAsync(cancellationToken);
-        await audit.RecordAsync(actor, AuditActions.AgentUnshared, $"Agent {agent.Name}", userId == actor.Id ? $"{share.User?.Username} left" : share.User?.Username, cancellationToken);
-        events.Publish(new ManagerEvent(ManagerEventKind.AccessChanged, agent.RunnerId, agentId, UserId: userId));
-        events.AgentChanged(agent.RunnerId, agentId);
+        finally { Agents.AgentService.ProjectGate.Release(); }
     }
 
     public async Task<List<SessionShare>> ListSessionSharesAsync(Guid sessionId, CancellationToken cancellationToken = default)

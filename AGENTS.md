@@ -89,8 +89,23 @@ page's header, with the same explanations).
 
 Every list of agents puts the one that replied last first: sort with `AgentOrder.ByLastReply()`
 (`DeveAgentManager.Client/Shared/AgentOrder.cs`), including lists cut short such as the dashboard's. Agents that never
-replied come after, newest first. Lists grouped by agent, such as sessions, order the groups the same way.
+replied come after, newest first. Lists grouped by agent, such as sessions, order the groups the same way. Agent lists
+(the Agents page, the dashboard, a Runner's page) use `GroupedAgentTable`, which groups workspaces under their project;
+a shortened list keeps whole projects and every project with a running workspace or one needing attention.
 `DeveAgentManager.Tests/Browser/agent-order.mts` checks the pages that list agents.
+
+## Projects and workspace agents
+
+A Project groups Main and its workspaces on one Runner. A workspace other than Main is an independent clone in
+`<main>.workspaces/<name>`, so agents pull and push normally. Each workspace agent retains its own runtime, login,
+conversation, tasks, notifications and continuation policy; several can run at once, each running one conversation.
+Opening a workspace or choosing a conversation never changes execution by itself: Start/Stop target one agent, and
+replacing a conversation is an explicit choice. Conversations belong to the project and outlive removed workspaces.
+Only delete folders whose `.git/dam-workspace` marker matches; never hardlink working files. Move project targets Main
+and every workspace, including stopped ones. Keep project sharing consistent across current and future workspaces; a
+standalone conversation share stays narrow. Project groups order by their latest child reply, then children use
+`AgentOrder.ByLastReply()`. Recorded creation plans and markers reconcile interrupted creation without repeating it.
+See [docs/project-workspaces.md](docs/project-workspaces.md) for start points, removal, transfer/recovery and rollback.
 
 ## Documentation privacy
 

@@ -31,7 +31,7 @@ public sealed partial class AgentService(
     ManagerEvents events,
     ILogger<AgentService> logger,
     AgentContinuations? continuations = null, AgentDiagnostics? diagnostics = null, UsageLimitReader? limitReader = null, ArtifactTokens? artifactTokens = null,
-    AuditLog? audit = null)
+    AuditLog? audit = null, Setup.UserSettingsStore? userSettings = null)
 {
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
 
@@ -55,7 +55,7 @@ public sealed partial class AgentService(
     }
 
     private static IQueryable<Agent> WithAccess(IQueryable<Agent> agents) => agents.AsNoTracking().AsSplitQuery()
-        .Include(a => a.Runner).ThenInclude(r => r!.Members)
+        .Include(a => a.Project).Include(a => a.Runner).ThenInclude(r => r!.Members)
         .Include(a => a.Account).ThenInclude(a => a!.CreatedBy).Include(a => a.Owner).Include(a => a.Shares).ThenInclude(s => s.User);
 
     /// <summary>
@@ -112,6 +112,9 @@ public sealed partial class AgentService(
         };
 
         using var workspaceLease = await ReserveWorkspaceAsync(runner.Id, name, workingDirectory, cancellationToken);
+        var existingFolders = await db.Agents.Where(a => a.RunnerId == runner.Id).Select(a => a.WorkingDirectory).ToListAsync(cancellationToken);
+        if (existingFolders.Any(path => OverlappingFolders(path, workingDirectory)))
+            throw new InvalidOperationException("Another agent already owns this folder or a parent folder. Open that agent, or create a new workspace from it.");
 
         var agentId = Guid.NewGuid();
         var now = DateTime.UtcNow;
@@ -137,6 +140,8 @@ public sealed partial class AgentService(
             && (await sessions.GetAsync(continueId, cancellationToken))?.HarnessId != agent.HarnessId;
         await PrepareWorkspaceAsync(runner, agent, request.Mode, cancellationToken);
 
+        agent.Project = new Project { Id = agent.Id, RunnerId = runner.Id, OwnerId = actor.Id,
+            Name = agent.Name, RootDirectory = agent.WorkingDirectory, CreatedAt = now };
         db.Agents.Add(agent);
         await db.SaveChangesAsync(cancellationToken);
         try
@@ -155,7 +160,7 @@ public sealed partial class AgentService(
 
         try
         {
-            await LaunchAsync(runner, agent, restart: false, cancellationToken, useDefaultModel: importingConversation, loginActor: actor);
+            await LaunchAsync(runner, agent, restart: false, cancellationToken, transferred: importingConversation, loginActor: actor);
             agent.State = AgentState.Running;
         }
         catch (Exception ex)
@@ -186,6 +191,7 @@ public sealed partial class AgentService(
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         RequireNotMoving(agent);
         var runner = RequireReady(agent.Runner!);
+        await VerifyWorkspaceAsync(runner, agent, cancellationToken);
         await LaunchAsync(runner, agent, restart, cancellationToken);
         if (restart || agent.State != AgentState.Running) AgentActivityTracker.Reset(agent);
         agent.State = AgentState.Running;
@@ -250,7 +256,7 @@ public sealed partial class AgentService(
             await db.SaveChangesAsync(cancellationToken);
             events.AgentChanged(runner.Id, agent.Id);
 
-            await LaunchAsync(runner, agent, restart: true, cancellationToken, useDefaultModel: changesHarness, loginActor: actor);
+            await LaunchAsync(runner, agent, restart: true, cancellationToken, transferred: changesHarness, loginActor: actor);
             agent.State = AgentState.Running;
             agent.StateMessage = null;
             agent.ExitCode = null;
@@ -291,8 +297,12 @@ public sealed partial class AgentService(
             throw new ArgumentException($"Choose a {harness.DisplayName} login you have Use access to.");
     }
 
-    /// <summary>Restores a saved chat in its own harness; a new chat uses the workspace's current harness.</summary>
-    public async Task SelectSessionAsync(Guid agentId, Guid? sessionId, string? title, CancellationToken ct = default)
+    /// <summary>
+    /// Replaces this workspace's conversation with a saved one of its project, in that conversation's own harness, or with
+    /// a new one in the workspace's current harness. The current conversation is saved. With <paramref name="update"/>,
+    /// the workspace's branch is pulled first; that is refused while it has uncommitted or unpushed work.
+    /// </summary>
+    public async Task SelectSessionAsync(Guid agentId, Guid? sessionId, string? title, CancellationToken ct = default, bool update = false)
     {
         using var lease = await sessions.LockAsync(ct);
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -302,9 +312,11 @@ public sealed partial class AgentService(
         var targetHarnessId = agent.HarnessId;
         if (sessionId is { } id)
         {
-            var selected = await sessions.GetAsync(id, ct) ?? throw new ArgumentException("Session not found.");
-            if (selected.WorkspaceAgentId != agent.Id) throw new InvalidOperationException("Choose a session from this workspace.");
+            var selected = await sessions.GetAsync(id, ct) ?? throw new ArgumentException("Conversation not found.");
+            if (selected.WorkspaceAgentId != agent.Id && !(agent.ProjectId is { } projectId && await InProjectAsync(db, selected, projectId, ct)))
+                throw new InvalidOperationException("Choose a conversation from this project.");
             if (selected.AgentId == agent.Id) return;
+            if (selected.AgentId is not null) throw new InvalidOperationException("This conversation is active in another workspace. Open that workspace instead.");
             targetHarnessId = selected.HarnessId;
         }
         if (!string.IsNullOrWhiteSpace(title)) SessionService.ValidateTitle(title);
@@ -319,6 +331,8 @@ public sealed partial class AgentService(
         await accounts.ResolveAsync(new Agent { Id = agent.Id, OwnerId = agent.OwnerId, HarnessId = targetHarnessId,
             AccountId = changesHarness ? null : agent.AccountId }, ct);
         var nativeId = target.NewSessionId(Guid.NewGuid());
+        // Before stopping anything: a refused or failed pull leaves the current conversation running.
+        if (update) await UpdateWorkspaceAsync(runner, agent, ct);
         try
         {
             agent.State = AgentState.Starting;
@@ -393,6 +407,10 @@ public sealed partial class AgentService(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         if (agent.MoveJson is not null) throw new InvalidOperationException("Finish the agent move before deleting it.");
+        if (agent.IsClone)
+            throw new InvalidOperationException("Use Remove workspace: it checks the workspace's uncommitted and unpushed work before deleting its folder.");
+        if (agent.ProjectId is { } projectId && await db.Agents.AnyAsync(a => a.ProjectId == projectId && a.Id != agent.Id, cancellationToken))
+            throw new InvalidOperationException("Keep Main while the project has other workspaces. Remove those workspaces first.");
         if (agent.Runner!.State == RunnerState.Ready)
         {
             // Keep the latest conversation: the session stays in the Manager after the agent is gone.
@@ -869,7 +887,8 @@ public sealed partial class AgentService(
         + "Use `dam-tools run-job` only when your harness has no built-in background-job support. Long runtimes, restart survival and validation needs are not exceptions. "
         + "Run `dam-tools --help` for other tools.";
 
-    private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool useDefaultModel = false, CurrentUser? loginActor = null)
+    /// <param name="transferred">The conversation was just converted from another harness (see <see cref="HarnessLaunch.Transferred"/>).</param>
+    private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool transferred = false, CurrentUser? loginActor = null)
     {
         using var loginLease = await Accounts.AccountCoordination.LockAsync(cancellationToken);
         await using var loginDb = await dbFactory.CreateDbContextAsync(cancellationToken);
@@ -892,13 +911,14 @@ public sealed partial class AgentService(
                 return;
             }
         }
-        // Claude restores a model from resumed transcripts before settings.json. Converted messages contain a
-        // compatibility model, not the user's choice, so use the Manager default explicitly on transfer.
-        var model = useDefaultModel && agent.HarnessId == "claude"
-            ? TransferModel((await settings.GetSetupProfileAsync(cancellationToken)).GetHarness("claude").DefaultModel)
-            : null;
+        // The owner's default model and effort (My settings → Models), else the Manager's. The harness decides when they
+        // apply: when a conversation starts in it, after a transfer, and for what it doesn't keep per conversation.
+        var model = harness.ConfigSupport is null ? new Setup.EffectiveModel(null, null, null) : Setup.EffectiveModel.Resolve(
+            (await settings.GetSetupProfileAsync(cancellationToken)).GetHarness(agent.HarnessId),
+            userSettings is null ? null : (await userSettings.GetModelDefaultsAsync(agent.OwnerId, cancellationToken)).GetValueOrDefault(agent.HarnessId));
         var instructions = runner.SetupVersion >= Runners.RunnerSetupService.AgentToolsSetupVersion ? LaunchInstructions : null;
-        var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model, instructions));
+        var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model.Model, instructions,
+            model.Effort, model.Provider, transferred));
 
         // The git identity's environment (the owner's unless switched: git config, GitHub token and variables), then the
         // harness login's, so e.g. a subscription wins over an API key meant for pi. A restart keeps the identity.
@@ -909,6 +929,8 @@ public sealed partial class AgentService(
         var ownerEnvironment = $". \"{Runners.RunnerUsers.EnvironmentFile(identity)}\"; ";
         var account = await accounts.ResolveAsync(agent, cancellationToken);
         var accountEnvironment = "";
+        if (agent.IsClone && agent.HarnessId == "pi")
+            accountEnvironment = await accounts.PreparePiWorkspaceAsync(runner, agent, cancellationToken);
         if (account is not null)
         {
             if (loginActor is not null) await RequireOwnLoginAsync(loginActor, harness, account.Id, cancellationToken);
@@ -943,8 +965,6 @@ public sealed partial class AgentService(
             logger.LogInformation("Agent {Agent} on {Runner} was already running; left it alone", agent.Name, runner.Name);
         }
     }
-
-    internal static string TransferModel(string? configured) => string.IsNullOrWhiteSpace(configured) ? "default" : configured.Trim();
 
     internal const string AlreadyRunningMarker = "DAM_ALREADY_RUNNING";
 

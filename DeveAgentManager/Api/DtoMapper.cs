@@ -147,7 +147,8 @@ public sealed class DtoMapper(
         agent.RunningAccountUsername,
         runnerAccess >= RunnerAccess.Use,
         access >= AgentAccess.Read ? GitIdentity(agent, AgentService.GitIdentity(agent), agent.GitIdentityName) : null,
-        access >= AgentAccess.Read ? GitIdentity(agent, AgentService.RunningGitIdentity(agent), agent.RunningGitIdentityName) : null);
+        access >= AgentAccess.Read ? GitIdentity(agent, AgentService.RunningGitIdentity(agent), agent.RunningGitIdentityName) : null,
+        agent.ProjectId ?? agent.Id, agent.Project?.Name ?? agent.Name, agent.IsClone, agent.WorkspaceCreationJson is not null, agent.ProjectWorkspaces);
 
     private static AgentGitIdentityDto GitIdentity(Agent agent, Guid userId, (string Username, string DisplayName)? name)
     {
@@ -158,7 +159,8 @@ public sealed class DtoMapper(
     /// <summary>A conversation loaded with its owner, shares, agent and workspace agent (see SessionService).</summary>
     public static SessionDto Session(StoredSession session, CurrentUser user)
     {
-        var workspace = session.WorkspaceAgent is { } owner
+        // A removed workspace's conversation takes its project's access: sharing is the same for every workspace.
+        var workspace = (session.WorkspaceAgent ?? session.Project?.Agents.OrderBy(a => a.IsClone).FirstOrDefault()) is { } owner
             ? AccessControl.ForAgent(user, owner.OwnerId, owner.Shares, owner.Runner is { } runner ? AccessControl.ForRunner(user, runner.OwnerId, runner.Members) : RunnerAccess.None)
             : AgentAccess.None;
         return new(
@@ -185,7 +187,8 @@ public sealed class DtoMapper(
             workspace,
             session.SourceSize,
             session.SavedSize,
-            session.TotalSize);
+            session.TotalSize,
+            session.ProjectId ?? session.WorkspaceAgent?.ProjectId);
     }
 
     /// <param name="renewable">Its harness lets the Manager renew subscription logins.</param>

@@ -65,7 +65,8 @@ public sealed class AccessControl(IDbContextFactory<ManagerDbContext> dbFactory)
     /// <summary>The conversations the user can read, for lists.</summary>
     public static IQueryable<StoredSession> VisibleSessions(ManagerDbContext db, CurrentUser user) =>
         user.Has(UserRoles.ConversationManager) ? db.Sessions : db.Sessions.Where(s => s.OwnerId == user.Id || s.Shares.Any(x => x.UserId == user.Id)
-            || (s.WorkspaceAgentId != null && db.AgentShares.Any(x => x.AgentId == s.WorkspaceAgentId && x.UserId == user.Id)));
+            || (s.WorkspaceAgentId != null && db.AgentShares.Any(x => x.AgentId == s.WorkspaceAgentId && x.UserId == user.Id))
+            || (s.ProjectId != null && db.Agents.Any(a => a.ProjectId == s.ProjectId && a.Shares.Any(x => x.UserId == user.Id))));
 
     public async Task<RunnerAccess> RunnerAsync(CurrentUser user, Guid runnerId, CancellationToken cancellationToken = default)
     {

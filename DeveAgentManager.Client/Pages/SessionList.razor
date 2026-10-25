@@ -48,94 +48,24 @@
                     <p>No sessions of yours match.</p>
                 }
             <div class="agent-table">
-                @* Agents' workspaces like agents everywhere: the one that replied last first (AgentOrder). *@
-                @foreach (var group in sessions.GroupBy(s => s.WorkspaceAgentId?.ToString() ?? s.RepositoryUrl ?? "Imported")
+                @* Projects like agents everywhere: the one that replied last first (AgentOrder). *@
+                @foreach (var group in sessions.GroupBy(s => s.ProjectId?.ToString() ?? s.WorkspaceAgentId?.ToString() ?? s.RepositoryUrl ?? "Imported")
                     .OrderByDescending(g => g.Max(s => s.Agent?.LastAssistantMessageAt ?? s.UpdatedAt)))
                 {
                     var first = group.First();
+                    var projectAgents = first.ProjectId is { } project ? _agents.Where(a => WorkspaceGroups.ProjectKey(a) == project).ToList() : [];
                     <div class="session-group-heading">
-                        <strong>@(first.WorkspaceName ?? first.RepositoryUrl ?? "Imported sessions")</strong>
+                        <strong>@(projectAgents.FirstOrDefault()?.ProjectName ?? first.WorkspaceName ?? first.RepositoryUrl ?? "Imported sessions")</strong>
                         <span> · @group.Count() @(group.Count() == 1 ? "session" : "sessions")</span>
-                        @if (first.WorkspaceAgentId is { } workspace && first.WorkspaceAccess >= AgentAccess.Write)
+                        @if (first.ProjectId is { } projectKey && projectAgents.Count > 0)
                         {
-                            <MudButton Size="Size.Small" OnClick="() => OpenWorkspaceAsync(workspace)">Manage sessions</MudButton>
+                            <MudButton Size="Size.Small" Href="@($"projects/{projectKey}")">Open project</MudButton>
                         }
                         <div class="list-subtitle">@string.Join(" · ", new[] { first.RepositoryUrl, first.RunnerName, first.WorkingDirectory }.Where(part => !string.IsNullOrEmpty(part)))</div>
                     </div>
                     @foreach (var session in group.OrderByDescending(s => s.AgentId != null).ThenByDescending(s => s.UpdatedAt))
                     {
-                    var live = session.Agent is { State: AgentState.Running or AgentState.Starting };
-                    <div class="agent-row">
-                        <a class="agent-row-main" href="sessions/@session.Id">
-                            @if (session.Agent is { } sessionAgent)
-                            {
-                                <AgentAvatar Agent="sessionAgent" />
-                            }
-                            else
-                            {
-                                <div class="list-avatar list-avatar-logo"><HarnessLogo HarnessId="@session.HarnessId" Size="Size.Medium" /></div>
-                            }
-                            <div class="list-main">
-                                <div class="list-title">@session.Title@(session.AgentId is not null ? " · Active" : "")</div>
-                                <div class="list-subtitle">
-                                    @* Before the size, so a long title can't push it out of sight. *@
-                                    @if (session.OwnerId != _userId)
-                                    {
-                                        <span class="account-badge account-badge-lead" title="@($"Conversation owned by {session.OwnerName}")">@session.OwnerName</span>
-                                    }
-                                    @SessionSize.Text(session)
-                                </div>
-                                <div class="list-subtitle">
-                                    @if (session.Agent is { } agent)
-                                    {
-                                        <span>@agent.Name on @agent.RunnerName</span>
-                                    }
-                                    else
-                                    {
-                                        <span>@(session.WorkspaceAgentId is not null ? $"Saved · {session.WorkspaceName} on {session.RunnerName}" : session.RunnerName is null ? "Imported" : $"No workspace · last on {session.RunnerName}")</span>
-                                    }
-                                    @if (session.RepositoryUrl is not null)
-                                    {
-                                        <span class="mono"> · @session.RepositoryUrl</span>
-                                    }
-                                </div>
-                            </div>
-                        </a>
-                        <div class="agent-row-state">
-                            @if (live)
-                            {
-                                <StatusPill Style="StateStyles.For(session.Agent!)" />
-                            }
-                            else
-                            {
-                                <span class="session-count">@session.MessageCount messages</span>
-                            }
-                            <span class="list-time">@session.UpdatedAt.Humanize()</span>
-                        </div>
-                        <div class="agent-row-actions">
-                            @if (session.Agent is { Access: >= AgentAccess.Read })
-                            {
-                                <MudTooltip Text="Open the agent">
-                                    <MudIconButton Href="@($"agents/{session.AgentId}")" Icon="@Icons.Material.Rounded.Terminal" Color="Color.Primary" Size="Size.Small" />
-                                </MudTooltip>
-                            }
-                            else if (ContinueText(session) is { } continueText)
-                            {
-                                <MudTooltip Text="@continueText">
-                                    <MudIconButton Icon="@Icons.Material.Rounded.PlayArrow" Color="Color.Success" Size="Size.Small" OnClick="() => ContinueAsync(session)" />
-                                </MudTooltip>
-                            }
-                            <SessionExportMenu SessionId="session.Id" Icon="true" />
-                            <MudTooltip Text="@(session.Access == SessionAccess.Owner ? "Share" : "Sharing")">
-                                <MudIconButton Icon="@(session.Access == SessionAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" Size="Size.Small" OnClick="() => ShareAsync(session)" />
-                            </MudTooltip>
-                            @if (session.Access == SessionAccess.Owner)
-                            {
-                                <MudIconButton Icon="@Icons.Material.Rounded.Edit" Size="Size.Small" aria-label="Rename session" OnClick="() => RenameAsync(session)" />
-                                <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Size="Size.Small" aria-label="Delete session" Disabled="@(session.AgentId != null)" OnClick="() => DeleteAsync(session)" />
-                            }
-                        </div>
-                    </div>
+                        <ConversationRow @key="session.Id" Session="session" UserId="_userId" ProjectAgents="projectAgents" Sessions="_sessions" Changed="ReloadAsync" />
                 }
                 }
             </div>
@@ -150,6 +80,7 @@
 
 @code {
     private List<SessionDto> _sessions = [];
+    private List<AgentDto> _agents = [];
     private string? _search;
     private Guid _userId;
     private bool _importing;
@@ -161,22 +92,14 @@
                     || (s.Agent?.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
                     || s.OwnerName.Contains(_search, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>
-    /// How the user can continue a conversation that isn't running where they can open it, or null when they can't: in its
-    /// workspace with read-write access to that agent, or else in a new agent of their own (a copy, for someone else's).
-    /// </summary>
-    public static string? ContinueText(SessionDto session) =>
-        session.WorkspaceAgentId is not null && session.WorkspaceAccess >= AgentAccess.Write ? "Continue in its workspace"
-        : session.Access != SessionAccess.Owner ? "Continue a copy on a Runner"
-        : session.WorkspaceAgentId is null ? "Continue on a Runner"
-        : null;
-
     protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.Kind is ManagerEventKind.SessionChanged or ManagerEventKind.SessionRemoved or ManagerEventKind.AgentChanged or ManagerEventKind.AgentRemoved;
 
     protected override async Task LoadAsync()
     {
         _userId = (await Me.GetAsync()).Id;
+        var agents = Api.ListAgentsAsync();
         _sessions = await Api.ListSessionsAsync();
+        _agents = await agents;
     }
 
     private async Task ImportAsync(IBrowserFile? file)
@@ -201,36 +124,5 @@
         {
             _importing = false;
         }
-    }
-
-    private async Task ContinueAsync(SessionDto session)
-    {
-        if (session.WorkspaceAgentId is { } workspace && session.WorkspaceAccess >= AgentAccess.Write) await OpenWorkspaceAsync(workspace);
-        else await Dialogs.ShowAsync<NewAgentDialog>("Continue session", new DialogParameters<NewAgentDialog> { { d => d.ContinueSession, session } });
-    }
-
-    private async Task ShareAsync(SessionDto session)
-    {
-        await ShareDialog.ShowAsync(Dialogs, session, await Me.GetAsync());
-        await ReloadAsync();
-    }
-    private async Task OpenWorkspaceAsync(Guid workspace)
-    {
-        if (await Api.GetAgentAsync(workspace) is not { } agent) return;
-        var dialog = await Dialogs.ShowAsync<SessionPickerDialog>("Sessions", new DialogParameters<SessionPickerDialog> { { d => d.Agent, agent } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
-        if (await dialog.Result is { Canceled: false }) Navigation.NavigateTo($"agents/{workspace}");
-        await ReloadAsync();
-    }
-    private async Task RenameAsync(SessionDto session)
-    {
-        var dialog = await Dialogs.ShowAsync<RenameSessionDialog>("Rename session", new DialogParameters<RenameSessionDialog> { { d => d.Session, session } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
-        await dialog.Result;
-        await ReloadAsync();
-    }
-    private async Task DeleteAsync(SessionDto session)
-    {
-        if (await Dialogs.ShowMessageBoxAsync("Delete session?", $"Delete '{session.Title}' and its saved backups from the Manager? Runner files stay untouched.", yesText: "Delete", cancelText: "Cancel") != true) return;
-        try { await Api.DeleteSessionAsync(session.Id); await ReloadAsync(); }
-        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
     }
 }

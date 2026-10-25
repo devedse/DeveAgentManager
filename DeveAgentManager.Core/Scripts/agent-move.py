@@ -104,8 +104,32 @@ def write_json(path, data):
     os.replace(temporary, path)
 
 
+def project_members(c):
+    return c.get('Workspaces') or [dict(Agent=c['Agent'], Owner=c['Owner'], Workspace=c['Workspace'], TmuxSession=c.get('TmuxSession'))]
+
+
+def workspace_paths(c):
+    return {Path(member['Workspace']) for member in project_members(c)}
+
+
+def workspace_owned(path, agent):
+    """A workspace clone carries its agent's marker in its own .git folder (see workspace.py)."""
+    marker = path / '.git' / 'dam-workspace'
+    try:
+        return not marker.is_symlink() and json.loads(marker.read_text()).get('Token') == agent
+    except (OSError, ValueError):
+        return False
+
+
 def roots_for(c, home, workspace, progress):
-    roots = [(workspace, True)]
+    roots = [(path, True) for path in workspace_paths(c)]
+    for member in project_members(c):
+        runtime = home / '.deveagentmanager' / 'agent-runtime' / member['Owner'] / member['Agent']
+        if runtime.exists():
+            roots.append((runtime, True))
+        tasks = home / '.deveagentmanager' / 'tasks' / (member['Agent'] + '.json')
+        if tasks.exists():
+            roots.append((tasks, True))
     runtime = home / '.deveagentmanager' / 'agent-runtime' / c['Owner'] / c['Agent']
     if runtime.exists():
         roots.append((runtime, True))
@@ -123,7 +147,7 @@ def roots_for(c, home, workspace, progress):
         if folder.exists():
             for metadata in folder.glob('*/metadata.json'):
                 data = json.loads(metadata.read_text())
-                if data.get('agentId', '').replace('-', '') == c['Agent']:
+                if data.get('agentId', '').replace('-', '') in {member['Agent'] for member in project_members(c)}:
                     roots.append((metadata.parent, False))
     # Preserve pasted uploads and fetched artifacts referred to by native records.
     # Scan bounded chunks: a single JSON record can contain a very large image.
@@ -157,7 +181,7 @@ def roots_for(c, home, workspace, progress):
     for path, remove in sorted(set(roots), key=lambda x: len(str(x[0]))):
         if any(path == previous[0] or path.is_relative_to(previous[0]) for previous in result):
             continue
-        if not path.is_absolute() or not (path == workspace or path.is_relative_to(home)):
+        if not path.is_absolute() or not (path in workspace_paths(c) or path.is_relative_to(home)):
             raise ValueError('A session path is outside this agent workspace and runner home.')
         result.append((path, remove))
     return result
@@ -177,6 +201,14 @@ def safe_parents(path):
 
 
 def background_processes(c, before_stop=False):
+    results = {}
+    for member in project_members(c):
+        for process in member_background_processes(dict(c, **member), before_stop):
+            results[process['identity']['pid']] = process
+    return sorted(results.values(), key=lambda item: item['identity']['pid'])
+
+
+def member_background_processes(c, before_stop=False):
     # Before stopping, exclude the live pane's tree. After stopping, every remaining
     # marked process can still use the workspace, including detached dev servers.
     pane_pid = None
@@ -258,7 +290,7 @@ def stop_background(c):
             process = Path('/proc') / str(identity['pid'])
             try:
                 fields = (process / 'stat').read_text().rsplit(') ', 1)[1].split()
-                owned = ('DAM_AGENT_ID=' + c['Agent']).encode() in (process / 'environ').read_bytes().split(b'\0')
+                owned = any(('DAM_AGENT_ID=' + member['Agent']).encode() in (process / 'environ').read_bytes().split(b'\0') for member in project_members(c))
                 if int(fields[19]) != identity['startTicks'] or not owned or process.stat().st_uid != os.geteuid():
                     raise ValueError('A process identity or owner changed. Refresh the list before moving.')
             except FileNotFoundError:
@@ -321,8 +353,41 @@ def main(phase, c):
             if workspace.resolve().is_relative_to(other) or other.is_relative_to(workspace.resolve()):
                 raise ValueError('Another agent shares the resolved workspace or a parent directory.')
         if workspace.exists() and (workspace / '.git').is_file():
-            raise ValueError('This workspace is a linked Git worktree. Move an independent checkout instead.')
+            raise ValueError('This folder is a linked Git worktree. Move its repository instead.')
+        for member in project_members(c):
+            path = Path(member['Workspace'])
+            safe_parents(path)
+            if not path.is_absolute() or path.is_symlink() or (path != workspace and path.parent != Path(str(workspace) + '.workspaces')):
+                raise ValueError('Invalid project workspace path.')
+            for other in others or []:
+                other = Path(other).resolve()
+                if path.resolve().is_relative_to(other) or other.is_relative_to(path.resolve()):
+                    raise ValueError('Another project shares a workspace path.')
+            if c.get('Source'):
+                if not path.is_dir():
+                    raise ValueError('A project workspace is missing.')
+                if path != workspace and not workspace_owned(path, member['Agent']):
+                    raise ValueError('A workspace folder is not the one the Manager created.')
+            elif path.exists():
+                raise ValueError('A destination workspace already exists.')
+        if c.get('Source'):
+            # Linked worktrees made outside the Manager would break when their repository moves.
+            for member in project_members(c):
+                path = Path(member['Workspace'])
+                if (path / '.git').is_dir():
+                    listed = subprocess.run(['git', '-C', str(path), 'worktree', 'list', '--porcelain', '-z'], capture_output=True, check=True).stdout.split(b'\0')
+                    if len([item for item in listed if item.startswith(b'worktree ')]) > 1:
+                        raise ValueError('A project folder has linked Git worktrees made outside the Manager. Remove them before moving.')
         print(json.dumps(dict(home=str(home), workspace=str(workspace.resolve()))))
+        return
+    if phase == 'verify-workspaces':
+        for member in project_members(c):
+            path = Path(member['Workspace'])
+            if path != workspace and not workspace_owned(path, member['Agent']):
+                raise ValueError('A restored workspace lost its ownership marker.')
+            if (path / '.git').is_dir():
+                subprocess.run(['git', '-C', str(path), 'rev-parse', '--verify', 'HEAD'], stdout=subprocess.DEVNULL, check=True)
+        print('workspaces verified')
         return
     if phase in ('quiesce', 'check-background'):
         check_background(c, before_stop=phase == 'check-background')
@@ -403,7 +468,7 @@ def main(phase, c):
             for index, root in enumerate(manifest):
                 destination = Path(root['path'])
                 safe_parents(destination)
-                if not destination.is_absolute() or not (destination == workspace or destination.is_relative_to(home)):
+                if not destination.is_absolute() or not (destination in workspace_paths(c) or destination.is_relative_to(home)):
                     raise ValueError('Invalid destination in move archive.')
                 if destination.exists() or destination.is_symlink():
                     if root['remove']:

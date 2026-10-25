@@ -136,7 +136,10 @@ public sealed class SessionService(
         .Include(s => s.Agent).ThenInclude(a => a!.Owner)
         .Include(s => s.Agent).ThenInclude(a => a!.Account).ThenInclude(a => a!.CreatedBy)
         .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Shares)
-        .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Runner).ThenInclude(r => r!.Members);
+        .Include(s => s.WorkspaceAgent).ThenInclude(a => a!.Runner).ThenInclude(r => r!.Members)
+        // After its workspace is removed, a conversation's access follows its project's sharing.
+        .Include(s => s.Project).ThenInclude(p => p!.Agents).ThenInclude(a => a.Shares)
+        .Include(s => s.Project).ThenInclude(p => p!.Agents).ThenInclude(a => a.Runner).ThenInclude(r => r!.Members);
 
     public async Task<StoredSession?> GetForAgentAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
@@ -212,38 +215,48 @@ public sealed class SessionService(
     public async Task AttachToAgentAsync(Runner runner, Agent agent, Guid? continueSessionId, CancellationToken cancellationToken)
     {
         using var lease = await LockAsync(cancellationToken);
+        await AttachToAgentLockedAsync(runner, agent, continueSessionId, cancellationToken);
+    }
+
+    internal async Task AttachToAgentLockedAsync(Runner runner, Agent agent, Guid? continueSessionId, CancellationToken cancellationToken)
+    {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         StoredSession stored;
         if (continueSessionId is { } existingId)
         {
             await EnsureVerifiedLockedAsync(existingId, cancellationToken);
             stored = await db.Sessions.FirstOrDefaultAsync(s => s.Id == existingId, cancellationToken) ?? throw new ArgumentException("Session not found.");
-            if (stored.OwnerId != agent.OwnerId)
+            var ranIn = stored.WorkingDirectory;
+            // A saved conversation of the same project resumes in another of its workspaces as it is.
+            var sameProject = agent.ProjectId is { } projectId && stored.AgentId is null && stored.OwnerId == agent.OwnerId
+                && (stored.ProjectId == projectId || await db.Agents.AnyAsync(a => a.Id == stored.WorkspaceAgentId && a.ProjectId == projectId, cancellationToken));
+            if (!sameProject && stored.OwnerId != agent.OwnerId)
             {
                 stored = await CopyAsync(db, stored, agent.OwnerId, cancellationToken);
             }
-            else if (stored.AgentId is not null || stored.WorkspaceAgentId is not null)
+            else if (!sameProject && (stored.AgentId is not null || stored.WorkspaceAgentId is not null))
             {
                 throw new InvalidOperationException("This session already belongs to a running agent. Open that agent instead.");
             }
-            else if (await _artifacts.HasCollectionAsync(stored.Id, cancellationToken))
+            else if (!sameProject && await _artifacts.HasCollectionAsync(stored.Id, cancellationToken))
             {
                 // A deleted agent's archives still reference this source folder. Continue an independent copy so
                 // future publications by the new agent cannot appear in the old agent's remaining archives.
                 stored = await CopyAsync(db, stored, agent.OwnerId, cancellationToken);
             }
 
-            await WriteForHarnessAsync(runner, stored, agent.HarnessId, agent.HarnessSessionId, agent.WorkingDirectory, cancellationToken);
+            await WriteForHarnessAsync(runner, stored, agent.HarnessId, agent.HarnessSessionId, agent.WorkingDirectory, ranIn, cancellationToken);
         }
         else
         {
             stored = await db.Sessions.FirstOrDefaultAsync(s => s.AgentId == agent.Id, cancellationToken)
-                ?? new StoredSession { Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Title = agent.Name, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+                ?? new StoredSession { Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Title = NewTitle, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
             if (db.Entry(stored).State == EntityState.Detached) db.Sessions.Add(stored);
         }
 
         stored.AgentId = agent.Id;
         stored.WorkspaceAgentId = agent.Id;
+        stored.ProjectId = agent.ProjectId ?? stored.ProjectId;
         stored.HarnessTrail ??= agent.HarnessId;
         stored.HarnessId = agent.HarnessId;
         stored.HarnessSessionId = agent.HarnessSessionId;
@@ -271,23 +284,24 @@ public sealed class SessionService(
         await BackupAsync(stored, cancellationToken);
 
         stored.TitlePinned = true; // Keep the conversation name across format conversion.
-        await WriteForHarnessAsync(runner, stored, harnessId, harnessSessionId, agent.WorkingDirectory, cancellationToken);
+        await WriteForHarnessAsync(runner, stored, harnessId, harnessSessionId, agent.WorkingDirectory, null, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         events.SessionChanged(stored.Id, agent.Id);
     }
 
     /// <summary>
     /// Writes a stored conversation to a Runner in a harness's format. Its own harness gets it unchanged; another harness
-    /// gets validated structured tool history. Updates the stored session after verified installation.
+    /// gets validated structured tool history. Updates the stored session after verified installation. When it last ran
+    /// in another folder (<paramref name="ranIn"/>), the agent is told where it works now.
     /// </summary>
-    private async Task WriteForHarnessAsync(Runner runner, StoredSession stored, string harnessId, string harnessSessionId, string workingDirectory, CancellationToken cancellationToken)
+    private async Task WriteForHarnessAsync(Runner runner, StoredSession stored, string harnessId, string harnessSessionId, string workingDirectory, string? ranIn, CancellationToken cancellationToken)
     {
         var format = _formats.GetValueOrDefault(harnessId) ?? throw new InvalidOperationException($"Conversations can't be continued in '{harnessId}' yet.");
         if (stored.MessageCount > 0 && !HasSaved(stored.Id))
             throw new IOException("The saved history is missing. Restore it before switching sessions.");
         logger.LogInformation("Loading conversation {Session} ({Size:0.0} MB saved) to continue it in {Harness} on {Runner}", stored.Id, Megabytes(stored.SavedSize), harnessId, runner.Name);
         await _wholeLoads.WaitAsync(cancellationToken);
-        try { await WriteForHarnessLockedAsync(runner, stored, format, harnessId, harnessSessionId, workingDirectory, cancellationToken); }
+        try { await WriteForHarnessLockedAsync(runner, stored, format, harnessId, harnessSessionId, workingDirectory, ranIn, cancellationToken); }
         finally { _wholeLoads.Release(); }
 
         var trail = (stored.HarnessTrail ?? stored.HarnessId).Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
@@ -305,7 +319,7 @@ public sealed class SessionService(
     }
 
     // One whole conversation at a time (_wholeLoads), converted and written for the harness that continues it.
-    private async Task WriteForHarnessLockedAsync(Runner runner, StoredSession stored, ISessionFormat format, string harnessId, string harnessSessionId, string workingDirectory, CancellationToken cancellationToken)
+    private async Task WriteForHarnessLockedAsync(Runner runner, StoredSession stored, ISessionFormat format, string harnessId, string harnessSessionId, string workingDirectory, string? ranIn, CancellationToken cancellationToken)
     {
         var session = await LoadAsync(stored.Id, cancellationToken);
         session.Title = stored.Title;
@@ -314,6 +328,8 @@ public sealed class SessionService(
         {
             session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(harnessId), harnessId);
         }
+
+        NoteFolderChange(session, ranIn, workingDirectory);
 
         // Nothing to move (e.g. pi writes its file only with the first message): the new harness starts a conversation
         // of its own under the id, instead of being handed an empty one (claude --resume refuses those).
@@ -352,6 +368,24 @@ public sealed class SessionService(
 
     private bool HasSaved(Guid id) => _native.Exists(id) || File.Exists(PathFor(id));
 
+    /// <summary>
+    /// When the conversation continues in another folder than <paramref name="ranIn"/>, a note for the agent at the end of
+    /// its active branch: its history names files in the old folder, which may still exist with another agent working in it.
+    /// </summary>
+    internal static void NoteFolderChange(DeveSession session, string? ranIn, string workingDirectory)
+    {
+        if (session.Entries.Count == 0 || ranIn is not { Length: > 0 } || ranIn.TrimEnd('/') == workingDirectory.TrimEnd('/')) return;
+        var parent = session.LeafId ?? session.Entries.LastOrDefault()?.Id;
+        var note = new DeveEntry
+        {
+            Id = Guid.NewGuid().ToString("N"), ParentId = parent, Kind = DeveEntryKind.Message, Role = DeveRole.User,
+            Timestamp = DateTime.UtcNow, Content = [DeveBlock.OfText(ManagerNotes.FolderNote(ranIn, workingDirectory))],
+            MigrationKind = ManagerNotes.FolderKind,
+        };
+        session.Entries.Add(note);
+        session.LeafId = note.Id;
+    }
+
     private async Task BackupAsync(StoredSession stored, CancellationToken ct)
     {
         if (!HasSaved(stored.Id)) return;
@@ -388,7 +422,7 @@ public sealed class SessionService(
             {
                 Id = Guid.NewGuid(),
                 OwnerId = agent.OwnerId,
-                Title = agent.Name,
+                Title = NewTitle,
                 AgentId = agent.Id,
                 WorkspaceAgentId = agent.Id,
                 HarnessId = agent.HarnessId,
@@ -718,12 +752,14 @@ public sealed class SessionService(
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var selected = id.HasValue ? await db.Sessions.SingleAsync(s => s.Id == id, ct) : new StoredSession
         {
-            Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Title = string.IsNullOrWhiteSpace(title) ? "New session" : ValidateTitle(title),
+            Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Title = string.IsNullOrWhiteSpace(title) ? NewTitle : ValidateTitle(title),
             TitlePinned = !string.IsNullOrWhiteSpace(title), CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
-            HarnessId = agent.HarnessId, WorkspaceAgentId = agent.Id
+            HarnessId = agent.HarnessId, WorkspaceAgentId = agent.Id, ProjectId = agent.ProjectId
         };
-        if (selected.WorkspaceAgentId != agent.Id) throw new InvalidOperationException("Choose a session from this workspace.");
-        if (selected.AgentId != null && selected.AgentId != agent.Id) throw new InvalidOperationException("Session is already active elsewhere.");
+        if (selected.WorkspaceAgentId != agent.Id && (agent.ProjectId is null || selected.ProjectId != agent.ProjectId
+            && !await db.Agents.AnyAsync(a => a.Id == selected.WorkspaceAgentId && a.ProjectId == agent.ProjectId, ct)))
+            throw new InvalidOperationException("Choose a conversation from this project.");
+        if (selected.AgentId != null && selected.AgentId != agent.Id) throw new InvalidOperationException("This conversation is active in another workspace.");
         var changesHarness = selected.HarnessId != agent.HarnessId;
         if (changesHarness && agent.LoginStopPending) throw new InvalidOperationException("Wait for pending login enforcement before changing harnesses.");
         var accountId = changesHarness ? null : agent.AccountId;
@@ -731,9 +767,12 @@ public sealed class SessionService(
         {
             await EnsureVerifiedLockedAsync(selected.Id, ct);
             await db.Entry(selected).ReloadAsync(ct);
-            await WriteForHarnessAsync(runner, selected, selected.HarnessId, nativeId, agent.WorkingDirectory, ct);
+            await WriteForHarnessAsync(runner, selected, selected.HarnessId, nativeId, agent.WorkingDirectory, selected.WorkingDirectory, ct);
         }
         else { selected.HarnessSessionId = nativeId; db.Sessions.Add(selected); }
+        // It now runs here; it stays the project's when this workspace is removed.
+        selected.WorkspaceAgentId = agent.Id;
+        selected.ProjectId = agent.ProjectId ?? selected.ProjectId;
         selected.WorkingDirectory = agent.WorkingDirectory;
         selected.RepositoryUrl = agent.RepositoryUrl;
         selected.RepositoryBranch = agent.RepositoryBranch;
@@ -853,13 +892,44 @@ public sealed class SessionService(
         await db.SaveChangesAsync(ct);
     }
 
+    /// <summary>
+    /// Conversations titled with a note the Manager put in front of their first prompt, from before titles skipped those
+    /// notes. A synced preview of that prompt is cut off inside the note, so the title comes from the whole history, once.
+    /// </summary>
+    public async Task RepairNoteTitlesAsync(CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var candidates = await db.Sessions.Where(s => s.Title.StartsWith("(This conversation was moved from ") || s.Title.StartsWith("[DAM ")).ToListAsync(ct);
+        foreach (var saved in candidates.Where(s => ManagerNotes.WithoutNotes(s.Title) is null && HasSaved(s.Id)))
+        {
+            try
+            {
+                var prompt = (await LoadAsync(saved.Id, ct)).FirstPrompt();
+                if (prompt is not null) saved.Title = prompt;
+                else if (!saved.TitlePinned) saved.Title = NewTitle;
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or FormatException)
+            { logger.LogWarning(ex, "Could not read the first prompt of session {Session} for its title", saved.Id); }
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>What a conversation is called until its harness names it or its first prompt says what it is about.</summary>
+    public const string NewTitle = "New conversation";
+
     internal static void Apply(StoredSession stored, DeveSession session, string? agentName)
     {
-        // Agents start pi with --name <agent>; the first prompt says more than that, unless the user renamed the session.
-        var title = session.Title is { Length: > 0 } name && name != agentName ? name : session.FirstPrompt() ?? session.Title;
+        // Agents start their harness with --name <agent>: that names the workspace, not the conversation. The first
+        // prompt says more, unless the user renamed the conversation.
+        var title = session.Title is { Length: > 0 } name && name != agentName ? name
+            : session.FirstPrompt() ?? (agentName is null ? session.Title : null);
         if (!stored.TitlePinned && !string.IsNullOrWhiteSpace(title))
         {
             stored.Title = title;
+        }
+        else if (!stored.TitlePinned && agentName is not null && stored.Title == agentName)
+        {
+            stored.Title = NewTitle;
         }
 
         stored.MessageCount = session.Entries.Count(e => e.Kind == DeveEntryKind.Message && e.Role is DeveRole.User or DeveRole.Assistant);

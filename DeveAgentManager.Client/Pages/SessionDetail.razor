@@ -34,7 +34,7 @@
                 {
                     <MudButton Href="@($"agents/{running.Id}")" Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Terminal">Open agent</MudButton>
                 }
-                else if (SessionList.ContinueText(_stored) is { } continueText)
+                else if (ConversationRow.ContinueText(_stored) is { } continueText)
                 {
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" OnClick="ContinueAsync">@continueText</MudButton>
                 }
@@ -196,12 +196,7 @@
 
     private async Task ContinueAsync()
     {
-        if (_stored?.WorkspaceAgentId is { } workspace && _stored.WorkspaceAccess >= AgentAccess.Write && await Api.GetAgentAsync(workspace) is { } agent)
-        {
-            var dialog = await Dialogs.ShowAsync<SessionPickerDialog>("Sessions", new DialogParameters<SessionPickerDialog> { { d => d.Agent, agent } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
-            if (await dialog.Result is { Canceled: false }) Navigation.NavigateTo($"agents/{workspace}");
-        }
-        else await Dialogs.ShowAsync<NewAgentDialog>("Continue session", new DialogParameters<NewAgentDialog> { { d => d.ContinueSession, _stored } });
+        if (_stored is not null) await ConversationResume.ContinueAsync(Api, Dialogs, _stored);
     }
     private async Task ShareAsync()
     {

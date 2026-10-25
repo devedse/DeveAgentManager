@@ -1,0 +1,149 @@
+@page "/projects/{ProjectId:guid}"
+@inherits LiveComponent
+@inject IDialogService Dialogs
+@inject SignedInUser Me
+
+<PageTitle>@(_main is null ? "Project" : WorkspaceGroups.ProjectName(_main)) · DeveAgentManager</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page">
+    <PageHeader Title="@(_main is null ? "Project" : WorkspaceGroups.ProjectName(_main))" Overline="Project" BackHref="agents"
+                Help="A project is one repository on one Runner. Main is its original folder; every other workspace is a clone next to it with its own agent. Conversations belong to the project, so they stay when a workspace is removed.">
+        <Actions>
+            @if (_main is { Access: AgentAccess.Owner, CanUseRunner: true } owner)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" Disabled="owner.MovePending" OnClick="() => NewWorkspaceDialog.ShowAsync(Dialogs, owner)">New workspace</MudButton>
+                @if (owner.MovePending)
+                {
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Restore" Disabled="@(owner.State == AgentState.Moving || _busy)" OnClick="() => RecoverMoveAsync(owner)">Recover move / finish cleanup</MudButton>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.DriveFileMove" Disabled="@(owner.RunnerState != RunnerState.Ready)" OnClick="() => MoveAgentDialog.ShowAsync(Dialogs, owner)">Move project</MudButton>
+                }
+            }
+            @if (_main is { Access: >= AgentAccess.Read } shared)
+            {
+                @* Owners share it; others see who else has it and can leave. *@
+                <MudButton Variant="Variant.Outlined" StartIcon="@(shared.Access == AgentAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" OnClick="() => ShareAsync(shared)">@(shared.Access == AgentAccess.Owner ? "Share project" : "Sharing")</MudButton>
+            }
+        </Actions>
+    </PageHeader>
+
+    <section class="panel" aria-label="Workspaces">
+        <div class="help-heading"><MudText Typo="Typo.h6">Workspaces</MudText>
+            <HelpTip Label="Workspaces" Text="Each workspace runs one conversation at a time. Start and stop them independently. Removing a workspace checks its uncommitted and unpushed work first." /></div>
+        <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading workspaces">
+            <Placeholder><SkeletonList Rows="3" /></Placeholder>
+            <ChildContent>
+                @if (_agents.Count == 0)
+                {
+                    <EmptyState Icon="@Icons.Material.Rounded.SearchOff" Title="Project not found" Text="It may have been deleted, or it isn't shared with you.">
+                        <MudButton Href="agents" Variant="Variant.Outlined">Back to agents</MudButton>
+                    </EmptyState>
+                }
+                else { <AgentTable Agents="_agents" ShowRunner="true" InProject="true" /> }
+            </ChildContent>
+        </LoadingSection>
+    </section>
+
+    @if (Loaded && _main is not null)
+    {
+        <section class="panel" aria-label="Kept folders">
+            <div class="help-heading"><MudText Typo="Typo.h6">Kept folders</MudText>
+                <HelpTip Label="Kept folders" Text="Folders left on the Runner when their workspace was removed with Keep files. Use one for a new workspace to continue in it, or delete it. Deleting cannot be undone." /></div>
+            <LoadingSection Loaded="_keptLoaded" Error="@_keptError" Retry="LoadKeptAsync" Label="Loading kept folders">
+                <Placeholder><SkeletonList Rows="1" Avatar="false" /></Placeholder>
+                <ChildContent>
+                    @if (_kept.Count == 0) { <MudText Typo="Typo.body2" Class="mud-text-secondary">None.</MudText> }
+                    @foreach (var folder in _kept)
+                    {
+                        <div class="agent-row" @key="folder.Path">
+                            <div class="list-main">
+                                <div class="list-title">@folder.Name</div>
+                                <div class="list-subtitle"><span class="mono">@folder.Path</span>@(folder.Branch is { } branch ? $" · {branch}" : "") · kept @folder.RemovedAt.Humanize()</div>
+                            </div>
+                            @if (_main.Access == AgentAccess.Owner)
+                            {
+                                <div class="agent-row-actions">
+                                    <MudButton Size="Size.Small" Disabled="_busy" OnClick="() => NewWorkspaceDialog.ShowAsync(Dialogs, _main, kept: folder)">Use for a new workspace</MudButton>
+                                    <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Size="Size.Small" aria-label="@($"Delete kept folder {folder.Name}")" Disabled="_busy" OnClick="() => DeleteKeptAsync(folder)" />
+                                </div>
+                            }
+                        </div>
+                    }
+                </ChildContent>
+            </LoadingSection>
+        </section>
+
+        <section class="panel" aria-label="Conversations">
+            <div class="help-heading"><MudText Typo="Typo.h6">Conversations</MudText>
+                <HelpTip Label="Conversations" Text="All of the project's conversations, grouped by the workspace they last ran in. A saved conversation can resume in a workspace, replacing the one running there, or in a new workspace. The Sessions page lists conversations of every project." /></div>
+            @if (_sessions.Count == 0) { <MudText Typo="Typo.body2" Class="mud-text-secondary">No conversations yet.</MudText> }
+            @foreach (var group in _sessions.GroupBy(s => WorkspaceGroups.LastRanIn(s, _agents)).OrderByDescending(g => g.Max(s => s.UpdatedAt)))
+            {
+                <div class="session-group-heading"><strong>@group.Key</strong><span> · @group.Count() @(group.Count() == 1 ? "conversation" : "conversations")</span></div>
+                <div class="agent-table">
+                    @foreach (var session in group.OrderByDescending(s => s.AgentId is not null).ThenByDescending(s => s.UpdatedAt))
+                    { <ConversationRow @key="session.Id" Session="session" UserId="_userId" ProjectAgents="_agents" Sessions="_allSessions" Changed="ReloadAsync" /> }
+                </div>
+            }
+        </section>
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(10);
+    private List<AgentDto> _agents = [];
+    private List<SessionDto> _sessions = [];
+    private List<SessionDto> _allSessions = [];
+    private List<KeptFolderDto> _kept = [];
+    private AgentDto? _main;
+    private Guid _userId;
+    private bool _keptLoaded, _busy;
+    private string? _keptError;
+
+    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.Kind is ManagerEventKind.AgentChanged or ManagerEventKind.AgentRemoved
+        or ManagerEventKind.SessionChanged or ManagerEventKind.SessionRemoved;
+
+    protected override async Task LoadAsync()
+    {
+        _userId = (await Me.GetAsync()).Id;
+        var agents = Api.ListAgentsAsync();
+        _allSessions = await Api.ListSessionsAsync();
+        _agents = (await agents).Where(a => WorkspaceGroups.ProjectKey(a) == ProjectId && a.Access >= AgentAccess.Read).ByLastReply().ToList();
+        _main = _agents.FirstOrDefault(a => !a.IsClone) ?? _agents.FirstOrDefault();
+        _sessions = WorkspaceGroups.InProject(_allSessions, ProjectId, _agents).ToList();
+        if (_main is not null) await LoadKeptAsync();
+    }
+
+    private async Task LoadKeptAsync()
+    {
+        _keptError = null;
+        try { _kept = await Api.ListKeptFoldersAsync(_main!.Id); _keptLoaded = true; }
+        catch (ApiException ex) { _keptError = ex.Message; }
+        catch (HttpRequestException) { _keptError = LoadingSection.Unreachable; }
+    }
+
+    private async Task ShareAsync(AgentDto main) => await ShareDialog.ShowAsync(Dialogs, main, await Me.GetAsync());
+
+    private async Task RecoverMoveAsync(AgentDto main)
+    {
+        _busy = true;
+        try { await Api.RecoverAgentMoveAsync(main.Id); Snackbar.Add("Move recovery queued", Severity.Success); }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _busy = false; }
+    }
+
+    private async Task DeleteKeptAsync(KeptFolderDto folder)
+    {
+        if (await Dialogs.ShowMessageBoxAsync("Delete kept folder?", (MarkupString)$"Delete <code>{System.Net.WebUtility.HtmlEncode(folder.Path)}</code> from the Runner, including any uncommitted files and unpushed commits in it? This cannot be undone.",
+                yesText: "Delete", cancelText: "Cancel") != true) return;
+        _busy = true;
+        try { await Api.DeleteKeptFolderAsync(_main!.Id, folder.Path); Snackbar.Add($"Deleted {folder.Name}.", Severity.Success); await LoadKeptAsync(); }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _busy = false; }
+    }
+}

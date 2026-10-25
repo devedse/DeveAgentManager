@@ -31,7 +31,7 @@
             <div class="activity-card-header">
                 <AgentAvatar Agent="agent" />
                 <div class="activity-card-name">
-                    <MudText Typo="Typo.h6">@agent.Name</MudText>
+                    <MudText Typo="Typo.h6">@WorkspaceGroups.DisplayName(agent)</MudText>
                     <MudText Typo="Typo.body2" Class="mud-text-secondary">@agent.RunnerName · @agent.HarnessId</MudText>
                 </div>
                 <AgentStatus Agent="agent" />
@@ -80,6 +80,6 @@
     };
     private IEnumerable<AgentDto> Filtered => _agents
         .Where(a => Matches(a, _filter))
-        .Where(a => string.IsNullOrWhiteSpace(_search) || a.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) || a.RunnerName.Contains(_search, StringComparison.OrdinalIgnoreCase))
+        .Where(a => string.IsNullOrWhiteSpace(_search) || WorkspaceGroups.DisplayName(a).Contains(_search, StringComparison.OrdinalIgnoreCase) || a.RunnerName.Contains(_search, StringComparison.OrdinalIgnoreCase))
         .ByLastReply();
 }

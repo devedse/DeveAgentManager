@@ -66,6 +66,12 @@ public sealed record MySettingsDto(UserProfile Profile, bool HasGitHubToken);
 
 public sealed record ScreenAwakeSettings(bool Enabled);
 
+/// <summary>
+/// My settings → Models, for one harness: the Manager's default (Manager settings; null lets the harness choose) and the
+/// user's own choice (null follows the Manager's).
+/// </summary>
+public sealed record ModelDefaultsDto(string HarnessId, string? ManagerProvider, string? ManagerModel, string? ManagerEffort, string? Model, string? Effort);
+
 /// <summary>Someone with access to a Runner besides its owner.</summary>
 public sealed record RunnerMemberDto(Guid UserId, string Username, string DisplayName, RunnerAccess Access, DateTime GrantedAt);
 
@@ -160,6 +166,7 @@ public sealed record SaveDesktopSnapshotRequest(Guid SessionId, string? Caption 
 /// <param name="Access">What the signed-in user may do with it.</param>
 /// <param name="AccountUsername">Creator of the next selected login, or the agent owner's username for their default selection.</param>
 /// <param name="RunningAccountUsername">Creator of the login actually used by the current harness; null when unknown.</param>
+/// <param name="Workspaces">How many workspaces besides Main the agent's project has.</param>
 public sealed record AgentDto(
     Guid Id,
     Guid RunnerId,
@@ -198,7 +205,12 @@ public sealed record AgentDto(
     string? RunningAccountUsername = null,
     bool CanUseRunner = false,
     AgentGitIdentityDto? GitIdentity = null,
-    AgentGitIdentityDto? RunningGitIdentity = null);
+    AgentGitIdentityDto? RunningGitIdentity = null,
+    Guid? ProjectId = null,
+    string? ProjectName = null,
+    bool IsClone = false,
+    bool WorkspaceCreationPending = false,
+    int Workspaces = 0);
 
 /// <summary>
 /// An agent's task list (dam-tools tasks), shown next to its terminal. <see cref="Revision"/> grows with every change,
@@ -270,7 +282,8 @@ public sealed record SessionDto(
     AgentAccess WorkspaceAccess = AgentAccess.None,
     long SourceSize = 0,
     long SavedSize = 0,
-    long TotalSize = 0);
+    long TotalSize = 0,
+    Guid? ProjectId = null);
 
 public sealed record AccountDto(
     Guid Id,
@@ -420,7 +433,8 @@ public static class ApiHeaders
 
 public sealed record ConfirmPasswordRequest(string Password, string? Code = null);
 
-public sealed record SelectSessionRequest(Guid? SessionId, string? Title = null);
+/// <param name="Update">Pull the workspace's branch first; refused when it has uncommitted or unpushed work.</param>
+public sealed record SelectSessionRequest(Guid? SessionId, string? Title = null, bool Update = false);
 public sealed record RenameSessionRequest(string Title);
 
 public sealed record ManagerLogEntry(long Id, DateTime Timestamp, string Level, string Category, string Message);

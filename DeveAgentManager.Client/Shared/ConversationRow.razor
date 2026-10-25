@@ -1,0 +1,125 @@
+@inject ManagerApi Api
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject SignedInUser Me
+
+@* One saved or active conversation, with its actions: the Sessions page and a project's page show the same rows. *@
+@{ var live = Session.Agent is { State: AgentState.Running or AgentState.Starting }; }
+<div class="agent-row">
+    <a class="agent-row-main" href="sessions/@Session.Id">
+        @if (Session.Agent is { } sessionAgent)
+        {
+            <AgentAvatar Agent="sessionAgent" />
+        }
+        else
+        {
+            <div class="list-avatar list-avatar-logo"><HarnessLogo HarnessId="@Session.HarnessId" Size="Size.Medium" /></div>
+        }
+        <div class="list-main">
+            <div class="list-title">@Session.Title@(Session.AgentId is not null ? " · Active" : "")</div>
+            <div class="list-subtitle">
+                @* Before the size, so a long title can't push it out of sight. *@
+                @if (Session.OwnerId != UserId)
+                {
+                    <span class="account-badge account-badge-lead" title="@($"Conversation owned by {Session.OwnerName}")">@Session.OwnerName</span>
+                }
+                @SessionSize.Text(Session)
+            </div>
+            <div class="list-subtitle">
+                @if ((ProjectAgents.FirstOrDefault(a => a.Id == Session.AgentId) ?? Session.Agent) is { } agent)
+                {
+                    <span class="session-active-badge">● Active in @WorkspaceGroups.WorkspaceName(agent)</span><span> on @agent.RunnerName</span>
+                }
+                else
+                {
+                    <span>@(Session.ProjectId is not null ? $"Saved · last in {WorkspaceGroups.LastRanIn(Session, ProjectAgents)} on {Session.RunnerName}" : Session.RunnerName is null ? "Imported" : $"No workspace · last on {Session.RunnerName}")</span>
+                }
+                @if (Session.RepositoryUrl is not null)
+                {
+                    <span class="mono"> · @Session.RepositoryUrl</span>
+                }
+            </div>
+        </div>
+    </a>
+    <div class="agent-row-state">
+        @if (live)
+        {
+            <StatusPill Style="StateStyles.For(Session.Agent!)" />
+        }
+        else
+        {
+            <span class="session-count">@Session.MessageCount messages</span>
+        }
+        <span class="list-time">@Session.UpdatedAt.Humanize()</span>
+    </div>
+    <div class="agent-row-actions">
+        @if (Session.AgentId is { } active && (Session.Agent?.Access ?? ProjectAgents.FirstOrDefault(a => a.Id == active)?.Access) >= AgentAccess.Read)
+        {
+            <MudTooltip Text="Open its workspace">
+                <MudIconButton Href="@($"agents/{active}")" Icon="@Icons.Material.Rounded.Terminal" Color="Color.Primary" Size="Size.Small" aria-label="Open its workspace" />
+            </MudTooltip>
+        }
+        else if (ContinueText(Session) is { } continueText)
+        {
+            <MudTooltip Text="@continueText">
+                <MudIconButton Icon="@Icons.Material.Rounded.PlayArrow" Color="Color.Success" Size="Size.Small" aria-label="@continueText" OnClick="ContinueAsync" />
+            </MudTooltip>
+        }
+        <SessionExportMenu SessionId="Session.Id" Icon="true" />
+        <MudTooltip Text="@(Session.Access == SessionAccess.Owner ? "Share" : "Sharing")">
+            <MudIconButton Icon="@(Session.Access == SessionAccess.Owner ? Icons.Material.Rounded.Share : Icons.Material.Rounded.PeopleAlt)" Size="Size.Small" OnClick="ShareAsync" />
+        </MudTooltip>
+        @if (Session.Access == SessionAccess.Owner)
+        {
+            <MudIconButton Icon="@Icons.Material.Rounded.Edit" Size="Size.Small" aria-label="Rename session" OnClick="RenameAsync" />
+            <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Size="Size.Small" aria-label="Delete session" Disabled="@(Session.AgentId != null)" OnClick="DeleteAsync" />
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public SessionDto Session { get; set; } = default!;
+    [Parameter, EditorRequired] public Guid UserId { get; set; }
+    /// <summary>The workspaces of the conversation's project, to say where it is active or last ran.</summary>
+    [Parameter] public IReadOnlyList<AgentDto> ProjectAgents { get; set; } = [];
+    /// <summary>All visible conversations, to name the one a resume would replace.</summary>
+    [Parameter] public IReadOnlyList<SessionDto>? Sessions { get; set; }
+    /// <summary>Something changed (resumed, shared, renamed, deleted): reload.</summary>
+    [Parameter] public EventCallback Changed { get; set; }
+
+    /// <summary>
+    /// How the user can continue a conversation that isn't running where they can open it, or null when they can't: in its
+    /// project with read-write access to it, or else in a new agent of their own (a copy, for someone else's).
+    /// </summary>
+    public static string? ContinueText(SessionDto session) =>
+        session.ProjectId is not null && session.WorkspaceAccess >= AgentAccess.Write ? "Resume in its project"
+        : session.Access != SessionAccess.Owner ? "Continue a copy on a Runner"
+        : session.WorkspaceAgentId is null ? "Continue on a Runner"
+        : null;
+
+    private async Task ContinueAsync()
+    {
+        await ConversationResume.ContinueAsync(Api, Dialogs, Session, Sessions);
+        await Changed.InvokeAsync();
+    }
+
+    private async Task ShareAsync()
+    {
+        await ShareDialog.ShowAsync(Dialogs, Session, await Me.GetAsync());
+        await Changed.InvokeAsync();
+    }
+
+    private async Task RenameAsync()
+    {
+        var dialog = await Dialogs.ShowAsync<RenameSessionDialog>("Rename session", new DialogParameters<RenameSessionDialog> { { d => d.Session, Session } }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        await dialog.Result;
+        await Changed.InvokeAsync();
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (await Dialogs.ShowMessageBoxAsync("Delete session?", $"Delete '{Session.Title}' and its saved backups from the Manager? Runner files stay untouched.", yesText: "Delete", cancelText: "Cancel") != true) return;
+        try { await Api.DeleteSessionAsync(Session.Id); await Changed.InvokeAsync(); }
+        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
+    }
+}

@@ -63,6 +63,9 @@ public sealed class ManagerOptions
 
     public string SessionsDirectory => Path.Combine(DataDirectory, "sessions");
 
+    /// <summary>Files pasted into terminals while they arrive, before they go to the Runner (see TerminalService).</summary>
+    public string TerminalUploadsDirectory => Path.Combine(DataDirectory, "terminal-uploads");
+
     public static ManagerOptions FromConfiguration(IConfiguration configuration, string contentRootPath)
     {
         var dataDirectory = Value(configuration, "DATA_DIR");

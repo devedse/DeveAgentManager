@@ -1,0 +1,63 @@
+@inject ManagerApi Api
+
+<MudDialog>
+    <TitleContent><div class="help-heading"><MudText Typo="Typo.h6">New conversation here</MudText>
+        <HelpTip Label="New conversation here"><p>Saves and stops the conversation in this workspace, then starts a fresh one in the same folder. The saved conversation can be resumed later. Other workspaces keep running.</p>
+            <p>Update first pulls this workspace's branch before the new conversation starts. It is only available when nothing is uncommitted or unpushed, so no work can get mixed up.</p></HelpTip></div></TitleContent>
+    <DialogContent>
+        @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mb-2">@_error</MudAlert> }
+        <MudTextField @bind-Value="_title" Label="Conversation name (optional)" MaxLength="200" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" />
+        <LoadingSection Loaded="@(_changes is not null)" Error="@_loadError" Retry="LoadAsync" Label="Checking the workspace">
+            <ChildContent>
+                <MudSwitch T="bool" @bind-Value="_update" Label="@($"Update to the latest {(_changes?.Upstream ?? "version")} first")" Color="Color.Primary" Disabled="@(_busy || UpdateBlocked is not null)" />
+                @if (UpdateBlocked is { } reason) { <MudText Typo="Typo.caption" Class="mud-text-secondary">@reason</MudText> }
+            </ChildContent>
+        </LoadingSection>
+    </DialogContent>
+    <DialogActions><MudButton OnClick="() => Dialog.Cancel()" Disabled="_busy">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="CreateAsync" Disabled="_busy">@(_busy ? "Starting…" : "Start new conversation")</MudButton></DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
+    private string? _title, _error, _loadError;
+    private bool _busy, _update;
+    private WorkspaceChangesDto? _changes;
+
+    private string? UpdateBlocked => _changes switch
+    {
+        null => null,
+        { Exists: false } => "This folder isn't a Git checkout.",
+        { Upstream: null } => "This branch has no remote branch to update from.",
+        { Uncommitted: > 0 } c => $"Unavailable: {c.Uncommitted} {(c.Uncommitted == 1 ? "file has" : "files have")} uncommitted changes ({string.Join(", ", c.Sample)}).",
+        { Unpushed: > 0 } c => $"Unavailable: {c.Unpushed} {(c.Unpushed == 1 ? "commit isn't" : "commits aren't")} pushed yet.",
+        _ => null,
+    };
+
+    public static async Task<bool> ShowAsync(IDialogService dialogs, AgentDto agent)
+    {
+        var dialog = await dialogs.ShowAsync<NewConversationDialog>("New conversation", new DialogParameters<NewConversationDialog> { { d => d.Agent, agent } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        return await dialog.Result is { Canceled: false };
+    }
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loadError = null;
+        try { _changes = await Api.GetWorkspaceChangesAsync(Agent.Id); }
+        catch (ApiException ex) { _loadError = ex.Message; }
+        catch (HttpRequestException) { _loadError = LoadingSection.Unreachable; }
+    }
+
+    private async Task CreateAsync()
+    {
+        _busy = true; _error = null;
+        try { await Api.SelectSessionAsync(Agent.Id, null, _title, _update && UpdateBlocked is null); Dialog.Close(DialogResult.Ok(true)); }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
+        finally { _busy = false; }
+    }
+}

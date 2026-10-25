@@ -137,8 +137,28 @@ public class RunnerActivity
     public string? Error { get; set; }
 }
 
+/// <summary>A repository or folder on one Runner. Existing agents migrate to separate projects.</summary>
+public class Project
+{
+    public Guid Id { get; set; }
+    public Guid RunnerId { get; set; }
+    public Guid OwnerId { get; set; }
+    public string Name { get; set; } = "";
+    public string RootDirectory { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+    /// <summary>JSON list of folders kept when their workspace was removed; they can be deleted or reused.</summary>
+    public string? KeptFoldersJson { get; set; }
+    public List<Agent> Agents { get; set; } = [];
+}
+
 public class Agent
 {
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+    /// <summary>A workspace cloned next to Main, in &lt;main&gt;.workspaces/&lt;name&gt;. Main itself is not a clone.</summary>
+    public bool IsClone { get; set; }
+    /// <summary>Durable creation intent; Start verifies an interrupted creation without repeating it.</summary>
+    public string? WorkspaceCreationJson { get; set; }
     /// <summary>Durable move intent and rollback checkpoints; credentials are never included.</summary>
     public string? MoveJson { get; set; }
     /// <summary>The latest completed move result, retained after its rollback checkpoints are cleared.</summary>
@@ -175,6 +195,10 @@ public class Agent
 
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public (string Username, string DisplayName)? GitIdentityName { get; set; }
+
+    /// <summary>How many workspaces besides Main its project has, for the Portal (AgentAccountNames fills it in).</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public int ProjectWorkspaces { get; set; }
 
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public (string Username, string DisplayName)? RunningGitIdentityName { get; set; }
@@ -265,7 +289,10 @@ public class AgentIcon
 /// </summary>
 public class StoredSession
 {
-    // Workspace ownership survives deactivation; AgentId identifies only the selected conversation.
+    /// <summary>The project the conversation belongs to. It stays when its workspace is removed.</summary>
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+    // The workspace it last ran in; AgentId identifies only where it is active now.
     public Guid? WorkspaceAgentId { get; set; }
     public Agent? WorkspaceAgent { get; set; }
     public bool TitlePinned { get; set; }

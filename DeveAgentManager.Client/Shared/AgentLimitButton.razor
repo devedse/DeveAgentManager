@@ -1,24 +1,40 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
 @inject BrowserClock Clock
+@inject ContinueOffers Offers
 
 @if (InMenu)
 {
     <MudMenuItem Icon="@StatusIcon" IconColor="@StatusColor" OnClick="OpenAsync">@Hint</MudMenuItem>
 }
+else if (OfferOnly)
+{
+    @Offer
+}
 else
 {
-    <MudTooltip Text="@Hint">
-        <MudIconButton Icon="@StatusIcon"
-                       Class="@(_limit?.Status is "Detected" or "Expired" && !_limit.NativeAutoContinue ? "limit-alert-blink" : _automatic.Enabled && StatusColor == Color.Success ? "auto-continue-active" : "")"
-                       Color="@StatusColor" Size="Size.Small" OnClick="OpenAsync" aria-label="@Hint" />
-    </MudTooltip>
+    @* The offer drops down from the button: its popover is placed against this span. *@
+    <span class="continue-offer-anchor">
+        <MudTooltip Text="@Hint">
+            <MudIconButton Icon="@StatusIcon"
+                           Class="@(_limit?.Status is "Detected" or "Expired" && !_limit.NativeAutoContinue ? "limit-alert-blink" : _automatic.Enabled && StatusColor == Color.Success ? "auto-continue-active" : "")"
+                           Color="@StatusColor" Size="Size.Small" OnClick="OpenAsync" aria-label="@Hint" />
+        </MudTooltip>
+        @if (!Overflowed)
+        {
+            @Offer
+        }
+    </span>
 }
 
 @code {
     [Parameter] public Guid AgentId { get; set; }
     /// <summary>An entry in the toolbar's ⋮ menu, when the toolbar has no room for the button.</summary>
     [Parameter] public bool InMenu { get; set; }
+    /// <summary>The toolbar has no room for this button (it is hidden): its offer drops down from the ⋮ menu instead.</summary>
+    [Parameter] public bool Overflowed { get; set; }
+    /// <summary>Only the offer to turn on auto-continue, against the element around it: the ⋮ menu, while the button is in it.</summary>
+    [Parameter] public bool OfferOnly { get; set; }
     private bool DetectionUnavailable => _limit?.DetectionProblem is not null || _limitError is not null || _automaticError is not null;
     private bool UnknownReset => _limit is { Manual: false, DetectedResetAt: null, Status: "Detected" or "Expired" };
     private bool ScheduleWaiting => _limit is { Status: "Scheduled" } && (_limit.Detail?.StartsWith("Waiting", StringComparison.Ordinal) == true || _limit.ContinueAt <= DateTime.UtcNow);
@@ -63,7 +79,11 @@ else
         : _limit?.Manual == true ? "Schedule continue"
         : _limit?.ResetAt is null ? "Usage limit" : "Usage limit: schedule continue after reset";
     protected override bool IsRelevant(ManagerEvent change) => change.AgentId == AgentId;
-    protected override Task LoadAsync() => Task.WhenAll(LoadLimitAsync(), LoadAutomaticAsync());
+    protected override async Task LoadAsync()
+    {
+        await Task.WhenAll(LoadLimitAsync(), LoadAutomaticAsync());
+        await LoadOfferAsync();
+    }
     private async Task LoadLimitAsync()
     {
         try
@@ -84,6 +104,8 @@ else
     }
     private async Task OpenAsync()
     {
+        // Seeing all the options answers the offer for this limit.
+        if (_offer && _limit is not null) await Offers.AnswerAsync(AgentId, _limit.DetectedAt);
         var dialog = await Dialogs.ShowAsync<ContinueAfterLimitDialog>(_limit is null || _limit.Manual ? "Schedule continue" : "Continue after usage limit", new DialogParameters
         { [nameof(ContinueAfterLimitDialog.LimitLoaded)] = _limitLoaded, [nameof(ContinueAfterLimitDialog.AutomaticLoaded)] = _automaticLoaded,
             [nameof(ContinueAfterLimitDialog.LimitLoadError)] = _limitError, [nameof(ContinueAfterLimitDialog.AutomaticLoadError)] = _automaticError,
@@ -91,5 +113,89 @@ else
             new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
         await dialog.Result;
         await ReloadAsync();
+    }
+
+    // A usage limit that automatic mode can handle, while it is off: offer to turn it on with one click, the same as
+    // switching it on in the dialog. Once per limit; Not now or opening the dialog answers it.
+    private bool _offer, _offerBusy;
+    private string? _offerReset, _offerQuestion, _offerError;
+    private bool Offerable => _limitLoaded && _automaticLoaded && _limitError is null && _automaticError is null
+        && !_automatic.Enabled && _automatic.Available
+        && _limit is { Manual: false, Status: "Detected" or "Expired", NativeAutoContinue: false, DetectedResetAt: not null, DetectionProblem: null };
+    /// <summary>A count of continuations left from before is kept, as the dialog's switch does; otherwise unlimited.</summary>
+    private int? OfferRemaining => _automatic.Remaining is > 0 ? _automatic.Remaining : null;
+
+    private async Task LoadOfferAsync()
+    {
+        if (!Offerable || await Offers.AnsweredAsync(AgentId, _limit!.DetectedAt)) { _offer = false; return; }
+        var reset = _limit.DetectedResetAt!.Value;
+        _offerReset = await ShortTimeAsync(reset);
+        var at = reset.AddMinutes(1);
+        _offerQuestion = $"Turn on auto-continue? It continues {(at <= DateTime.UtcNow ? "right away" : $"at {await ShortTimeAsync(at)}")}"
+            + (OfferRemaining is { } count ? $" ({count} {(count == 1 ? "continuation" : "continuations")} left)." : ".");
+        _offer = true;
+    }
+
+    /// <summary>The local time, with its date when that isn't today.</summary>
+    private async Task<string> ShortTimeAsync(DateTime utc)
+    {
+        var parts = await Clock.LocalPartsAsync(utc);
+        return parts.Date == (await Clock.LocalPartsAsync(DateTime.UtcNow)).Date ? parts.Time : $"{parts.Date} {parts.Time}";
+    }
+
+    protected override void OnInitialized() => Offers.Changed += OnOffersChanged;
+    private void OnOffersChanged() => _ = InvokeAsync(async () =>
+    {
+        await LoadOfferAsync();
+        StateHasChanged();
+    });
+
+    private async Task TurnOnAsync()
+    {
+        _offerBusy = true;
+        _offerError = null;
+        try
+        {
+            await Api.SetAutoContinueAsync(AgentId, true, OfferRemaining);
+            // Switching on schedules the limit on screen at once: the button shows when it continues.
+            await ReloadAsync();
+        }
+        catch (ApiException ex) { _offerError = ex.Message; }
+        catch (HttpRequestException) { _offerError = LoadingSection.Unreachable; }
+        finally { _offerBusy = false; }
+    }
+
+    private async Task NotNowAsync()
+    {
+        if (_limit is not null) await Offers.AnswerAsync(AgentId, _limit.DetectedAt);
+        _offer = false;
+    }
+
+    private RenderFragment Offer => @<MudPopover Open="@_offer" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Paper="false" Class="continue-offer-popover">
+        <aside class="continue-offer" aria-label="Turn on auto-continue" role="status" aria-live="polite">
+            <div class="help-heading">
+                <h2>Usage limit until <span class="continue-offer-time">@_offerReset</span></h2>
+                <HelpTip Label="turning on auto-continue">
+                    <p>Turn on switches on auto-continue for this agent, as in the usage-limit options: the Manager types <b>continue</b> one minute after this reset, and again after each later usage limit@(OfferRemaining is { } count ? $", {count} more {(count == 1 ? "time" : "times")}" : ", until you switch it off").</p>
+                    <p>It waits while you have a draft or the agent is busy, and stops when the conversation or harness changes. For a one-time continue, open the options with the button.</p>
+                    <p>Not now hides this until the next usage limit, in this browser.</p>
+                </HelpTip>
+            </div>
+            <p>@_offerQuestion</p>
+            @if (_offerError is not null)
+            {
+                <p class="continue-offer-error" role="alert">@_offerError</p>
+            }
+            <div class="continue-offer-actions">
+                <MudButton Variant="Variant.Text" Disabled="_offerBusy" OnClick="NotNowAsync">Not now</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Autorenew" Disabled="_offerBusy" OnClick="TurnOnAsync">Turn on</MudButton>
+            </div>
+        </aside>
+    </MudPopover>;
+
+    public override void Dispose()
+    {
+        Offers.Changed -= OnOffersChanged;
+        base.Dispose();
     }
 }

@@ -19,7 +19,8 @@ internal sealed record AgentMoveState(string Id, Guid AgentId, Guid SourceRunner
     string? TmuxSession = null, IReadOnlyList<AgentProcessIdentity>? StopProcesses = null,
     AgentMoveProgressDto? Progress = null, bool ReportProgress = false,
     DateTime? StartedAt = null, string? SourceName = null, string? TargetName = null,
-    IReadOnlyList<AgentMoveStepDto>? Steps = null);
+    IReadOnlyList<AgentMoveStepDto>? Steps = null, IReadOnlyList<MoveWorkspace>? Workspaces = null);
+internal sealed record MoveWorkspace(Guid AgentId, string Workspace, string Owner, string Agent, string TmuxSession, AgentState PreviousState, bool Resume);
 internal sealed record MoveHistory(string Path, string Harness);
 
 // Queueing a move and beginning runner maintenance must be mutually exclusive.
@@ -37,10 +38,14 @@ internal static class AgentMoveCoordination
 
 public sealed partial class AgentService
 {
-    private static readonly string MoveScript = ReadMoveScript();
-    private static string ReadMoveScript()
+    internal static Guid[] MoveIds(AgentMoveState move) => move.Workspaces is { Count: > 0 } workspaces ? workspaces.Select(w => w.AgentId).ToArray() : [move.AgentId];
+    private static IEnumerable<MoveWorkspace> MoveWorkspaces(AgentMoveState move) => move.Workspaces is { Count: > 0 } workspaces ? workspaces :
+        [new(move.AgentId, move.Workspace, move.Owner, move.Agent, move.TmuxSession ?? "", move.PreviousState, move.Resume)];
+    private static MoveWorkspace WorkspaceState(Agent agent) => new(agent.Id, agent.WorkingDirectory, agent.OwnerId.ToString("N"), agent.Id.ToString("N"), agent.TmuxSession, agent.State, agent.State is AgentState.Running or AgentState.Starting);
+    private static readonly string MoveScript = ReadScript("agent-move.py");
+    private static string ReadScript(string name)
     {
-        using var stream = typeof(AgentService).Assembly.GetManifestResourceStream("DeveAgentManager.Core.Scripts.agent-move.py")!;
+        using var stream = typeof(AgentService).Assembly.GetManifestResourceStream("DeveAgentManager.Core.Scripts." + name)!;
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
@@ -78,8 +83,11 @@ public sealed partial class AgentService
         var agent = await GetAsync(agentId, ct) ?? throw new KeyNotFoundException("Agent not found.");
         RequireNotMoving(agent);
         var runner = RequireReady(agent.Runner!);
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var workspaces = await db.Agents.Where(a => a.Id == agent.Id || agent.ProjectId != null && a.ProjectId == agent.ProjectId).ToListAsync(ct);
+        var main = workspaces.FirstOrDefault(a => !a.IsClone) ?? agent;
         var move = new AgentMoveState(Guid.NewGuid().ToString("N"), agent.Id, agent.RunnerId, agent.RunnerId,
-            agent.WorkingDirectory, agent.OwnerId.ToString("N"), agent.Id.ToString("N"), agent.State, false, TmuxSession: agent.TmuxSession);
+            main.WorkingDirectory, agent.OwnerId.ToString("N"), agent.Id.ToString("N"), agent.State, false, TmuxSession: agent.TmuxSession, Workspaces: workspaces.Count > 1 ? workspaces.Select(WorkspaceState).ToArray() : null);
         return await ReadMoveProcessesAsync(runner, move, ct);
     }
 
@@ -101,6 +109,14 @@ public sealed partial class AgentService
             using var loginLease = await Accounts.AccountCoordination.LockAsync(ct);
             await using var db = await dbFactory.CreateDbContextAsync(ct);
             var agent = await db.Agents.Include(a => a.Runner).SingleAsync(a => a.Id == agentId, ct);
+            var workspaces = await db.Agents.Where(a => a.Id == agent.Id || agent.ProjectId != null && a.ProjectId == agent.ProjectId).ToListAsync(ct);
+            if (workspaces.Any(a => a.RunnerId != agent.RunnerId || a.OwnerId != agent.OwnerId || a.MoveJson != null || a.WorkspaceCreationJson != null))
+                throw new InvalidOperationException("Finish workspace creation, moves or recovery in this project first.");
+            agent = workspaces.FirstOrDefault(a => !a.IsClone) ?? throw new InvalidOperationException("The project's Main workspace is missing.");
+            if (await db.Projects.AnyAsync(p => p.Id == agent.ProjectId && p.KeptFoldersJson != null && p.KeptFoldersJson != "[]", ct))
+                throw new InvalidOperationException("Delete or reuse the project's kept workspace folders first (Manage workspaces).");
+            await db.Entry(agent).Reference(a => a.Runner).LoadAsync(ct);
+            var workspaceIds = workspaces.Select(a => a.Id).ToArray();
             if (agent.MoveJson is not null) throw new InvalidOperationException("Finish the previous move or its cleanup first.");
             if (await access.AgentAsync(actor, agentId, ct) < AgentAccess.Owner)
                 throw new UnauthorizedAccessException("Only the agent owner can move it.");
@@ -116,21 +132,21 @@ public sealed partial class AgentService
                 && (claim.Name == agent.Name || OverlappingFolders(claim.Path, agent.WorkingDirectory))))
                 throw new InvalidOperationException("Wait for agent creation in this workspace to finish before moving it.");
             if (agent.Runner!.Username != target.Username) throw new ArgumentException("Choose a runner with the same SSH username to preserve absolute file references.");
-            if (!target.HarnessIds.Contains(agent.HarnessId)) throw new ArgumentException("Install this agent's harness on the destination runner first.");
-            if (await db.Agents.AnyAsync(a => a.RunnerId == target.Id && a.Name == agent.Name, ct))
+            if (workspaces.Any(a => !target.HarnessIds.Contains(a.HarnessId))) throw new ArgumentException("Install this agent's harness on the destination runner first.");
+            if (await db.Agents.AnyAsync(a => a.RunnerId == target.Id && workspaces.Select(w => w.Name).Contains(a.Name), ct))
                 throw new InvalidOperationException("The destination already has an agent with this name.");
-            var folders = await db.Agents.Where(a => a.Id != agent.Id && (a.RunnerId == agent.RunnerId || a.RunnerId == target.Id))
+            var folders = await db.Agents.Where(a => !workspaceIds.Contains(a.Id) && (a.RunnerId == agent.RunnerId || a.RunnerId == target.Id))
                 .Select(a => a.WorkingDirectory).ToListAsync(ct);
-            if (folders.Any(path => OverlappingFolders(path, agent.WorkingDirectory)))
+            if (folders.Any(path => workspaces.Any(w => OverlappingFolders(path, w.WorkingDirectory))))
                 throw new InvalidOperationException("Another agent shares this workspace or a parent folder. Separate their workspaces before moving it.");
-            await accounts.ResolveAsync(agent, ct);
+            foreach (var workspace in workspaces) await accounts.ResolveAsync(workspace, ct);
             var move = new AgentMoveState(Guid.NewGuid().ToString("N"), agent.Id, agent.RunnerId, target.Id,
                 agent.WorkingDirectory, agent.OwnerId.ToString("N"), agent.Id.ToString("N"), agent.State,
                 agent.State is AgentState.Running or AgentState.Starting,
-                OtherSourceFolders: await db.Agents.Where(a => a.Id != agent.Id && a.RunnerId == agent.RunnerId).Select(a => a.WorkingDirectory).ToListAsync(ct),
+                OtherSourceFolders: await db.Agents.Where(a => !workspaceIds.Contains(a.Id) && a.RunnerId == agent.RunnerId).Select(a => a.WorkingDirectory).ToListAsync(ct),
                 OtherTargetFolders: await db.Agents.Where(a => a.RunnerId == target.Id).Select(a => a.WorkingDirectory).ToListAsync(ct),
                 TmuxSession: agent.TmuxSession, StopProcesses: stopProcesses,
-                StartedAt: DateTime.UtcNow, SourceName: agent.Runner.Name, TargetName: target.Name, Steps: MoveStepPlan());
+                StartedAt: DateTime.UtcNow, SourceName: agent.Runner.Name, TargetName: target.Name, Steps: MoveStepPlan(), Workspaces: workspaces.Count > 1 ? workspaces.Select(WorkspaceState).ToArray() : null);
             if (stopProcesses is { Count: > 0 })
             {
                 if (stopProcesses.Count > 256 || stopProcesses.Any(p => p is null || p.Pid <= 1 || p.StartTicks <= 0 || !Guid.TryParse(p.BootId, out _)))
@@ -139,13 +155,16 @@ public sealed partial class AgentService
                 if (current.Any(p => !stopProcesses.Contains(p.Identity)))
                     throw new InvalidOperationException("Background processes changed. Review the updated list before moving.");
             }
-            agent.MoveJson = JsonSerializer.Serialize(move);
-            agent.State = AgentState.Moving;
-            agent.StateMessage = $"Moving to {target.Name}…";
-            agent.UpdatedAt = DateTime.UtcNow;
+            foreach (var workspace in workspaces)
+            {
+                workspace.MoveJson = JsonSerializer.Serialize(move);
+                workspace.State = AgentState.Moving;
+                workspace.StateMessage = $"Moving project to {target.Name}…";
+                workspace.UpdatedAt = DateTime.UtcNow;
+            }
             await db.SaveChangesAsync(ct);
             logger.LogInformation("Queued agent move {MoveId} for agent {AgentId} from runner {SourceRunner} to {TargetRunner}", move.Id, agent.Id, agent.RunnerId, target.Id);
-            events.AgentChanged(agent.RunnerId, agent.Id);
+            foreach (var workspace in workspaces) events.AgentChanged(workspace.RunnerId, workspace.Id);
         }
         finally { AgentMoveCoordination.Gate.Release(); }
     }
@@ -174,9 +193,9 @@ public sealed partial class AgentService
         var agent = await db.Agents.SingleAsync(a => a.Id == agentId, ct);
         var move = JsonSerializer.Deserialize<AgentMoveState>(agent.MoveJson ?? throw new InvalidOperationException("There is no pending move."))!;
         if (move.Phase is not ("Failed" or "CleanupFailed" or "TargetCleanupFailed")) throw new InvalidOperationException("The move is still running.");
-        agent.MoveJson = JsonSerializer.Serialize(move with { Phase = move.Phase == "CleanupFailed" ? "Cleanup" : move.Phase == "TargetCleanupFailed" ? "TargetCleanup" : "Recover", FallbackLaunchAttempted = false });
-        if (move.Phase == "Failed") agent.State = AgentState.Moving;
-        await db.SaveChangesAsync(ct);
+        var recovered = JsonSerializer.Serialize(move with { Phase = move.Phase == "CleanupFailed" ? "Cleanup" : move.Phase == "TargetCleanupFailed" ? "TargetCleanup" : "Recover", FallbackLaunchAttempted = false });
+        await db.Agents.Where(a => MoveIds(move).Contains(a.Id)).ExecuteUpdateAsync(s => s.SetProperty(a => a.MoveJson, recovered), ct);
+        if (move.Phase == "Failed") await db.Agents.Where(a => MoveIds(move).Contains(a.Id)).ExecuteUpdateAsync(s => s.SetProperty(a => a.State, AgentState.Moving), ct);
         events.AgentChanged(agent.RunnerId, agent.Id);
     }
 
@@ -184,11 +203,10 @@ public sealed partial class AgentService
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var payload = JsonSerializer.Serialize(move);
-        await db.Agents.Where(a => a.Id == move.AgentId).ExecuteUpdateAsync(s => s
+        await db.Agents.Where(a => MoveIds(move).Contains(a.Id)).ExecuteUpdateAsync(s => s
             .SetProperty(a => a.MoveJson, payload)
             .SetProperty(a => a.StateMessage, message).SetProperty(a => a.UpdatedAt, DateTime.UtcNow), ct);
-        events.AgentChanged(move.SourceRunner, move.AgentId);
-        events.AgentChanged(move.TargetRunner, move.AgentId);
+        foreach (var id in MoveIds(move)) { events.AgentChanged(move.SourceRunner, id); events.AgentChanged(move.TargetRunner, id); }
     }
 
     public static AgentMoveDetailsDto? MoveDetails(Agent agent) => agent.MoveJson is { } json
@@ -294,11 +312,18 @@ public sealed partial class AgentService
             if (first.RootElement.GetProperty("home").GetString() != second.RootElement.GetProperty("home").GetString()
                 || first.RootElement.GetProperty("workspace").GetString() != second.RootElement.GetProperty("workspace").GetString())
                 throw new InvalidOperationException("The runners resolve home or workspace paths differently. The source is unchanged.");
-            var existingTerminal = await shell.RunAsync(target, "tmux has-session -t " + ShellQuote.Quote("=" + agent.TmuxSession) + " 2>/dev/null", cancellationToken: ct);
-            if (existingTerminal.ExitCode == 0) throw new InvalidOperationException("A terminal with this agent name already exists on the destination. Remove that terminal before moving.");
-            if (existingTerminal.ExitCode != 1) throw new IOException("Could not verify that the destination terminal is absent.");
+            var observed = new List<MoveWorkspace>();
+            foreach (var member in MoveWorkspaces(move))
+            {
+                var current = await db.Agents.SingleAsync(a => a.Id == member.AgentId, ct);
+                var existingTerminal = await shell.RunAsync(target, "tmux has-session -t " + ShellQuote.Quote("=" + current.TmuxSession) + " 2>/dev/null", cancellationToken: ct);
+                if (existingTerminal.ExitCode == 0) throw new InvalidOperationException("A project terminal already exists on the destination.");
+                if (existingTerminal.ExitCode != 1) throw new IOException("Could not verify destination terminal absence.");
+                observed.Add(member with { Resume = member.Resume || await MovePaneAliveAsync(source, current, ct) });
+            }
             move = move with { Home = first.RootElement.GetProperty("home").GetString(),
-                Resume = move.Resume || await MovePaneAliveAsync(source, agent, ct) };
+                Resume = observed.First(w => w.AgentId == move.AgentId).Resume,
+                Workspaces = move.Workspaces is null ? null : observed };
             move = await StartMoveStepAsync(move, "stop", ct);
             if (move.StopProcesses is { Count: > 0 })
             {
@@ -310,14 +335,22 @@ public sealed partial class AgentService
             await SaveMoveAsync(move, "Stopping and verifying source history…", ct);
             using (await sessions.LockAsync(ct))
             {
-                (await shell.RunAsync(source, BuildStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), ct)).EnsureSuccess("Stopping source agent");
-                if (await MovePaneAliveAsync(source, agent, ct)) throw new IOException("Source agent did not stop.");
+                foreach (var member in MoveWorkspaces(move))
+                {
+                    var current = await db.Agents.SingleAsync(a => a.Id == member.AgentId, ct);
+                    (await shell.RunAsync(source, BuildStopScript(ShellQuote.Quote("=" + current.TmuxSession + ":")), TimeSpan.FromMinutes(1), ct)).EnsureSuccess("Stopping source agent");
+                    if (await MovePaneAliveAsync(source, current, ct)) throw new IOException("A source agent did not stop.");
+                }
                 await MovePhaseAsync(source, "quiesce", move, ct);
                 move = move with { SourceStopped = true, Phase = "Packing" };
                 move = await StartMoveStepAsync(move, "history", ct);
-                await sessions.SyncRunnerLockedAsync(source, ct, agent.Id, forceVerification: true);
-                await sessions.PreserveArtifactsAsync(agent.Id, ct);
-                var stored = await db.Sessions.AsNoTracking().Where(s => s.AgentId == agent.Id || s.WorkspaceAgentId == agent.Id)
+                foreach (var member in MoveWorkspaces(move))
+                {
+                    await sessions.SyncRunnerLockedAsync(source, ct, member.AgentId, forceVerification: true);
+                    await sessions.PreserveArtifactsAsync(member.AgentId, ct);
+                }
+                var ids = MoveIds(move);
+                var stored = await db.Sessions.AsNoTracking().Where(s => ids.Contains(s.AgentId ?? Guid.Empty) || ids.Contains(s.WorkspaceAgentId ?? Guid.Empty))
                     .Where(s => s.SourcePath != null).Select(s => new MoveHistory(s.SourcePath!, s.HarnessId)).ToListAsync(ct);
                 move = move with { Histories = stored };
                 move = await StartMoveStepAsync(move, "pack", ct);
@@ -351,32 +384,50 @@ public sealed partial class AgentService
             move = move with { Phase = "Installing" };
             move = await StartMoveStepAsync(move, "install", ct);
             await MovePhaseAsync(target, "install", move, ct);
+            await MovePhaseAsync(target, "verify-workspaces", move, ct);
             await MovePhaseAsync(source, "verify-source", move, ct);
             move = await ReadMoveStepsAsync(move, ct);
             using (await sessions.LockAsync(ct))
             {
-                db.Entry(agent).State = EntityState.Detached;
-                agent = await db.Agents.SingleAsync(a => a.Id == move.AgentId, ct);
+                db.ChangeTracker.Clear();
+                var ids = MoveIds(move);
+                var members = await db.Agents.Where(a => ids.Contains(a.Id)).ToListAsync(ct);
+                agent = members.Single(a => a.Id == move.AgentId);
                 var owner = await accounts.GetActorAsync(agent.OwnerId, ct);
                 if (await access.RunnerAsync(owner, target.Id, ct) < RunnerAccess.Use)
-                    throw new UnauthorizedAccessException("The agent owner no longer has Use access to the destination.");
-                agent.RunnerId = target.Id; agent.Runner = target;
-                await db.Sessions.Where(s => s.AgentId == agent.Id || s.WorkspaceAgentId == agent.Id)
-                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.RunnerName, target.Name), ct);
-                await db.SaveChangesAsync(ct);
-                if (move.Resume)
+                    throw new UnauthorizedAccessException("The project owner no longer has Use access to the destination.");
+                await using (var transaction = await db.Database.BeginTransactionAsync(ct))
+                {
+                    foreach (var member in members) { member.RunnerId = target.Id; member.Runner = target; }
+                    if (agent.ProjectId is { } projectId)
+                        await db.Projects.Where(p => p.Id == projectId).ExecuteUpdateAsync(s => s.SetProperty(p => p.RunnerId, target.Id), ct);
+                    await db.Sessions.Where(s => ids.Contains(s.AgentId ?? Guid.Empty) || ids.Contains(s.WorkspaceAgentId ?? Guid.Empty))
+                        .ExecuteUpdateAsync(s => s.SetProperty(x => x.RunnerName, target.Name), ct);
+                    await db.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                }
+                if (MoveWorkspaces(move).Any(w => w.Resume))
                 {
                     move = move with { Phase = "StartingTarget", TargetLaunchAttempted = true };
                     move = await StartMoveStepAsync(move, "start", ct);
-                    await LaunchAsync(target, agent, restart: false, ct);
-                    await Task.Delay(1000, ct);
-                    if (!await MovePaneAliveAsync(target, agent, ct)) throw new IOException("The destination harness exited during startup.");
+                    foreach (var state in MoveWorkspaces(move).Where(w => w.Resume))
+                    {
+                        var member = members.Single(a => a.Id == state.AgentId);
+                        await VerifyWorkspaceAsync(target, member, ct);
+                        await LaunchAsync(target, member, restart: false, ct);
+                        await Task.Delay(1000, ct);
+                        if (!await MovePaneAliveAsync(target, member, ct)) throw new IOException("A destination harness exited during startup.");
+                    }
                 }
                 move = move with { Phase = "Cleanup" };
-                agent.MoveJson = JsonSerializer.Serialize(move);
-                agent.State = move.Resume ? AgentState.Running : AgentState.Stopped;
-                agent.StateMessage = "Moved; removing source files…";
-                agent.UpdatedAt = DateTime.UtcNow;
+                foreach (var member in members)
+                {
+                    var state = MoveWorkspaces(move).Single(w => w.AgentId == member.Id);
+                    member.MoveJson = JsonSerializer.Serialize(move);
+                    member.State = state.Resume ? AgentState.Running : AgentState.Stopped;
+                    member.StateMessage = "Moved; removing source files…";
+                    member.UpdatedAt = DateTime.UtcNow;
+                }
                 await db.SaveChangesAsync(ct);
             }
             move = await StartMoveStepAsync(move, "cleanup", ct);
@@ -418,15 +469,21 @@ public sealed partial class AgentService
 
     private async Task FinishMoveCleanupAsync(AgentMoveState move, Runner source, CancellationToken ct)
     {
-        var agent = (await GetAsync(move.AgentId, ct))!;
-        if (await MovePaneAliveAsync(source, agent, ct))
-            throw new IOException("A source terminal is running. Source files were retained; stop it before finishing cleanup.");
+        foreach (var member in MoveWorkspaces(move))
+        {
+            var agent = (await GetAsync(member.AgentId, ct))!;
+            if (await MovePaneAliveAsync(source, agent, ct))
+                throw new IOException("A source terminal is running. Source files were retained; stop it before finishing cleanup.");
+        }
         await MovePhaseAsync(source, "quiesce", move, ct);
         await MovePhaseAsync(source, "cleanup-source", move, ct);
-        (await shell.RunAsync(source, "tmux kill-session -t " + ShellQuote.Quote("=" + agent.TmuxSession)
-            + " 2>/dev/null || true\nrm -f -- " + ShellQuote.Path($"~/.deveagentmanager/artifact-access/{move.Agent}.token")
-            + " " + ShellQuote.Path($"~/.deveagentmanager/tasks/{move.AgentId:N}.json") + " " + ShellQuote.Path($"~/.deveagentmanager/tasks/{move.AgentId:N}.lock"),
-            cancellationToken: ct)).EnsureSuccess("Removing source agent runtime");
+        foreach (var member in MoveWorkspaces(move))
+        {
+            (await shell.RunAsync(source, "tmux kill-session -t " + ShellQuote.Quote("=" + member.TmuxSession)
+                + " 2>/dev/null || true\nrm -f -- " + ShellQuote.Path($"~/.deveagentmanager/artifact-access/{member.Agent}.token")
+                + " " + ShellQuote.Path($"~/.deveagentmanager/tasks/{member.AgentId:N}.json") + " " + ShellQuote.Path($"~/.deveagentmanager/tasks/{member.AgentId:N}.lock"),
+                cancellationToken: ct)).EnsureSuccess("Removing source agent runtime");
+        }
         await using (var db = await dbFactory.CreateDbContextAsync(ct))
         {
             var target = await db.Runners.SingleAsync(r => r.Id == move.TargetRunner, ct);
@@ -444,7 +501,7 @@ public sealed partial class AgentService
         var detail = previous is not null ? JsonSerializer.Deserialize<AgentMoveDetailsDto>(previous)! with { Steps = move.Steps, CompletedAt = DateTime.UtcNow }
             : Details(move, failed ? "Destination cleanup finished; agent retained on source." : "Source files removed.", pending: false, failed: failed);
         var last = JsonSerializer.Serialize(detail);
-        await db.Agents.Where(a => a.Id == move.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.MoveJson, (string?)null)
+        await db.Agents.Where(a => MoveIds(move).Contains(a.Id)).ExecuteUpdateAsync(s => s.SetProperty(a => a.MoveJson, (string?)null)
             .SetProperty(a => a.LastMoveJson, last).SetProperty(a => a.StateMessage, (string?)null), ct);
         events.AgentChanged(move.TargetRunner, move.AgentId);
         logger.LogInformation("Agent move {MoveId} for agent {AgentId} finished: {Outcome}", move.Id, move.AgentId, detail.Outcome);
@@ -458,8 +515,12 @@ public sealed partial class AgentService
             move = await StartMoveStepAsync(move, targetWork ? "target-cleanup" : "recovery", ct);
             if (move.TargetLaunchAttempted)
             {
-                (await shell.RunAsync(target, BuildStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), ct)).EnsureSuccess("Stopping destination for rollback");
-                if (await MovePaneAliveAsync(target, agent, ct)) throw new IOException("Destination process is still running; source will not be restarted.");
+                foreach (var member in MoveWorkspaces(move))
+                {
+                    var current = (await GetAsync(member.AgentId, ct))!;
+                    (await shell.RunAsync(target, BuildStopScript(ShellQuote.Quote("=" + current.TmuxSession + ":")), TimeSpan.FromMinutes(1), ct)).EnsureSuccess("Stopping destination for rollback");
+                    if (await MovePaneAliveAsync(target, current, ct)) throw new IOException("A destination process is still running; source will not be restarted.");
+                }
             }
             var cleanupPending = false;
             if (targetWork)
@@ -477,26 +538,44 @@ public sealed partial class AgentService
             using (await sessions.LockAsync(ct))
             {
                 await using var db = await dbFactory.CreateDbContextAsync(ct);
-                agent = await db.Agents.SingleAsync(a => a.Id == move.AgentId, ct);
-                agent.RunnerId = source.Id;
-                agent.Runner = await db.Runners.SingleAsync(r => r.Id == source.Id, ct);
-                agent.MoveJson = JsonSerializer.Serialize(move);
-                await db.Sessions.Where(s => s.AgentId == agent.Id || s.WorkspaceAgentId == agent.Id)
-                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.RunnerName, source.Name), ct);
-                await db.SaveChangesAsync(ct);
-                if (move.Resume && !await MovePaneAliveAsync(source, agent, ct))
+                var ids = MoveIds(move);
+                var members = await db.Agents.Where(a => ids.Contains(a.Id)).ToListAsync(ct);
+                agent = members.Single(a => a.Id == move.AgentId);
+                var sourceRunner = await db.Runners.SingleAsync(r => r.Id == source.Id, ct);
+                await using (var transaction = await db.Database.BeginTransactionAsync(ct))
                 {
-                    if (move.FallbackLaunchAttempted) throw new IOException("A fallback launch was already attempted. Check the source before starting it manually.");
+                    foreach (var member in members) { member.RunnerId = source.Id; member.Runner = sourceRunner; member.MoveJson = JsonSerializer.Serialize(move); }
+                    if (agent.ProjectId is { } projectId)
+                        await db.Projects.Where(p => p.Id == projectId).ExecuteUpdateAsync(s => s.SetProperty(p => p.RunnerId, source.Id), ct);
+                    await db.Sessions.Where(s => ids.Contains(s.AgentId ?? Guid.Empty) || ids.Contains(s.WorkspaceAgentId ?? Guid.Empty))
+                        .ExecuteUpdateAsync(s => s.SetProperty(x => x.RunnerName, source.Name), ct);
+                    await db.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                }
+                var toResume = new List<Agent>();
+                foreach (var member in members)
+                    if (MoveWorkspaces(move).Single(w => w.AgentId == member.Id).Resume && !await MovePaneAliveAsync(source, member, ct)) toResume.Add(member);
+                if (toResume.Count > 0)
+                {
+                    if (move.FallbackLaunchAttempted) throw new IOException("A fallback launch was already attempted. Check all source agents before starting manually.");
                     move = move with { Phase = "Rollback", FallbackLaunchAttempted = true };
                     await SaveMoveAsync(move, "Resuming on the source after a failed move…", ct);
-                    await LaunchAsync(source, agent, restart: false, ct);
-                    if (!await MovePaneAliveAsync(source, agent, ct)) throw new IOException("Source harness did not resume.");
+                    foreach (var member in toResume)
+                    {
+                        await VerifyWorkspaceAsync(source, member, ct);
+                        await LaunchAsync(source, member, restart: false, ct);
+                        if (!await MovePaneAliveAsync(source, member, ct)) throw new IOException("A source harness did not resume.");
+                    }
                 }
-                agent.State = move.Resume ? AgentState.Running : move.PreviousState;
-                agent.StateMessage = "Move failed; source retained: " + error;
                 move = await FinishMoveStepsAsync(move, ct);
-                agent.LastMoveJson = JsonSerializer.Serialize(Details(move, error, pending: false, failed: true));
-                agent.MoveJson = cleanupPending ? JsonSerializer.Serialize(move with { Phase = "TargetCleanup" }) : null;
+                foreach (var member in members)
+                {
+                    var state = MoveWorkspaces(move).Single(w => w.AgentId == member.Id);
+                    member.State = state.Resume ? AgentState.Running : state.PreviousState;
+                    member.StateMessage = "Move failed; source retained: " + error;
+                    member.LastMoveJson = JsonSerializer.Serialize(Details(move, error, pending: false, failed: true));
+                    member.MoveJson = cleanupPending ? JsonSerializer.Serialize(move with { Phase = "TargetCleanup" }) : null;
+                }
                 await db.SaveChangesAsync(ct);
             }
             events.AgentChanged(source.Id, agent.Id); events.AgentChanged(target.Id, agent.Id);
@@ -511,7 +590,7 @@ public sealed partial class AgentService
             move = await FailMoveStepAsync(move, rollbackError.Message, CancellationToken.None);
             await SaveMoveAsync(move with { Phase = "Failed" }, "Move needs recovery. Source files retained. " + rollbackError.Message, CancellationToken.None);
             await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
-            await db.Agents.Where(a => a.Id == move.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.State, AgentState.Error), CancellationToken.None);
+            await db.Agents.Where(a => MoveIds(move).Contains(a.Id)).ExecuteUpdateAsync(s => s.SetProperty(a => a.State, AgentState.Error), CancellationToken.None);
         }
     }
 }
@@ -529,7 +608,7 @@ public sealed class AgentMoves(IDbContextFactory<ManagerDbContext> factory, Agen
             {
                 await using var db = await factory.CreateDbContextAsync(stoppingToken);
                 var pending = await db.Agents.AsNoTracking().Where(a => a.MoveJson != null).Select(a => a.MoveJson!).ToListAsync(stoppingToken);
-                foreach (var json in pending)
+                foreach (var json in pending.Distinct())
                 {
                     var move = JsonSerializer.Deserialize<AgentMoveState>(json)!;
                     if (move.Phase is "Failed" or "CleanupFailed" or "TargetCleanupFailed") continue;
@@ -538,7 +617,7 @@ public sealed class AgentMoves(IDbContextFactory<ManagerDbContext> factory, Agen
                     {
                         logger.LogWarning(e, "Agent move {Move} retained for recovery", move.Id);
                         var failed = JsonSerializer.Serialize(move with { Phase = move.Phase == "Cleanup" ? "CleanupFailed" : move.Phase == "TargetCleanup" ? "TargetCleanupFailed" : "Failed" });
-                        await db.Agents.Where(a => a.Id == move.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.MoveJson, failed)
+                        await db.Agents.Where(a => AgentService.MoveIds(move).Contains(a.Id)).ExecuteUpdateAsync(s => s.SetProperty(a => a.MoveJson, failed)
                             .SetProperty(a => a.StateMessage, "Move needs recovery: " + e.Message), stoppingToken);
                     }
                     finally

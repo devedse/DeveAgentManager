@@ -19,6 +19,20 @@ public sealed class UserSettingsStore(
     private const string ProfileKey = "profile";
     private const string GitHubTokenKey = "github-token";
     private const string ScreenAwakeKey = "screen-awake";
+    private const string ModelsKey = "models";
+
+    /// <summary>The user's own default model and effort per harness id; harnesses they didn't change aren't listed.</summary>
+    public async Task<Dictionary<string, ModelDefault>> GetModelDefaultsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var json = protector.Unprotect(await GetRawAsync(userId, ModelsKey, cancellationToken));
+        return json is null ? [] : JsonSerializer.Deserialize<Dictionary<string, ModelDefault>>(json) ?? [];
+    }
+
+    public async Task SaveModelDefaultsAsync(Guid userId, IReadOnlyDictionary<string, ModelDefault> defaults, CancellationToken cancellationToken = default)
+    {
+        var cleaned = defaults.Select(d => (d.Key, Value: d.Value.Cleaned())).Where(d => !d.Value.IsEmpty).ToDictionary(d => d.Key, d => d.Value);
+        await SetRawAsync(userId, ModelsKey, cleaned.Count == 0 ? null : protector.Protect(JsonSerializer.Serialize(cleaned)), cancellationToken);
+    }
 
     public async Task<bool> GetScreenAwakeAsync(Guid userId, CancellationToken cancellationToken = default) =>
         protector.Unprotect(await GetRawAsync(userId, ScreenAwakeKey, cancellationToken)) == "true";

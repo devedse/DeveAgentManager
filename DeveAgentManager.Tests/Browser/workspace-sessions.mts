@@ -1,5 +1,6 @@
 const { chromium } = (await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright') as typeof import('playwright'));
 import assert from 'node:assert/strict';
+// Conversations in a workspace: the dropdown lists saved ones, choosing one asks what to do, and nothing resumes by itself.
 const browser = await chromium.launch();
 try {
  const context = await browser.newContext({viewport:{width:390,height:844},hasTouch:true});
@@ -13,15 +14,15 @@ try {
  const info=await (await context.request.get(base+'/api/info')).json();
  const me=await (await context.request.get(base+'/api/me')).json();
  const id='00000000-0000-0000-0000-000000000001', other='00000000-0000-0000-0000-000000000002',now=new Date().toISOString();
- const agent={id,runnerId:id,runnerName:'runner-01',runnerState:'Ready',runnerHarnessIds:['codex','claude'],runnerToolIds:['vscode'],name:'deveagentmanager',harnessId:'codex',workingDirectory:'/work/deveagentmanager',state:'Running',accountName:'Personal',createdAt:now,updatedAt:now,activity:{status:'UsageLimited',reason:'Usage allowance reached.',rule:'usage-limit',observedAt:now,since:now,sequence:1}} as { id: string; runnerId: string; runnerName: string; runnerState: string; runnerHarnessIds: string[]; runnerToolIds: string[]; name: string; harnessId: string; workingDirectory: string; state: string; accountName: string; createdAt: string; updatedAt: string; activity: { status: string; reason: string; rule: string; observedAt: string; since: string; sequence: number; }; } & Record<string, any>;
- agent.ownerId=me.id;agent.ownerName='Test user';agent.access='Owner';
- let rows=[{id,title:'Current conversation',agentId:id,agent},{id:other,title:'Earlier conversation',agentId:null,agent:null}].map(s=>({...s,ownerId: me.id, ownerName: "Test user", access: "Owner", workspaceAccess: "Owner", workspaceAgentId:id,workspaceName:agent.name,harnessId:'codex',runnerName:'runner-01',repositoryUrl:'https://example.com/repository',workingDirectory:'/work/deveagentmanager',messageCount:12,createdAt:now,updatedAt:now,lastSyncedAt:now,sourceSize:2048,totalSize:4096}));
+ const agent={id,runnerId:id,runnerName:'runner-01',runnerState:'Ready',runnerHarnessIds:['codex','claude'],runnerToolIds:['vscode'],name:'deveagentmanager',harnessId:'codex',workingDirectory:'/work/deveagentmanager',repositoryBranch:'master',state:'Running',accountName:'Personal',createdAt:now,updatedAt:now,projectId:id,projectName:'deveagentmanager',activity:{status:'UsageLimited',reason:'Usage allowance reached.',rule:'usage-limit',observedAt:now,since:now,sequence:1}} as Record<string, any>;
+ agent.ownerId=me.id;agent.ownerName='Test user';agent.access='Owner';agent.canUseRunner=true;
+ let rows=[{id,title:'Current conversation',agentId:id,agent},{id:other,title:'Earlier conversation',agentId:null,agent:null}].map(s=>({...s,ownerId:me.id,ownerName:'Test user',access:'Owner',workspaceAccess:'Owner',workspaceAgentId:id,workspaceName:agent.name,projectId:id,harnessId:'codex',runnerName:'runner-01',repositoryUrl:'https://example.com/repository',workingDirectory:'/work/deveagentmanager',repositoryBranch:'master',messageCount:12,createdAt:now,updatedAt:now,lastSyncedAt:now,sourceSize:2048,totalSize:4096}));
  rows[1].harnessId='claude';
- rows.forEach(s=>{s.ownerId=me.id;s.ownerName='Test user';s.access='Owner';s.workspaceAccess='Owner';});
  const actions=[];
  await page.route('**/api/**',async route=>{
   const p=new URL(route.request().url()).pathname, method=route.request().method();
   if(p==='/api/me'||p.startsWith('/api/me/')) return route.continue();
+  if(p.endsWith('/workspaces/branches')) return route.fulfill({json:{[id]:'master'}});
   if(p.endsWith('/session')&&method==='POST') {
    const request=route.request().postDataJSON();actions.push(request);
    if(request.sessionId===null) rows.push({...rows[0],id:'00000000-0000-0000-0000-000000000003',title:request.title??'New session',agentId:null,harnessId:agent.harnessId});
@@ -32,17 +33,15 @@ try {
   }
   if(p.endsWith('/title')&&method==='PUT') {rows.find(s=>p.includes(s.id)).title=route.request().postDataJSON().title;return route.fulfill({status:204});}
   if(p.startsWith('/api/sessions/')&&method==='DELETE') {rows=rows.filter(s=>!p.endsWith(s.id));return route.fulfill({status:204});}
-  const body=p==='/api/info'?info:p==='/api/sessions'?rows:p.endsWith('/session')?rows.find(s=>s.agentId===id):p===`/api/agents/${id}`?agent:p==='/api/agents'?[agent]:p.endsWith('/limit/automatic')?{enabled:false,sent:0}:p.endsWith('/limit')?null:[];
+  const body=p==='/api/info'?info:p==='/api/sessions'?rows:p.endsWith('/session')?rows.find(s=>s.agentId===id):p===`/api/agents/${id}`?agent:p==='/api/agents'?[agent]
+   :p.endsWith('/workspace/changes')?{path:agent.workingDirectory,exists:true,uncommitted:2,sample:['app.css','Program.cs'],unpushed:0,upstream:'origin/master',branch:'master',conversations:2}
+   :p.endsWith('/limit/automatic')?{enabled:false,sent:0}:p.endsWith('/limit')?null:[];
   await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
  });
  await page.routeWebSocket('**/ws/terminal?**',ws=>ws.send(JSON.stringify({type:'ready',tty:'/dev/pts/99'})));
  await page.goto(base+`/agents/${id}`);
  await page.locator('.terminal-name').waitFor({timeout:60000});
- const openSessions=async()=>{
-  const button=page.getByLabel('Switch session',{exact:true});
-  if(await button.isVisible()) await button.click();
-  else {await page.getByLabel('More actions',{exact:true}).click();await page.getByRole('menuitem',{name:'Switch session',exact:true}).click();}
- };
+ const openMenu=async()=>{ await page.locator('button[aria-label="Choose workspace"]').click(); await page.getByRole('menuitem',{name:/Earlier conversation/}).waitFor(); };
  for(const width of [320,390,600,740,1280]) {
   await page.setViewportSize({width,height:844});await page.waitForTimeout(300);
   const boxes=await page.locator('.terminal-toolbar').evaluate(el=>[...el.children].filter(x=>getComputedStyle(x).display!=='none'&&x.getBoundingClientRect().width>0).map(x=>{const r=x.getBoundingClientRect();return {x:r.x,right:r.right};}));
@@ -50,46 +49,64 @@ try {
   const title=await page.locator('.terminal-title').boundingBox();
   const status=await page.locator('.terminal-name-row .agent-status-button').boundingBox();
   assert.ok(status.x+status.width<=title.x+title.width+1,`status escapes title at ${width}`);
-  await openSessions();
-  await page.getByText('Earlier conversation',{exact:true}).waitFor();
-  const dialog=await page.getByRole('dialog').boundingBox();
-  assert.ok(dialog.x>=0&&dialog.x+dialog.width<=width,`dialog overflows at ${width}`);
+  await openMenu();
+  // The workspace row is labelled by what it works on; saved conversations are listed below.
+  await page.getByRole('menuitem',{name:/Current conversation/}).waitFor();
+  const menu=await page.locator('.mud-popover-open.workspace-menu-popover').boundingBox();
+  assert.ok(menu.x>=0&&menu.x+menu.width<=width+1,`menu overflows at ${width}: ${JSON.stringify(menu)}`);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`menu content overflows at ${width}`);
+  await page.getByRole('menuitem',{name:/Earlier conversation/}).click();
+  const dialog=page.getByRole('dialog');
+  await dialog.getByRole('button',{name:'Resume here, in Main'}).waitFor();
+  await dialog.getByRole('button',{name:'Resume in a new workspace…'}).waitFor();
+  await dialog.getByText('“Current conversation” is saved and stops.',{exact:true}).waitFor();
+  const box=await dialog.boundingBox();
+  assert.ok(box.x>=0&&box.x+box.width<=width,`chooser overflows at ${width}`);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-  await page.screenshot({path:`/tmp/dam-sessions-${width}.png`});
-  await page.getByRole('button',{name:'Close',exact:true}).last().click();
+  await page.waitForTimeout(300); // Let the dialog finish opening.
+  await page.screenshot({path:`/tmp/dam-conversation-chooser-${width}.png`});
+  await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+  await dialog.waitFor({state:'hidden'});
  }
+ assert.deepEqual(actions,[],'listing and choosing conversations never resumes one by itself');
  await page.setViewportSize({width:390,height:844});
- await openSessions();
- const oldRow=page.locator('.session-picker-row').filter({hasText:'Earlier conversation'});
- await oldRow.getByLabel('Rename session').click();
- await page.getByLabel('Session name',{exact:true}).fill('Renamed history');
- await page.getByRole('button',{name:'Save',exact:true}).click();
- await page.getByText('Renamed history',{exact:true}).waitFor();
- await page.locator('.session-picker-row').filter({hasText:'Renamed history'}).getByRole('button',{name:'Select',exact:true}).click();
+ await openMenu();
+ await page.getByRole('menuitem',{name:/Earlier conversation/}).click();
+ await page.getByRole('dialog').getByRole('button',{name:'Resume here, in Main'}).click();
  await page.getByRole('dialog').waitFor({state:'hidden'});
  assert.equal(actions.at(-1).sessionId,other);
  await page.locator('.switch-chip-label').filter({hasText:'claude'}).waitFor({state:'attached'});
- assert.equal(rows.find(s=>s.id===other).harnessId,'claude','Selected history retains its own harness');
- await openSessions();
- await page.getByLabel('New session name (optional)',{exact:true}).fill('Fresh chat');
- await page.getByRole('button',{name:'New session',exact:true}).click();
- await page.getByRole('dialog').waitFor({state:'hidden'});
- assert.equal(actions.at(-1).title,'Fresh chat');
+ // A new conversation: updating first is unavailable while files are uncommitted.
+ await page.getByLabel('More actions',{exact:true}).click();
+ await page.getByRole('menuitem',{name:'New conversation here…',exact:true}).click();
+ const fresh=page.getByRole('dialog');
+ await fresh.getByText('Unavailable: 2 files have uncommitted changes (app.css, Program.cs).',{exact:true}).waitFor();
+ assert.equal(await fresh.getByRole('switch').isDisabled(),true);
+ await fresh.getByLabel('Conversation name (optional)',{exact:true}).fill('Fresh chat');
+ await fresh.getByRole('button',{name:'Start new conversation',exact:true}).click();
+ await fresh.waitFor({state:'hidden'});
+ assert.deepEqual([actions.at(-1).title,actions.at(-1).update],['Fresh chat',false]);
  assert.equal(rows.at(-1).harnessId,'claude','New chat uses the restored harness');
- await openSessions();
- await page.locator('.session-picker-row').filter({hasText:'Renamed history'}).getByLabel('Delete session').click();
+ // The Sessions page groups by project, renames and deletes saved conversations.
+ await page.goto(base+'/sessions');
+ await page.getByText('Open project',{exact:true}).waitFor({timeout:60000});
+ assert.equal(await page.locator('section[aria-label="Your sessions"] .session-group-heading strong').count(),1);
+ await page.getByText('● Active in Main').first().waitFor();
+ const saved=page.locator('.agent-row').filter({hasText:'Current conversation'});
+ await saved.getByLabel('Rename session').click();
+ await page.getByLabel('Session name',{exact:true}).fill('Renamed history');
+ await page.getByRole('button',{name:'Save',exact:true}).click();
+ await page.getByText('Renamed history',{exact:true}).waitFor();
+ const renamed=page.locator('.agent-row').filter({hasText:'Renamed history'});
+ await renamed.getByLabel('Delete session').click();
  await page.getByRole('button',{name:'Cancel',exact:true}).click();
  assert.equal(rows.length,3);
- await page.locator('.session-picker-row').filter({hasText:'Renamed history'}).getByLabel('Delete session').click();
+ await renamed.getByLabel('Delete session').click();
  await page.getByRole('button',{name:'Delete',exact:true}).click();
  await page.getByText('Renamed history',{exact:true}).waitFor({state:'hidden'});
  assert.equal(rows.length,2);
- await page.getByRole('button',{name:'Close',exact:true}).last().click();
- await page.goto(base+'/sessions');
- await page.getByText('Manage sessions',{exact:true}).waitFor();
- assert.equal(await page.locator('section[aria-label="Your sessions"] .session-group-heading strong').count(),1);
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  await page.screenshot({path:'/tmp/dam-sessions-page-phone.png'});
  assert.deepEqual(errors,[]);
- console.log('Passed: header and picker fit 320–1280px; native harness selection, new chats, rename, confirmed deletion and grouped sessions page.');
-} finally {await browser.close();}
+ console.log('Passed: header, dropdown and chooser fit 320–1280px; choosing never resumes by itself; resume here restores its harness; new chats with a blocked update; project-grouped sessions page with rename and confirmed deletion.');
+} catch (error) { const page = browser.contexts()[0]?.pages()[0]; if (page) { await page.screenshot({path:'/tmp/dam-workspace-conversation-failure.png'}); console.error((await page.locator('.mud-popover-open').allInnerTexts()).join(' | ')); } throw error; } finally {await browser.close();}

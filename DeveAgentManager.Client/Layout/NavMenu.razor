@@ -1,5 +1,6 @@
 @inherits LiveComponent
 @inject SignedInUser Me
+@inject NavigationManager Navigation
 
 <div class="nav-wrapper">
     <MudNavMenu Class="app-nav" Rounded="true" Margin="Margin.Dense" Color="Color.Primary">
@@ -25,18 +26,22 @@
             }
         </Placeholder>
         <ChildContent>
-        @foreach (var agent in _liveAgents)
+        @foreach (var group in WorkspaceGroups.Group(_liveAgents.Where(a => WorkspaceGroups.Sidebar(a, SelectedAgent))))
         {
-            <MudNavLink Href="@($"agents/{agent.Id}")" Match="NavLinkMatch.All" Class="nav-agent">
-                <div class="nav-agent-row">
-                    <span class="nav-agent-avatar">
-                        <AgentAvatar Agent="agent" Class="nav-avatar" />
-                        <span class="nav-agent-dot @(agent.State != AgentState.Running ? "" : StateStyles.For(agent).Tone == Tone.Warning ? "warning" : StateStyles.For(agent).Tone == Tone.Unclear ? "unclear" : agent.Working ? "working" : "live")" title="@(agent.Activity?.Reason ?? StateStyles.For(agent).Text)"></span>
-                    </span>
-                    <span class="nav-agent-name">@agent.Name</span>
-                    <span class="nav-agent-meta">@agent.RunnerName</span>
-                </div>
-            </MudNavLink>
+            @if (group.Count == 1) { <WorkspaceNavEntry Agent="group[0]" /> }
+            else
+            {
+                @* Indented under Agents like a single agent, its workspaces one step further. The menu is too narrow for a
+                   project's name and Runner both, so the Runner is in the title. *@
+                <MudNavGroup Title="@WorkspaceGroups.ProjectName(group[0])" Icon="@Icons.Material.Rounded.FolderOpen" Expanded="true" Class="nav-project">
+                    <TitleContent>
+                        <span class="nav-project-name" title="@($"{WorkspaceGroups.ProjectName(group[0])} · {group[0].RunnerName}")">@WorkspaceGroups.ProjectName(group[0])</span>
+                    </TitleContent>
+                    <ChildContent>
+                        @foreach (var agent in group) { <WorkspaceNavEntry Agent="agent" Child="true" /> }
+                    </ChildContent>
+                </MudNavGroup>
+            }
         }
         </ChildContent>
         </LoadingSection>
@@ -84,6 +89,8 @@
 </div>
 
 @code {
+    private Guid? SelectedAgent => Guid.TryParse(Navigation.ToBaseRelativePath(Navigation.Uri).Split('/').ElementAtOrDefault(1)?.Split('?')[0], out var id) ? id : null;
+    private void LocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args) => _ = InvokeAsync(StateHasChanged);
     private int _runningAgents;
     private int _readyRunners;
     private List<AgentDto> _liveAgents = [];
@@ -94,6 +101,7 @@
     protected override async Task OnInitializedAsync()
     {
         Me.Changed += OnUserChanged;
+        Navigation.LocationChanged += LocationChanged;
         await base.OnInitializedAsync();
     }
 
@@ -102,6 +110,7 @@
     public override void Dispose()
     {
         Me.Changed -= OnUserChanged;
+        Navigation.LocationChanged -= LocationChanged;
         base.Dispose();
     }
 
@@ -110,11 +119,10 @@
         _user = await Me.GetAsync();
         var runners = await Api.ListRunnersAsync();
         _readyRunners = runners.Count(r => r.State == RunnerState.Ready);
-        _liveAgents = runners.SelectMany(r => r.Agents)
+        _liveAgents = (await Api.ListAgentsAsync())
             .Where(a => a.OwnerId == _user.Id || a.SharedWithMe)
-            .Where(a => a.State is AgentState.Running or AgentState.Starting)
             .ByLastReply()
             .ToList();
-        _runningAgents = _liveAgents.Count;
+        _runningAgents = _liveAgents.Count(WorkspaceGroups.Running);
     }
 }
