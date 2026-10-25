@@ -34,8 +34,7 @@
                     <small class="workspace-menu-where">@WorkspaceGroups.LastRanIn(session, _agents) · @session.UpdatedAt.Humanize()</small>
                 </MudMenuItem>
             }
-            <MudMenuItem Href="@($"sessions?project={WorkspaceGroups.ProjectKey(Agent)}")" Icon="@Icons.Material.Rounded.History">All conversations</MudMenuItem>
-            <MudMenuItem Href="@($"projects/{WorkspaceGroups.ProjectKey(Agent)}")" Icon="@Icons.Material.Rounded.FolderOpen">Manage workspaces</MudMenuItem>
+            <MudMenuItem Href="@($"projects/{WorkspaceGroups.ProjectKey(Agent)}")" Icon="@Icons.Material.Rounded.FolderOpen">All workspaces and conversations</MudMenuItem>
         }
     </ChildContent>
 </MudMenu>
@@ -56,8 +55,8 @@
 
     private RenderFragment Row(AgentDto agent) => @<div class="workspace-menu-entry" @key="agent.Id">
         <MudMenuItem Href="@($"agents/{agent.Id}")" Icon="@(agent.Id == Agent.Id ? Icons.Material.Rounded.Check : Icons.Material.Rounded.Terminal)">
-            <div class="workspace-menu-row"><span class="workspace-menu-title">@Title(agent)</span><StatusPill Style="StateStyles.For(agent)" /></div>
-            <small class="mono workspace-menu-where">@WorkspaceGroups.WorkspaceName(agent)@(Branch(agent) is { } branch ? $" · {branch}" : "")</small>
+            <div class="workspace-menu-row"><span class="workspace-menu-title">@WorkspaceGroups.WorkspaceName(agent)</span><StatusPill Style="StateStyles.For(agent)" /></div>
+            <small class="workspace-menu-where">@string.Join(" · ", new[] { Branch(agent), ConversationTitle(agent) }.Where(part => !string.IsNullOrEmpty(part)))</small>
         </MudMenuItem>
         @if (agent.Access >= AgentAccess.Write)
         {
@@ -69,7 +68,7 @@
     </div>;
 
     /// <summary>What a workspace is working on: its conversation's title.</summary>
-    private string Title(AgentDto agent) => _sessions.FirstOrDefault(s => s.AgentId == agent.Id)?.Title ?? WorkspaceGroups.WorkspaceName(agent);
+    private string? ConversationTitle(AgentDto agent) => _sessions.FirstOrDefault(s => s.AgentId == agent.Id)?.Title;
     private string? Branch(AgentDto agent) => _branches.TryGetValue(agent.Id, out var branch) ? branch : agent.RepositoryBranch;
 
     private Task LoadAsync() => _open ? LoadCoreAsync() : Task.CompletedTask;
@@ -129,6 +128,6 @@
     private async Task ChooseAsync(SessionDto session)
     {
         await CloseAsync();
-        if (await ConversationChooserDialog.ShowAsync(Dialogs, session, Agent, _agents, Title(Agent)) == ConversationChooserDialog.ResumedHere) await Changed.InvokeAsync();
+        if (await ConversationChooserDialog.ShowAsync(Dialogs, session, Agent, _agents, ConversationTitle(Agent)) == ConversationChooserDialog.ResumedHere) await Changed.InvokeAsync();
     }
 }

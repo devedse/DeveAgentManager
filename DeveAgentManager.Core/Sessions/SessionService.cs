@@ -249,7 +249,7 @@ public sealed class SessionService(
         else
         {
             stored = await db.Sessions.FirstOrDefaultAsync(s => s.AgentId == agent.Id, cancellationToken)
-                ?? new StoredSession { Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Title = agent.Name, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+                ?? new StoredSession { Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Title = NewTitle, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
             if (db.Entry(stored).State == EntityState.Detached) db.Sessions.Add(stored);
         }
 
@@ -400,7 +400,7 @@ public sealed class SessionService(
             {
                 Id = Guid.NewGuid(),
                 OwnerId = agent.OwnerId,
-                Title = agent.Name,
+                Title = NewTitle,
                 AgentId = agent.Id,
                 WorkspaceAgentId = agent.Id,
                 HarnessId = agent.HarnessId,
@@ -730,7 +730,7 @@ public sealed class SessionService(
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var selected = id.HasValue ? await db.Sessions.SingleAsync(s => s.Id == id, ct) : new StoredSession
         {
-            Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Title = string.IsNullOrWhiteSpace(title) ? "New session" : ValidateTitle(title),
+            Id = Guid.NewGuid(), OwnerId = agent.OwnerId, Title = string.IsNullOrWhiteSpace(title) ? NewTitle : ValidateTitle(title),
             TitlePinned = !string.IsNullOrWhiteSpace(title), CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
             HarnessId = agent.HarnessId, WorkspaceAgentId = agent.Id, ProjectId = agent.ProjectId
         };
@@ -870,13 +870,22 @@ public sealed class SessionService(
         await db.SaveChangesAsync(ct);
     }
 
+    /// <summary>What a conversation is called until its harness names it or its first prompt says what it is about.</summary>
+    public const string NewTitle = "New conversation";
+
     internal static void Apply(StoredSession stored, DeveSession session, string? agentName)
     {
-        // Agents start pi with --name <agent>; the first prompt says more than that, unless the user renamed the session.
-        var title = session.Title is { Length: > 0 } name && name != agentName ? name : session.FirstPrompt() ?? session.Title;
+        // Agents start their harness with --name <agent>: that names the workspace, not the conversation. The first
+        // prompt says more, unless the user renamed the conversation.
+        var title = session.Title is { Length: > 0 } name && name != agentName ? name
+            : session.FirstPrompt() ?? (agentName is null ? session.Title : null);
         if (!stored.TitlePinned && !string.IsNullOrWhiteSpace(title))
         {
             stored.Title = title;
+        }
+        else if (!stored.TitlePinned && agentName is not null && stored.Title == agentName)
+        {
+            stored.Title = NewTitle;
         }
 
         stored.MessageCount = session.Entries.Count(e => e.Kind == DeveEntryKind.Message && e.Role is DeveRole.User or DeveRole.Assistant);

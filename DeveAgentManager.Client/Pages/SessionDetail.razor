@@ -34,7 +34,7 @@
                 {
                     <MudButton Href="@($"agents/{running.Id}")" Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Terminal">Open agent</MudButton>
                 }
-                else if (SessionList.ContinueText(_stored) is { } continueText)
+                else if (ConversationRow.ContinueText(_stored) is { } continueText)
                 {
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" OnClick="ContinueAsync">@continueText</MudButton>
                 }

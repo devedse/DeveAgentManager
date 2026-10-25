@@ -29,7 +29,7 @@
         <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading agents">
             <Placeholder><SkeletonList Rows="5" /></Placeholder>
             <ChildContent>
-                <GroupedAgentTable Agents="Filtered" User="_user" ShowRunner="true" GroupWorkspaces="true" ShowStopped="@(_showStopped || _filter == "stopped")">
+                <GroupedAgentTable Agents="Filtered" User="_user" ShowRunner="true" ShowStopped="@(_showStopped || _filter == "stopped")">
                     <EmptyContent>
                         @if (_agents.Count == 0)
                         {
@@ -42,7 +42,7 @@
     </div>
     @if (Loaded)
     {
-        <GroupedAgentTable Agents="Filtered" User="_user" ShowRunner="true" GroupWorkspaces="true" ShowStopped="@(_showStopped || _filter == "stopped")" AdministrativeOnly="true" />
+        <GroupedAgentTable Agents="Filtered" User="_user" ShowRunner="true" ShowStopped="@(_showStopped || _filter == "stopped")" AdministrativeOnly="true" />
     }
 </MudContainer>
 

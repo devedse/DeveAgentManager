@@ -9,6 +9,8 @@ public static class WorkspaceGroups
     public static Guid ProjectKey(AgentDto agent) => agent.ProjectId ?? agent.Id;
     public static string ProjectName(AgentDto agent) => agent.ProjectName ?? agent.Name;
     public static string WorkspaceName(AgentDto agent) => agent.IsClone ? agent.Name : "Main";
+    /// <summary>A name that stands on its own outside a project group: "project · workspace" for a clone.</summary>
+    public static string DisplayName(AgentDto agent) => agent.IsClone ? $"{ProjectName(agent)} · {agent.Name}" : agent.ProjectName ?? agent.Name;
     public static bool Running(AgentDto agent) => agent.State is AgentState.Running or AgentState.Starting;
     public static bool QuietStopped(AgentDto agent) => agent.RunnerState == RunnerState.Ready
         && agent.State is AgentState.Stopped or AgentState.Exited
@@ -24,13 +26,6 @@ public static class WorkspaceGroups
     public static string LastRanIn(SessionDto session, IEnumerable<AgentDto> projectAgents) =>
         projectAgents.FirstOrDefault(a => a.Id == session.WorkspaceAgentId) is { } agent ? WorkspaceName(agent)
         : session.WorkingDirectory is { } folder ? $"{folder.TrimEnd('/').Split('/')[^1]} (removed)" : "removed workspace";
-    public static string Size(long bytes) => bytes switch
-    {
-        >= 1L << 30 => $"{bytes / (double)(1L << 30):0.#} GB",
-        >= 1L << 20 => $"{bytes / (double)(1L << 20):0.#} MB",
-        >= 1L << 10 => $"{bytes / 1024.0:0.#} KB",
-        _ => $"{bytes} bytes",
-    };
     public static IReadOnlyList<IReadOnlyList<AgentDto>> Group(IEnumerable<AgentDto> agents) => agents.ByLastReply()
         .GroupBy(ProjectKey).Select(g => (IReadOnlyList<AgentDto>)g.ToList()).ToList();
 }

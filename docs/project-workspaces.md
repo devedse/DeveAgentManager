@@ -6,7 +6,8 @@ its own agent: its own public ID, tmux terminal, harness/login, activity, tasks 
 workspaces can run at the same time. A workspace runs one conversation at a time.
 
 Opening a workspace changes only what this viewer sees; it never starts, stops or redirects an agent. Start and Stop
-(▶/■ in the workspace dropdown, on the Agents page and on the project page) target one workspace.
+(▶/■ in the workspace dropdown, on the Agents page and on the project page) target one workspace. The Agents page, the
+dashboard and a Runner's page list workspaces under their project in the same way.
 
 ## Folders
 
@@ -74,8 +75,12 @@ ran, and `AgentId` where it is active now. A conversation is active in at most o
 - **New conversation here** saves and stops the workspace's conversation and starts a fresh one in the same folder.
   **Update to the latest version first** pulls the workspace's branch before that; it is refused while anything is
   uncommitted or unpushed, before anything stops.
+- **Names.** A workspace is named by its workspace name (Main, or the name it was created with); a conversation by its
+  title. Harnesses start with `--name <workspace>`, so until the first prompt a new conversation is "New conversation".
 - **Saved conversations** appear in the workspace dropdown (newest first), on the project page grouped by the
-  workspace they last ran in, and on the Sessions page grouped by project. Choosing one never does anything by itself:
+  workspace they last ran in, and on the Sessions page grouped by project; both pages use the same rows and actions.
+  The project page is the place for one project; the Sessions page lists every project's conversations, imported ones
+  and those shared with you. Choosing one never does anything by itself:
   the person picks **Resume here** (which saves and stops the conversation running there, and warns when its last
   folder or branch differs), **Resume in a new workspace**, or **Read only**. An active conversation opens its workspace.
 - **Removing a workspace** keeps its conversations with the project. Their access then follows the project's sharing.

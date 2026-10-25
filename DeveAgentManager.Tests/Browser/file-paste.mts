@@ -28,7 +28,7 @@ try {
 
     // The Manager's side of the terminal socket: uploads are stored (answered with a path), everything else is typing.
     const uploads = [];
-    let typed = '';
+    let typed = '', answerDelay = 0, failNext = false;
     await context.routeWebSocket('**/ws/terminal?**', ws => {
         let receiving = null;
         ws.send(JSON.stringify({ type: 'ready', tty: '/dev/pts/9' }));
@@ -47,8 +47,11 @@ try {
                 if (receiving.received === receiving.size) {
                     const done = receiving;
                     receiving = null;
-                    uploads.push({ name: done.name, content: Buffer.concat(done.chunks).toString('utf8') });
-                    ws.send(JSON.stringify({ type: 'image', id: done.id, path: `/home/runner/.deveagentmanager/uploads/20261011-010203-abcd1234/${done.name}` }));
+                    const failed = failNext;
+                    failNext = false;
+                    if (!failed) uploads.push({ name: done.name, content: Buffer.concat(done.chunks).toString('utf8') });
+                    setTimeout(() => ws.send(JSON.stringify(failed ? { type: 'image', id: done.id, error: 'Test-only storage failure' }
+                        : { type: 'image', id: done.id, path: `/home/runner/.deveagentmanager/uploads/20261011-010203-abcd1234/${done.name}` })), answerDelay);
                 }
                 return;
             }
@@ -125,6 +128,30 @@ try {
         assert.equal(typed, expected(images).map(path => `\x1b[200~${path}\x1b[201~`).join(''), 'no Enter or extra terminal input');
     }
 
+    // Several files: a row each while they upload, done turns green and fades, and nothing is left behind.
+    await page.locator('.terminal-uploads').waitFor({ state: 'detached', timeout: 10000 });
+    answerDelay = 800;
+    typed = '';
+    await deliver('drop', images);
+    const rows = page.locator('.terminal-upload');
+    await rows.nth(1).waitFor();
+    assert.equal(await rows.count(), 2, 'one row per file');
+    const box = await page.locator('.terminal-uploads').boundingBox();
+    const toolbar = await page.locator('.terminal-toolbar').boundingBox();
+    const keys = await page.locator('.terminal-keys').boundingBox();
+    assert.ok(box.y >= toolbar.y + toolbar.height && (!keys || box.y + box.height <= keys.y), 'uploads stay clear of the toolbar and the keys');
+    await page.locator('.terminal-upload-done').first().waitFor();
+    await page.locator('.terminal-uploads').waitFor({ state: 'detached', timeout: 10000 });
+    await waitFor(() => pastes().length === images.length, 'slow uploads completed');
+    assert.equal(await page.locator('.mud-snackbar').count(), 0, 'no upload message is left behind');
+    answerDelay = 0;
+    // A failed upload says why, and can be dismissed.
+    failNext = true;
+    await deliver('drop', [images[0]]);
+    await page.locator('.terminal-upload-error').getByText('Test-only storage failure', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Dismiss first.png', exact: true }).click();
+    await page.locator('.terminal-uploads').waitFor({ state: 'detached' });
+
     // A mixed batch retains ordinary file names and original order.
     typed = '';
     const mixed = [images[0], { name: 'results.log', type: 'text/plain', content: 'passed' }, images[1]];
@@ -141,7 +168,7 @@ try {
     await waitFor(() => pastes().length === images.length, 'phone image picker completed');
     assert.deepEqual(pastes(), expected(images));
 
-    console.log(`Passed (${engine}): file upload names/content, separate image paste events, mixed batch order, phone multi-image picker, no automatic submission${scriptedPaste ? ', text/image clipboard precedence' : ' (scripted clipboard unavailable; drops and picker checked)'}.`);
+    console.log(`Passed (${engine}): file upload names/content, separate image paste events, upload rows (progress, done, failure, nothing left behind), mixed batch order, phone multi-image picker, no automatic submission${scriptedPaste ? ', text/image clipboard precedence' : ' (scripted clipboard unavailable; drops and picker checked)'}.`);
 } finally {
     await browser.close();
 }

@@ -508,11 +508,12 @@
     const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // TerminalService.MaxUploadBytes
     const IMAGE_CHUNK_BYTES = 64 * 1024; // TerminalSocket.ImageChunkBytes
     let nextImageId = 1;
+    let nextUploadId = 1;
 
     // Sends an image over the terminal's socket (TerminalSocket.Image); resolves to its path on the Runner.
     // Not an HTTP upload: a reverse proxy's request size limit (nginx: 1 MB by default) doesn't apply to a WebSocket.
     // When the connection drops meanwhile (a bad network), it is sent again once the terminal has reconnected.
-    async function uploadImage(id, file) {
+    async function uploadImage(id, file, progress?: (fraction: number) => void) {
         if (file.size > MAX_IMAGE_BYTES) {
             throw new Error(`Files can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB.`);
         }
@@ -529,7 +530,7 @@
             }
 
             try {
-                return await sendImage(connection, file.name, bytes);
+                return await sendImage(connection, file.name, bytes, progress);
             } catch (error) {
                 if (!error.dropped || attempt === 3) {
                     throw error;
@@ -558,32 +559,45 @@
         return null;
     }
 
-    function sendImage(connection, name, bytes) {
+    function sendImage(connection, name, bytes, progress?: (fraction: number) => void) {
         return new Promise((resolve, reject) => {
             const imageId = nextImageId++;
-            connection.images.set(imageId, { resolve, reject });
+            const socket = connection.socket;
+            const queuedBefore = socket.bufferedAmount;
+            let timer;
+            const settle = finish => value => { clearInterval(timer); finish(value); };
+            connection.images.set(imageId, { resolve: settle(resolve), reject: settle(reject) });
             // Header and bytes in one go, without awaiting: nothing typed meanwhile can end up between them.
-            connection.socket.send(JSON.stringify({ type: "image", id: imageId, name: name ?? "", size: bytes.length }));
+            socket.send(JSON.stringify({ type: "image", id: imageId, name: name ?? "", size: bytes.length }));
             for (let offset = 0; offset < bytes.length; offset += IMAGE_CHUNK_BYTES) {
-                connection.socket.send(bytes.subarray(offset, offset + IMAGE_CHUNK_BYTES));
+                socket.send(bytes.subarray(offset, offset + IMAGE_CHUNK_BYTES));
             }
+            // Sent is what the socket no longer holds; storing it on the Runner is the last step, until the answer.
+            timer = setInterval(() => {
+                const left = Math.min(bytes.length, Math.max(0, socket.bufferedAmount - queuedBefore));
+                progress?.(0.95 * (bytes.length - left) / bytes.length);
+            }, 200);
         });
     }
 
     // Uploads images to the terminal's Runner (the Manager stores them) and pastes their paths into the terminal.
-    // Progress and errors go to .NET (snackbars).
+    // Each file's progress goes to .NET, which shows it on the terminal: queued, sending (a fraction), done or error.
     async function sendImages(terminal, dotnet, id, files, afterPaste) {
         const paths = [];
-        for (const file of files) {
-            dotnet?.invokeMethodAsync("OnImageStatus", "uploading", `${file.name || "file"} (${Math.max(1, Math.round(file.size / 1024))} KB)`);
+        const report = (upload, file, phase, fraction, error = null) =>
+            dotnet?.invokeMethodAsync("OnUploadProgress", upload, phase, file.name || "file", file.size, fraction, error);
+        const uploads = files.map(file => ({ file, upload: nextUploadId++ }));
+        for (const { file, upload } of uploads) report(upload, file, "queued", 0);
+        for (const { file, upload } of uploads) {
+            report(upload, file, "sending", 0);
             try {
-                paths.push(await uploadImage(id, file));
+                paths.push(await uploadImage(id, file, fraction => report(upload, file, "sending", fraction)));
+                report(upload, file, "done", 1);
             } catch (error) {
-                dotnet?.invokeMethodAsync("OnImageStatus", "error", error?.message ?? String(error));
+                report(upload, file, "error", 0, error?.message ?? String(error));
             }
         }
 
-        dotnet?.invokeMethodAsync("OnImageStatus", "done", "");
         if (paths.length > 0) {
             afterPaste();
             // Codex recognizes one image path per paste. Keep each file in its own bracketed

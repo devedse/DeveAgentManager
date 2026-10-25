@@ -22,7 +22,7 @@ else
                     <AgentAvatar Agent="agent" />
                     <div class="list-main">
                         <div class="list-title">
-                            @(WorkspaceLabels ? WorkspaceGroups.WorkspaceName(agent) : agent.IsClone ? $"{WorkspaceGroups.ProjectName(agent)} · {agent.Name}" : agent.ProjectName ?? agent.Name)
+                            @(WorkspaceLabels ? WorkspaceGroups.WorkspaceName(agent) : WorkspaceGroups.DisplayName(agent))
                             @if (ShowOwner || agent.SharedWithMe || agent.Access != AgentAccess.Owner)
                             {
                                 <span class="account-badge" title="@ShareText(agent)">@agent.OwnerName</span>

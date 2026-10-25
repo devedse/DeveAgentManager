@@ -28,6 +28,13 @@ try {
     const sessions = [session(0, 'Current conversation', id(10)), session(1, 'Previous conversation', null),
         session(2, 'Removed workspace chat', null, null, '/work/example-project.workspaces/old-fix')];
     const writes: { path: string, body: any }[] = [];
+    const login = (n, name) => ({ id: id(300 + n), harnessId: 'pi', name, kind: 'Subscription', isDefault: false, version: 1, agentCount: 0,
+        createdAt: now, updatedAt: now, access: 'Use', enabled: true });
+    const accounts = [login(1, 'Work login'), login(2, 'Personal login')];
+    agents[0]['accountId'] = id(302);
+    const runner = { id: id(1), name: 'test-runner', ownerId: me.id, ownerName: 'Test user', access: 'Owner', providerId: 'existing', kind: 'Headless', state: 'Ready',
+        host: 'runner.test', cores: 4, memoryMb: 8192, diskGb: 64, agents, harnessIds: ['pi'], toolIds: [], createdAt: now, updatedAt: now };
+    let slowAccounts = false;
     const estimates = { MainBranch: { bytes: 39845888, files: 1204, freeBytes: 15032385536, copyOnWrite: false, branch: 'main', canPull: true },
         LastCommit: { bytes: 39845888, files: 1204, freeBytes: 15032385536, copyOnWrite: false, branch: 'main', canPull: true },
         ExactCopy: { bytes: 21474836480, files: 51234, freeBytes: 15032385536, copyOnWrite: false, branch: 'main', canPull: true } };
@@ -44,6 +51,7 @@ try {
             return route.fulfill({ status: 204 });
         }
         if (path === '/api/agents' && slowWorkspace) await new Promise(resolve => setTimeout(resolve, 900));
+        if (path === '/api/accounts' && slowAccounts) await new Promise(resolve => setTimeout(resolve, 900));
         if (path === '/api/agents' && failWorkspace) return route.fulfill({ status: 503, json: { error: 'Test-only workspace failure' } });
         if (path.endsWith('/workspaces/estimate')) {
             const start = url.searchParams.get('start');
@@ -53,7 +61,9 @@ try {
             return route.fulfill({ json: estimates[start] });
         }
         const selected = agents.find(a => path === `/api/agents/${a.id}`);
-        const body = path === '/api/info' ? info : path === '/api/agents' ? agents : selected ? selected : path === '/api/runners' ? []
+        const body = path === '/api/info' ? info : path === '/api/agents' ? agents : selected ? selected : path === '/api/runners' ? [runner]
+            : path === `/api/runners/${id(1)}` ? runner : path === '/api/accounts' ? accounts
+            : path.endsWith('/timezone') ? { defaultTimeZoneId: 'UTC', overrideTimeZoneId: null }
             : path.endsWith('/workspace/changes') ? changes : path.endsWith('/kept-folders')
                 ? [{ path: '/work/example-project.workspaces/kept-fix', name: 'kept-fix', branch: 'kept-fix', removedAt: now }]
             : path.endsWith('/session') ? sessions[0] : path === '/api/sessions' ? sessions : [];
@@ -82,6 +92,16 @@ try {
     await page.locator('.nav-project').waitFor({ timeout: 60000 });
     assert.equal(await page.locator('.nav-project .nav-agent').count(), 2, 'two running agents expand into separate links');
     agents[1].state = 'Stopped';
+    // The dashboard and a Runner's page group workspaces with the same component.
+    for (const path of ['/', `/runners/${id(1)}`]) {
+        await page.goto(base + path);
+        const group = page.getByRole('region', { name: 'Project Example project', exact: true });
+        await group.waitFor({ timeout: 60000 });
+        assert.equal(await group.locator('.agent-row').count(), 1, `${path}: the stopped workspace waits behind Show stopped`);
+        await group.getByRole('button', { name: /Show 1 stopped workspace/ }).click();
+        assert.equal(await group.locator('.agent-row').count(), 2, `${path}: both workspaces are under their project`);
+        await page.getByRole('region', { name: 'Project Stopped project', exact: true }).waitFor();
+    }
 
     // The dropdown: rows labelled by their conversation, with ▶/■; opening sends nothing.
     await page.goto(base + `/agents/${id(10)}`);
@@ -94,7 +114,9 @@ try {
     slowWorkspace = false;
     await page.getByRole('menuitem', { name: /Stopped \(1\)/ }).click();
     await page.getByRole('menuitem', { name: /login-fix/ }).waitFor();
-    await page.getByText('login-fix · switched-branch', { exact: true }).waitFor();
+    // Rows lead with the workspace's name; the branch and the conversation are underneath.
+    await page.getByRole('menuitem', { name: /login-fix/ }).getByText('switched-branch', { exact: true }).waitFor();
+    await page.getByRole('menuitem', { name: /^Main/ }).getByText('main · Current conversation', { exact: true }).waitFor();
     assert.deepEqual(writes, [], 'opening the dropdown sends no lifecycle commands');
     await page.getByRole('button', { name: 'Stop Main', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Start login-fix', exact: true }).click();
@@ -103,6 +125,7 @@ try {
     await page.getByRole('menuitem', { name: /Previous conversation/ }).waitFor();
     await page.getByRole('menuitem', { name: /Removed workspace chat/ }).getByText('old-fix (removed)', { exact: false }).waitFor();
     assert.equal(await page.getByRole('menuitem', { name: /Current conversation/ }).count(), 1, 'active conversations show only as workspaces');
+    assert.equal(await page.getByRole('menuitem', { name: 'All workspaces and conversations', exact: true }).getAttribute('href'), `projects/${id(50)}`);
 
     // Choosing a saved conversation asks first.
     await page.getByRole('menuitem', { name: /Previous conversation/ }).click();
@@ -118,9 +141,13 @@ try {
     // New workspace: each start point fills in on its own; too large is disabled; failures retry.
     let exactArrived = false;
     slowExact = new Promise(resolve => { releaseExact = () => { exactArrived = true; resolve(); }; });
+    slowAccounts = true;
     await picker.click();
     await page.getByRole('menuitem', { name: 'New workspace…', exact: true }).click();
     const create = page.getByRole('dialog');
+    await create.getByRole('status').filter({ hasText: 'Loading harnesses and logins' }).waitFor();
+    assert.equal(await create.getByRole('alert').count(), 0, 'nothing reads as an error while the dialog loads');
+    slowAccounts = false;
     await create.getByText('38 MB · 1,204 files').first().waitFor();
     await create.getByRole('status').filter({ hasText: 'Calculating…' }).waitFor();
     await create.getByText('Size unknown · Retry', { exact: true }).waitFor();
@@ -134,13 +161,18 @@ try {
     await create.getByText('39 MB · 1,216 files', { exact: true }).waitFor();
     await create.getByLabel('Pull first').check();
     await create.getByText('about 38 MB · 1,204 files', { exact: true }).waitFor();
+    // What this workspace uses comes first, marked (current), and is preselected.
+    await create.getByText('Personal login (current)', { exact: true }).waitFor();
+    await create.getByRole('combobox', { name: 'Harness login' }).click();
+    assert.deepEqual(await page.getByRole('option').allInnerTexts(), ['Personal login (current)', "Owner's permitted default", 'Work login']);
+    await page.keyboard.press('Escape');
     await create.getByLabel('Name (optional)', { exact: true }).fill('fix-toolbar');
     await create.screenshot({ path: '/tmp/dam-new-workspace.png' });
     await create.getByRole('button', { name: 'Create workspace', exact: true }).click();
     await page.waitForURL(base + `/agents/${id(12)}`);
     const created = writes.at(-1);
     assert.equal(created.path, `/api/agents/${id(10)}/workspaces`);
-    assert.deepEqual([created.body.name, created.body.start, created.body.pull, created.body.startAgent], ['fix-toolbar', 'MainBranch', true, true]);
+    assert.deepEqual([created.body.name, created.body.start, created.body.pull, created.body.startAgent, created.body.accountId], ['fix-toolbar', 'MainBranch', true, true, id(302)]);
 
     // Removing a workspace lists what would be lost and offers Keep files.
     await page.goto(base + `/agents/${id(11)}`);
@@ -161,6 +193,9 @@ try {
     const conversations = page.getByRole('region', { name: 'Conversations', exact: true });
     await conversations.getByText('old-fix (removed)', { exact: true }).waitFor();
     await conversations.getByText('● Active in Main', { exact: true }).waitFor();
+    // The same rows as the Sessions page, with its actions.
+    assert.equal(await conversations.getByRole('button', { name: 'Rename session', exact: true }).count(), 3);
+    assert.equal(await conversations.getByRole('button', { name: 'Resume in its project', exact: true }).count(), 2, 'saved conversations can resume');
 
     failWorkspace = true;
     await page.goto(base + `/agents/${id(10)}`);

@@ -7,7 +7,7 @@
     <DialogContent>
         @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mb-2">@_error</MudAlert> }
         <MudTextField @bind-Value="_title" Label="Conversation name (optional)" MaxLength="200" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" />
-        <LoadingSection Loaded="@(_changes is not null)" Error="_loadError" Retry="LoadAsync" Label="Checking the workspace">
+        <LoadingSection Loaded="@(_changes is not null)" Error="@_loadError" Retry="LoadAsync" Label="Checking the workspace">
             <ChildContent>
                 <MudSwitch T="bool" @bind-Value="_update" Label="@($"Update to the latest {(_changes?.Upstream ?? "version")} first")" Color="Color.Primary" Disabled="@(_busy || UpdateBlocked is not null)" />
                 @if (UpdateBlocked is { } reason) { <MudText Typo="Typo.caption" Class="mud-text-secondary">@reason</MudText> }

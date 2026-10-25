@@ -89,7 +89,7 @@ try {
  assert.equal(rows.at(-1).harnessId,'claude','New chat uses the restored harness');
  // The Sessions page groups by project, renames and deletes saved conversations.
  await page.goto(base+'/sessions');
- await page.getByText('Manage workspaces',{exact:true}).waitFor({timeout:60000});
+ await page.getByText('Open project',{exact:true}).waitFor({timeout:60000});
  assert.equal(await page.locator('section[aria-label="Your sessions"] .session-group-heading strong').count(),1);
  await page.getByText('● Active in Main').first().waitFor();
  const saved=page.locator('.agent-row').filter({hasText:'Current conversation'});

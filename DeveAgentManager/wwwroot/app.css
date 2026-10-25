@@ -1753,6 +1753,43 @@ html:has(.terminal-layout) body {
         background-color: transparent !important;
     }
 
+/* Files being pasted into the terminal, one row each. */
+.terminal-uploads {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    /* Above the terminal and its Copy button, below the connecting overlay. */
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: min(300px, calc(100% - 24px));
+    pointer-events: none;
+}
+.terminal-upload {
+    --upload-tone: var(--dam-info);
+    pointer-events: auto;
+    padding: 6px 10px 8px;
+    border: 1px solid color-mix(in srgb, var(--upload-tone) 55%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--dam-surface) 92%, var(--upload-tone));
+    color: var(--dam-text);
+    font-size: .8rem;
+    box-shadow: 0 4px 14px rgb(0 0 0 / 25%);
+}
+.terminal-upload-done { --upload-tone: var(--dam-success); animation: terminal-upload-fade .5s ease 1s forwards; }
+.terminal-upload-error { --upload-tone: var(--dam-error); }
+.terminal-upload-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.terminal-upload-row .mud-icon-root { color: var(--upload-tone); flex-shrink: 0; }
+.terminal-upload-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-upload-size { color: var(--dam-muted); flex-shrink: 0; }
+.terminal-upload-close { border: 0; background: none; color: var(--dam-muted); cursor: pointer; padding: 0 2px; font: inherit; }
+.terminal-upload-bar { height: 4px; margin-top: 6px; border-radius: 2px; background: color-mix(in srgb, var(--upload-tone) 20%, transparent); overflow: hidden; }
+.terminal-upload-bar > div { height: 100%; background: var(--upload-tone); transition: width .2s ease; }
+.terminal-upload-reason { margin-top: 4px; overflow-wrap: anywhere; }
+@keyframes terminal-upload-fade { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .terminal-upload-done { animation: none; } .terminal-upload-bar > div { transition: none; } }
+
 .terminal-overlay {
     position: absolute;
     inset: 0;

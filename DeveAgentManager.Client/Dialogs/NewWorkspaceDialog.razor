@@ -9,7 +9,7 @@
             <p>Git shares the history with Main through hardlinks. Working files are written fresh, or copied with copy-on-write where the disk supports it. Remove the workspace later from its menu; that checks for uncommitted and unpushed work first.</p>
         </HelpTip></div></TitleContent>
     <DialogContent>
-        <LoadingSection Loaded="_loaded" Error="_loadError" Retry="LoadAsync" Label="Loading harnesses and logins">
+        <LoadingSection Loaded="_loaded" Error="@_loadError" Retry="LoadAsync" Label="Loading harnesses and logins">
             <Placeholder><SkeletonForm Fields="4" /></Placeholder>
             <ChildContent>
                 @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mb-2">@_error</MudAlert> }
@@ -52,13 +52,14 @@
                     <MudText Typo="Typo.caption" Class="workspace-start-disk">@DiskText</MudText>
                     <MudTextField @bind-Value="_branch" Label="New branch (optional)" HelperText="@BranchHelp" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" Class="mt-2" />
                 }
-                <MudSelect T="string" @bind-Value="_harness" Label="Harness" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" Class="mt-2">
-                    @foreach (var harness in _harnesses) { <MudSelectItem T="string" Value="harness.Id">@harness.DisplayName</MudSelectItem> }
+                @* What this workspace uses comes first, marked (current). *@
+                <MudSelect T="string" @bind-Value="_harness" @bind-Value:after="HarnessChanged" Label="Harness" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" Class="mt-2">
+                    @foreach (var harness in _harnesses.OrderByDescending(h => h.Id == Source.HarnessId))
+                    { <MudSelectItem T="string" Value="harness.Id">@harness.DisplayName@(harness.Id == Source.HarnessId ? " (current)" : "")</MudSelectItem> }
                 </MudSelect>
                 <MudSelect T="Guid?" @bind-Value="_account" Label="Harness login" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy">
-                    <MudSelectItem T="Guid?" Value="@((Guid?)null)">Owner's permitted default</MudSelectItem>
-                    @foreach (var account in _accounts.Where(a => a.Enabled && a.Access >= AccountAccess.Use && a.HarnessId == _harness))
-                    { <MudSelectItem T="Guid?" Value="account.Id">@account.Name</MudSelectItem> }
+                    @foreach (var (id, name) in Logins)
+                    { <MudSelectItem T="Guid?" Value="id">@name@(SameHarness && id == Source.AccountId ? " (current)" : "")</MudSelectItem> }
                 </MudSelect>
                 <MudSwitch T="bool" @bind-Value="_startAgent" Label="Start the agent right away" Disabled="_busy" Color="Color.Primary" />
             </ChildContent>
@@ -115,11 +116,28 @@
             _harnesses = (await Api.InfoAsync()).Harnesses.Where(h => Source.RunnerHarnessIds.Contains(h.Id)).ToList();
             if (_harnesses.All(h => h.Id != _harness)) _harness = Source.HarnessId;
             _accounts = await Api.ListAccountsAsync();
+            HarnessChanged();
             _loaded = true;
         }
         catch (ApiException ex) { _loadError = ex.Message; }
         catch (HttpRequestException) { _loadError = LoadingSection.Unreachable; }
     }
+
+    private bool SameHarness => _harness == Source.HarnessId;
+    private IEnumerable<AccountDto> Usable => _accounts.Where(a => a.Enabled && a.Access >= AccountAccess.Use && a.HarnessId == _harness);
+
+    /// <summary>The logins for the chosen harness; with this workspace's harness, the one it uses comes first.</summary>
+    private IEnumerable<(Guid? Id, string Name)> Logins
+    {
+        get
+        {
+            IEnumerable<(Guid? Id, string Name)> logins = Usable.Select(a => ((Guid?)a.Id, a.Name)).Prepend(((Guid?)null, "Owner's permitted default"));
+            return SameHarness ? logins.OrderByDescending(l => l.Id == Source.AccountId) : logins;
+        }
+    }
+
+    // This workspace's login for its own harness; the owner's default for another one.
+    private void HarnessChanged() => _account = SameHarness && Usable.Any(a => a.Id == Source.AccountId) ? Source.AccountId : null;
 
     // Each start point fills in on its own; the exact copy measures the whole folder and can take a while.
     private async Task EstimateAsync(WorkspaceStart start)
@@ -137,15 +155,15 @@
     private string SizeText(WorkspaceStart start)
     {
         var estimate = _estimates[start]!;
-        var size = $"{(start == WorkspaceStart.MainBranch && _pull ? "about " : "")}{WorkspaceGroups.Size(estimate.Bytes)} · {estimate.Files:N0} files";
-        return TooLarge(start) ? $"needs {WorkspaceGroups.Size(estimate.Bytes)}, {WorkspaceGroups.Size(estimate.FreeBytes)} free" : size;
+        var size = $"{(start == WorkspaceStart.MainBranch && _pull ? "about " : "")}{ByteCount.Text(estimate.Bytes)} · {estimate.Files:N0} files";
+        return TooLarge(start) ? $"needs {ByteCount.Text(estimate.Bytes)}, {ByteCount.Text(estimate.FreeBytes)} free" : size;
     }
 
     /// <summary>Only a known size can rule an option out; while it's calculating, every option stays available.</summary>
     private bool TooLarge(WorkspaceStart start) => _estimates.GetValueOrDefault(start) is { } estimate && estimate.Bytes > estimate.FreeBytes;
 
     private string DiskText => _estimates.Values.FirstOrDefault(e => e is not null) is { } any
-        ? $"{WorkspaceGroups.Size(any.FreeBytes)} free · {(any.CopyOnWrite ? "copies are instant and use no extra space at first (copy-on-write)" : "copies are normal copies (this disk has no copy-on-write)")}"
+        ? $"{ByteCount.Text(any.FreeBytes)} free · {(any.CopyOnWrite ? "copies are instant and use no extra space at first (copy-on-write)" : "copies are normal copies (this disk has no copy-on-write)")}"
         : "Checking the disk…";
 
     private string BranchHelp => _estimates.GetValueOrDefault(_start == WorkspaceStart.MainBranch ? WorkspaceStart.MainBranch : WorkspaceStart.LastCommit)?.Branch is { } branch

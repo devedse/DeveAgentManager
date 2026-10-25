@@ -1,7 +1,8 @@
+@* Every list of agents: workspaces grouped under their project, projects ordered by their latest reply (AgentOrder).
+   A shortened list (the dashboard's) keeps whole projects and never hides an active one. *@
 @{
-    var agents = Agents.ForAgentList(User)
-        .Where(a => AdministrativeOnly == (a.OwnerId != User?.Id && !a.SharedWithMe))
-        .ByLastReply().Take(LimitPerSection).ToList();
+    var agents = Shorten(WorkspaceGroups.Group(Agents.ForAgentList(User)
+        .Where(a => AdministrativeOnly == (a.OwnerId != User?.Id && !a.SharedWithMe)))).SelectMany(project => project).ToList();
 }
 @if (AdministrativeOnly)
 {
@@ -12,8 +13,7 @@
                 <div class="help-heading"><MudText Typo="Typo.h6">Other users’ agents</MudText>
                 <HelpTip Label="Other users’ agents"><p>Agents visible through your management permissions. Agents shared with you appear with your own agents above.</p></HelpTip></div>
             </div>
-            @if (GroupWorkspaces) { <ProjectAgentTable Agents="agents" ShowRunner="ShowRunner" ShowOwner="true" ShowStopped="ShowStopped" /> }
-            else { <AgentTable Agents="agents" ShowRunner="ShowRunner" ShowOwner="true" /> }
+            <ProjectAgentTable Agents="agents" ShowRunner="ShowRunner" ShowOwner="true" ShowStopped="ShowStopped" />
         </section>
     }
 }
@@ -24,16 +24,7 @@ else
             <MudText Typo="Typo.h6">Your agents</MudText>
             <HelpTip Label="Your agents"><p>Your own agents and agents shared with you, ordered by their latest reply.</p></HelpTip>
         </div>
-        @if (GroupWorkspaces)
-        {
-            <ProjectAgentTable Agents="agents" ShowRunner="ShowRunner" ShowStopped="ShowStopped" EmptyText="EmptyText"><EmptyContent>@EmptyContent</EmptyContent></ProjectAgentTable>
-        }
-        else
-        {
-        <AgentTable Agents="agents" ShowRunner="ShowRunner" EmptyText="@EmptyText">
-            <EmptyContent>@EmptyContent</EmptyContent>
-        </AgentTable>
-        }
+        <ProjectAgentTable Agents="agents" ShowRunner="ShowRunner" ShowStopped="ShowStopped" EmptyText="@EmptyText"><EmptyContent>@EmptyContent</EmptyContent></ProjectAgentTable>
     </section>
 }
 
@@ -42,9 +33,20 @@ else
     [Parameter, EditorRequired] public CurrentUserDto? User { get; set; }
     [Parameter] public bool AdministrativeOnly { get; set; }
     [Parameter] public bool ShowRunner { get; set; }
-    [Parameter] public bool GroupWorkspaces { get; set; }
     [Parameter] public bool ShowStopped { get; set; }
+    /// <summary>
+    /// How many projects to show; a project with several workspaces counts once. Projects with a running workspace, or one
+    /// needing attention, always show; the most recent others fill the remaining places.
+    /// </summary>
     [Parameter] public int LimitPerSection { get; set; } = int.MaxValue;
+
+    private IEnumerable<IReadOnlyList<AgentDto>> Shorten(IReadOnlyList<IReadOnlyList<AgentDto>> projects)
+    {
+        static bool Active(IReadOnlyList<AgentDto> project) => project.Any(a => WorkspaceGroups.Sidebar(a, null));
+        var room = Math.Max(0, LimitPerSection - projects.Count(Active));
+        foreach (var project in projects)
+            if (Active(project) || room-- > 0) yield return project;
+    }
     [Parameter] public string EmptyText { get; set; } = "No agents match.";
     [Parameter] public RenderFragment? EmptyContent { get; set; }
 }

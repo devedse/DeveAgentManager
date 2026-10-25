@@ -122,6 +122,22 @@ public sealed class WorkspaceSessionTests
     }
 
     [Fact]
+    public void TheHarnessNameNamesTheWorkspaceNotItsConversation()
+    {
+        // Agents start their harness with --name <workspace>; until the first prompt, that is not the conversation's title.
+        var stored = new StoredSession { Title = "testworkspace" };
+        SessionService.Apply(stored, new DeveSession { Title = "testworkspace" }, "testworkspace");
+        Assert.Equal(SessionService.NewTitle, stored.Title);
+        var prompted = new DeveSession { Title = "testworkspace" };
+        prompted.Entries.Add(new DeveEntry { Id = "u1", Kind = DeveEntryKind.Message, Role = DeveRole.User, Content = [DeveBlock.OfText("Fix the toolbar on phones")] });
+        SessionService.Apply(stored, prompted, "testworkspace");
+        Assert.Equal("Fix the toolbar on phones", stored.Title);
+        var pinned = new StoredSession { Title = "testworkspace", TitlePinned = true };
+        SessionService.Apply(pinned, new DeveSession { Title = "testworkspace" }, "testworkspace");
+        Assert.Equal("testworkspace", pinned.Title);
+    }
+
+    [Fact]
     public async Task SelectingAnotherHarnessRestoresIt_AndNewSessionsUseTheRestoredHarness()
     {
         using var rig = new Rig();

@@ -3,7 +3,7 @@
         <span class="nav-agent-avatar"><AgentAvatar Agent="Agent" Class="nav-avatar" />
             <span class="nav-agent-dot @(Agent.State == AgentState.Error ? "warning" : Agent.State != AgentState.Running ? "" : Agent.Working ? "working" : "live")" title="@(Agent.Activity?.Reason ?? StateStyles.For(Agent).Text)"></span>
         </span>
-        <span class="nav-agent-name">@(Child ? WorkspaceGroups.WorkspaceName(Agent) : WorkspaceGroups.ProjectName(Agent))</span>
+        <span class="nav-agent-name">@(Child ? WorkspaceGroups.WorkspaceName(Agent) : WorkspaceGroups.DisplayName(Agent))</span>
         <span class="nav-agent-meta">@(Child ? Agent.RepositoryBranch ?? StateStyles.For(Agent).Text : Agent.RunnerName)</span>
     </div>
 </MudNavLink>

@@ -7,7 +7,7 @@
             <p>Remove everything deletes the folder, including uncommitted files and commits that were never pushed; that cannot be undone. Keep files leaves the folder on the Runner and lists it under Manage workspaces, where you can delete it or use it for a new workspace. Only a folder the Manager created is ever deleted.</p>
         </HelpTip></div></TitleContent>
     <DialogContent>
-        <LoadingSection Loaded="@(_changes is not null)" Error="_loadError" Retry="LoadAsync" Label="Checking the workspace for unsaved work">
+        <LoadingSection Loaded="@(_changes is not null)" Error="@_loadError" Retry="LoadAsync" Label="Checking the workspace for unsaved work">
             <Placeholder><SkeletonList Rows="2" Avatar="false" /></Placeholder>
             <ChildContent>
                 @if (_changes is { } changes)

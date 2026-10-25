@@ -89,7 +89,9 @@ page's header, with the same explanations).
 
 Every list of agents puts the one that replied last first: sort with `AgentOrder.ByLastReply()`
 (`DeveAgentManager.Client/Shared/AgentOrder.cs`), including lists cut short such as the dashboard's. Agents that never
-replied come after, newest first. Lists grouped by agent, such as sessions, order the groups the same way.
+replied come after, newest first. Lists grouped by agent, such as sessions, order the groups the same way. Agent lists
+(the Agents page, the dashboard, a Runner's page) use `GroupedAgentTable`, which groups workspaces under their project;
+a shortened list keeps whole projects and every project with a running workspace or one needing attention.
 `DeveAgentManager.Tests/Browser/agent-order.mts` checks the pages that list agents.
 
 ## Projects and workspace agents
