@@ -75,6 +75,8 @@ await using (var db = await app.Services.GetRequiredService<IDbContextFactory<Ma
 }
 
 await app.Services.GetRequiredService<UserService>().EnsureAdminAsync();
+// Files that were still arriving in a terminal when the Manager stopped.
+DeveAgentManager.Core.Runners.TerminalService.ClearUploadBuffers(managerOptions);
 await app.Services.GetRequiredService<UserSettingsStore>().MoveSettingsFromBeforeUsersAsync();
 await app.Services.GetRequiredService<DeveAgentManager.Core.Sessions.SessionService>().BackfillMessageTimesAsync();
 await app.Services.GetRequiredService<DeveAgentManager.Core.Sessions.SessionService>().RepairNoteTitlesAsync();

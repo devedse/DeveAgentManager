@@ -179,7 +179,11 @@ public sealed class RunnerShell(
     }
 
     /// <summary>Writes a file on the Runner (creating its folder) and returns its absolute path there.</summary>
-    public async Task<string> UploadAsync(Runner runner, string remotePath, byte[] bytes, string mode = "600", CancellationToken cancellationToken = default)
+    public Task<string> UploadAsync(Runner runner, string remotePath, byte[] bytes, string mode = "600", CancellationToken cancellationToken = default) =>
+        UploadAsync(runner, remotePath, new MemoryStream(bytes), mode, cancellationToken);
+
+    /// <summary>Writes a file on the Runner from <paramref name="content"/>'s position on, streamed rather than held in memory.</summary>
+    public async Task<string> UploadAsync(Runner runner, string remotePath, Stream content, string mode = "600", CancellationToken cancellationToken = default)
     {
         var directory = remotePath.Contains('/') ? remotePath[..remotePath.LastIndexOf('/')] : "";
         if (directory.Length > 0)
@@ -190,8 +194,7 @@ public sealed class RunnerShell(
         var sftpPath = await WithSftpAsync(runner, async (sftp, ct) =>
         {
             var path = ToSftpPath(sftp, remotePath);
-            using var stream = new MemoryStream(bytes);
-            await sftp.UploadFileAsync(stream, path, ct);
+            await sftp.UploadFileAsync(content, path, ct);
             return path;
         }, cancellationToken);
 

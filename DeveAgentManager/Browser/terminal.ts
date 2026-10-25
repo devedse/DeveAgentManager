@@ -505,10 +505,14 @@
         return Array.from(dataTransfer?.files ?? []);
     }
 
-    const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // TerminalService.MaxUploadBytes
+    const MAX_IMAGE_BYTES = 500 * 1024 * 1024; // TerminalService.MaxUploadBytes
     const IMAGE_CHUNK_BYTES = 64 * 1024; // TerminalSocket.ImageChunkBytes
+    // A large file is read a slice at a time and only this much waits in the socket, so it isn't held in the page.
+    const IMAGE_SLICE_BYTES = 1024 * 1024;
+    const IMAGE_QUEUE_BYTES = 4 * 1024 * 1024;
     let nextImageId = 1;
     let nextUploadId = 1;
+    const dropped = () => Object.assign(new Error("The connection dropped before the file was sent. Paste it again."), { dropped: true });
 
     // Sends an image over the terminal's socket (TerminalSocket.Image); resolves to its path on the Runner.
     // Not an HTTP upload: a reverse proxy's request size limit (nginx: 1 MB by default) doesn't apply to a WebSocket.
@@ -518,8 +522,7 @@
             throw new Error(`Files can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB.`);
         }
 
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        if (bytes.length === 0) {
+        if (file.size === 0) {
             throw new Error(`${file.name || "The file"} is empty.`);
         }
 
@@ -530,7 +533,10 @@
             }
 
             try {
-                return await sendImage(connection, file.name, bytes, progress);
+                // One file at a time per connection: its bytes are the only binary frames until it is sent.
+                const turn = connection.uploads.then(() => sendImage(connection, file, progress));
+                connection.uploads = turn.catch(() => {});
+                return await turn;
             } catch (error) {
                 if (!error.dropped || attempt === 3) {
                     throw error;
@@ -559,25 +565,50 @@
         return null;
     }
 
-    function sendImage(connection, name, bytes, progress?: (fraction: number) => void) {
-        return new Promise((resolve, reject) => {
-            const imageId = nextImageId++;
-            const socket = connection.socket;
-            const queuedBefore = socket.bufferedAmount;
-            let timer;
-            const settle = finish => value => { clearInterval(timer); finish(value); };
-            connection.images.set(imageId, { resolve: settle(resolve), reject: settle(reject) });
-            // Header and bytes in one go, without awaiting: nothing typed meanwhile can end up between them.
-            socket.send(JSON.stringify({ type: "image", id: imageId, name: name ?? "", size: bytes.length }));
-            for (let offset = 0; offset < bytes.length; offset += IMAGE_CHUNK_BYTES) {
-                socket.send(bytes.subarray(offset, offset + IMAGE_CHUNK_BYTES));
+    // The header, then the file's bytes in slices. Until the last one, what is typed (and resizes) waits in
+    // connection.held: binary frames are the file's bytes until then. The socket only queues IMAGE_QUEUE_BYTES.
+    async function sendImage(connection, file, progress?: (fraction: number) => void) {
+        const imageId = nextImageId++;
+        const socket = connection.socket;
+        const size = file.size;
+        const queuedBefore = socket.bufferedAmount;
+        const sent = () => Math.max(0, Math.min(size, sending - Math.max(0, socket.bufferedAmount - queuedBefore)));
+        let sending = 0, timer;
+        const answer = new Promise((resolve, reject) => connection.images.set(imageId, { resolve, reject }));
+        answer.catch(() => {});
+        connection.held = [];
+        try {
+            socket.send(JSON.stringify({ type: "image", id: imageId, name: file.name ?? "", size }));
+            timer = setInterval(() => progress?.(0.95 * sent() / size), 200);
+            for (let offset = 0; offset < size; offset += IMAGE_SLICE_BYTES) {
+                const slice = new Uint8Array(await file.slice(offset, offset + IMAGE_SLICE_BYTES).arrayBuffer());
+                for (let at = 0; at < slice.length; at += IMAGE_CHUNK_BYTES) {
+                    if (socket.readyState !== WebSocket.OPEN) throw dropped();
+                    socket.send(slice.subarray(at, at + IMAGE_CHUNK_BYTES));
+                }
+                sending += slice.length;
+                while (socket.bufferedAmount - queuedBefore > IMAGE_QUEUE_BYTES && socket.readyState === WebSocket.OPEN) {
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                }
             }
-            // Sent is what the socket no longer holds; storing it on the Runner is the last step, until the answer.
-            timer = setInterval(() => {
-                const left = Math.min(bytes.length, Math.max(0, socket.bufferedAmount - queuedBefore));
-                progress?.(0.95 * (bytes.length - left) / bytes.length);
-            }, 200);
-        });
+        } catch (error) {
+            // Part of a file was sent: what follows would be taken as more of it. A new connection starts clean.
+            connection.held = null;
+            clearInterval(timer);
+            connection.images.delete(imageId);
+            if (socket.readyState === WebSocket.OPEN) socket.close();
+            throw error.dropped ? error : Object.assign(error, { dropped: false });
+        }
+
+        const held = connection.held;
+        connection.held = null;
+        held.forEach(data => socket.send(data));
+        // Sent is what the socket no longer holds; storing it on the Runner is the last step, until the answer.
+        try {
+            return await answer;
+        } finally {
+            clearInterval(timer);
+        }
     }
 
     // Uploads images to the terminal's Runner (the Manager stores them) and pastes their paths into the terminal.
@@ -851,9 +882,11 @@
             }, 10000);
             socket.addEventListener("open", () => clearTimeout(opening));
             const encoder = new TextEncoder();
-            const connection = { ready: false, socket, subscriptions: [], closed: null, images: new Map() };
+            const connection = { ready: false, socket, subscriptions: [], closed: null, images: new Map(), uploads: Promise.resolve(), held: null };
             const send = data => {
-                if (socket.readyState === WebSocket.OPEN) {
+                if (connection.held) {
+                    connection.held.push(data);
+                } else if (socket.readyState === WebSocket.OPEN) {
                     socket.send(data);
                 }
             };
@@ -881,7 +914,7 @@
             socket.onclose = () => {
                 clearTimeout(opening);
                 connection.subscriptions.forEach(s => s.dispose());
-                connection.images.forEach(waiting => waiting.reject(Object.assign(new Error("The connection dropped before the image was stored. Paste it again."), { dropped: true })));
+                connection.images.forEach(waiting => waiting.reject(Object.assign(new Error("The connection dropped before the file was stored. Paste it again."), { dropped: true })));
                 connection.images.clear();
                 // Only the current connection reports: an old one closing after a reconnect says nothing.
                 if (sockets.get(id) === connection) {

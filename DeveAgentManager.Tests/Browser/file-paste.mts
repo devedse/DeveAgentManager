@@ -49,7 +49,11 @@ try {
                     receiving = null;
                     const failed = failNext;
                     failNext = false;
-                    if (!failed) uploads.push({ name: done.name, content: Buffer.concat(done.chunks).toString('utf8') });
+                    const content = Buffer.concat(done.chunks);
+                    // A large file is checked by its bytes, not kept as text.
+                    if (!failed) uploads.push(content.length > 1024 * 1024
+                        ? { name: done.name, size: content.length, allSame: content.every(byte => byte === content[0]), first: content[0] }
+                        : { name: done.name, content: content.toString('utf8') });
                     setTimeout(() => ws.send(JSON.stringify(failed ? { type: 'image', id: done.id, error: 'Test-only storage failure' }
                         : { type: 'image', id: done.id, path: `/home/runner/.deveagentmanager/uploads/20261011-010203-abcd1234/${done.name}` })), answerDelay);
                 }
@@ -159,6 +163,22 @@ try {
     await waitFor(() => pastes().length === mixed.length, 'mixed batch completed');
     assert.deepEqual(pastes(), expected(mixed));
 
+    // A large file (over the old 25 MB) goes in slices. What is typed meanwhile waits and arrives after it, whole,
+    // instead of ending up between its bytes.
+    typed = '';
+    const large = uploads.length;
+    await page.evaluate(() => {
+        const data = new DataTransfer();
+        data.items.add(new File([new Uint8Array(40 * 1024 * 1024).fill(65)], 'build.tar', { type: 'application/x-tar' }));
+        (document.querySelector('.xterm-helper-textarea') ?? document.querySelector('.xterm')).dispatchEvent(new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }));
+    });
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.type('typed-meanwhile');
+    for (let i = 0; i < 600 && !(uploads.length === large + 1 && pastes().length === 1); i++) await page.waitForTimeout(50);
+    assert.deepEqual(uploads.at(-1), { name: 'build.tar', size: 40 * 1024 * 1024, allSame: true, first: 65 }, 'the large file arrived whole');
+    assert.ok(typed.includes('typed-meanwhile'), `what was typed arrived too: ${JSON.stringify(typed.slice(0, 200))}`);
+    assert.deepEqual(pastes(), [`/home/runner/.deveagentmanager/uploads/20261011-010203-abcd1234/build.tar `]);
+
     // The phone's attachment button uses the same path, including multiple selected images.
     await page.setViewportSize({ width: 390, height: 850 });
     typed = '';
@@ -168,7 +188,7 @@ try {
     await waitFor(() => pastes().length === images.length, 'phone image picker completed');
     assert.deepEqual(pastes(), expected(images));
 
-    console.log(`Passed (${engine}): file upload names/content, separate image paste events, upload rows (progress, done, failure, nothing left behind), mixed batch order, phone multi-image picker, no automatic submission${scriptedPaste ? ', text/image clipboard precedence' : ' (scripted clipboard unavailable; drops and picker checked)'}.`);
+    console.log(`Passed (${engine}): file upload names/content, separate image paste events, upload rows (progress, done, failure, nothing left behind), mixed batch order, a 40 MB file in slices with typing held until it is sent, phone multi-image picker, no automatic submission${scriptedPaste ? ', text/image clipboard precedence' : ' (scripted clipboard unavailable; drops and picker checked)'}.`);
 } finally {
     await browser.close();
 }

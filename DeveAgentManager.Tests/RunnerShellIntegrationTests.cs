@@ -82,6 +82,42 @@ public class RunnerShellIntegrationTests
         Assert.DoesNotContain("no more sessions", await File.ReadAllTextAsync(fixture.Log, Ct));
     }
 
+    [Fact(Timeout = 120_000)]
+    public async Task ALargePastedFileIsStreamedFromItsBufferToTheRunner()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        Assert.SkipWhen(!File.Exists("/usr/sbin/sshd"), "The isolated transport regression requires openssh-server.");
+        await using var fixture = await Fixture.StartAsync();
+        var data = Directory.CreateTempSubdirectory("dam-upload-data-").FullName;
+        try
+        {
+            var terminals = new DeveAgentManager.Core.Runners.TerminalService(null!, fixture.Shell, null!, null!,
+                new DeveAgentManager.Core.Configuration.ManagerOptions { DataDirectory = data });
+            // As the terminal socket fills it: 64 MB in 64 KB frames, then sent on from its start.
+            var chunk = new byte[64 * 1024];
+            await using var buffer = terminals.NewUploadBuffer();
+            for (var i = 0; i < 1024; i++)
+            {
+                Array.Fill(chunk, (byte)(i % 251));
+                await buffer.WriteAsync(chunk, Ct);
+            }
+
+            buffer.Position = 0;
+            var expected = Convert.ToHexStringLower(await System.Security.Cryptography.SHA256.HashDataAsync(buffer, Ct));
+            buffer.Position = 0;
+            var remote = fixture.Root + "/home/uploads/nested/build.tar";
+            var path = await fixture.Shell.UploadAsync(fixture.Runner, remote, buffer, "600", Ct);
+            Assert.Equal(remote, path);
+            Assert.Equal(64L * 1024 * 1024, new FileInfo(remote).Length);
+            Assert.Equal(expected, Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(remote))));
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(remote));
+        }
+        finally
+        {
+            Directory.Delete(data, true);
+        }
+    }
+
     private static async Task WaitForFileAsync(string path)
     {
         for (var i = 0; !File.Exists(path) && i < 100; i++) await Task.Delay(20, Ct);
