@@ -62,6 +62,11 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
 
     public Task<UserProfile> SaveMyProfileAsync(UserProfile profile) => SendAsync<UserProfile>(HttpMethod.Put, "api/me/settings/profile", profile);
 
+    public Task<List<ModelDefaultsDto>> GetMyModelDefaultsAsync() => GetAsync<List<ModelDefaultsDto>>("api/me/settings/models");
+
+    public Task<List<ModelDefaultsDto>> SaveMyModelDefaultsAsync(Dictionary<string, ModelDefault> defaults) =>
+        SendAsync<List<ModelDefaultsDto>>(HttpMethod.Put, "api/me/settings/models", defaults);
+
     public Task SaveGitHubTokenAsync(string? token) => SendAsync(HttpMethod.Put, "api/me/settings/github-token", new GitHubTokenRequest(token));
 
     // Users

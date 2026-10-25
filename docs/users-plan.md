@@ -102,7 +102,7 @@ An agent's owner can share it with other users, **read-only** or **read-write**,
 
 | Where | What |
 |---|---|
-| **My settings** (each user) | Git name and email, environment variables, GitHub token, harness logins, SSH keys, theme |
+| **My settings** (each user) | Git name and email, environment variables, GitHub token, harness logins, own default models, SSH keys, theme |
 | **Per Runner** (Manage) | Name, size, harnesses and tools to install, timezone, desktop, password, keys only |
 | **Manager settings** (Settings manager) | Providers, templates, default timezone, and the rest of the Setup Profile: setup files, setup script, harness packages, default model and effort, and settings |
 
@@ -118,7 +118,8 @@ user's My settings; the rest stays shared. My settings are only set in the Porta
     user's name, email and a credentials file with their token, so commits carry their name and pushes use their token.
 - Harness credentials have one folder per login. Agents use separate runtime profiles for session lists and local mutable state; only the selected authorized session is bootstrapped from legacy files.
 - **Agent launch** loads the base environment, then the owner's environment file, then the harness login's. The
-  default model and effort stay shared (Manager settings).
+  default model and effort are the owner's (My settings → Models), else the Manager's; see
+  [default models](model-defaults.md).
 - **Work folders**: new agents default to `~/work/<username>/…`, so two users cloning the same repository don't collide.
 - **Shell** loads the environment of whoever opens it, so git in the shell uses their identity and token.
 - **SSH keys** of everyone with access are in `~/.ssh/authorized_keys`, next to the Manager's key.
@@ -234,7 +235,7 @@ Phases 1–2 are useful on their own: several people, each on their own Runners.
 - 2026-10-06 — Runner access has Use and Manage levels and one owner. Manage can view and set the Runner's password.
 - 2026-10-06 — Unique random password per Runner instead of the shared `remoteman`; password SSH stays allowed with a
   per-Runner keys only switch; per-user SSH keys.
-- 2026-10-06 — Implementation decisions: the default model and effort stay shared; VS Code runs with the Runner
+- 2026-10-06 — Implementation decisions: the default model and effort stay shared (2026-10-25: users can choose their own); VS Code runs with the Runner
   owner's identity; removing someone's Runner access removes their agents there; whoever manages a Runner sees other
   people's agents on it listed but can't open them, Use-level people don't see them; an agent's "needs attention"
   state is shared by everyone who sees it; deleting a user gives what they owned, and their Runner access, to a user

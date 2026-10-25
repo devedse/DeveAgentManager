@@ -115,13 +115,22 @@ public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHar
         // A -c value is parsed as TOML, so the instructions go in as a TOML string.
         var instructions = string.IsNullOrWhiteSpace(launch.Instructions) ? ""
             : " -c " + ShellQuote.Quote("developer_instructions=" + TomlString(launch.Instructions));
+        // Codex resumes with the model and effort of the conversation's last turn (turn_context), not config.toml's; without
+        // one (a new conversation, which is a resume too, or one from another harness) the effort would be Codex's default.
+        // So until Codex has run a turn of it, or right after a switch from another harness, they are given explicitly.
+        var defaults = (string.IsNullOrWhiteSpace(launch.Model) ? "" : " -m " + ShellQuote.Quote(launch.Model.Trim()))
+            + (string.IsNullOrWhiteSpace(launch.Effort) ? "" : " -c " + ShellQuote.Quote("model_reasoning_effort=" + TomlString(launch.Effort.Trim())));
+        var starts = launch.Transferred ? "true"
+            : $"! grep -qs '\"type\":\"turn_context\"' \"${{CODEX_HOME:-$HOME/.codex}}\"/sessions/*/*/*/rollout-*-{id}.jsonl";
         // Without its background server: that listens on a socket in CODEX_HOME, and an account's folder is too long a
         // path for a socket (108 characters), so Codex would refuse to start. Older Codex versions don't have the flag.
-        var script = $"""
-            node "{PrepareScript}" {id}
+        var script = $$"""
+            node "{{PrepareScript}}" {{id}}
             flags=""
             if codex --help 2>/dev/null | grep -q -- '--no-daemon'; then flags="--no-daemon"; fi
-            exec codex $flags --dangerously-bypass-approvals-and-sandbox{instructions} resume {id}
+            start=()
+            if {{starts}}; then start=({{defaults.TrimStart()}}); fi
+            exec codex $flags --dangerously-bypass-approvals-and-sandbox{{instructions}} "${start[@]}" resume {{id}}
             """;
         return "bash -c " + ShellQuote.Quote(script);
     }

@@ -4,7 +4,9 @@ Select **Grok** when creating a Runner, or install it from an existing Runner's 
 official [`@xai-official/grok`](https://docs.x.ai/build/overview) CLI. Connect an account under **My settings → Harness
 logins → Grok** using device authentication or an xAI API key. A Grok account's access depends on its plan.
 
-**Manager settings → Grok** selects the default model and reasoning effort. Empty fields let the CLI choose.
+**Manager settings → Grok** selects the default model and reasoning effort. Empty fields let the CLI choose. Users can
+choose their own under **My settings → Models**; the model is given when a conversation starts and the effort at every
+start (see [default models](model-defaults.md)).
 The Manager writes an overlay to `~/.deveagentmanager/grok-config.json`; native `~/.grok/config.toml` settings remain
 available. Save and apply to update Runners; restart an agent to load the new launch settings. Models come from the
 installed CLI's catalog. Instructions passed at launch use `--rules`, which adds them to Grok's system prompt.

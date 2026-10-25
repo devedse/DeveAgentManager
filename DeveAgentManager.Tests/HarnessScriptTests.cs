@@ -61,12 +61,12 @@ public sealed class HarnessScriptTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, "opus")]
-    [InlineData(true, "opus")]
-    [InlineData(true, "default")]
-    [InlineData(true, "opus[1m]")]
-    [InlineData(true, "model with spaces; $(touch injected)")]
-    public void Claude_TransferLaunch_SelectsExplicitModelForNewAndResumedChats(bool exists, string model)
+    [InlineData(false, "opus", "opus")]
+    [InlineData(true, "opus", "opus")]
+    [InlineData(true, null, "default")]
+    [InlineData(true, "opus[1m]", "opus[1m]")]
+    [InlineData(true, "model with spaces; $(touch injected)", "model with spaces; $(touch injected)")]
+    public void Claude_TransferLaunch_SelectsExplicitModelForNewAndResumedChats(bool exists, string? model, string expected)
     {
         if (!HasTools()) return;
         const string id = "11111111-2222-3333-4444-555555555555";
@@ -80,12 +80,12 @@ public sealed class HarnessScriptTests : IDisposable
             File.WriteAllText(Path.Combine(directory, id + ".jsonl"), new ClaudeSessionFormat().Write(imported, id, _work));
         }
         File.WriteAllText(Path.Combine(_bin, "claude"), "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HOME/launch-args\"\n");
-        Run(new ClaudeHarness().BuildLaunchCommand(new(id, "test", _work, model)));
+        Run(new ClaudeHarness().BuildLaunchCommand(new(id, "test", _work, model, Transferred: true)));
         var args = File.ReadAllLines(Path.Combine(_home, "launch-args"));
         Assert.Contains(exists ? "--resume" : "--session-id", args);
         var position = Array.IndexOf(args, "--model");
         Assert.True(position >= 0);
-        Assert.Equal(model, args[position + 1]);
+        Assert.Equal(expected, args[position + 1]);
         Assert.Single(args, a => a == "--model");
         Assert.False(File.Exists(Path.Combine(_work, "injected")));
     }
@@ -131,11 +131,98 @@ public sealed class HarnessScriptTests : IDisposable
     }
 
     [Theory]
-    [InlineData(null, "default")]
-    [InlineData("  ", "default")]
-    [InlineData(" opus ", "opus")]
-    public void Claude_TransferUsesConfiguredDefaultOrAccountDefault(string? configured, string expected) =>
-        Assert.Equal(expected, DeveAgentManager.Core.Agents.AgentService.TransferModel(configured));
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Claude_GivesTheEffortAtEveryStart_AndTheModelWhenAConversationStarts(bool exists)
+    {
+        if (!HasTools()) return;
+        const string id = "11111111-2222-3333-4444-555555555555";
+        if (exists)
+        {
+            var directory = Path.Combine(_home, ".claude", "projects", "test");
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, id + ".jsonl"), "");
+        }
+
+        // Claude restores a resumed conversation's model but not its effort, and ignores a top-level effortLevel in
+        // settings.json for current models.
+        var args = Launch(new ClaudeHarness(), new(id, "test", _work, "opus", Effort: "xhigh"), "  --effort <level>  Effort level for the current session");
+        Assert.Contains(exists ? "--resume" : "--session-id", args);
+        Assert.Equal("xhigh", args[Array.IndexOf(args, "--effort") + 1]);
+        Assert.Equal(!exists, args.Contains("--model"));
+
+        // A version without the flag would refuse to start with it.
+        Assert.DoesNotContain("--effort", Launch(new ClaudeHarness(), new(id, "test", _work, "opus", Effort: "xhigh"), ""));
+    }
+
+    [Fact]
+    public void Codex_GivesTheDefaultsUntilTheConversationHasATurn()
+    {
+        if (!HasTools()) return;
+        var harness = new CodexHarness();
+        Run(harness.InstallScript);
+        var id = harness.NewSessionId(Guid.NewGuid());
+        var launch = new HarnessLaunch(id, "test", _work, "gpt-6.1-sol", Effort: "xhigh");
+
+        // Every start is a resume, a new conversation's too, and without a recorded turn Codex would use its own default
+        // effort instead of config.toml's.
+        Assert.Equal(["-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=\"xhigh\"", "resume", id], Launch(harness, launch, "")[^6..]);
+        Assert.Equal(["-c", "model_reasoning_effort=\"xhigh\"", "resume", id], Launch(harness, launch with { Model = null }, "")[^4..]);
+
+        // After a turn it keeps the conversation's own model and effort, which /model may have changed.
+        var file = Directory.GetFiles(Path.Combine(_home, ".codex", "sessions"), $"rollout-*-{id}.jsonl", SearchOption.AllDirectories).Single();
+        File.AppendAllText(file, """{"timestamp":"2026-10-25T10:00:01.000Z","type":"turn_context","payload":{"model":"gpt-6.1-sol","effort":"medium"}}""" + "\n");
+        Assert.Equal(["--dangerously-bypass-approvals-and-sandbox", "resume", id], Launch(harness, launch, ""));
+
+        // Converted from another harness, earlier Codex turns of the conversation don't decide.
+        Assert.Equal(["-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=\"xhigh\"", "resume", id], Launch(harness, launch with { Transferred = true }, "")[^6..]);
+    }
+
+    [Fact]
+    public void Pi_GivesTheDefaultsWhenAConversationStarts()
+    {
+        if (!HasTools()) return;
+        const string id = "11111111-2222-3333-4444-555555555555";
+        var launch = new HarnessLaunch(id, "test", _work, "claude-opus-5-5", Effort: "high", Provider: "anthropic");
+        string[] defaults = ["--provider", "anthropic", "--model", "claude-opus-5-5", "--thinking", "high"];
+        Assert.Equal(defaults, Launch(new PiHarness(), launch, "")[^6..]);
+
+        // pi resumes with the model and thinking level recorded in the conversation.
+        var sessions = Path.Combine(_home, ".pi", "agent", "sessions", "--work--");
+        Directory.CreateDirectory(sessions);
+        File.WriteAllText(Path.Combine(sessions, $"2026-10-25T10-00-00-000Z_{id}.jsonl"), "");
+        Assert.DoesNotContain("--model", Launch(new PiHarness(), launch, ""));
+        Assert.Equal(defaults, Launch(new PiHarness(), launch with { Transferred = true }, "")[^6..]);
+    }
+
+    [Fact]
+    public void Grok_GivesTheModelWhenAConversationStarts_AndTheEffortAtEveryStart()
+    {
+        if (!HasTools() || !Which("python3")) return;
+        var harness = new GrokHarness();
+        Run(harness.InstallScript);
+        var id = harness.NewSessionId(Guid.NewGuid());
+        var launch = new HarnessLaunch(id, "test", _work, "grok-4.7", Effort: "high");
+        const string help = "      --reasoning-effort <EFFORT>";
+        Assert.Equal(["--session-id", id, "--model", "grok-4.7", "--reasoning-effort", "high"], Launch(harness, launch, help)[^6..]);
+
+        Directory.CreateDirectory(Path.Combine(_home, ".grok", "sessions", "work", id));
+        Assert.Equal(["--resume", id, "--reasoning-effort", "high"], Launch(harness, launch, help)[^4..]);
+        Assert.Equal(["--resume", id, "--model", "grok-4.7", "--reasoning-effort", "high"], Launch(harness, launch with { Transferred = true }, help)[^6..]);
+        // A version without the flag would refuse to start with it.
+        Assert.Equal(["--resume", id], Launch(harness, launch, "")[^2..]);
+    }
+
+    /// <summary>Starts the harness's launch command with a stub that records its arguments; <paramref name="help"/> is what its --help shows.</summary>
+    private string[] Launch(IHarness harness, HarnessLaunch launch, string help)
+    {
+        var stub = Path.Combine(_bin, harness.Id);
+        // NUL-separated, so arguments with spaces stay whole.
+        File.WriteAllText(stub, $"#!/bin/sh\nif [ \"$1\" = --help ]; then printf '%s\\n' {DeveAgentManager.Core.Ssh.ShellQuote.Quote(help)}; exit 0; fi\nprintf '%s\\0' \"$@\" > \"$HOME/launch-args\"\n");
+        File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        Run($"cd {_work} && {harness.BuildLaunchCommand(launch)}");
+        return File.ReadAllText(Path.Combine(_home, "launch-args")).TrimEnd('\0').Split('\0');
+    }
 
     [Fact]
     public void Claude_Accounts_SubscriptionWinsOverAnApiKeyFromTheProfile()
@@ -251,7 +338,7 @@ public sealed class HarnessScriptTests : IDisposable
         start.Environment["HOME"] = _home;
         start.Environment["PATH"] = _bin + ":" + Environment.GetEnvironmentVariable("PATH");
         // An agent running these tests has its own harness homes; the scripts must use this test's.
-        foreach (var home in new[] { "CODEX_HOME", "CLAUDE_CONFIG_DIR", "GROK_HOME" }) start.Environment.Remove(home);
+        foreach (var home in new[] { "CODEX_HOME", "CLAUDE_CONFIG_DIR", "GROK_HOME", "PI_CODING_AGENT_DIR" }) start.Environment.Remove(home);
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
         process.WaitForExit();

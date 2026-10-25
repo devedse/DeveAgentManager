@@ -31,7 +31,7 @@ public sealed partial class AgentService(
     ManagerEvents events,
     ILogger<AgentService> logger,
     AgentContinuations? continuations = null, AgentDiagnostics? diagnostics = null, UsageLimitReader? limitReader = null, ArtifactTokens? artifactTokens = null,
-    AuditLog? audit = null)
+    AuditLog? audit = null, Setup.UserSettingsStore? userSettings = null)
 {
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
 
@@ -160,7 +160,7 @@ public sealed partial class AgentService(
 
         try
         {
-            await LaunchAsync(runner, agent, restart: false, cancellationToken, useDefaultModel: importingConversation, loginActor: actor);
+            await LaunchAsync(runner, agent, restart: false, cancellationToken, transferred: importingConversation, loginActor: actor);
             agent.State = AgentState.Running;
         }
         catch (Exception ex)
@@ -256,7 +256,7 @@ public sealed partial class AgentService(
             await db.SaveChangesAsync(cancellationToken);
             events.AgentChanged(runner.Id, agent.Id);
 
-            await LaunchAsync(runner, agent, restart: true, cancellationToken, useDefaultModel: changesHarness, loginActor: actor);
+            await LaunchAsync(runner, agent, restart: true, cancellationToken, transferred: changesHarness, loginActor: actor);
             agent.State = AgentState.Running;
             agent.StateMessage = null;
             agent.ExitCode = null;
@@ -887,7 +887,8 @@ public sealed partial class AgentService(
         + "Use `dam-tools run-job` only when your harness has no built-in background-job support. Long runtimes, restart survival and validation needs are not exceptions. "
         + "Run `dam-tools --help` for other tools.";
 
-    private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool useDefaultModel = false, CurrentUser? loginActor = null)
+    /// <param name="transferred">The conversation was just converted from another harness (see <see cref="HarnessLaunch.Transferred"/>).</param>
+    private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool transferred = false, CurrentUser? loginActor = null)
     {
         using var loginLease = await Accounts.AccountCoordination.LockAsync(cancellationToken);
         await using var loginDb = await dbFactory.CreateDbContextAsync(cancellationToken);
@@ -910,13 +911,14 @@ public sealed partial class AgentService(
                 return;
             }
         }
-        // Claude restores a model from resumed transcripts before settings.json. Converted messages contain a
-        // compatibility model, not the user's choice, so use the Manager default explicitly on transfer.
-        var model = useDefaultModel && agent.HarnessId == "claude"
-            ? TransferModel((await settings.GetSetupProfileAsync(cancellationToken)).GetHarness("claude").DefaultModel)
-            : null;
+        // The owner's default model and effort (My settings → Models), else the Manager's. The harness decides when they
+        // apply: when a conversation starts in it, after a transfer, and for what it doesn't keep per conversation.
+        var model = harness.ConfigSupport is null ? new Setup.EffectiveModel(null, null, null) : Setup.EffectiveModel.Resolve(
+            (await settings.GetSetupProfileAsync(cancellationToken)).GetHarness(agent.HarnessId),
+            userSettings is null ? null : (await userSettings.GetModelDefaultsAsync(agent.OwnerId, cancellationToken)).GetValueOrDefault(agent.HarnessId));
         var instructions = runner.SetupVersion >= Runners.RunnerSetupService.AgentToolsSetupVersion ? LaunchInstructions : null;
-        var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model, instructions));
+        var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model.Model, instructions,
+            model.Effort, model.Provider, transferred));
 
         // The git identity's environment (the owner's unless switched: git config, GitHub token and variables), then the
         // harness login's, so e.g. a subscription wins over an API key meant for pi. A restart keeps the identity.
@@ -963,8 +965,6 @@ public sealed partial class AgentService(
             logger.LogInformation("Agent {Agent} on {Runner} was already running; left it alone", agent.Name, runner.Name);
         }
     }
-
-    internal static string TransferModel(string? configured) => string.IsNullOrWhiteSpace(configured) ? "default" : configured.Trim();
 
     internal const string AlreadyRunningMarker = "DAM_ALREADY_RUNNING";
 

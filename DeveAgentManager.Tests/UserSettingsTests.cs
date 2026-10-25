@@ -86,6 +86,40 @@ public sealed class UserSettingsTests : IAsyncLifetime
         await Assert.ThrowsAsync<ArgumentException>(() => _store.SaveGitHubTokenAsync(someone, "https://user:token@github.com", Ct));
     }
 
+    [Fact]
+    public async Task ModelDefaults_KeepOnlyWhatTheUserChose()
+    {
+        Assert.Empty(await _store.GetModelDefaultsAsync(User.BootstrapId, Ct));
+        await _store.SaveModelDefaultsAsync(User.BootstrapId, new Dictionary<string, ModelDefault>
+        {
+            ["codex"] = new() { Model = " gpt-6.1-sol ", Effort = "" },
+            ["claude"] = new() { Model = "  ", Effort = null },
+        }, Ct);
+        var saved = Assert.Single(await _store.GetModelDefaultsAsync(User.BootstrapId, Ct));
+        Assert.Equal(("codex", "gpt-6.1-sol", (string?)null), (saved.Key, saved.Value.Model, saved.Value.Effort));
+
+        // Back to the Manager's default everywhere.
+        await _store.SaveModelDefaultsAsync(User.BootstrapId, new Dictionary<string, ModelDefault>(), Ct);
+        Assert.Empty(await _store.GetModelDefaultsAsync(User.BootstrapId, Ct));
+    }
+
+    [Fact]
+    public void ModelDefaults_FollowTheManagerForWhatTheUserLeftEmpty()
+    {
+        var manager = new HarnessConfig { DefaultProvider = "anthropic", DefaultModel = "claude-opus-5-5", DefaultThinkingLevel = "xhigh" };
+        Assert.Equal(new EffectiveModel("anthropic", "claude-opus-5-5", "xhigh"), EffectiveModel.Resolve(manager, null));
+        Assert.Equal(new EffectiveModel("anthropic", "claude-opus-5-5", "low"), EffectiveModel.Resolve(manager, new() { Effort = "low" }));
+        // The Manager's provider belongs to the Manager's model.
+        Assert.Equal(new EffectiveModel(null, "openai/gpt-6", "xhigh"), EffectiveModel.Resolve(manager, new() { Model = "openai/gpt-6", Effort = " " }));
+        Assert.Equal(new EffectiveModel(null, null, null), EffectiveModel.Resolve(new HarnessConfig { DefaultModel = " ", DefaultProvider = "anthropic" }, new()));
+    }
+
+    [Theory]
+    [InlineData("opus[1m]", null)]
+    [InlineData("anthropic/claude-opus-5-5:high", null)]
+    [InlineData("gpt 6", "One model name, without spaces.")]
+    public void ModelDefaults_TakeOneModelName(string model, string? problem) => Assert.Equal(problem, ModelDefault.ModelProblem(model));
+
     private sealed class Factory(string path) : IDbContextFactory<ManagerDbContext>
     {
         public ManagerDbContext CreateDbContext() => new(new DbContextOptionsBuilder<ManagerDbContext>().UseSqlite($"Data Source={path};Pooling=False").Options);

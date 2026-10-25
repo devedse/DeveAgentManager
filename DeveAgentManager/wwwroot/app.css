@@ -2307,6 +2307,22 @@ html:has(.terminal-layout) body {
     max-width: 200px;
 }
 
+/* My settings → Models: the model field takes the room and the effort field fits "Manager default"; each takes the
+   whole row on phones. MudBlazor puts Class on an inner element, so these are its wrappers. */
+.model-default .form-row > :first-child {
+    flex: 1 1 320px;
+}
+
+.model-default .form-row > :last-child {
+    flex: 0 1 240px;
+}
+
+@media (max-width: 600px) {
+    .model-default .form-row > :last-child {
+        flex: 1 1 100%;
+    }
+}
+
 /* ---------- Login ---------- */
 
 .login-page {

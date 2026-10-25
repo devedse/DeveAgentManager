@@ -41,7 +41,7 @@
 
 <div class="settings-section">
     <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Default model</MudText>
-        <HelpTip Label="Default model">What new agents start with. <b>Leave empty to let @Harness.DisplayName choose</b>: it picks what fits your plan and moves on to new models by itself.
+        <HelpTip Label="Default model">What new conversations start with, for everyone who hasn't chosen their own under My settings → Models. <b>Leave empty to let @Harness.DisplayName choose</b>: it picks what fits your plan and moves on to new models by itself.
         @if (Support.ModelSuggestions is { Count: > 0 })
         {
             <span>Aliases like <code>@Support.ModelSuggestions[0].Id</code> always mean the latest model of that family, so agents move on to a new one by themselves.</span>

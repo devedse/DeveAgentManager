@@ -1,0 +1,156 @@
+@* My settings → Models: the user's own default model and effort per harness. Empty fields follow the Manager's default. *@
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+
+<div data-section="model-defaults">
+<div class="help-heading mb-3">
+    <MudText Typo="Typo.subtitle1">Default models</MudText>
+    <HelpTip Label="Default models">
+        <p>What your agents start a conversation with. Empty fields use the Manager's default, set under Manager settings for everyone, and follow it when it changes.
+        Clear a field or use <b>Use Manager default</b> to go back to it.</p>
+        <p>An agent uses them for the next conversation it starts, and when it continues a conversation in another harness. A conversation that is already running
+        keeps the model it has; Claude Code and Grok take the effort at every start. In a conversation you can still switch with <code>/model</code>.</p>
+    </HelpTip>
+</div>
+
+<LoadingSection Loaded="_loaded" Error="@_loadError" Retry="LoadAsync" Label="Loading your default models">
+<Placeholder><SkeletonForm Fields="4" /></Placeholder>
+<ChildContent>
+@foreach (var harness in _harnesses)
+{
+    var row = _rows[harness.Id];
+    var own = _own[harness.Id];
+    <div class="settings-section model-default" data-harness="@harness.Id">
+        <div class="section-title-row">
+            <MudText Typo="Typo.subtitle1" Class="section-title harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</MudText>
+            @if (!own.IsEmpty)
+            {
+                <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Undo" OnClick="() => _own[harness.Id] = new ModelDefault()">Use Manager default</MudButton>
+            }
+        </div>
+        <div class="form-row">
+            <MudAutocomplete T="string" @bind-Value="own.Model" Label="Model" Placeholder="Manager default" ShrinkLabel="true"
+                             SearchFunc="(text, token) => SearchModelsAsync(harness, text)" CoerceValue="true" CoerceText="false" Clearable="true" ResetValueOnEmptyText="true"
+                             MaxItems="50" Strict="false" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1"
+                             Error="@(ModelDefault.ModelProblem(own.Model) is not null)" ErrorText="@ModelDefault.ModelProblem(own.Model)" HelperText="@($"Manager default: {ManagerDefault(harness, row)}.")">
+                <ItemTemplate Context="model">
+                    <span class="mono">@model</span>
+                    @if (Choices(harness).FirstOrDefault(m => m.Id == model) is { } choice && choice.Name != model)
+                    {
+                        <span class="mud-text-secondary"> · @choice.Name</span>
+                    }
+                </ItemTemplate>
+            </MudAutocomplete>
+            <MudSelect T="string" @bind-Value="own.Effort" Label="@harness.ConfigSupport!.EffortName" Placeholder="Manager default" ShrinkLabel="true"
+                       Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" Class="model-default-effort">
+                @foreach (var level in EffortLevels(harness, own.Model ?? row.ManagerModel))
+                {
+                    <MudSelectItem Value="level">@level@(Selected(harness, own.Model ?? row.ManagerModel)?.DefaultEffort == level ? " (model default)" : "")</MudSelectItem>
+                }
+            </MudSelect>
+        </div>
+    </div>
+}
+<div class="settings-actions">
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Save" Disabled="_saving || HasProblems" OnClick="SaveAsync">Save</MudButton>
+</div>
+</ChildContent>
+</LoadingSection>
+</div>
+
+@code {
+    private List<HarnessDto> _harnesses = [];
+    private Dictionary<string, ModelDefaultsDto> _rows = [];
+    private Dictionary<string, ModelDefault> _own = [];
+    private readonly Dictionary<string, IReadOnlyList<ModelChoice>> _models = [];
+    private bool _loaded;
+    private string? _loadError;
+    private bool _saving;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loadError = null;
+        try
+        {
+            var harnesses = (await Api.InfoAsync()).Harnesses.Where(h => h.ConfigSupport is not null).ToList();
+            Show(await Api.GetMyModelDefaultsAsync(), harnesses);
+            _loaded = true;
+            foreach (var harness in _harnesses.Where(h => h.HasModelCatalog && !_models.ContainsKey(h.Id))) _ = LoadModelsAsync(harness.Id);
+        }
+        catch (ApiException ex)
+        {
+            _loadError = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = LoadingSection.Unreachable;
+        }
+    }
+
+    private void Show(List<ModelDefaultsDto> rows, List<HarnessDto> harnesses)
+    {
+        _rows = rows.ToDictionary(r => r.HarnessId);
+        _harnesses = harnesses.Where(h => _rows.ContainsKey(h.Id)).ToList();
+        _own = _rows.Values.ToDictionary(r => r.HarnessId, r => new ModelDefault { Model = r.Model, Effort = r.Effort });
+    }
+
+    /// <summary>The harness's catalog on one of the user's Runners, for the model field. In the background: any name works without it.</summary>
+    private async Task LoadModelsAsync(string harnessId)
+    {
+        try
+        {
+            _models[harnessId] = await Api.ListModelsAsync(harnessId);
+            StateHasChanged();
+        }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException)
+        {
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        try
+        {
+            Show(await Api.SaveMyModelDefaultsAsync(_own.Where(o => !o.Value.IsEmpty).ToDictionary(o => o.Key, o => o.Value)), _harnesses);
+            Snackbar.Add("Saved. Your agents use it from the next conversation they start.", Severity.Success);
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Add(LoadingSection.Unreachable, Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private bool HasProblems => _own.Values.Any(o => ModelDefault.ModelProblem(o.Model) is not null || ModelDefault.EffortProblem(o.Effort) is not null);
+
+    /// <summary>What the empty fields mean, e.g. "gpt-6.1-sol · xhigh" or "Claude Code chooses".</summary>
+    private static string ManagerDefault(HarnessDto harness, ModelDefaultsDto row)
+    {
+        var model = row.ManagerModel is { } name ? (row.ManagerProvider is { } provider ? $"{provider}/{name}" : name) : null;
+        return model is null && row.ManagerEffort is null ? $"{harness.DisplayName} chooses"
+            : $"{model ?? $"{harness.DisplayName} chooses the model"} · {row.ManagerEffort ?? "default effort"}";
+    }
+
+    private IEnumerable<ModelChoice> Choices(HarnessDto harness) => (harness.ConfigSupport!.ModelSuggestions ?? []).Concat(_models.GetValueOrDefault(harness.Id) ?? []);
+
+    private ModelChoice? Selected(HarnessDto harness, string? model) => (_models.GetValueOrDefault(harness.Id) ?? []).FirstOrDefault(m => m.Id == model);
+
+    private IReadOnlyList<string> EffortLevels(HarnessDto harness, string? model) =>
+        Selected(harness, model) is { Efforts.Count: > 0 } choice ? choice.Efforts : harness.ConfigSupport!.ThinkingLevels;
+
+    private Task<IEnumerable<string>> SearchModelsAsync(HarnessDto harness, string? text)
+    {
+        var all = Choices(harness).Select(m => m.Id).Distinct();
+        return Task.FromResult(string.IsNullOrWhiteSpace(text) ? all : all.Where(m => m.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase)));
+    }
+}

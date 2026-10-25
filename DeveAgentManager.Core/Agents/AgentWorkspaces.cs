@@ -175,7 +175,7 @@ public sealed partial class AgentService
             await db.SaveChangesAsync(CancellationToken.None);
             if (request.StartAgent)
             {
-                await LaunchAsync(runner, agent, false, ct, loginActor: actor);
+                await LaunchAsync(runner, agent, false, ct, transferred: resume is not null && resume.HarnessId != agent.HarnessId, loginActor: actor);
                 agent.State = AgentState.Running;
             }
         }

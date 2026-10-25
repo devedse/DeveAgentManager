@@ -1,4 +1,5 @@
 using DeveAgentManager.Contracts;
+using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Setup;
@@ -34,7 +35,7 @@ internal static class SettingsEndpoints
         }).RequireRole(UserRoles.SettingsManager);
 
         // The shared Setup Profile holds secrets settings managers enter (login files). They are shown and edited here,
-        // and never leave through any other endpoint.
+        // and never leave through any other endpoint (My settings → Models gets only the default model fields).
         settings.MapGet("/profile", (SettingsStore store, CancellationToken ct) => store.GetSetupProfileAsync(ct)).RequireRole(UserRoles.SettingsManager);
 
         settings.MapPut("/profile", async (SetupProfile profile, SettingsStore store, CancellationToken ct) =>
@@ -89,6 +90,25 @@ internal static class SettingsEndpoints
             return request;
         }).ForAnyUser();
 
+        // My settings → Models: the user's own default model and effort per harness, next to the Manager's (only those
+        // fields of the shared Setup Profile). Agents use them from the next conversation they start.
+        mine.MapGet("/models", (CurrentUser user, UserSettingsStore store, SettingsStore shared, IEnumerable<IHarness> harnesses, CancellationToken ct) =>
+            ModelDefaultsAsync(user.Id, store, shared, harnesses, ct)).ForAnyUser();
+
+        mine.MapPut("/models", async (Dictionary<string, ModelDefault> request, CurrentUser user, UserSettingsStore store, SettingsStore shared,
+            IEnumerable<IHarness> harnesses, CancellationToken ct) =>
+        {
+            var known = harnesses.Where(h => h.ConfigSupport is not null).ToDictionary(h => h.Id);
+            foreach (var (harnessId, value) in request)
+            {
+                if (!known.TryGetValue(harnessId, out var harness)) throw new ArgumentException($"There is no harness '{harnessId}'.");
+                value.Validate(harness.DisplayName);
+            }
+
+            await store.SaveModelDefaultsAsync(user.Id, request, ct);
+            return await ModelDefaultsAsync(user.Id, store, shared, harnesses, ct);
+        }).ForAnyUser();
+
         mine.MapGet("/", async (CurrentUser user, UserSettingsStore store, CancellationToken ct) =>
             new MySettingsDto(await store.GetProfileAsync(user.Id, ct), await store.GetGitHubTokenAsync(user.Id, ct) is not null)).ForAnyUser();
 
@@ -106,5 +126,20 @@ internal static class SettingsEndpoints
             runnerUsers.SyncForUser(user.Id);
             return Results.NoContent();
         }).ForAnyUser();
+    }
+
+    private static async Task<List<ModelDefaultsDto>> ModelDefaultsAsync(Guid userId, UserSettingsStore store, SettingsStore shared,
+        IEnumerable<IHarness> harnesses, CancellationToken ct)
+    {
+        var profile = await shared.GetSetupProfileAsync(ct);
+        var mine = await store.GetModelDefaultsAsync(userId, ct);
+        return harnesses.Where(h => h.ConfigSupport is not null).Select(h =>
+        {
+            var manager = profile.GetHarness(h.Id);
+            var own = mine.GetValueOrDefault(h.Id);
+            return new ModelDefaultsDto(h.Id, Blank(manager.DefaultProvider), Blank(manager.DefaultModel), Blank(manager.DefaultThinkingLevel), own?.Model, own?.Effort);
+        }).ToList();
+
+        static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 }

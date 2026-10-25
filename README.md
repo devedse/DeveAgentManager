@@ -42,9 +42,10 @@ when you close the tab.
   Per harness (**Manager settings → pi**): packages (pi extensions, skills, themes, e.g. `npm:pi-web-access`), the default
   model and thinking level, and extra settings merged into `~/.pi/agent/settings.json`. **Save and apply to Runners**
   updates the ready Runners right away. Packages removed from the list are removed from the Runners.
-  **Manager settings → Claude Code / Codex / Grok**: the default model and effort for new agents. Empty (the default) lets the
-  harness choose, which follows new models by itself. Claude takes aliases like `opus`, and Codex lists the models its
-  catalog offers on your Runner.
+  **Manager settings → Claude Code / Codex / Grok**: the default model and effort for new conversations. Empty (the
+  default) lets the harness choose, which follows new models by itself. Claude takes aliases like `opus`, and Codex lists
+  the models its catalog offers on your Runner. Each user can choose their own under **My settings → Models**, or follow
+  the Manager's default. See [default models](docs/model-defaults.md).
 - **VS Code** (opt-in per Runner: tick it in **New Runner**, or **Install VS Code** on the Runner page): VS Code in the
   browser ([code-server](https://github.com/coder/code-server)) to browse files, edit and see git changes. The Runner
   page opens it in the Runner's home folder, an agent's terminal in the agent's folder. It opens inside the Portal,
