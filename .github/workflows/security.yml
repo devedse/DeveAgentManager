@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Build local image for scanning
         run: docker build -t dam-security-test .
-      - uses: aquasecurity/trivy-action@0.36.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: dam-security-test
           severity: HIGH,CRITICAL
