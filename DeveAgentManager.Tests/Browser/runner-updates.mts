@@ -59,10 +59,13 @@ try {
         await page.locator('.operation', { hasText: 'Update Codex' }).getByText('0.164.0', { exact: true }).waitFor();
         await status.getByText('Restart needed', { exact: true }).waitFor();
         await page.screenshot({ path: `/tmp/dam-runner-updates-detail-${theme}.png`, fullPage: true });
-        await page.getByRole('button', { name: 'Check now', exact: true }).click();
+        await Promise.all([
+            page.waitForResponse(r => new URL(r.url()).pathname === `/api/runners/${id}/updates/check`),
+            page.getByRole('button', { name: 'Check now', exact: true }).click()
+        ]);
         assert.equal(requests, 1);
-        assert.ok(await page.getByRole('button', { name: 'Check now', exact: true }).isDisabled());
-        assert.match(await status.innerText(), /Checking/);
+        await page.locator('button:disabled', { hasText: 'Check now' }).waitFor();
+        await status.getByText(/Checking…/).waitFor();
         updates = { ...observed, softwareError: 'Release check unavailable', systemError: 'Repository unavailable' };
         await page.reload();
         await status.getByText(/3\+ tool updates/).waitFor({ timeout: 60000 });
