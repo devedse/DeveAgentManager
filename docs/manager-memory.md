@@ -49,6 +49,10 @@ the usage refresh of every Runner every 15 seconds. Several tabs made about ten 
 - Bursts of events coalesce into one reload per second per section, and an agent's terminal page reloads for its own
   Runner's changes only.
 - The screens list of an agent's terminal, which runs a command on the Runner, isn't polled in a hidden tab.
+- The live connection (`LiveUpdates`) retries after 0, 1, 2 and 3 seconds, then every 5 seconds. A tab that is shown
+  again retries at once: a browser that froze it, or a computer that slept, lets the Manager close the connection
+  after 30 seconds without keep-alives. **Reconnecting…** appears only after 2 seconds, so quick reconnects don't flash it.
+  `live-reconnect.mts` checks this.
 
 ## .NET heap limit
 

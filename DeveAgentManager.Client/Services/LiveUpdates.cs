@@ -13,14 +13,22 @@ namespace DeveAgentManager.Client.Services;
 /// </summary>
 public sealed class LiveUpdates : IAsyncDisposable
 {
-    private readonly HubConnection _connection;
-    private readonly HashSet<Guid> _followedLogs = [];
+    /// <summary>Waits before each attempt: quickly at first (an update restarts the Manager in seconds), then every 5 seconds.</summary>
+    private static readonly TimeSpan[] RetryDelays =
+        [TimeSpan.Zero, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(5)];
 
-    public LiveUpdates(NavigationManager navigation)
+    private readonly HubConnection _connection;
+    private readonly PageVisibility _visibility;
+    private readonly HashSet<Guid> _followedLogs = [];
+    private TaskCompletionSource _resume = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _connecting;
+    private bool _disposed;
+
+    public LiveUpdates(NavigationManager navigation, PageVisibility visibility)
     {
+        // Reconnecting is ours (StartAsync), not SignalR's automatic reconnect, so a tab shown again needn't wait.
         _connection = new HubConnectionBuilder()
             .WithUrl(navigation.ToAbsoluteUri(LiveHub.Path))
-            .WithAutomaticReconnect(new ForeverRetry())
             .AddJsonProtocol(options => ApiJson.Configure(options.PayloadSerializerOptions))
             .Build();
 
@@ -28,29 +36,17 @@ public sealed class LiveUpdates : IAsyncDisposable
         _connection.On<Guid, RunnerLogLine>(LiveHub.Log, (runnerId, line) => Log?.Invoke(runnerId, line));
         _connection.On<OperationFinished>(LiveHub.OperationFinished, e => OperationFinished?.Invoke(e));
         _connection.On(LiveHub.CpuTraceChanged, () => CpuTraceChanged?.Invoke());
-        _connection.Reconnecting += _ =>
+        _connection.Closed += error =>
         {
             StateChanged?.Invoke();
+            _ = StartAsync();
             return Task.CompletedTask;
         };
-        _connection.Reconnected += async _ =>
-        {
-            // Groups are per connection: follow the logs again.
-            foreach (var runnerId in _followedLogs.ToList())
-            {
-                await _connection.InvokeAsync<IReadOnlyList<RunnerLogLine>>(LiveHub.FollowLog, runnerId);
-            }
 
-            StateChanged?.Invoke();
-            Reconnected?.Invoke();
-        };
-        _connection.Closed += async _ =>
-        {
-            StateChanged?.Invoke();
-            // Retrying forever gave up (it doesn't), or the start failed: try again in a while.
-            await Task.Delay(TimeSpan.FromSeconds(5));
-            await StartAsync();
-        };
+        // A browser that froze a background tab, or a computer that slept, often loses the connection: when the tab is
+        // shown again, the next attempt starts at once instead of after the rest of its wait.
+        _visibility = visibility;
+        _visibility.VisibleObserved += Resume;
     }
 
     /// <summary>Something changed in the Manager (a Runner, an agent, a session, the settings).</summary>
@@ -69,25 +65,57 @@ public sealed class LiveUpdates : IAsyncDisposable
 
     public bool IsConnected => _connection.State == HubConnectionState.Connected;
 
+    /// <summary>Connects, trying again until the Manager is reachable; a lost connection starts this again.</summary>
     public async Task StartAsync()
     {
-        if (_connection.State != HubConnectionState.Disconnected)
+        if (_connecting || _disposed || _connection.State != HubConnectionState.Disconnected)
         {
             return;
         }
 
+        _connecting = true;
         try
         {
-            await _connection.StartAsync();
-            StateChanged?.Invoke();
-            Reconnected?.Invoke();
+            for (var attempt = 0; ; attempt++)
+            {
+                await WaitAsync(RetryDelays[Math.Min(attempt, RetryDelays.Length - 1)]);
+                if (_disposed || _connection.State != HubConnectionState.Disconnected)
+                {
+                    return;
+                }
+
+                try
+                {
+                    await _connection.StartAsync();
+                    break;
+                }
+                catch (Exception)
+                {
+                    // The Manager is not reachable right now (restarting, or the network is still waking up).
+                    StateChanged?.Invoke();
+                }
+            }
         }
-        catch (Exception)
+        finally
         {
-            // The Manager is not reachable right now; Closed tries again.
-            StateChanged?.Invoke();
-            _ = Task.Delay(TimeSpan.FromSeconds(5)).ContinueWith(_ => StartAsync());
+            _connecting = false;
         }
+
+        // Groups are per connection: follow the logs again.
+        foreach (var runnerId in _followedLogs.ToList())
+        {
+            try
+            {
+                await _connection.InvokeAsync<IReadOnlyList<RunnerLogLine>>(LiveHub.FollowLog, runnerId);
+            }
+            catch (Exception)
+            {
+                // Lost again (Closed tries again) or no longer allowed: the other logs still follow.
+            }
+        }
+
+        StateChanged?.Invoke();
+        Reconnected?.Invoke();
     }
 
     /// <summary>Follows a Runner's setup log (<see cref="Log"/>) and returns its recent lines.</summary>
@@ -115,18 +143,25 @@ public sealed class LiveUpdates : IAsyncDisposable
         }
     }
 
-    public ValueTask DisposeAsync() => _connection.DisposeAsync();
-
-    /// <summary>Retries forever: quickly at first (an update restarts the Manager in seconds), then every 5 seconds.</summary>
-    private sealed class ForeverRetry : IRetryPolicy
+    /// <summary>Waits before an attempt, unless the tab is shown again (<see cref="Resume"/>) meanwhile.</summary>
+    private async Task WaitAsync(TimeSpan delay)
     {
-        public TimeSpan? NextRetryDelay(RetryContext retryContext) => retryContext.PreviousRetryCount switch
+        if (delay == TimeSpan.Zero)
         {
-            0 => TimeSpan.Zero,
-            1 => TimeSpan.FromSeconds(1),
-            2 => TimeSpan.FromSeconds(2),
-            3 => TimeSpan.FromSeconds(3),
-            _ => TimeSpan.FromSeconds(5),
-        };
+            return;
+        }
+
+        _resume = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        await Task.WhenAny(Task.Delay(delay), _resume.Task);
+    }
+
+    private void Resume() => _resume.TrySetResult();
+
+    public ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        _visibility.VisibleObserved -= Resume;
+        Resume();
+        return _connection.DisposeAsync();
     }
 }

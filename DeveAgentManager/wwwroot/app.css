@@ -126,6 +126,16 @@ a {
     border-radius: 999px !important;
 }
 
+/* Hidden for the first 2 seconds, so a quick reconnect (such as a frozen background tab shown again) doesn't flash it. */
+.live-offline {
+    animation: live-offline-appear 0.2s ease 2s both;
+}
+
+@keyframes live-offline-appear {
+    from { opacity: 0; visibility: hidden; }
+    to { opacity: 1; visibility: visible; }
+}
+
 .menu-form {
     margin: 0;
 }
