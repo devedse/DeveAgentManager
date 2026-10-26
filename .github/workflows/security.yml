@@ -10,13 +10,13 @@ jobs:
   dependencies:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
       - name: Audit all NuGet dependencies (high/critical and audit failures fail)
         run: dotnet restore DeveAgentManager.slnx --force-evaluate
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Verify and audit vendored browser addons
@@ -30,10 +30,10 @@ jobs:
   container:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Build local image for scanning
         run: docker build -t dam-security-test .
-      - uses: aquasecurity/trivy-action@0.35.0
+      - uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: dam-security-test
           severity: HIGH,CRITICAL
@@ -49,11 +49,11 @@ jobs:
       matrix:
         suite: [portal, interop, cpu-startup]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: npm ci --prefix tools/security-browser --ignore-scripts
@@ -69,9 +69,9 @@ jobs:
   passive-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - run: tools/security-browser/zap.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: isolated-zap-reports

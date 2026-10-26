@@ -35,7 +35,7 @@ jobs:
       image_labels: ${{ steps.meta.outputs.labels }}
       image_annotations: ${{ steps.meta.outputs.annotations }}
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Generate build number
       id: buildnumber
       uses: onyxmueller/build-tag-number@v1
@@ -48,6 +48,7 @@ jobs:
         images: ${{ env.REGISTRY_IMAGE }}
         tags: |
           type=raw,value=1.0.${{ steps.buildnumber.outputs.build_number }},enable=${{ github.ref == 'refs/heads/master' }}
+          type=raw,value=1.0.${{ steps.buildnumber.outputs.build_number }}-beta,enable=${{ github.ref != 'refs/heads/master' }}
           type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
           type=raw,value=beta_nightly,enable=${{ github.actor != 'dependabot[bot]' }}
           type=raw,value=beta,enable=${{ github.ref != 'refs/heads/master' }}
@@ -64,12 +65,12 @@ jobs:
     runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "proxmox", "medium"]') || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Setup .NET
-      uses: actions/setup-dotnet@v5
+      uses: actions/setup-dotnet@v6
       with:
         dotnet-version: 10.0.x
-    - uses: actions/setup-node@v6
+    - uses: actions/setup-node@v7
       with:
         node-version: 22
     - name: Restore
@@ -106,7 +107,7 @@ jobs:
       contents: read
       packages: write
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Verify native runner architecture
       env:
         EXPECTED_MACHINE: ${{ matrix.machine }}

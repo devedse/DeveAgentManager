@@ -1,0 +1,43 @@
+# Weekly update pull requests: one for all minor and patch updates per ecosystem, and one per major update.
+# Their branch builds publish beta images like any other branch, but don't move beta_nightly.
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      nuget:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # These follow the target framework; moving to the next .NET is its own change.
+      - dependency-name: Microsoft.AspNetCore.*
+        update-types: [version-update:semver-major]
+      - dependency-name: Microsoft.EntityFrameworkCore.*
+        update-types: [version-update:semver-major]
+      - dependency-name: Microsoft.Extensions.*
+        update-types: [version-update:semver-major]
+
+  # tools/browser-dependencies is left out: CI checks it against the vendored copies in wwwroot/lib, so updating it
+  # means vendoring the new files too.
+  - package-ecosystem: npm
+    directories: [/, /tools/security-browser]
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # Follows the Node version the build uses.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

@@ -391,8 +391,11 @@ Every push runs .NET tests, native AMD64 and ARM64 production-image builds, and 
 After the checks pass, publication combines the two images under the release tags without rebuilding or using QEMU.
 The GitHub release points to the tested commit. Newer pushes cancel older builds on the same branch.
 
-Images at `ghcr.io/devedse/deveagentmanager` get `latest` and `1.0.<build>` from `master`; other branches get `beta`
-and `beta_<branch>`, with application version `1.0.<build>-beta`. Non-Dependabot builds also update `beta_nightly`.
+Images at `ghcr.io/devedse/deveagentmanager` get `latest` and `1.0.<build>` from `master`; other branches get
+`1.0.<build>-beta`, `beta` and `beta_<branch>`. Non-Dependabot builds also update `beta_nightly`.
+Dependabot opens weekly pull requests for NuGet, npm and GitHub Actions updates (`.github/dependabot.yml`): one per
+ecosystem for minor and patch updates, and one per major update. Major updates of the packages that follow the .NET or
+Node version are skipped, as is `tools/browser-dependencies`, whose packages must match the vendored files.
 Security checks run within the build workflow on pushes, and independently on pull requests and the weekly schedule.
 Portal browser tests and the real five-minute startup capture run in separate jobs so neither waits for the other.
 The detailed native profiler probe is a separate manual workflow for runtime or profiler changes. ARM64 uses the
