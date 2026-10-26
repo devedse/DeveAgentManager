@@ -2,6 +2,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "skipLibCheck": true,
+    "types": ["node"],
     "noEmitOnError": true,
     "strict": false,
     "module": "ES2022",
