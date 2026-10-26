@@ -33,6 +33,9 @@ over SSH is currently unattributed. Candidates are retained for seven days.
 
 ## Adding a species
 
+See the [pet project README](../DeveAgentManager.Pets/README.md) for a full walkthrough, renderer examples, artwork
+requirements, the AI workflow and original prompts, and validation commands.
+
 1. Add an entry to `DeveAgentManager.Pets/catalog.json`: unique id, display name, default name, renderer module and
    four stage labels. Catalog definitions are embedded in the module and returned by the pet API.
 2. Add `DeveAgentManager/Browser/pets/<renderer>.ts`. Export `createRenderer(mount, options)` returning a `PetRenderer`
