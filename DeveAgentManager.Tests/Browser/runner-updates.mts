@@ -40,6 +40,8 @@ try {
             if (route.request().method() === 'POST') {
                 assert.equal(path, `/api/runners/${id}/updates/check`, 'Checking must never call an install or update endpoint');
                 requests++;
+                // Match RunnerUpdateCache.Request: accepted checks remain pending in subsequent reads.
+                updates = { ...updates, checking: true };
                 return route.fulfill({ status: 202, body: '' });
             }
             const body = path === '/api/info' ? info : path === '/api/runners' ? [runner()] : path === `/api/runners/${id}` ? runner()
@@ -65,7 +67,12 @@ try {
         ]);
         assert.equal(requests, 1);
         await page.locator('button:disabled', { hasText: 'Check now' }).waitFor();
+        // A background refresh can replace the local optimistic status with the cached server status.
+        // Exercise that deterministically instead of relying on the live connection's timing.
+        await page.reload();
         await status.getByText(/Checking…/).waitFor();
+        assert.match(await status.innerText(), /3 tool updates · 6 system updates/, 'Refresh keeps the last observed counts while checking');
+        assert.ok(await page.getByRole('button', { name: 'Check now', exact: true }).isDisabled(), 'A pending cached check cannot be started again');
         updates = { ...observed, softwareError: 'Release check unavailable', systemError: 'Repository unavailable' };
         await page.reload();
         await status.getByText(/3\+ tool updates/).waitFor({ timeout: 60000 });
