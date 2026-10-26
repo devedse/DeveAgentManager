@@ -20,7 +20,7 @@
         </div>
         <div class="settings-section">
             <div class="help-heading"><MudText Typo="Typo.subtitle1">People’s pets</MudText>
-                <HelpTip Label="People’s pets"><p>Change a person’s pet without accessing their conversations or account security. Changing type keeps progress. Setting a different level moves progress to the beginning of that level. All administrator changes are audited.</p></HelpTip></div>
+                <HelpTip Label="People’s pets"><p>Managers can change species and names directly while preserving progress. Choose Unchosen egg to clear the current pet. Set a level or an exact pet token count, and edit lifetime tokens separately. All administrator changes are audited.</p></HelpTip></div>
             <MudTextField @bind-Value="_search" Label="Find a person" Immediate="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
             <MudSelect T="Guid?" Value="_selected" ValueChanged="Select" Label="Person" Variant="Variant.Outlined" Margin="Margin.Dense">
                 @foreach (var person in _people.Where(p => (p.DisplayName + " " + p.Username).Contains(_search, StringComparison.OrdinalIgnoreCase)))
@@ -32,22 +32,27 @@
                 <div class="form-row">
                     <MudTextField @bind-Value="_name" Label="Pet name" MaxLength="40" Variant="Variant.Outlined" Margin="Margin.Dense" />
                     <MudSelect T="string" @bind-Value="_species" Label="Pet type" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        <MudSelectItem Value="@(string.Empty)">Unchosen egg</MudSelectItem>
                         @foreach (var pet in _catalog) { <MudSelectItem Value="@pet.Id">@pet.Name</MudSelectItem> }
                     </MudSelect>
                 </div>
                 <div class="form-row">
-                    <MudNumericField T="int" @bind-Value="_level" Min="1" Max="1000" Label="Level" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    @if (_exactTokens) { <MudNumericField T="long" @bind-Value="_petTokens" Min="0" Label="Pet tokens" Variant="Variant.Outlined" Margin="Margin.Dense" /> }
+                    else { <MudNumericField T="int" @bind-Value="_level" Min="1" Max="1000" Label="Level" Variant="Variant.Outlined" Margin="Margin.Dense" /> }
                     <MudNumericField T="int" @bind-Value="_happiness" Min="0" Max="100" Label="Happiness" Variant="Variant.Outlined" Margin="Margin.Dense" />
                 </div>
+                <MudSwitch T="bool" @bind-Value="_exactTokens" Label="Set exact pet tokens instead of level" Color="Color.Primary" />
+                <MudNumericField T="long" @bind-Value="_lifetimeTokens" Min="0" Label="Lifetime tokens" Variant="Variant.Outlined" Margin="Margin.Dense" />
                 <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SavePerson" Disabled="_busy">Save person’s pet</MudButton></div>
             }
         </div>
     </ChildContent>
 </LoadingSection>
 @code {
-    private bool _loaded, _busy, _enabled, _default, _petEnabled;
+    private bool _loaded, _busy, _enabled, _default, _petEnabled, _exactTokens;
     private string? _error;
-    private string _search = "", _name = "", _species = "snek";
+    private string _search = "", _name = "", _species = "";
+    private long _petTokens, _lifetimeTokens;
     private int _level = 1, _happiness = 70;
     private Guid? _selected;
     private List<PetPersonDto> _people = [];
@@ -58,10 +63,10 @@
         try { var options = await Api.PetOptionsAsync(); _people = await Api.PetPeopleAsync(); _catalog = (await Api.MyPetAsync()).Catalog; _enabled = options.Enabled; _default = options.DefaultForNewUsers; _loaded = true; }
         catch (Exception ex) when (ex is ApiException or HttpRequestException) { _error = ex is ApiException ? ex.Message : LoadingSection.Unreachable; }
     }
-    private void Select(Guid? id) { _selected = id; if (_people.FirstOrDefault(p => p.UserId == id)?.Pet is { } p) { _name = p.Name; _species = p.Species; _petEnabled = p.Enabled; _level = p.Level; _happiness = p.Happiness; } }
+    private void Select(Guid? id) { _selected = id; if (_people.FirstOrDefault(p => p.UserId == id)?.Pet is { } p) { _name = p.Name; _species = p.Species; _petEnabled = p.Enabled; _level = Math.Max(1, p.Level); _happiness = p.Happiness; _petTokens = p.Experience; _lifetimeTokens = p.LifetimeTokens; _exactTokens = false; } }
     private async Task Run(Func<Task> work) { _busy = true; try { await work(); await Pets.ReloadAsync(); Snackbar.Add("Damagochi saved.", Severity.Success); } catch (Exception ex) when (ex is ApiException or HttpRequestException) { Snackbar.Add(ex.Message, Severity.Error); } finally { _busy = false; } }
     private Task SaveOptions() => Run(async () => { await Api.SavePetOptionsAsync(new(_enabled, _default)); });
-    private Task SavePerson() => Run(async () => { await Api.AdjustPetAsync(_selected!.Value, new(_petEnabled, _name, _species, _level, _happiness)); await Load(); });
+    private Task SavePerson() => Run(async () => { await Api.AdjustPetAsync(_selected!.Value, new(_petEnabled, _name, _species, _level, _happiness, _exactTokens ? _petTokens : null, _lifetimeTokens)); await Load(); Select(_selected); });
     private async Task Bulk(bool enabled) {
         var verb = enabled ? "Enable" : "Disable";
         if (await Dialogs.ShowMessageBoxAsync($"{verb} everyone’s pets?", $"This changes every existing user’s pet switch. Individual progress is preserved.", yesText: verb, cancelText: "Cancel") == true)

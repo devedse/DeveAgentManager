@@ -48,12 +48,13 @@ public sealed class PetTests : IAsyncLifetime
         await pets.BulkAsync(TestUsers.Admin, false, Ct);
         Assert.False((await pets.MineAsync(TestUsers.Plain(newcomer), Ct)).Pet.Enabled);
     }
-    [Fact] public async Task TypeChangesKeepGrowthAndByteIsTheChickenDefault() {
-        Assert.Equal("Byte", new PetCatalog().Require("silkie").DefaultName);
+    [Fact] public async Task OnlyManagersCanChangeSpeciesAndNamesStartEmpty() {
+        Assert.All(new PetCatalog().All, definition => Assert.Equal("", definition.DefaultName));
         await pets.AdjustAsync(TestUsers.Admin, person, new(true, "Byte", "silkie", 10, 90), Ct);
         var before = (await pets.MineAsync(User, Ct)).Pet;
         await pets.SaveOptionsAsync(TestUsers.Admin, new(true), Ct);
-        await pets.SavePreferencesAsync(User, new(true, "Snek", "snek"), Ct);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => pets.SavePreferencesAsync(User, new(true, "Snek", "snek", Generation: 1), Ct));
+        await pets.AdjustAsync(TestUsers.Admin, person, new(true, "Snek", "snek", 10, 90), Ct);
         var after = (await Service().MineAsync(User, Ct)).Pet;
         Assert.Equal(before.Experience, after.Experience); Assert.Equal(3, after.Stage); Assert.Equal(90, after.Happiness);
         await Assert.ThrowsAsync<ArgumentException>(() => pets.AdjustAsync(TestUsers.Admin, person, new(true, "X", "unknown", 10, 90), Ct));
@@ -61,9 +62,9 @@ public sealed class PetTests : IAsyncLifetime
     }
     [Fact] public async Task UsageIsAttributedOnceAndSurvivesCopiesRestartsAndSnoozing() {
         await pets.SaveOptionsAsync(TestUsers.Admin, new(true), Ct);
-        await pets.SavePreferencesAsync(User, new(true, "Snek", "snek"), Ct);
+        await pets.AdoptAsync(User, new("Snek", "snek", 0), Ct);
         var at = DateTime.UtcNow;
-        await using (var db = factory.CreateDbContext()) { db.PetInputClaims.Add(new() { AgentId = Guid.NewGuid(), SessionId = session, UserId = person, At = at }); await db.SaveChangesAsync(Ct); }
+        await using (var db = factory.CreateDbContext()) { db.PetInputClaims.Add(new() { AgentId = Guid.NewGuid(), SessionId = session, UserId = person, Generation = 1, At = at }); await db.SaveChangesAsync(Ct); }
         var turn = new SessionUsageTurn { PromptId = "prompt-1", StartedAt = at, Tokens = 200_000 };
         await pets.CreditAsync(session, "codex:native-session", [turn], Ct);
         Assert.Equal(200_000, (await pets.MineAsync(User, Ct)).Pet.Experience);
@@ -72,9 +73,9 @@ public sealed class PetTests : IAsyncLifetime
         await pets.InteractAsync(User, "snooze", 5, Ct); turn.Tokens += 100_000;
         await pets.CreditAsync(session, "codex:native-session", [turn], Ct);
         Assert.Equal(300_000, (await pets.MineAsync(User, Ct)).Pet.Experience);
-        await pets.SavePreferencesAsync(User, new(false, "Snek", "snek"), Ct); turn.Tokens += 100_000;
+        await pets.SavePreferencesAsync(User, new(false, "Snek", "snek", Generation: 1), Ct); turn.Tokens += 100_000;
         await pets.CreditAsync(session, "codex:native-session", [turn], Ct);
-        await pets.SavePreferencesAsync(User, new(true, "Snek", "snek"), Ct);
+        await pets.SavePreferencesAsync(User, new(true, "Snek", "snek", Generation: 1), Ct);
         await pets.CreditAsync(session, "codex:native-session", [turn], Ct);
         Assert.Equal(300_000, (await pets.MineAsync(User, Ct)).Pet.Experience);
         await pets.CreditAsync(session, "codex:native-session", [new() { PromptId = "old-import", StartedAt = at.AddDays(-30), Tokens = 9_000_000 }], Ct);
@@ -82,11 +83,11 @@ public sealed class PetTests : IAsyncLifetime
     }
     [Fact] public async Task ReEnablingDoesNotCreditWorkWhoseHistoryArrivedAfterItWasDisabled() {
         await pets.SaveOptionsAsync(TestUsers.Admin, new(true), Ct);
-        await pets.SavePreferencesAsync(User, new(true, "Snek", "snek"), Ct);
+        await pets.AdoptAsync(User, new("Snek", "snek", 0), Ct);
         var at = DateTime.UtcNow;
-        await using (var db = factory.CreateDbContext()) { db.PetInputClaims.Add(new() { AgentId = Guid.NewGuid(), SessionId = session, UserId = person, At = at }); await db.SaveChangesAsync(Ct); }
-        await pets.SavePreferencesAsync(User, new(false, "Snek", "snek"), Ct);
-        await pets.SavePreferencesAsync(User, new(true, "Snek", "snek"), Ct);
+        await using (var db = factory.CreateDbContext()) { db.PetInputClaims.Add(new() { AgentId = Guid.NewGuid(), SessionId = session, UserId = person, Generation = 1, At = at }); await db.SaveChangesAsync(Ct); }
+        await pets.SavePreferencesAsync(User, new(false, "Snek", "snek", Generation: 1), Ct);
+        await pets.SavePreferencesAsync(User, new(true, "Snek", "snek", Generation: 1), Ct);
         await pets.CreditAsync(session, "claude:delayed", [new() { PromptId = "delayed", StartedAt = at, Tokens = 1_000_000 }], Ct);
         Assert.Equal(0, (await pets.MineAsync(User, Ct)).Pet.Experience);
     }
@@ -99,6 +100,57 @@ public sealed class PetTests : IAsyncLifetime
         await pets.InteractAsync(User, "hide", 0, Ct);
         var p = (await pets.MineAsync(User, Ct)).Pet;
         Assert.False(p.Enabled); Assert.Equal(before, p.Experience);
+    }
+    [Fact] public async Task BulkEnablingStartsWithAnUnchosenUnnamedEggAndAdoptionStartsAtZero() {
+        await pets.SaveOptionsAsync(TestUsers.Admin, new(true), Ct);
+        await pets.BulkAsync(TestUsers.Admin, true, Ct);
+        var egg = (await pets.MineAsync(User, Ct)).Pet;
+        Assert.True(egg.NeedsAdoption); Assert.Equal("", egg.Name); Assert.Equal(0, egg.Stage); Assert.Equal(0, egg.Level);
+        await Assert.ThrowsAsync<ArgumentException>(() => pets.AdoptAsync(User, new(" ", "silkie", 0), Ct));
+        var at = DateTime.UtcNow;
+        await using (var db = factory.CreateDbContext()) { db.PetInputClaims.Add(new() { SessionId = session, UserId = person, At = at }); await db.SaveChangesAsync(Ct); }
+        await pets.CreditAsync(session, "codex:egg", [new() { PromptId = "egg-work", StartedAt = at, Tokens = 4_000_000 }], Ct);
+        egg = (await pets.MineAsync(User, Ct)).Pet;
+        Assert.Equal(4_000_000, egg.LifetimeTokens); Assert.Equal(0, egg.Experience);
+        await pets.AdoptAsync(User, new("Byte", "silkie", 0), Ct);
+        var pet = (await pets.MineAsync(User, Ct)).Pet;
+        Assert.False(pet.NeedsAdoption); Assert.Equal(1, pet.Level); Assert.Equal(1, pet.Stage); Assert.Equal(0, pet.Experience);
+        Assert.Equal(4_000_000, pet.LifetimeTokens);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => pets.AdoptAsync(User, new("Other", "snek", pet.Generation), Ct));
+    }
+    [Fact] public async Task RetirementPreservesLifetimeAndDelayedUsageCannotGrowTheReplacement() {
+        await pets.SaveOptionsAsync(TestUsers.Admin, new(true), Ct);
+        await pets.AdoptAsync(User, new("Byte", "silkie", 0), Ct);
+        var at = DateTime.UtcNow;
+        await using (var db = factory.CreateDbContext()) { db.PetInputClaims.Add(new() { SessionId = session, UserId = person, Generation = 1, At = at }); await db.SaveChangesAsync(Ct); }
+        var turn = new SessionUsageTurn { PromptId = "first-pet", StartedAt = at, Tokens = 4_000_000 };
+        await pets.CreditAsync(session, "codex:reset", [turn], Ct);
+        await pets.RetireAsync(User, new(1), Ct);
+        var egg = (await Service().MineAsync(User, Ct)).Pet;
+        Assert.True(egg.NeedsAdoption); Assert.Equal(4_000_000, egg.LifetimeTokens); Assert.Equal(0, egg.Experience);
+        await pets.AdoptAsync(User, new("Snek", "snek", egg.Generation), Ct);
+        turn.Tokens += 2_000_000;
+        await pets.CreditAsync(session, "codex:reset", [turn, new() { PromptId = "delayed-old-work", StartedAt = at, Tokens = 100_000 }], Ct);
+        var pet = (await pets.MineAsync(User, Ct)).Pet;
+        Assert.Equal(6_100_000, pet.LifetimeTokens); Assert.Equal(0, pet.Experience); Assert.Equal(1, pet.Level);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => pets.RetireAsync(User, new(1), Ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => pets.SavePreferencesAsync(User, new(true, "Old", "silkie", Generation: 1), Ct));
+        await using (var db = factory.CreateDbContext()) { db.PetInputClaims.Add(new() { SessionId = session, UserId = person, Generation = pet.Generation, At = at.AddSeconds(10) }); await db.SaveChangesAsync(Ct); }
+        await pets.CreditAsync(session, "codex:reset", [new() { PromptId = "new-work", StartedAt = at.AddSeconds(10), Tokens = 500_000 }], Ct);
+        pet = (await Service().MineAsync(User, Ct)).Pet;
+        Assert.Equal(6_600_000, pet.LifetimeTokens); Assert.Equal(500_000, pet.Experience);
+    }
+    [Fact] public async Task ManagerCanSetExactCountersAndReturnAPetToAnEgg() {
+        await pets.AdjustAsync(TestUsers.Admin, person, new(true, "Byte", "silkie", 1, 40, 4_000_000, 12_000_000), Ct);
+        var pet = (await pets.MineAsync(User, Ct)).Pet;
+        Assert.Equal(3, pet.Level); Assert.Equal(4_000_000, pet.Experience); Assert.Equal(12_000_000, pet.LifetimeTokens);
+        await pets.AdjustAsync(TestUsers.Admin, person, new(true, "", "", 1, 70), Ct);
+        pet = (await pets.MineAsync(User, Ct)).Pet;
+        Assert.True(pet.NeedsAdoption); Assert.Equal(12_000_000, pet.LifetimeTokens); Assert.Equal(0, pet.Experience);
+    }
+    [Fact] public void FourMillionTokensAreStillAYoungPetAndAdulthoodNeedsFortyFiveMillion() {
+        Assert.Equal(3, PetRules.Level(4_000_000)); Assert.Equal(1, PetRules.Stage(PetRules.Level(4_000_000)));
+        Assert.Equal(45_000_000, PetRules.LevelStart(10));
     }
     [Fact] public void CodexUsesCumulativeUsageWithoutCountingCachedAndReasoningSubsetsAgain() {
         var format = new CodexSessionFormat(); var cursor = new SessionReadCursor();
@@ -120,7 +172,7 @@ public sealed class PetTests : IAsyncLifetime
         }) format.AppendLines(cursor, [(JsonObject)JsonNode.Parse(line)!]);
         Assert.Equal(125, Assert.Single(cursor.UsageTurns).Tokens);
     }
-    [Theory] [InlineData(1, 0)] [InlineData(3, 1)] [InlineData(6, 2)] [InlineData(10, 3)] [InlineData(1000, 3)]
+    [Theory] [InlineData(1, 1)] [InlineData(3, 1)] [InlineData(6, 2)] [InlineData(10, 3)] [InlineData(1000, 3)]
     public void LevelsAndStagesRoundTrip(int level, int stage) { var experience = PetRules.LevelStart(level); Assert.Equal(level, PetRules.Level(experience)); Assert.Equal(stage, PetRules.Stage(level)); }
     private sealed class Factory(string file) : IDbContextFactory<ManagerDbContext> { public ManagerDbContext CreateDbContext() => new(new DbContextOptionsBuilder<ManagerDbContext>().UseSqlite("Data Source=" + file + ";Pooling=False").Options); }
 }

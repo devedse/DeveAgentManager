@@ -4,6 +4,8 @@ public sealed partial class ManagerApi
 {
     public Task<MyPetDto> MyPetAsync() => GetAsync<MyPetDto>("api/me/pet");
     public Task<MyPetDto> SavePetAsync(PetPreferences value) => SendAsync<MyPetDto>(HttpMethod.Put, "api/me/pet", value);
+    public Task<MyPetDto> AdoptPetAsync(PetAdoption value) => SendAsync<MyPetDto>(HttpMethod.Post, "api/me/pet/adopt", value);
+    public Task<MyPetDto> RetirePetAsync(PetRetirement value) => SendAsync<MyPetDto>(HttpMethod.Post, "api/me/pet/retire", value);
     public Task PetActionAsync(string action) => SendAsync(HttpMethod.Post, "api/me/pet/interact", new PetInteractionRequest(action));
     public Task SnoozePetAsync(int minutes) => SendAsync(HttpMethod.Post, "api/me/pet/snooze", new PetSnoozeRequest(minutes));
     public Task<PetOptions> PetOptionsAsync() => GetAsync<PetOptions>("api/pets/settings");

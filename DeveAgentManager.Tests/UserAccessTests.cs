@@ -167,6 +167,8 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
             var body = await response.Content.ReadAsStringAsync();
             // A role she lacks is refused first, the same for every id; without access to the thing itself, it isn't there.
             var expected = EndpointAccess.RequiredRoles(endpoint) is not null ? StatusCodes.Status403Forbidden
+                // Self-service pet writes require the optional module to be enabled globally.
+                : method is "PUT" or "POST" && (path is "/api/me/pet" or "/api/me/pet/retire") ? StatusCodes.Status403Forbidden
                 : pattern.Parameters.Any(p => ids.ContainsKey(p.Name)) ? StatusCodes.Status404NotFound
                 : (int?)null;
             if (expected is { } code ? status != code : status is 401 or 403 or >= 500)

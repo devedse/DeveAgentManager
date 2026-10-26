@@ -27,7 +27,9 @@ public sealed class PetApiTests
             Assert.Equal(HttpStatusCode.OK, (await keeper.PutAsJsonAsync("/api/pets/settings", new PetOptions(true), ApiJson.Options, Ct)).StatusCode);
             var mine = (await plain.GetFromJsonAsync<MyPetDto>("/api/me/pet", ApiJson.Options, Ct))!;
             Assert.True(mine.CanEdit); Assert.False(mine.CanManage);
-            Assert.Equal(HttpStatusCode.OK, (await plain.PutAsJsonAsync("/api/me/pet", new PetPreferences(true, "Byte", "silkie"), ApiJson.Options, Ct)).StatusCode);
+            Assert.True(mine.Pet.NeedsAdoption); Assert.Equal("", mine.Pet.Name);
+            Assert.Equal(HttpStatusCode.OK, (await plain.PostAsJsonAsync("/api/me/pet/adopt", new PetAdoption("Byte", "silkie", 0), ApiJson.Options, Ct)).StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict, (await plain.PutAsJsonAsync("/api/me/pet", new PetPreferences(true, "Snek", "snek", Generation: 1), ApiJson.Options, Ct)).StatusCode);
             var path = "/api/pets/people/" + mine.Pet.UserId;
             var adjustment = new PetAdjustment(true, "Byte", "silkie", 10, 91);
             Assert.Equal(HttpStatusCode.Forbidden, (await plain.PutAsJsonAsync(path, adjustment, ApiJson.Options, Ct)).StatusCode);
@@ -36,8 +38,16 @@ public sealed class PetApiTests
             Assert.Equal(("Byte", 10, 91), (changed.Pet.Name, changed.Pet.Level, changed.Pet.Happiness));
             Assert.Equal(HttpStatusCode.NoContent, (await plain.PostAsJsonAsync("/api/me/pet/snooze", new PetSnoozeRequest(5), ApiJson.Options, Ct)).StatusCode);
             Assert.Equal(HttpStatusCode.BadRequest, (await plain.PostAsJsonAsync("/api/me/pet/snooze", new PetSnoozeRequest(-1), ApiJson.Options, Ct)).StatusCode);
+            plain.DefaultRequestHeaders.Remove(ApiHeaders.Request);
+            Assert.Equal(HttpStatusCode.Forbidden, (await plain.PostAsJsonAsync("/api/me/pet/retire", new PetRetirement(1), ApiJson.Options, Ct)).StatusCode);
+            plain.DefaultRequestHeaders.Add(ApiHeaders.Request, "1");
+            Assert.Equal(HttpStatusCode.OK, (await plain.PostAsJsonAsync("/api/me/pet/retire", new PetRetirement(1), ApiJson.Options, Ct)).StatusCode);
+            var egg = (await plain.GetFromJsonAsync<MyPetDto>("/api/me/pet", ApiJson.Options, Ct))!;
+            Assert.True(egg.Pet.NeedsAdoption);
+            Assert.Equal(HttpStatusCode.OK, (await plain.PostAsJsonAsync("/api/me/pet/adopt", new PetAdoption("New", "snek", egg.Pet.Generation), ApiJson.Options, Ct)).StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict, (await plain.PostAsJsonAsync("/api/me/pet/retire", new PetRetirement(1), ApiJson.Options, Ct)).StatusCode);
             await keeper.PutAsJsonAsync("/api/pets/settings", new PetOptions(false), ApiJson.Options, Ct);
-            Assert.Equal(HttpStatusCode.Forbidden, (await plain.PutAsJsonAsync("/api/me/pet", new PetPreferences(false, "Byte", "silkie"), ApiJson.Options, Ct)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await plain.PutAsJsonAsync("/api/me/pet", new PetPreferences(false, "Byte", "silkie", Generation: 1), ApiJson.Options, Ct)).StatusCode);
             keeper.DefaultRequestHeaders.Remove(ApiHeaders.Request);
             Assert.Equal(HttpStatusCode.Forbidden, (await keeper.PutAsJsonAsync("/api/pets/settings", new PetOptions(true), ApiJson.Options, Ct)).StatusCode);
         } finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); Directory.Delete(folder, true); }

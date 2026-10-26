@@ -34,10 +34,11 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
     }
     private PetStateDto Dto(UserPet p)
     {
-        var level = PetRules.Level(p.Experience); var stage = PetRules.Stage(level);
-        return new(p.UserId, p.Name, p.Species, p.Enabled, p.Experience, level, stage, catalog.Require(p.Species).Stages[stage],
-            PetRules.LevelStart(level), PetRules.LevelStart(Math.Min(PetRules.MaxLevel, level + 1)), PetRules.StageProgress(p.Experience), p.Happiness,
-            p.SnoozedUntil, p.ReducedMotion, p.Size, p.Revision, p.Reaction, p.ReactionAt);
+        var waiting = p.Species.Length == 0;
+        var level = waiting ? 0 : PetRules.Level(p.Experience); var stage = waiting ? 0 : PetRules.Stage(level);
+        return new(p.UserId, p.Name, p.Species, p.Enabled, p.Experience, level, stage, waiting ? "Unchosen egg" : catalog.Require(p.Species).Stages[stage],
+            PetRules.LevelStart(level), waiting ? 0 : PetRules.LevelStart(Math.Min(PetRules.MaxLevel, level + 1)), waiting ? 0 : PetRules.StageProgress(p.Experience), p.Happiness,
+            p.SnoozedUntil, p.ReducedMotion, p.Size, p.Revision, p.Reaction, p.ReactionAt, p.LifetimeTokens, p.Generation);
     }
     private void Changed(UserPet p, string reaction = "idle")
     {
@@ -87,16 +88,58 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
     }
     public async Task SavePreferencesAsync(CurrentUser actor, PetPreferences request, CancellationToken ct)
     {
-        catalog.Require(request.Species); var name = PetRules.CleanName(request.Name);
         if (request.Size is < 90 or > 240) throw new ArgumentException("Pet size must be between 90 and 240.");
         await gate.WaitAsync(ct);
         try { await using var db = await factory.CreateDbContextAsync(ct); await using var transaction = await db.Database.BeginTransactionAsync(ct);
             if (!(await Options(db, ct)).Enabled && !actor.Has(UserRoles.DamagochiManager)) throw new UnauthorizedAccessException("Damagochi is disabled by a Damagochi manager.");
             var p = await Pet(db, actor.Id, ct);
+            RequireGeneration(p, request.Generation);
+            if (p.Species != request.Species) throw new InvalidOperationException("Kill your current pet before choosing a new one. Damagochi managers can change types in Manager settings.");
+            var name = PetRules.CleanName(request.Name, p.Species.Length == 0);
+            if (p.Species.Length == 0 && name.Length != 0) throw new InvalidOperationException("Choose a pet and give it a name to hatch your egg.");
             if (p.Enabled && !request.Enabled) await PauseUsage(db, actor.Id, ct);
             p.Enabled = request.Enabled; p.Name = name; p.Species = request.Species;
             p.ReducedMotion = request.ReducedMotion; p.Size = request.Size; p.SnoozedUntil = null; Changed(p); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
         } finally { gate.Release(); }
+        Notify(actor.Id);
+    }
+    private static void RequireGeneration(UserPet pet, long generation)
+    {
+        if (pet.Generation != generation) throw new InvalidOperationException("Your pet changed in another tab. Refresh and try again.");
+    }
+    public async Task AdoptAsync(CurrentUser actor, PetAdoption request, CancellationToken ct)
+    {
+        catalog.Require(request.Species); var name = PetRules.CleanName(request.Name);
+        await gate.WaitAsync(ct);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            if (!(await Options(db, ct)).Enabled && !actor.Has(UserRoles.DamagochiManager)) throw new UnauthorizedAccessException("Damagochi is disabled by a Damagochi manager.");
+            var p = await Pet(db, actor.Id, ct); RequireGeneration(p, request.Generation);
+            if (p.Species.Length != 0) throw new InvalidOperationException("Kill your current pet before choosing a new one.");
+            p.Generation++; p.Species = request.Species; p.Name = name; p.Experience = 0; p.Happiness = 70;
+            p.Enabled = true; p.SnoozedUntil = null; p.LastInteractionAt = null; Changed(p, "adopted");
+            await db.SaveChangesAsync(ct);
+        }
+        finally { gate.Release(); }
+        Notify(actor.Id);
+    }
+    public async Task RetireAsync(CurrentUser actor, PetRetirement request, CancellationToken ct)
+    {
+        await gate.WaitAsync(ct);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            if (!(await Options(db, ct)).Enabled && !actor.Has(UserRoles.DamagochiManager)) throw new UnauthorizedAccessException("Damagochi is disabled by a Damagochi manager.");
+            var p = await Pet(db, actor.Id, ct); RequireGeneration(p, request.Generation);
+            if (p.Species.Length == 0) throw new InvalidOperationException("Choose a pet first.");
+            // Credits retain lifetime attribution. Their generation prevents delayed work growing the next pet.
+            p.Generation++; p.Species = ""; p.Name = ""; p.Experience = 0; p.Happiness = 70;
+            p.SnoozedUntil = null; p.LastInteractionAt = null; Changed(p, "retired");
+            await db.SaveChangesAsync(ct);
+        }
+        finally { gate.Release(); }
+        await audit.RecordAsync(actor, "PetRetired", "Damagochi", "Pet progress reset; lifetime tokens preserved.", ct);
         Notify(actor.Id);
     }
     public async Task InteractAsync(CurrentUser actor, string action, int minutes, CancellationToken ct)
@@ -106,6 +149,7 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
         await gate.WaitAsync(ct);
         try { await using var db = await factory.CreateDbContextAsync(ct); await using var transaction = await db.Database.BeginTransactionAsync(ct); var p = await Pet(db, actor.Id, ct);
             if (!(await Options(db, ct)).Enabled || !p.Enabled) throw new InvalidOperationException("Enable your pet first.");
+            if (p.Species.Length == 0 && action is "pet" or "play") throw new InvalidOperationException("Choose and name your pet first.");
             if (action == "hide") { p.Enabled = false; await PauseUsage(db, actor.Id, ct); }
             if (action == "snooze") p.SnoozedUntil = Now.AddMinutes(minutes);
             if (action == "wake") p.SnoozedUntil = null;
@@ -126,16 +170,21 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
     }
     public async Task AdjustAsync(CurrentUser actor, Guid userId, PetAdjustment request, CancellationToken ct)
     {
-        RequireManager(actor); catalog.Require(request.Species); var name = PetRules.CleanName(request.Name);
+        RequireManager(actor); if (request.Species.Length != 0) catalog.Require(request.Species); var name = PetRules.CleanName(request.Name, true);
         if (request.Level is < 1 or > PetRules.MaxLevel || request.Happiness is < 0 or > 100) throw new ArgumentException("Choose level 1–1000 and happiness 0–100.");
+        if (request.Experience < 0 || request.LifetimeTokens < 0) throw new ArgumentException("Token counts cannot be negative.");
         await gate.WaitAsync(ct);
         try { await using var db = await factory.CreateDbContextAsync(ct); await using var transaction = await db.Database.BeginTransactionAsync(ct); var p = await Pet(db, userId, ct);
             if (p.Enabled && !request.Enabled) await PauseUsage(db, userId, ct);
+            if ((p.Species.Length == 0) != (request.Species.Length == 0)) p.Generation++;
             p.Name = name; p.Species = request.Species; p.Enabled = request.Enabled; p.Happiness = request.Happiness;
-            if (PetRules.Level(p.Experience) != request.Level) p.Experience = PetRules.LevelStart(request.Level);
+            if (p.Species.Length == 0) { p.Name = ""; p.Experience = 0; }
+            else if (request.Experience is { } xp) p.Experience = xp;
+            else if (PetRules.Level(p.Experience) != request.Level) p.Experience = PetRules.LevelStart(request.Level);
+            if (request.LifetimeTokens is { } total) p.LifetimeTokens = total;
             Changed(p); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
         } finally { gate.Release(); }
-        await audit.RecordAsync(actor, "PetAdjusted", $"User {userId}", $"Species: {request.Species}; level: {request.Level}; happiness: {request.Happiness}; enabled: {request.Enabled}", ct); Notify(userId);
+        await audit.RecordAsync(actor, "PetAdjusted", $"User {userId}", $"Species: {request.Species}; level: {request.Level}; pet tokens: {request.Experience}; lifetime tokens: {request.LifetimeTokens}; happiness: {request.Happiness}; enabled: {request.Enabled}", ct); Notify(userId);
     }
     public async Task BulkAsync(CurrentUser actor, bool enabled, CancellationToken ct)
     {
@@ -152,10 +201,10 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
     {
         await gate.WaitAsync(ct);
         try { await using var db = await factory.CreateDbContextAsync(ct); if (!(await Options(db, ct)).Enabled) return;
-            if (!(await Pet(db, userId, ct)).Enabled) return;
+            var pet = await Pet(db, userId, ct); if (!pet.Enabled) return;
             var session = await db.Sessions.Where(s => s.AgentId == agentId).Select(s => (Guid?)s.Id).FirstOrDefaultAsync(ct);
             if (session is null) return;
-            db.PetInputClaims.Add(new() { AgentId = agentId, SessionId = session.Value, UserId = userId, At = Now });
+            db.PetInputClaims.Add(new() { AgentId = agentId, SessionId = session.Value, UserId = userId, Generation = pet.Generation, At = Now });
             await db.PetInputClaims.Where(c => c.At < Now.AddDays(-7)).ExecuteDeleteAsync(ct); await db.SaveChangesAsync(ct);
         } finally { gate.Release(); }
     }
@@ -163,7 +212,7 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
     {
         await gate.WaitAsync(ct);
         try { await using var db = await factory.CreateDbContextAsync(ct); var options = await Options(db, ct); if (!options.Enabled) return;
-            var p = await Pet(db, userId, ct); if (!p.Enabled || p.ReactionAt is { } at && Now - at < TimeSpan.FromSeconds(2)) return;
+            var p = await Pet(db, userId, ct); if (!p.Enabled || p.Species.Length == 0 || p.ReactionAt is { } at && Now - at < TimeSpan.FromSeconds(2)) return;
             Changed(p, reaction); await db.SaveChangesAsync(ct);
         } finally { gate.Release(); }
         Notify(userId);
@@ -208,14 +257,19 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
                 var credit = existing.GetValueOrDefault(turn.PromptId);
                 if (credit is null) {
                     var claim = claims.LastOrDefault(c => c.At <= turn.StartedAt.AddSeconds(5) && c.At >= turn.StartedAt.AddMinutes(-2));
-                    credit = new PetUsageCredit { Source = source, PromptId = turn.PromptId, UserId = claim?.UserId };
+                    credit = new PetUsageCredit { Source = source, PromptId = turn.PromptId, UserId = claim?.UserId, Generation = claim?.Generation ?? 0 };
                     db.PetUsageCredits.Add(credit); existing[turn.PromptId] = credit;
                 }
                 var delta = Math.Max(0, turn.Tokens - credit.Tokens); credit.Tokens = Math.Max(credit.Tokens, turn.Tokens);
                 if (delta == 0 || credit.UserId is not { } userId || !options.Enabled || !await db.Users.AnyAsync(u => u.Id == userId && !u.Disabled, ct)) continue;
                 var p = await Pet(db, userId, ct); if (!p.Enabled) continue;
-                var level = PetRules.Level(p.Experience); p.Experience = Math.Min(PetRules.LevelStart(PetRules.MaxLevel), p.Experience + delta);
-                p.Happiness = Math.Min(100, p.Happiness + 1); Changed(p, PetRules.Level(p.Experience) > level ? "level" : "working"); notified.Add(userId);
+                p.LifetimeTokens = Math.Min(long.MaxValue - delta, p.LifetimeTokens) + delta;
+                if (p.Species.Length != 0 && credit.Generation == p.Generation) {
+                    var level = PetRules.Level(p.Experience); p.Experience = Math.Min(long.MaxValue - delta, p.Experience) + delta;
+                    p.Happiness = Math.Min(100, p.Happiness + 1); Changed(p, PetRules.Level(p.Experience) > level ? "level" : "working");
+                }
+                else Changed(p);
+                notified.Add(userId);
             }
             await db.SaveChangesAsync(ct);
         } finally { gate.Release(); }

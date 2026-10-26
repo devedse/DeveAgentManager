@@ -13,6 +13,12 @@ internal static class PetEndpoints
         api.MapPut("/me/pet", async (PetPreferences request, CurrentUser user, PetService pets, CancellationToken ct) => {
             await pets.SavePreferencesAsync(user, request, ct); return await pets.MineAsync(user, ct);
         }).ForAnyUser();
+        api.MapPost("/me/pet/adopt", async (PetAdoption request, CurrentUser user, PetService pets, CancellationToken ct) => {
+            await pets.AdoptAsync(user, request, ct); return await pets.MineAsync(user, ct);
+        }).ForAnyUser();
+        api.MapPost("/me/pet/retire", async (PetRetirement request, CurrentUser user, PetService pets, CancellationToken ct) => {
+            await pets.RetireAsync(user, request, ct); return await pets.MineAsync(user, ct);
+        }).ForAnyUser();
         api.MapPost("/me/pet/interact", async (PetInteractionRequest request, CurrentUser user, PetService pets, CancellationToken ct) => {
             await pets.InteractAsync(user, request.Action, 0, ct); return Results.NoContent();
         }).ForAnyUser();

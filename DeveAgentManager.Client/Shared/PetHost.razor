@@ -2,25 +2,35 @@
 @inject PetClient Pets
 @inject ManagerApi Api
 @inject IJSRuntime JS
+@inject NavigationManager Navigation
 
 <div class="dam-pet-host" @ref="_host" hidden="@(!Visible)" data-pet-user="@Pets.State?.Pet.UserId">
-    <div class="dam-pet-body" role="button" tabindex="0" aria-label="@($"{Pets.State?.Pet.Name}, level {Pets.State?.Pet.Level}. Tap to pet; right-click or press Shift+F10 for the menu.")">
+    <div class="dam-pet-body" role="button" tabindex="0" aria-label="@(Pets.State?.Pet.NeedsAdoption == true ? "Unchosen egg. Choose a pet and give it a name." : $"{Pets.State?.Pet.Name}, level {Pets.State?.Pet.Level}. Tap to pet; right-click or press Shift+F10 for the menu.")">
         <div class="dam-pet-art" @ref="_mount"></div>
-        <span class="dam-pet-name">@Pets.State?.Pet.Name ♡</span>
+        <span class="dam-pet-name">@(Pets.State?.Pet.NeedsAdoption == true ? "Choose pet & name" : $"{Pets.State?.Pet.Name} ♡")</span>
     </div>
     <div class="dam-pet-hide-target" aria-hidden="true">Drop here to hide for 5 minutes</div>
     @if (_menu && Pets.State is { } state)
     {
         <div class="dam-pet-menu" role="menu" aria-label="Pet interactions">
-            <div class="dam-pet-summary"><b>@state.Pet.Name</b><span>Level @state.Pet.Level · @state.Pet.StageName</span><span>Happiness @state.Pet.Happiness%</span></div>
-            <button role="menuitem" @onclick='() => Action("pet")'>Pet</button>
-            <button role="menuitem" @onclick='() => Action("play")'>Play</button>
+            <div class="dam-pet-summary">
+                <b>@(state.Pet.NeedsAdoption ? "Your egg is waiting" : state.Pet.Name)</b>
+                @if (state.Pet.NeedsAdoption) { <span>Choose a pet and give it a name.</span> }
+                else { <span>@state.Pet.StageName · Happiness @state.Pet.Happiness%</span><PetXpBar Pet="state.Pet" /> }
+                <span>@state.Pet.LifetimeTokens.ToString("N0") lifetime tokens</span>
+            </div>
+            @if (state.Pet.NeedsAdoption) { <a role="menuitem" href="settings?tab=damagochi" @onclick="() => _menu = false">Choose pet and name…</a> }
+            else {
+                <button role="menuitem" @onclick='() => Action("pet")'>Pet</button>
+                <button role="menuitem" @onclick='() => Action("play")'>Play</button>
+            }
             @foreach (var minutes in new[] { 5, 15, 60 })
             {
                 <button role="menuitem" @onclick="() => Snooze(minutes)">Go away for @minutes minutes</button>
             }
             <button role="menuitem" @onclick='() => Action("hide")'>Hide until I turn it on again</button>
             <a role="menuitem" href="settings?tab=damagochi" @onclick="() => _menu = false">Pet settings</a>
+            @if (!state.Pet.NeedsAdoption) { <PetRetireButton InMenu="true" OnRetired="CloseMenu" /> }
             <button role="menuitem" @onclick="() => _menu = false">Close</button>
             @if (_error is not null) { <span role="alert">@_error</span> }
         </div>
@@ -46,15 +56,18 @@
             _timer = new PeriodicTimer(TimeSpan.FromSeconds(15)); _ = TickAsync();
         }
         if (_module is not null && Pets.State is { } state) {
-            var definition = state.Catalog.First(d => d.Id == state.Pet.Species);
-            await _module.InvokeVoidAsync("update", _host, state.Pet, definition.Renderer, Visible);
+            var renderer = state.Pet.NeedsAdoption ? "unclaimed-egg" : state.Catalog.First(d => d.Id == state.Pet.Species).Renderer;
+            await _module.InvokeVoidAsync("update", _host, state.Pet, renderer, Visible, Pets.Threatened);
         }
     }
     private async Task TickAsync() { try { while (_timer is not null && await _timer.WaitForNextTickAsync()) await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { } }
     private void OnChanged() { if (!_disposed) _ = InvokeAsync(StateHasChanged); }
     [JSInvokable] public Task OpenMenu() { _menu = !_menu; return InvokeAsync(StateHasChanged); }
     [JSInvokable] public Task CloseMenu() { _menu = false; return InvokeAsync(StateHasChanged); }
-    [JSInvokable] public Task Pet() => Action("pet");
+    [JSInvokable] public Task Pet() {
+        if (Pets.State?.Pet.NeedsAdoption == true) { Navigation.NavigateTo("settings?tab=damagochi"); return Task.CompletedTask; }
+        return Action("pet");
+    }
     [JSInvokable] public Task Dismiss() => Snooze(5);
     private async Task Action(string action) {
         try { await Api.PetActionAsync(action); _menu = false; _error = null; await Pets.ReloadAsync(); }

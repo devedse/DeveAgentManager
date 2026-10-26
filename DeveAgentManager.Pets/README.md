@@ -34,7 +34,7 @@ Append an object to [catalog.json](catalog.json), keeping the surrounding JSON a
 {
   "id": "fennec",
   "name": "Fennec fox",
-  "defaultName": "Pixel",
+  "defaultName": "",
   "renderer": "fennec-art",
   "stages": ["Egg", "Kit", "Young", "Adult"]
 }
@@ -44,19 +44,21 @@ Append an object to [catalog.json](catalog.json), keeping the surrounding JSON a
 | --- | --- |
 | `id` | Unique, stable species key saved in user accounts. Use a lowercase slug; renaming an existing key requires migrating saved pets. |
 | `name` | Species label in the settings picker. |
-| `defaultName` | Suggested personal name when choosing the species; keep it within the shared 1–40 character name limit. |
+| `defaultName` | Retained catalog field; leave it empty. Users explicitly name their pet when adopting it. |
 | `renderer` | Module filename without `.ts` or `.js`. It must match `^[a-z][a-z0-9-]*$`; paths and extensions are rejected by the host. |
 | `stages` | Exactly four labels in the order below. Labels do not change the growth thresholds. |
 
 | Stage passed to the renderer | Levels | Role |
 | --- | --- | --- |
-| `0` | 1–2 | Egg; the host uses this stage for the hatch transition. |
-| `1` | 3–5 | Newly hatched pet. |
+| `0` | No level | Egg-to-pet transition when a user chooses and names a pet. The unchosen egg has its own shared renderer. |
+| `1` | 1–5 | Newly hatched pet. |
 | `2` | 6–9 | Young pet. |
 | `3` | 10+ | Adult. |
 
 The catalog feeds the existing settings picker and API. Adding a species normally needs no new endpoint,
-authorization rule, database migration, or settings component. Changing species retains earned experience.
+authorization rule, database migration, or settings component. Users choose a species once; replacement requires the
+confirmed Kill pet action and resets that pet's XP. Lifetime tokens survive. Damagochi managers can change species
+directly while retaining progress. New names and species start empty until the user completes adoption.
 
 ## 2. Implement the renderer
 
@@ -121,8 +123,9 @@ mode may draw only one frame. Loading images after that frame can leave an other
 | `transitioning` | Whether the host is playing the egg-to-pet transition. |
 | `showRig` | Debug drawing flag; the Portal currently supplies false. |
 
-Support `idle`, `happy`, `wave`, `hop`, `peck`, `sleep`, `sad`, `surprised`, and `hatch`. The included renderers also
-support `walk` for choreography/previews. These are animation states, not a required number of image files: several
+Support `idle`, `happy`, `wave`, `hop`, `peck`, `sleep`, `sad`, `surprised`, and `hatch`. The host occasionally chooses
+`peck`, `walk`, `wave` or `hop` during idle. `sad` also previews crying while hovering/focusing Kill pet; `sleep`
+precedes the retirement fade. These are animation states, not a required number of image files: several
 motions can reuse an expression with different movement. The host translates `working` into `idle` and `level` into
 `happy`. Affection uses `happy`, play uses `hop`, image uploads use `surprised`, and other uploads use `peck`.
 
@@ -257,7 +260,7 @@ Run commands from the repository root with .NET 10, Node 22+, and npm available:
 npm ci --ignore-scripts
 npm run check
 dotnet build DeveAgentManager.Tests -c Release
-dotnet DeveAgentManager.Tests/bin/Release/net10.0/DeveAgentManager.Tests.dll -noLogo -class '*PetTests' -class '*PetApiTests'
+dotnet DeveAgentManager.Tests/bin/Release/net10.0/DeveAgentManager.Tests.dll -noLogo -class '*PetTests' -class '*PetApiTests' -class '*PetMigrationTests'
 ```
 
 `dotnet build` also compiles the browser TypeScript. Edit `.ts` sources, then rebuild; emitted files in `wwwroot/js`
@@ -278,10 +281,13 @@ development instance for manual checks too.
 
 The current browser test explicitly exercises Snek and Byte. Extend it for the new species rather than assuming a
 catalog entry is covered automatically. With a Damagochi manager account, enable the module, select the new species,
-and set levels **1, 3, 6, and 10** to inspect all four stages. Check:
+and choose **Unchosen egg** for the waiting state. Adopt a named pet to inspect its hatch transition, then set levels
+**1, 6, and 10** to inspect its three body stages. Check:
 
 - Every expression has the right face, stable proportions, intact extremities, and a consistent ground anchor.
-- The hatch transition and egg cracks work, and changing species retains level/experience.
+- Adoption starts at zero XP, the hatch transition works, and the chosen name is visible.
+- Kill pet previews crying, requires confirmation, sleeps/fades into an unchosen egg, and keeps lifetime tokens.
+- Administrator species changes preserve pet progress; user replacement starts a fresh pet.
 - Navigation between normal pages and the terminal retains the same renderer/canvas for the selected species.
 - Dragging, context menu, touch hold, snooze/wake, and hiding/restoring work at desktop and phone sizes.
 - Reduced motion draws a complete still pose after a cold asset load; light/dark themes both keep edges clean.

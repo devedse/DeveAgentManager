@@ -11,12 +11,26 @@ Each person has one pet across their agents and workspaces. The pet host lives b
 layouts, so internal navigation preserves its renderer. My settings → Damagochi controls the pet type, name, size and
 reduced movement. The context menu offers affection, play, snooze and indefinite hiding. Dragging saves a position
 per user in that browser; keyboard arrows move it too. Shift+F10 opens its menu. A touch hold opens the same menu.
+The context menu includes current-level XP and lifetime tokens. Enabled accounts without a pet show an unchosen egg
+with a question mark and a “Choose pet & name” action. Species and name start empty. Choosing both hatches a level-1 pet.
 
 ## Growth and usage
 
-Level N starts at `25,000 × (N − 1) × N` tokens. Levels 1–2 are the egg, 3–5 the hatchling, 6–9 young, and 10+ adult.
-The maximum level is 1000. Changing species preserves experience. Administrator level adjustments move experience
-to the start of the chosen level. Happiness ranges from 0–100; affection has a cooldown and low happiness changes
+Level N starts at `500,000 × (N − 1) × N` pet tokens, twenty times the original curve. Levels 1–5 are the hatchling,
+6–9 young, and 10+ adult (45 million tokens). The unchosen egg has no level. The maximum level is 1000.
+Each pet has its own tokens/XP, separate from remembered lifetime tokens. Choosing a pet starts its XP at zero;
+tokens credited while choosing an egg increase lifetime usage only. Killing a pet requires confirmation, resets
+its XP, level and happiness, and returns to an unnamed, unchosen egg. Lifetime usage survives. Delayed usage from an
+older pet generation still counts toward lifetime usage while enabled, but cannot grow a replacement pet.
+
+Users can rename their pet; changing species requires the “Kill pet and create new one” flow. Hovering or focusing
+that button previews crying locally. Confirmation plays sleep, then a fade, then the unchosen egg. Reduced motion
+uses a shorter still-pose fade. Hidden tabs pause animation; ordinary idle includes occasional pecking, walks and waves.
+Damagochi managers can directly change species, name, happiness, level, exact pet tokens and lifetime tokens, or choose
+an unchosen egg. Manager species changes keep current progress unless explicitly adjusted. Level adjustments move
+experience to the start of the chosen level. Existing token balances survive migration and initialize lifetime usage;
+levels are recalculated with the slower curve. Untouched, disabled, zero-token default pets become unchosen eggs.
+Happiness ranges from 0–100; affection has a cooldown and low happiness changes
 the idle expression. Snoozing still earns progress; disabling closes the current turn’s growth eligibility; new prompts earn growth after re-enabling. Administrator changes are audited.
 
 Usage summaries are collected incrementally before history metadata is compacted. They are stored separately from
@@ -40,7 +54,8 @@ requirements, the AI workflow and original prompts, and validation commands.
    four stage labels. Catalog definitions are embedded in the module and returned by the pet API.
 2. Add `DeveAgentManager/Browser/pets/<renderer>.ts`. Export `createRenderer(mount, options)` returning a `PetRenderer`
    from `types.ts`. An optional async `prepare()` loads that species’ assets once. Keep assets in `wwwroot/pets/`.
-3. Implement `setStage(0..3)` and `pose(PetFrame)`. Support idle, happy, wave, hop, walk, peck, sleep, sad, surprised and
+3. Implement `setStage(0..3)` and `pose(PetFrame)`. Stage 0 is the adoption hatch transition; the unchosen egg uses a
+   shared renderer. Support idle, happy, wave, hop, walk, peck, sleep, sad (including the Kill pet hover), surprised and
    hatch. Supply `dispose()` to release observers and graphics resources. Use the shared egg or illustrated rig when
    appropriate. The host loads the selected module only when a pet becomes visible.
 4. Check the new species at each growth stage, at phone sizes, with reduced motion and without WebGL. No progression,

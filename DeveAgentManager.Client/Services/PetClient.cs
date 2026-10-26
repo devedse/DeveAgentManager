@@ -8,6 +8,12 @@ public sealed class PetClient(ManagerApi api, LiveUpdates live, SignedInUser me)
     public MyPetDto? State { get; private set; }
     public string? Error { get; private set; }
     public event Action? Changed;
+    public bool Threatened { get; private set; }
+    public void PreviewRetirement(bool value)
+    {
+        if (Threatened == value) return;
+        Threatened = value; Changed?.Invoke();
+    }
     private bool started;
     private readonly SemaphoreSlim gate = new(1, 1);
     public async Task StartAsync()

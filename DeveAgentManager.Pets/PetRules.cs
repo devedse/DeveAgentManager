@@ -20,20 +20,21 @@ public sealed class PetCatalog
 public static class PetRules
 {
     public const int MaxLevel = 1000;
-    public static long LevelStart(int level) => 25_000L * (Math.Clamp(level, 1, MaxLevel) - 1) * Math.Clamp(level, 1, MaxLevel);
-    public static int Level(long experience) => Math.Clamp((int)((1 + Math.Sqrt(1 + 4 * Math.Max(0, experience) / 25_000d)) / 2), 1, MaxLevel);
-    public static int Stage(int level) => level < 3 ? 0 : level < 6 ? 1 : level < 10 ? 2 : 3;
+    public const long GrowthScale = 500_000;
+    public static long LevelStart(int level) => GrowthScale * (Math.Clamp(level, 1, MaxLevel) - 1) * Math.Clamp(level, 1, MaxLevel);
+    public static int Level(long experience) => Math.Clamp((int)((1 + Math.Sqrt(1 + 4 * Math.Max(0, experience) / (double)GrowthScale)) / 2), 1, MaxLevel);
+    public static int Stage(int level) => level < 6 ? 1 : level < 10 ? 2 : 3;
     public static double StageProgress(long experience)
     {
         var level = Level(experience); var stage = Stage(level);
-        var low = LevelStart(new[] { 1, 3, 6, 10 }[stage]);
-        var high = stage == 3 ? low : LevelStart(new[] { 3, 6, 10, 10 }[stage]);
+        var low = LevelStart(new[] { 1, 1, 6, 10 }[stage]);
+        var high = stage == 3 ? low : LevelStart(new[] { 1, 6, 10, 10 }[stage]);
         return stage == 3 ? 1 : Math.Clamp((experience - low) / (double)(high - low), 0, 1);
     }
-    public static string CleanName(string name)
+    public static string CleanName(string name, bool allowEmpty = false)
     {
         var clean = (name ?? "").Trim();
-        if (clean.Length is < 1 or > 40 || clean.Any(char.IsControl)) throw new ArgumentException("Use a pet name of 1–40 characters.");
+        if ((!allowEmpty && clean.Length == 0) || clean.Length > 40 || clean.Any(char.IsControl)) throw new ArgumentException("Use a pet name of 1–40 characters.");
         return clean;
     }
 }
@@ -42,9 +43,11 @@ public sealed class UserPet
 {
     public Guid UserId { get; set; }
     public bool Enabled { get; set; }
-    public string Species { get; set; } = "snek";
-    public string Name { get; set; } = "Snek";
+    public string Species { get; set; } = "";
+    public string Name { get; set; } = "";
     public long Experience { get; set; }
+    public long LifetimeTokens { get; set; }
+    public long Generation { get; set; }
     public int Happiness { get; set; } = 70;
     public DateTime? SnoozedUntil { get; set; }
     public bool ReducedMotion { get; set; }
@@ -62,6 +65,7 @@ public sealed class PetUsageCredit
     public string PromptId { get; set; } = "";
     public long Tokens { get; set; }
     public Guid? UserId { get; set; }
+    public long Generation { get; set; }
 }
 public sealed class PetInputClaim
 {
@@ -69,5 +73,6 @@ public sealed class PetInputClaim
     public Guid AgentId { get; set; }
     public Guid SessionId { get; set; }
     public Guid UserId { get; set; }
+    public long Generation { get; set; }
     public DateTime At { get; set; }
 }

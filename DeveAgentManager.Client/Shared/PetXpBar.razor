@@ -1,0 +1,19 @@
+@using DeveAgentManager.Contracts.Pets
+@using System.Globalization
+
+@if (!Pet.NeedsAdoption)
+{
+    <div class="dam-pet-xp">
+        <div class="dam-pet-xp-labels"><b>Level @Pet.Level</b><span>@(Pet.Level >= 1000 ? "Maximum level" : $"Level {Pet.Level + 1}")</span></div>
+        <div class="dam-pet-xp-track" role="progressbar" aria-label="Pet experience" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@Percent" aria-valuetext="@Description">
+            <div class="dam-pet-xp-fill" style="@($"width:{Percent}%")"></div>
+        </div>
+        <div class="dam-pet-xp-detail">@Description</div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public PetStateDto Pet { get; set; } = default!;
+    private string Percent => Pet.LevelProgress.ToString("0.##", CultureInfo.InvariantCulture);
+    private string Description => Pet.Level >= 1000 ? $"{Pet.Experience:N0} pet XP · maximum level" : $"{Pet.Experience - Pet.LevelStart:N0} / {Pet.NextLevel - Pet.LevelStart:N0} XP to level {Pet.Level + 1}";
+}

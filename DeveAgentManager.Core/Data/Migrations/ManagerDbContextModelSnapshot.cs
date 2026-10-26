@@ -970,6 +970,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<DateTime>("At")
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("Generation")
+                        .HasColumnType("INTEGER");
+
                     b.Property<Guid>("SessionId")
                         .HasColumnType("TEXT");
 
@@ -992,6 +995,9 @@ namespace DeveAgentManager.Core.Data.Migrations
 
                     b.Property<string>("PromptId")
                         .HasColumnType("TEXT");
+
+                    b.Property<long>("Generation")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("Tokens")
                         .HasColumnType("INTEGER");
@@ -1017,11 +1023,17 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<long>("Experience")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long>("Generation")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Happiness")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("LastInteractionAt")
                         .HasColumnType("TEXT");
+
+                    b.Property<long>("LifetimeTokens")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Name")
                         .IsRequired()

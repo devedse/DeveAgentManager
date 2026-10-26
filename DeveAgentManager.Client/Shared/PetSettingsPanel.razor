@@ -11,18 +11,32 @@
     {
         <div class="settings-section">
             <div class="help-heading"><MudText Typo="Typo.subtitle1">Your Damagochi</MudText>
-                <HelpTip Label="Damagochi"><p>Your pet follows you through the Portal. Tokens from work you prompt grow it through four stages; levels continue after adulthood. Petting and playing improve happiness.</p><p>Snoozing hides your pet while it keeps growing. Disabling pauses growth without losing progress. Pet position is saved in this browser.</p></HelpTip></div>
+                <HelpTip Label="Damagochi"><p>Choose a species and give your egg a name to hatch your pet. New pets start at level 1 with zero pet XP. Tokens from new work you prompt grow the current pet; lifetime tokens are remembered separately.</p><p>Changing species requires killing your current pet and confirming its permanent reset. Lifetime tokens are kept. Damagochi managers can change pets directly in Manager settings.</p><p>Snoozing hides your pet while it keeps growing. Disabling pauses growth without losing progress. Position is saved in this browser.</p></HelpTip></div>
             @if (state.CanEdit)
             {
                 <MudSwitch T="bool" @bind-Value="_enabled" Label="Enable my pet" Color="Color.Primary" />
-                <div class="form-row">
-                    <MudSelect T="string" Value="_species" ValueChanged="SpeciesChanged" Label="Pet type" Variant="Variant.Outlined" Margin="Margin.Dense">
-                        @foreach (var pet in state.Catalog) { <MudSelectItem Value="@pet.Id">@pet.Name</MudSelectItem> }
-                    </MudSelect>
-                    <MudTextField @bind-Value="_name" Label="Name" MaxLength="40" Variant="Variant.Outlined" Margin="Margin.Dense" />
-                </div>
-                <div class="dam-pet-stats"><span>Level @state.Pet.Level · @state.Pet.StageName</span><span>@state.Pet.Experience.ToString("N0") tokens</span><span>Happiness @state.Pet.Happiness%</span></div>
-                <MudProgressLinear Value="@(state.Pet.Level >= 1000 ? 100 : (state.Pet.Experience - state.Pet.LevelStart) * 100d / (state.Pet.NextLevel - state.Pet.LevelStart))" Color="Color.Primary" Class="my-3" aria-label="Progress to the next level" />
+                @if (state.Pet.NeedsAdoption)
+                {
+                    <div class="help-heading"><MudText Typo="Typo.subtitle2">Your egg needs a pet and a name</MudText>
+                        <HelpTip Label="Choosing your pet"><p>Choose the pet you want to raise and enter its name. Hatching starts a new pet at zero XP; previous lifetime tokens do not grow it. You can rename it later, but replacing it requires the confirmed Kill pet action.</p></HelpTip></div>
+                    <div class="form-row">
+                        <MudSelect T="string" @bind-Value="_species" Label="Choose a pet" Placeholder="Choose a pet" Variant="Variant.Outlined" Margin="Margin.Dense">
+                            @foreach (var pet in state.Catalog) { <MudSelectItem Value="@pet.Id">@pet.Name</MudSelectItem> }
+                        </MudSelect>
+                        <MudTextField @bind-Value="_name" Immediate="true" Label="Name your pet" MaxLength="40" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    </div>
+                    <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Adopt" Disabled="@(_saving || string.IsNullOrWhiteSpace(_name) || string.IsNullOrEmpty(_species))">Choose pet and hatch egg</MudButton></div>
+                }
+                else
+                {
+                    <div class="form-row">
+                        <MudTextField Value="@(state.Catalog.First(p => p.Id == state.Pet.Species).Name)" Label="Pet type" ReadOnly="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        <MudTextField @bind-Value="_name" Label="Name" MaxLength="40" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    </div>
+                    <div class="dam-pet-stats"><span>@state.Pet.StageName</span><span>@state.Pet.Experience.ToString("N0") pet tokens</span><span>Happiness @state.Pet.Happiness%</span></div>
+                    <PetXpBar Pet="state.Pet" />
+                }
+                <div class="dam-pet-stats"><span>@state.Pet.LifetimeTokens.ToString("N0") lifetime tokens</span></div>
                 <MudNumericField T="int" @bind-Value="_size" Min="90" Max="240" Label="Pet size" Variant="Variant.Outlined" Margin="Margin.Dense" />
                 <MudSwitch T="bool" @bind-Value="_reduced" Label="Reduce pet movement" Color="Color.Primary" />
                 @if (state.Pet.SnoozedUntil > DateTime.UtcNow)
@@ -30,7 +44,8 @@
                     <MudText Typo="Typo.body2">Your pet is snoozing.</MudText>
                     <MudButton OnClick="Wake" Disabled="_saving">Bring back now</MudButton>
                 }
-                <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving">Save pet</MudButton></div>
+                <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving">Save pet settings</MudButton></div>
+                @if (!state.Pet.NeedsAdoption) { <div class="settings-actions"><PetRetireButton /></div> }
                 @if (!state.Options.Enabled) { <MudText Typo="Typo.body2">Damagochi is globally disabled; these preferences are saved for later.</MudText> }
             }
             else { <MudText Typo="Typo.body2">Damagochi is disabled by a Damagochi manager.</MudText> }
@@ -40,23 +55,33 @@
 </LoadingSection>
 @code {
     private bool _enabled, _reduced, _saving, _loaded;
-    private string _name = "", _species = "snek";
+    private string _name = "", _species = "";
     private int _size = 140;
+    private long _generation;
     private PetPreferences? _shown;
     protected override async Task OnInitializedAsync() { Pets.Changed += Changed; await Pets.StartAsync(); Load(); }
     private void Changed() { Load(); _ = InvokeAsync(StateHasChanged); }
     private void Load() {
         if (Pets.State is not { } s) return;
-        var current = new PetPreferences(_enabled, _name, _species, _reduced, _size);
-        if (!_loaded || current == _shown) { _enabled = s.Pet.Enabled; _name = s.Pet.Name; _species = s.Pet.Species; _size = s.Pet.Size; _reduced = s.Pet.ReducedMotion; _loaded = true; }
-        _shown = new(s.Pet.Enabled, s.Pet.Name, s.Pet.Species, s.Pet.ReducedMotion, s.Pet.Size);
+        var current = new PetPreferences(_enabled, s.Pet.NeedsAdoption ? "" : _name, s.Pet.NeedsAdoption ? "" : _species, _reduced, _size, _generation);
+        if (!_loaded || _generation != s.Pet.Generation || current == _shown) {
+            // Preserve an in-progress adoption form during unrelated live token updates.
+            if (!_loaded || _generation != s.Pet.Generation || !s.Pet.NeedsAdoption) { _name = s.Pet.Name; _species = s.Pet.Species; }
+            _enabled = s.Pet.Enabled; _size = s.Pet.Size; _reduced = s.Pet.ReducedMotion; _generation = s.Pet.Generation; _loaded = true;
+        }
+        _shown = new(s.Pet.Enabled, s.Pet.Name, s.Pet.Species, s.Pet.ReducedMotion, s.Pet.Size, s.Pet.Generation);
     }
-    private void SpeciesChanged(string species) {
-        if (Pets.State is not { } s) return;
-        if (_name == s.Catalog.First(p => p.Id == _species).DefaultName) _name = s.Catalog.First(p => p.Id == species).DefaultName;
-        _species = species;
+    private async Task Run(Func<Task> action, string message) {
+        _saving = true;
+        try { await action(); await Pets.ReloadAsync(); Snackbar.Add(message, Severity.Success); }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException) { Snackbar.Add(ex.Message, Severity.Error); }
+        finally { _saving = false; }
     }
-    private async Task Save() { _saving = true; try { await Api.SavePetAsync(new(_enabled, _name, _species, _reduced, _size)); await Pets.ReloadAsync(); Snackbar.Add("Pet saved.", Severity.Success); } catch (Exception ex) when (ex is ApiException or HttpRequestException) { Snackbar.Add(ex.Message, Severity.Error); } finally { _saving = false; } }
-    private async Task Wake() { try { await Api.PetActionAsync("wake"); await Pets.ReloadAsync(); } catch (Exception ex) when (ex is ApiException or HttpRequestException) { Snackbar.Add(ex.Message, Severity.Error); } }
+    private Task Save() => Run(async () => {
+        var pending = Pets.State!.Pet.NeedsAdoption;
+        await Api.SavePetAsync(new(_enabled, pending ? "" : _name, pending ? "" : _species, _reduced, _size, _generation));
+    }, "Pet settings saved.");
+    private Task Adopt() => Run(async () => { await Api.AdoptPetAsync(new(_name, _species, _generation)); }, "Your pet has hatched.");
+    private Task Wake() => Run(() => Api.PetActionAsync("wake"), "Pet brought back.");
     public void Dispose() => Pets.Changed -= Changed;
 }
