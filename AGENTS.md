@@ -16,6 +16,10 @@ When the user requests changes, commit and push them to `master` as soon as they
 requests work on a branch, commit and push to that branch instead. Do not leave requested changes only in the local
 working tree or ask for separate permission to commit and push.
 
+Whenever you push, tell the user which version tag its build is expected to get: `1.0.N` on `master`, `1.0.N-beta` on
+other branches. N is one more than the highest `build-number-*` tag (`git ls-remote --tags origin 'build-number-*'`).
+Every push to any branch takes the next number, so check just before pushing.
+
 ## Usage-limit continuations
 
 A passed reset is permission to retry, never proof that the agent resumed. Keep a current rejection and its send
