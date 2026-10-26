@@ -76,6 +76,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AgentAttentionService>();
         services.AddSingleton<RunnerService>();
         services.AddSingleton<RunnerStatusCache>();
+        services.AddSingleton<RunnerUpdateCache>();
+        services.AddSingleton<RunnerReleaseCatalog>();
+        services.AddHostedService<RunnerUpdateMonitor>();
         services.AddSingleton<TerminalService>();
         services.AddSingleton<IRunnerProvider, ExistingMachineProvider>();
         services.AddSingleton<IRunnerTool, VsCodeTool>();

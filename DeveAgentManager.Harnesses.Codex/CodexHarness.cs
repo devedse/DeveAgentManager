@@ -17,6 +17,8 @@ namespace DeveAgentManager.Harnesses.Codex;
 public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHarness
 {
     public const string HarnessId = "codex";
+    public string UpdateNpmPackage => NpmPackage;
+
     public const string NpmPackage = "@openai/codex";
 
     /// <summary>Where and as whom the Codex CLI renews its ChatGPT login (codex-rs/login/src/auth/manager.rs, 0.160.1).</summary>

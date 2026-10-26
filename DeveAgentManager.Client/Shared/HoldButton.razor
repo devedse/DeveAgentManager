@@ -12,7 +12,7 @@
     <MudTooltip Visible="TipVisible" ShowOnHover="false" ShowOnFocus="false" ShowOnClick="false" Placement="Placement.Bottom" Arrow="true" Class="help-tooltip">
         <ChildContent>
             <MudButton Variant="Variant" Color="Color" Size="Size" StartIcon="@Icon" Disabled="Disabled" Ripple="false"
-                       Class="@($"hold-button-control {(_phase == Phase.Holding ? "hold-button-holding" : "")}")" aria-describedby="@_hintId">@Text</MudButton>
+                       Class="@($"hold-button-control {(_phase == Phase.Holding ? "hold-button-holding" : "")}")" aria-describedby="@_hintId"><span>@Text</span>@Adornment</MudButton>
         </ChildContent>
         <TooltipContent>
             <div class="help-tip-content">
@@ -52,6 +52,8 @@
     /// <summary>What it does, in the tooltip on hover and keyboard focus, and for screen readers.</summary>
     [Parameter] public string? Help { get; set; }
     [Parameter] public EventCallback OnConfirmed { get; set; }
+    /// <summary>Compact status inside the button; its meaning also belongs in Help for screen readers.</summary>
+    [Parameter] public RenderFragment? Adornment { get; set; }
     [Parameter] public string? Icon { get; set; }
     [Parameter] public bool Disabled { get; set; }
     [Parameter] public Color Color { get; set; } = Color.Default;

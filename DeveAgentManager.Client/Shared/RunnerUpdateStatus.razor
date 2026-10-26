@@ -1,0 +1,39 @@
+<div class="runner-update-status" aria-label="Update status">
+    @if (Runner.Updates is not { } updates)
+    {
+        @if (Runner.State == RunnerState.Ready)
+        {
+            <span class="runner-update-reading" role="status" aria-busy="true"><Skeleton Width="170px" /><span class="visually-hidden">Checking for updates</span></span>
+        }
+        else { <span>Updates not checked</span> }
+    }
+    else
+    {
+        <span class="help-heading">
+            @if (updates.Checking && Runner.State == RunnerState.Ready) { <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="runner-update-spinner" /> }
+            <span>@Summary(updates, Runner.State == RunnerState.Ready)</span>
+            <HelpTip Label="Update status">
+                <p>Tools means the installed harnesses and VS Code. System means Debian or Ubuntu packages. Release versions are checked hourly; system package lists are refreshed every six hours. Check now refreshes this Runner and release metadata. Shared release lookups are limited to once a minute.</p>
+                <p>Tools: @(updates.SoftwareCheckedAt is { } softwareAt ? $"last checked {softwareAt.ToString("u")}" : "not checked yet"). System: @(updates.SystemCheckedAt is { } systemAt ? $"last checked {systemAt.ToString("u")}" : "not checked yet"). Counts are the last successful observations while refreshing or offline.</p>
+                @if (updates.SoftwareError is not null) { <p>@updates.SoftwareError. The previous results are kept; try Check now.</p> }
+                @if (updates.SystemError is not null) { <p>@updates.SystemError. The previous count is kept; try Check now.</p> }
+                <p>Checks don't install anything. Pi extension updates aren't included. The system count includes new dependencies required by dist-upgrade. A + means some tools could not be checked. A restart indicator appears when the operating system reports one is needed; some Debian systems don't provide that signal.</p>
+            </HelpTip>
+        </span>
+        @if (updates.RebootRequired) { <span class="runner-reboot-needed"><MudIcon Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" />Restart needed</span> }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public RunnerDto Runner { get; set; } = default!;
+    public static string Summary(RunnerUpdatesDto? updates, bool active = true)
+    {
+        if (updates is null) return "Updates not checked yet";
+        if (updates.SoftwareCheckedAt is null && updates.SystemCheckedAt is null && updates.SoftwareError is null && updates.SystemError is null) return active ? "Checking for updates…" : "Updates not checked yet";
+        var tools = updates.SoftwareCount > 0 ? $"{updates.SoftwareCount}{(updates.SoftwareKnown ? "" : "+")} tool updates" : updates.SoftwareKnown ? "Tools up to date" : "Tool updates unknown";
+        var system = updates.SystemPackageCount is { } count ? count > 0 ? $"{count} system updates" : "System up to date" : "System updates unknown";
+        if (updates.SystemError is not null) system = updates.SystemPackageCount is null ? "System check failed" : $"{updates.SystemPackageCount} system updates (last check)";
+        if (updates.SoftwareError is not null && updates.SoftwareCount == 0) tools = "Tool check incomplete";
+        return $"{tools} · {system}" + (updates.Checking && active ? " · Checking…" : "");
+    }
+}

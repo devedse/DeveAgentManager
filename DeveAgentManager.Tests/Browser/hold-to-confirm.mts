@@ -64,6 +64,7 @@ async function run(theme) {
     const action = (scope, name) => scope.locator('.hold-button', { has: page.getByRole('button', { name, exact: true }) });
     const bubble = scope => scope.locator('.hold-bubble');
     const press = async (target, ms = 0) => {
+        await target.locator('button').scrollIntoViewIfNeeded();
         const box = await target.locator('button').boundingBox();
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.mouse.down();
@@ -139,12 +140,15 @@ async function run(theme) {
     await action(header, 'Stop').waitFor({ timeout: 60000 });
     assert.deepEqual((await header.locator('.hold-button button').allInnerTexts()), ['Stop', 'Restart', 'Update all']);
     await page.getByText('Same as Update all.').waitFor();
-    // Updating only the system packages is an operation of its own, confirmed in a dialog.
-    await page.locator('.operation', { hasText: 'Update system packages' }).getByRole('button', { name: 'Update', exact: true }).click();
-    const dialog = page.getByRole('dialog');
-    await dialog.getByText(/apt-get update and apt-get dist-upgrade/).waitFor();
-    await dialog.getByRole('button', { name: 'Update', exact: true }).click();
-    await dialog.waitFor({ state: 'hidden' });
+    // Updating only system packages uses the same hold interaction as Update all.
+    const systemUpdate = page.locator('.operation', { hasText: 'Update system packages' }).locator('.hold-button');
+    const beforeSystem = posts.length;
+    await press(systemUpdate);
+    await page.mouse.up();
+    assert.equal(posts.length, beforeSystem, 'A click does not update system packages');
+    await bubble(systemUpdate).waitFor({ state: 'detached', timeout: 4000 });
+    await press(systemUpdate, 3300);
+    await page.mouse.up();
     for (let i = 0; i < 50 && posts.at(-1) !== `${id(1)}/system/update`; i++) await page.waitForTimeout(100);
     assert.deepEqual(posts.at(-1), `${id(1)}/system/update`);
     await action(header, 'Restart').locator('button').hover();
@@ -198,7 +202,7 @@ try {
         await run(theme);
         await phone(theme);
     }
-    console.log(`Passed (${engine}): Runner Start/Stop, Restart and Update all on the cards and the Runner page need a 3-second hold, Update system packages asks first; a click or an early release only shows the hint, which fades; mouse, keyboard and touch; help on hover; on screen on a phone; light and dark.`);
+    console.log(`Passed (${engine}): Runner Start/Stop, Restart and Update all on the cards and the Runner page need a 3-second hold, Update system packages requires a hold; a click or an early release only shows the hint, which fades; mouse, keyboard and touch; help on hover; on screen on a phone; light and dark.`);
 } finally {
     await browser.close();
 }

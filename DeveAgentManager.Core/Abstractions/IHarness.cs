@@ -22,6 +22,9 @@ public interface IHarness
     /// <summary>Prints the installed version.</summary>
     string VersionCommand { get; }
 
+    /// <summary>The npm package whose latest tag this harness installs; null when update detection is unsupported.</summary>
+    string? UpdateNpmPackage => null;
+
     /// <summary>
     /// What the harness shows at the bottom of its screen while it works (an extended regular expression, as grep -E
     /// takes it), e.g. its spinner line; null when it has none. An agent counts as working while this is on its screen,

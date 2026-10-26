@@ -12,6 +12,8 @@ namespace DeveAgentManager.Harnesses.Grok;
 public sealed class GrokHarness(HttpMessageHandler? tokenHandler = null) : IHarness
 {
     public const string HarnessId = "grok";
+    public string UpdateNpmPackage => NpmPackage;
+
     public const string NpmPackage = "@xai-official/grok";
     public const string PrepareScript = "$HOME/.deveagentmanager/grok-prepare.py";
     public const string SettingsFile = "$HOME/.deveagentmanager/grok-config.json";

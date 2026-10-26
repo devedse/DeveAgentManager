@@ -1,6 +1,7 @@
 using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Data;
+using DeveAgentManager.Core.Events;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Users;
@@ -47,6 +48,13 @@ internal static class RunnerEndpoints
         {
             await service.ForgetHostKeyAsync(runnerId, ct);
             return Results.NoContent();
+        }).RequireRunner(RunnerAccess.Manage);
+
+        runners.MapPost("/{runnerId:guid}/updates/check", (Guid runnerId, RunnerUpdateCache updates, ManagerEvents events) =>
+        {
+            updates.Request(runnerId);
+            events.RunnerChanged(runnerId);
+            return Results.Accepted();
         }).RequireRunner(RunnerAccess.Manage);
 
         runners.MapPost("/{runnerId:guid}/system/update", (Guid runnerId, RunnerService service, OperationNotifier notifier, CancellationToken ct) =>

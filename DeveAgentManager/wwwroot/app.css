@@ -3920,3 +3920,22 @@ span.skeleton { display: inline-block; vertical-align: middle; }
     .workspace-picker-separator,
     .workspace-picker-child .workspace-picker-project { display: none; }
 }
+
+/* Available updates stay inside Update all's hit target, with full labels at every screen size. */
+.runner-update-badges { display: inline-flex; align-items: center; gap: 4px; margin-left: 7px; }
+.runner-update-count, .runner-update-unknown {
+    display: inline-flex; align-items: center; white-space: nowrap; padding: 1px 6px; border-radius: 6px;
+    font-size: .68rem; line-height: 1.5; font-weight: 650; text-transform: none; letter-spacing: normal;
+    color: var(--dam-primary); background: color-mix(in srgb, var(--dam-primary) 12%, transparent);
+}
+.runner-update-unknown { color: var(--dam-muted); background: color-mix(in srgb, var(--dam-muted) 10%, transparent); }
+.runner-update-pending { display: inline-flex; align-items: center; margin-left: 5px; }
+.updates-stale { opacity: .7; }
+.runner-update-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 0 20px 12px; color: var(--dam-muted); font-size: .8rem; }
+.runner-update-status .help-heading { flex-wrap: wrap; }
+.runner-update-reading { display: inline-flex; min-height: 20px; align-items: center; }
+.runner-update-spinner { width: 14px !important; height: 14px !important; }
+.runner-reboot-needed { display: inline-flex; align-items: center; gap: 4px; color: var(--dam-primary); }
+.runner-reboot-icon { color: var(--dam-primary); width: 15px !important; height: 15px !important; }
+.runner-software-version strong { color: var(--dam-primary); font-weight: 600; }
+.runner-card-actions .runner-card-update .hold-button-control { padding-inline: 7px; }

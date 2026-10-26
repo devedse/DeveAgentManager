@@ -1,0 +1,22 @@
+@if (Runner.Updates?.Software.FirstOrDefault(s => s.Id == SoftwareId) is { } software)
+{
+    <div class="operation-description runner-software-version">
+        @if (software.InstalledVersion is { } installed)
+        {
+            <span>@installed</span>
+            @if (software.UpdateAvailable == true) { <span aria-label="available version"> → <strong>@software.LatestVersion</strong></span> }
+            else if (software.UpdateAvailable == false && Runner.Updates.SoftwareError is null) { <span> · Up to date</span> }
+        }
+        @if (software.Error is not null) { <span> · @software.Error</span> }
+    </div>
+}
+else if (Runner.State == RunnerState.Ready && Runner.Updates?.SoftwareError is null)
+{
+    <div class="operation-description" role="status" aria-busy="true"><Skeleton Width="110px" /><span class="visually-hidden">Checking version</span></div>
+}
+else { <div class="operation-description">Version not checked</div> }
+
+@code {
+    [Parameter, EditorRequired] public RunnerDto Runner { get; set; } = default!;
+    [Parameter, EditorRequired] public string SoftwareId { get; set; } = "";
+}

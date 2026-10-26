@@ -13,6 +13,8 @@ namespace DeveAgentManager.Harnesses.Pi;
 public sealed class PiHarness : IHarness
 {
     public const string HarnessId = "pi";
+    public string UpdateNpmPackage => NpmPackage;
+
     public const string NpmPackage = "@earendil-works/pi-coding-agent";
 
     public string Id => HarnessId;

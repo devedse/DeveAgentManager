@@ -13,6 +13,8 @@ namespace DeveAgentManager.Harnesses.Claude;
 public sealed class ClaudeHarness : IHarness
 {
     public const string HarnessId = "claude";
+    public string UpdateNpmPackage => NpmPackage;
+
     public const string NpmPackage = "@anthropic-ai/claude-code";
 
     /// <summary>Sets what Claude Code asks on its first start (theme, trusting the folder), so agents start straight away.</summary>

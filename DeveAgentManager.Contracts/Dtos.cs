@@ -147,7 +147,8 @@ public sealed record RunnerDto(
     DateTime? LastSetupAt,
     string? Operation,
     MachineStatus? Status,
-    IReadOnlyList<AgentDto> Agents);
+    IReadOnlyList<AgentDto> Agents,
+    RunnerUpdatesDto? Updates = null);
 
 /// <summary>An operation that ran on a Runner. <paramref name="Outcome"/> is null while it runs.</summary>
 public sealed record RunnerActivityDto(long Id, string Name, DateTime StartedAt, DateTime? FinishedAt, RunnerActivityOutcome? Outcome, string? Error);

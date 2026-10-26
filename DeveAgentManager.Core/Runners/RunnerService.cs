@@ -34,7 +34,8 @@ public sealed partial class RunnerService(
     SecretProtector protector,
     AuditLog audit,
     IHostApplicationLifetime lifetime,
-    ILogger<RunnerService> logger)
+    ILogger<RunnerService> logger,
+    RunnerUpdateCache updateCache)
 {
     private static readonly TimeSpan SshTimeout = TimeSpan.FromMinutes(5);
 
@@ -212,7 +213,7 @@ public sealed partial class RunnerService(
     {
         var provider = GetProvider(op.Runner);
         await BringOnlineAsync(op, provider, runSetup: true, cancellation, updateSystem: true);
-    });
+    }, waitForUpdateCheck: true);
 
     /// <summary>
     /// Updates the system packages (apt-get dist-upgrade) without the rest of the setup. The Runner stays usable and
@@ -224,7 +225,7 @@ public sealed partial class RunnerService(
             RequireReady(op.Runner);
             await setup.UpdateSystemPackagesAsync(op.Runner, op.Log, cancellation);
             op.Log.Success("System packages updated");
-        }, markFailed: false);
+        }, markFailed: false, waitForUpdateCheck: true);
 
     /// <summary>
     /// Updates one harness without the rest of the setup: installs its latest version, updates its packages, then applies
@@ -237,7 +238,7 @@ public sealed partial class RunnerService(
             RequireReady(op.Runner);
             await setup.UpdateHarnessAsync(op.Runner, harnessId, op.Log, cancellation);
             await op.SaveAsync();
-        }, markFailed: false);
+        }, markFailed: false, waitForUpdateCheck: true);
 
     /// <summary>Installs a harness on a Runner that was set up without it (e.g. Claude Code on a Runner made for pi).</summary>
     public Task<string?> InstallHarness(Guid runnerId, string harnessId) =>
@@ -252,7 +253,7 @@ public sealed partial class RunnerService(
 
             await setup.UpdateHarnessAsync(op.Runner, harnessId, op.Log, cancellation);
             await op.SaveAsync();
-        }, markFailed: false);
+        }, markFailed: false, waitForUpdateCheck: true);
 
     /// <summary>Installs a tool (e.g. VS Code) on a Runner, or its latest version when it has it. Returns the error, or null.</summary>
     public Task<string?> InstallTool(Guid runnerId, string toolId, bool update = false)
@@ -269,7 +270,7 @@ public sealed partial class RunnerService(
 
             await setup.UpdateToolAsync(op.Runner, tool.Id, op.Log, cancellation);
             await op.SaveAsync();
-        }, markFailed: false);
+        }, markFailed: false, waitForUpdateCheck: true);
     }
 
     /// <summary>Applies a harness's configuration from the Setup Profile (after it changed). Returns the error, or null.</summary>
@@ -508,7 +509,7 @@ public sealed partial class RunnerService(
     /// <param name="markFailed">Put the Runner in the Error state when the operation fails. Off for operations that leave it usable.</param>
     /// <returns>Completes when the operation is done: its error message, or null when it worked.</returns>
     private Task<string?> StartOperation(Guid runnerId, string name, Func<RunnerOperation, CancellationToken, Task> work, bool deleting = false, bool replaceRunning = false,
-        bool markFailed = true)
+        bool markFailed = true, bool waitForUpdateCheck = false)
     {
         var operation = new Operation(name, CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping));
         Operation? previous = null;
@@ -554,6 +555,13 @@ public sealed partial class RunnerService(
                     ownsMaintenance = true;
                 }
                 finally { AgentMoveCoordination.Gate.Release(); }
+                if (waitForUpdateCheck)
+                {
+                    // apt-get update owns the package-list lock. Let a check finish before installing anything.
+                    var check = updateCache.WaitForCheckAsync(runnerId, cancellation);
+                    if (!check.IsCompleted) log.Step("Waiting for the update check to finish");
+                    await check;
+                }
                 await work(new RunnerOperation(db, runner, log, events), cancellation);
             }
             catch (OperationCanceledException) when (lifetime.ApplicationStopping.IsCancellationRequested)
@@ -605,6 +613,7 @@ public sealed partial class RunnerService(
                 // Only remove our own entry: a Delete may already have replaced it.
                 _operations.TryRemove(new KeyValuePair<Guid, Operation>(runnerId, operation));
                 operation.Cancellation.Dispose();
+                updateCache.Request(runnerId);
                 events.RunnerChanged(runnerId);
             }
         }, CancellationToken.None);

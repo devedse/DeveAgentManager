@@ -1,0 +1,38 @@
+@* Inside a hold button: no extra hit target. Help describes these counts to screen readers. *@
+@if (Runner.Updates is { } updates)
+{
+    <span class="runner-update-badges @(Runner.State != RunnerState.Ready || Runner.Operation is not null || updates.Checking ? "updates-stale" : "")" aria-hidden="true">
+        @if (updates.SoftwareCount > 0)
+        {
+            <span class="runner-update-count">@updates.SoftwareCount@(updates.SoftwareKnown ? "" : "+") tools</span>
+        }
+        else if (!updates.SoftwareKnown && updates.SoftwareError is not null)
+        {
+            <span class="runner-update-unknown">Tools ?</span>
+        }
+        @if (updates.SystemPackageCount is > 0)
+        {
+            <span class="runner-update-count">@updates.SystemPackageCount system@(updates.SystemError is null ? "" : "?")</span>
+        }
+        else if (updates.SystemError is not null)
+        {
+            <span class="runner-update-unknown">System ?</span>
+        }
+        @if (Runner.State == RunnerState.Ready && (updates.Checking || updates.SoftwareCheckedAt is null && updates.SoftwareError is null || updates.SystemCheckedAt is null && updates.SystemError is null))
+        {
+            <span class="runner-update-pending"><Skeleton Width="22px" Height="12px" /></span>
+        }
+        @if (updates.RebootRequired)
+        {
+            <MudIcon Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" Class="runner-reboot-icon" />
+        }
+    </span>
+}
+else if (Runner.State == RunnerState.Ready)
+{
+    <span class="runner-update-pending" aria-hidden="true"><Skeleton Width="24px" Height="12px" /></span>
+}
+
+@code {
+    [Parameter, EditorRequired] public RunnerDto Runner { get; set; } = default!;
+}

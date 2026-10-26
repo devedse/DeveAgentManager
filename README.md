@@ -59,6 +59,15 @@ when you close the tab.
 - Each Runner card on the Runners page and the top of a Runner's page have **Start** or **Stop**, **Restart** (stop,
   then start; running agents stop as with Stop) and **Update all** (the same as Re-run setup). Each is held for 3
   seconds to confirm instead of asking in a dialog; hovering one says what it does.
+- **Update all** shows compact counts such as **3 tools · 6 system** on Runner cards and the Runner page. Tools means
+  installed harnesses and VS Code; system means Debian or Ubuntu packages. **Operations** shows the installed and
+  available versions, individual Update buttons held for three seconds, and **Check now**. Release metadata is shared
+  across Runners and cached for an hour (Check now can refresh it, at most once a minute). Installed versions are read hourly over SSH; system package lists are refreshed
+  every six hours with `apt-get update`, followed by `apt-get -s dist-upgrade` to count upgrades and new dependencies.
+  Checks install nothing. Failures retain previous observations, show an unknown status and retry after ten minutes;
+  stopped Runners retain their last check. Checks run again after maintenance. Results are kept in memory and rebuilt
+  after a Manager restart. Pi extensions are not counted. A restart indicator uses the operating system's
+  `/var/run/reboot-required` signal when available.
 
 See [PLAN.md](PLAN.md) for where this is going (Jobs API, projects).
 

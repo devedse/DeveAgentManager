@@ -21,4 +21,7 @@ public interface IRunnerTool
 
     /// <summary>Prints the installed version.</summary>
     string VersionCommand { get; }
+
+    /// <summary>The GitHub repository whose latest stable release this tool installs.</summary>
+    string? UpdateGitHubRepository => null;
 }

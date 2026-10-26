@@ -59,7 +59,7 @@ if (suite === 'all' || suite === 'portal') {
         'loading-states.mjs', 'agent-order.mjs', 'grok.mjs', 'access-management.mjs', 'model-defaults.mjs', 'tab-bars.mjs', 'nav-projects.mjs']);
 }
 if (suite === 'all' || suite === 'interop') {
-    await runSuite(['app-update.mjs', 'hold-to-confirm.mjs', 'touch-input.mjs', 'terminal-toolbar.mjs', 'file-paste.mjs',
+    await runSuite(['app-update.mjs', 'hold-to-confirm.mjs', 'runner-updates.mjs', 'touch-input.mjs', 'terminal-toolbar.mjs', 'file-paste.mjs',
         'terminal-copy.mjs', 'screen-awake.mjs', 'hidden-tabs.mjs', 'shared-images.mjs']);
 }
 // Its startup/uptime assertions require a fresh host, not the shared host after earlier regressions.

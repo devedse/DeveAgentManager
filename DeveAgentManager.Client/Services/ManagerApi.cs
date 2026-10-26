@@ -139,6 +139,7 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
     public Task CancelOperationAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/cancel");
 
     public Task RerunSetupAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/setup");
+    public Task CheckRunnerUpdatesAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/updates/check");
     public Task UpdateSystemPackagesAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/system/update");
 
     public Task DeleteRunnerAsync(Guid runnerId, bool destroyMachine) => SendAsync(HttpMethod.Delete, $"api/runners/{runnerId}?destroyMachine={destroyMachine.ToString().ToLowerInvariant()}");

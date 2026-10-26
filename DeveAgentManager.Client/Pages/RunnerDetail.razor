@@ -205,8 +205,10 @@
                 {
                 <div class="panel">
                     <div class="panel-header">
-                        <MudText Typo="Typo.h6">Operations</MudText>
+                        <div class="help-heading"><MudText Typo="Typo.h6">Operations</MudText><HelpTip Label="Runner updates"><p>Check for available tools and system packages here. Hold an Update button for three seconds to install it; Update all in the header updates everything and runs setup again.</p></HelpTip></div>
+                        <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Refresh" Disabled="@(!ready || _checkingUpdates || _runner.Updates?.Checking == true)" OnClick="CheckUpdatesAsync">Check now</MudButton>
                     </div>
+                    <RunnerUpdateStatus Runner="_runner" />
                     <div class="operation-list">
                         @foreach (var harnessId in _runner.HarnessIds)
                         {
@@ -215,8 +217,11 @@
                                 <MudIcon Icon="@(harness.Icon ?? Icons.Material.Rounded.Upgrade)" Class="operation-icon" />
                                 <div class="operation-text">
                                     <div class="operation-name help-heading"><span>Update @harness.DisplayName</span><HelpTip Label="Maintenance operation">The latest @harness.DisplayName and its packages, then Manager settings → @harness.DisplayName (packages, model, settings).</HelpTip></div>
+                                    <RunnerSoftwareVersion Runner="_runner" SoftwareId="@harnessId" />
                                 </div>
-                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => UpdateHarnessAsync(harness)">Update</MudButton>
+                                <HoldButton Text="Update" ActiveText="Updating" Icon="@Icons.Material.Rounded.Upgrade" Size="Size.Small" Disabled="!ready"
+                                            Help="@($"Installs the latest {harness.DisplayName}, updates its packages and applies its Manager settings. Running agents keep their current version until restarted.")"
+                                            OnConfirmed="() => UpdateHarnessAsync(harness)" />
                             </div>
                         }
                         @foreach (var harness in (_info?.Harnesses ?? []).Where(h => !_runner.HarnessIds.Contains(h.Id)))
@@ -236,8 +241,14 @@
                                 <MudIcon Icon="@(tool.Icon ?? Icons.Material.Rounded.Extension)" Class="operation-icon" />
                                 <div class="operation-text">
                                     <div class="operation-name help-heading"><span>@(installed ? "Update" : "Install") @tool.DisplayName</span><HelpTip Label="Maintenance operation">@(installed ? $"The latest {tool.DisplayName}. If it is open, it reloads with the new version." : tool.Description)</HelpTip></div>
+                                    @if (installed) { <RunnerSoftwareVersion Runner="_runner" SoftwareId="@tool.Id" /> }
                                 </div>
-                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => InstallToolAsync(tool, installed)">@(installed ? "Update" : "Install")</MudButton>
+                                @if (installed)
+                                {
+                                    <HoldButton Text="Update" ActiveText="Updating" Icon="@Icons.Material.Rounded.Upgrade" Size="Size.Small" Disabled="!ready"
+                                                Help="@($"Installs the latest {tool.DisplayName}. Its editor reloads with the new version when opened again.")" OnConfirmed="() => InstallToolAsync(tool, true)" />
+                                }
+                                else { <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="() => InstallToolAsync(tool, false)">Install</MudButton> }
                             </div>
                         }
                         <div class="operation">
@@ -247,8 +258,15 @@
                                     <p>Runs apt-get update and apt-get dist-upgrade: the latest version of every Debian or Ubuntu package, which can add or remove packages and install a new kernel. Update all does this too.</p>
                                     <p>Running agents keep running. When an update needs a restart, such as a new kernel, the setup log says so; restart the Runner to finish it.</p>
                                 </HelpTip></div>
+                                @if (_runner.Updates?.SystemPackageCount is { } packages)
+                                { <div class="operation-description">@packages packages available@(_runner.Updates.SystemError is not null ? " · Last check failed" : "")</div> }
+                                else if (ready && _runner.Updates?.SystemError is null)
+                                { <div class="operation-description" role="status" aria-busy="true"><Skeleton Width="120px" /><span class="visually-hidden">Checking system packages</span></div> }
+                                else { <div class="operation-description">@(_runner.Updates?.SystemError ?? "Packages not checked")</div> }
                             </div>
-                            <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="UpdateSystemPackagesAsync">Update</MudButton>
+                            <HoldButton Text="Update" ActiveText="Updating" Icon="@Icons.Material.Rounded.SystemUpdate" Size="Size.Small" Disabled="!ready"
+                                        Help="Updates Debian or Ubuntu packages with apt-get dist-upgrade, including any new dependencies or package removals it requires. Running agents keep running. The log says when the system reports a restart is needed."
+                                        OnConfirmed="UpdateSystemPackagesAsync" />
                         </div>
                         <div class="operation">
                             <MudIcon Icon="@Icons.Material.Rounded.Build" Class="operation-icon" />
@@ -384,32 +402,30 @@
         }
     }
 
+    private bool _checkingUpdates;
+    private async Task CheckUpdatesAsync()
+    {
+        _checkingUpdates = true;
+        try
+        {
+            await Api.CheckRunnerUpdatesAsync(RunnerId);
+            if (_runner is not null) _runner = _runner with { Updates = (_runner.Updates ?? new RunnerUpdatesDto([])) with { Checking = true } };
+        }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _checkingUpdates = false; }
+    }
+
     private async Task UpdateSystemPackagesAsync()
     {
-        var confirmed = await Dialogs.ShowMessageBoxAsync(
-            $"Update the system packages on '{_runner!.Name}'?",
-            "Runs apt-get update and apt-get dist-upgrade: the latest version of every Debian or Ubuntu package. This can add or remove packages and install a new kernel. Running agents keep running; if an update needs a restart, the setup log says so.",
-            yesText: "Update", cancelText: "Cancel");
-        if (confirmed == true)
-        {
-            _waitingFor.Add("update");
-            await RunAsync(() => Api.UpdateSystemPackagesAsync(RunnerId));
-        }
+        _waitingFor.Add("update");
+        await RunAsync(() => Api.UpdateSystemPackagesAsync(RunnerId));
     }
 
     private async Task UpdateHarnessAsync(HarnessDto harness)
     {
-        var running = _runner!.Agents.Count(a => a.State == AgentState.Running && a.HarnessId == harness.Id);
-        var confirmed = await Dialogs.ShowMessageBoxAsync(
-            $"Update {harness.DisplayName} on '{_runner.Name}'?",
-            $"Installs the latest {harness.DisplayName}, updates its packages, and applies Manager settings → {harness.DisplayName} (packages added and removed, model, settings, keybindings). The rest of the setup is skipped."
-            + (running > 0 ? $" The {running} running {(running == 1 ? "agent keeps" : "agents keep")} the old version until {(running == 1 ? "it is" : "they are")} restarted." : ""),
-            yesText: "Update", cancelText: "Cancel");
-        if (confirmed == true)
-        {
-            _waitingFor.Add("update");
-            await RunAsync(() => Api.UpdateHarnessAsync(RunnerId, harness.Id));
-        }
+        _waitingFor.Add("update");
+        await RunAsync(() => Api.UpdateHarnessAsync(RunnerId, harness.Id));
     }
 
     private bool _refreshing;

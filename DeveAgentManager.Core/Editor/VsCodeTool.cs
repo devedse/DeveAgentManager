@@ -47,6 +47,8 @@ public sealed class VsCodeTool : IRunnerTool
         """;
 
     /// <remarks>An empty config, or code-server writes a default one to ~/.config the first time it runs.</remarks>
+    public string UpdateGitHubRepository => "coder/code-server";
+
     public string VersionCommand => "CODE_SERVER_CONFIG=/dev/null code-server --version | head -n1 | cut -d' ' -f1";
 
     /// <summary>Stops the code-server the Manager started, if it runs (checked by its process id, not by name).</summary>

@@ -75,7 +75,8 @@ GitHub Primer's loading guidance.)
 Disruptive actions that lose nothing for good, where a confirmation dialog would only slow people down, use
 `<HoldButton>` (`DeveAgentManager.Client/Shared/HoldButton.razor`): press and hold it for 3 seconds. For now that is only
 a Runner's Start, Stop, Restart and Update all (`RunnerPowerActions`, on the Runners page's cards and in the Runner
-page's header, with the same explanations).
+page's header, with the same explanations), and updates of individual harnesses, tools and system packages in the
+Runner page's Operations list.
 
 - **A click does nothing.** It shows "Hold 3 seconds to confirm" in a bubble on the button, which fades away once
   released, so it's clear nothing was confirmed.

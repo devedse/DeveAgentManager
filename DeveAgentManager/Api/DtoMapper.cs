@@ -19,6 +19,7 @@ namespace DeveAgentManager.Api;
 public sealed class DtoMapper(
     RunnerService runners,
     RunnerStatusCache statuses,
+    RunnerUpdateCache updates,
     AgentService agents,
     SessionService sessions,
     RunnerSetupService setup,
@@ -101,7 +102,8 @@ public sealed class DtoMapper(
             statuses.Get(runner.Id),
             runner.Agents.Select(a => (Agent: a, Access: AccessControl.ForAgent(user, a.OwnerId, a.Shares, access)))
                 .Where(a => a.Access >= AgentAccess.Listed).OrderByDescending(a => a.Agent.CreatedAt)
-                .Select(a => Agent(a.Agent, runner, a.Access, access, a.Agent.Shares.Any(s => s.UserId == user.Id))).ToList());
+                .Select(a => Agent(a.Agent, runner, a.Access, access, a.Agent.Shares.Any(s => s.UserId == user.Id))).ToList(),
+            access >= RunnerAccess.Manage ? updates.Get(runner.Id) : null);
     }
 
     /// <summary>An agent loaded with its Runner (and the Runner's members), owner, shares and harness login.</summary>

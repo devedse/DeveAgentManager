@@ -26,8 +26,10 @@
     }
     <HoldButton Text="Update all" ActiveText="Updating" Icon="@Icons.Material.Rounded.SystemUpdateAlt" Variant="Variant" Size="Size"
                 Disabled="@(Busy || Runner.State == RunnerState.Stopped)" Class="@UpdateClass"
-                Help="Updates the system packages (apt-get dist-upgrade) and re-runs the setup script: the latest harnesses and tools, the shared Setup Profile, and each person's git identity, GitHub token, environment and SSH keys. Running agents keep running; restart them to use the updates."
-                OnConfirmed="() => RunAsync(() => Api.RerunSetupAsync(Runner.Id))" />
+                Help="@UpdateHelp"
+                OnConfirmed="() => RunAsync(() => Api.RerunSetupAsync(Runner.Id))">
+        <Adornment><RunnerUpdateBadges Runner="Runner" /></Adornment>
+    </HoldButton>
 }
 
 @code {
@@ -39,6 +41,10 @@
     [Parameter] public string? UpdateClass { get; set; }
     /// <summary>After an operation was started, e.g. to show the setup log.</summary>
     [Parameter] public EventCallback Started { get; set; }
+
+    private string UpdateHelp => "Updates the system packages (apt-get dist-upgrade) and re-runs the setup script: the latest harnesses and tools, the shared Setup Profile, and each person's git identity, GitHub token, environment and SSH keys. Running agents keep running; restart them to use the updates. "
+        + RunnerUpdateStatus.Summary(Runner.Updates, Runner.State == RunnerState.Ready)
+        + (Runner.Updates?.RebootRequired == true ? ". The operating system reports that a restart is needed." : "");
 
     private bool Busy => Runner.Operation is not null;
     private bool Ready => Runner.State == RunnerState.Ready && !Busy;
