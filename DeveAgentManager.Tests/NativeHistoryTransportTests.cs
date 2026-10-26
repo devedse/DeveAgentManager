@@ -282,7 +282,7 @@ public class NativeHistoryTransportTests
             new ManagerEvents(), NullLogger<SessionService>.Instance);
         var beforeFailure = (await service.LoadAsync(saved.Id, Ct)).ToJson();
         using (await service.LockAsync(Ct))
-            await Assert.ThrowsAsync<FormatException>(() => broken.MoveToHarnessAsync(runner, agent, "codex", "rejected-session", Ct));
+            await Assert.ThrowsAsync<SessionMigrationException>(() => broken.MoveToHarnessAsync(runner, agent, "codex", "rejected-session", Ct));
         Assert.Equal(beforeFailure, (await service.LoadAsync(saved.Id, Ct)).ToJson());
         Assert.Equal("claude", (await service.GetAsync(saved.Id, Ct))!.HarnessId);
         Assert.False(File.Exists(formats.Single(f => f.HarnessId == "codex").GetPath("rejected-session", agent.WorkingDirectory, DateTime.UtcNow)));
@@ -370,6 +370,58 @@ public class NativeHistoryTransportTests
         var privateImage = Guid.NewGuid();
         await imageStore.SaveAsync(continued.Id, privateImage, png, "new.png", "New agent only", Ct);
         Assert.DoesNotContain(await artifacts.ListImagesAsync(older.Id, TestUsers.Admin, Ct), i => i.Id == privateImage);
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task CodexEmptyToolOutputSurvivesExportSwitchNativeSyncAndSwitchBackOverSsh()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipWhen(!OperatingSystem.IsLinux() || !File.Exists("/usr/sbin/sshd"), "Requires isolated OpenSSH fixture.");
+        await using var fixture = await RunnerShellIntegrationTests.Fixture.StartAsync();
+        var options = new ManagerOptions { DataDirectory = fixture.Root + "/data" };
+        Directory.CreateDirectory(options.DataDirectory);
+        var factory = new Factory(options.DatabasePath);
+        var runner = fixture.Runner; runner.OwnerId = User.BootstrapId;
+        var agent = new Agent { Id = Guid.NewGuid(), OwnerId = User.BootstrapId, Name = "empty-output-agent", Runner = runner,
+            RunnerId = runner.Id, HarnessId = "codex", HarnessSessionId = "empty-output-source", State = AgentState.Stopped, WorkingDirectory = "/workspace" };
+        await using (var db = factory.CreateDbContext())
+        {
+            await db.Database.EnsureCreatedAsync(Ct); db.Agents.Add(agent); await db.SaveChangesAsync(Ct);
+        }
+        ISessionFormat[] formats = [new RootedFormat(new CodexSessionFormat(), fixture.Root + "/home"), new RootedFormat(new ClaudeSessionFormat(), fixture.Root + "/home")];
+        var service = new SessionService(factory, fixture.Shell, formats, [], new SessionImageStore(options), new SessionFileStore(options),
+            options, new ManagerEvents(), NullLogger<SessionService>.Instance);
+        await service.AttachToAgentAsync(runner, agent, null, Ct);
+        var stored = (await service.GetForAgentAsync(agent.Id, Ct))!;
+        var sourcePath = formats[0].GetPath(agent.HarnessSessionId, agent.WorkingDirectory, DateTime.UtcNow);
+        await fixture.Shell.UploadAtomicAsync(runner, sourcePath, SessionMigrationTests.CodexWithEmptyToolText, Ct);
+        await service.SyncRunnerAsync(runner, Ct);
+        var source = await service.LoadAsync(stored.Id, Ct);
+        var expected = SessionMigration.Prepare(source, "Codex", "Claude Code", "claude");
+        var export = await service.ExportAsync(stored.Id, "claude", Ct);
+        SessionMigration.ValidateWritten(expected, new ClaudeSessionFormat().Read(export.ReadAllText()));
+        using (await service.LockAsync(Ct))
+            await service.MoveToHarnessAsync(runner, agent, "claude", "empty-output-claude", Ct);
+        Assert.Equal(SessionMigrationTests.CodexWithEmptyToolText, await File.ReadAllTextAsync(sourcePath, Ct));
+        var backup = Directory.GetFiles(options.SessionsDirectory, $"{stored.Id:N}.*.codex.json").Single();
+        Assert.Equal(source.ToJson(), DeveSession.FromJson(await File.ReadAllTextAsync(backup, Ct)).ToJson());
+        var targetPath = formats[1].GetPath("empty-output-claude", agent.WorkingDirectory, DateTime.UtcNow);
+        SessionMigration.ValidateWritten(expected, new ClaudeSessionFormat().Read(await File.ReadAllTextAsync(targetPath, Ct)));
+        agent.HarnessId = "claude"; agent.HarnessSessionId = "empty-output-claude";
+        await using (var db = factory.CreateDbContext())
+        {
+            var row = await db.Agents.SingleAsync(a => a.Id == agent.Id, Ct);
+            row.HarnessId = agent.HarnessId; row.HarnessSessionId = agent.HarnessSessionId; await db.SaveChangesAsync(Ct);
+        }
+        await service.SyncRunnerAsync(runner, Ct);
+        var synced = await service.LoadAsync(stored.Id, Ct);
+        SessionMigration.ValidateWritten(expected, synced);
+        var expectedBack = SessionMigration.Prepare(synced, "Claude Code", "Codex", "codex");
+        using (await service.LockAsync(Ct))
+            await service.MoveToHarnessAsync(runner, agent, "codex", "empty-output-back", Ct);
+        var returnedPath = formats[0].GetPath("empty-output-back", agent.WorkingDirectory, DateTime.UtcNow);
+        SessionMigration.ValidateWritten(expectedBack, new CodexSessionFormat().Read(await File.ReadAllTextAsync(returnedPath, Ct)));
+        Assert.Equal("codex", (await service.GetAsync(stored.Id, Ct))!.HarnessId);
     }
 
     [Fact(Timeout = 60_000)]

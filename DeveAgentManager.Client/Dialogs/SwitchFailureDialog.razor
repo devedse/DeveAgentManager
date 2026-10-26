@@ -1,0 +1,59 @@
+@inject ManagerApi Api
+
+<MudDialog>
+    <DialogContent>
+        <div class="switch-failure-context">
+            <div class="help-heading"><MudText Typo="Typo.subtitle2">What was attempted</MudText><HelpTip Label="Conversation switch attempt"><p>Continue this conversation in the same working folder with the selected harness and login. The Manager stops the current harness, saves and verifies its history, converts it if needed, then starts the destination.</p></HelpTip></div>
+            <MudText Typo="Typo.body2"><strong>@Agent.Name</strong> on @Agent.RunnerName</MudText>
+            <div class="switch-failure-route"><span>@SourceLabel</span><MudIcon Icon="@Icons.Material.Rounded.ArrowDownward" Size="Size.Small" /><strong>@TargetLabel</strong></div>
+        </div>
+        <div class="help-heading mt-4"><MudText Typo="Typo.subtitle2">What went wrong</MudText><HelpTip Label="Conversation switch recovery"><p>This message stays open until you choose an action. Cancel closes it; it doesn't discard the saved history or restart an agent that was stopped.</p><p>Retry is offered only when history verification rejected the conversion before installation. It checks the agent's current state first. Other failures may have happened after installation or startup; Check status reads the current state without repeating the switch.</p></HelpTip></div>
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true" Class="switch-failure-error" role="alert">@Error</MudAlert>
+        <MudText Typo="Typo.body2" Class="mt-3">@(CanRetry ? "The agent may be stopped. Cancel closes this message." : "Saved history is retained. Check the current agent state before choosing another action.")</MudText>
+        @if (_status is not null) { <MudText Typo="Typo.body2" Class="mt-2">@_status</MudText> }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Disabled="_busy" OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="RecoverAsync">@(_busy ? "Checking…" : CanRetry ? "Retry" : "Check status")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
+    [Parameter, EditorRequired] public string SourceLabel { get; set; } = "";
+    [Parameter, EditorRequired] public string TargetLabel { get; set; } = "";
+    [Parameter, EditorRequired] public string TargetHarnessId { get; set; } = "";
+    [Parameter] public Guid? AccountId { get; set; }
+    [Parameter] public string Error { get; set; } = "";
+    [Parameter] public bool CanRetry { get; set; }
+    private bool _busy;
+    private string? _status;
+
+    private async Task RecoverAsync()
+    {
+        _busy = true;
+        try
+        {
+            var current = await Api.GetAgentAsync(Agent.Id);
+            if (current is null) { CanRetry = false; _status = "The agent is no longer available. Cancel and return to the agent list."; return; }
+            var harness = (await Api.InfoAsync()).Harnesses.FirstOrDefault(h => h.Id == current.HarnessId)?.DisplayName ?? current.HarnessId;
+            _status = $"Current state: {harness} · {current.State}.";
+            if (!CanRetry) return;
+            if (current.HarnessId != Agent.HarnessId || current.AccountId != Agent.AccountId || current.RunnerId != Agent.RunnerId || current.State is AgentState.Running or AgentState.Starting)
+            {
+                CanRetry = false;
+                _status += " The agent changed since this attempt. Cancel and review it before switching again.";
+                return;
+            }
+            await Api.SwitchAgentAsync(Agent.Id, TargetHarnessId, AccountId);
+            Dialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            CanRetry = ex is ApiException { Code: SessionMigrationProblems.VerificationFailed };
+            Error = ex is HttpRequestException ? "The connection was interrupted before the Manager confirmed the result." : ex.Message;
+        }
+        finally { _busy = false; }
+    }
+}

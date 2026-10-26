@@ -315,7 +315,7 @@ public sealed class ClaudeSessionFormat : ISessionFormat
                 ["usage"] = new JsonObject { ["input_tokens"] = 0, ["output_tokens"] = 0 },
             };
         }
-        SessionToolMetadata.Write(entry, line);
+        SessionToolMetadata.Write(entry, line, omittedEmptyResultText: true);
         return line;
     }
 

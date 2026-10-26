@@ -18,3 +18,8 @@ public sealed class SessionMigrationReport
 
 /// <summary>A reason and count, deliberately excluding commands, output, paths and user text.</summary>
 public sealed record SessionMigrationIssue(string Reason, int Count);
+
+public static class SessionMigrationProblems
+{
+    public const string VerificationFailed = "session_migration_verification";
+}

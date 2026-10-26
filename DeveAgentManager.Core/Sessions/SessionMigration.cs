@@ -196,22 +196,26 @@ public static class SessionMigration
     /// <summary>Read the actual destination bytes back before installation; format writers must not silently lose data.</summary>
     public static void ValidateWritten(DeveSession expected, DeveSession actual)
     {
-        Validate(actual);
+        try { Validate(actual); }
+        catch (FormatException) { throw new SessionMigrationException("The converted history has incomplete or incorrectly paired tool calls and results."); }
         var before = expected.ActivePath().SelectMany(e => e.Content ?? []).Where(b => b.Type is "toolCall" or "toolResult").ToList();
         var after = actual.ActivePath().SelectMany(e => e.Content ?? []).Where(b => b.Type is "toolCall" or "toolResult").ToList();
-        if (before.Count != after.Count) throw new FormatException("The destination lost historical tool records.");
+        if (before.Count != after.Count) throw new SessionMigrationException($"The converted history contains {after.Count} tool records instead of the expected {before.Count}.");
         for (var i = 0; i < before.Count; i++)
         {
             var a = before[i]; var b = after[i];
-            if (a.Type != b.Type || a.Id != b.Id || a.ToolCallId != b.ToolCallId || a.Name != b.Name || a.ToolName != b.ToolName ||
-                (a.IsError == true) != (b.IsError == true) || (a.CallType == "custom") != (b.CallType == "custom") || a.Namespace != b.Namespace ||
-                !JsonNode.DeepEquals(a.Arguments, b.Arguments) ||
-                JsonSerializer.Serialize(a.Content, DeveSession.JsonOptions) != JsonSerializer.Serialize(b.Content, DeveSession.JsonOptions))
-                throw new FormatException("The destination changed historical tool arguments or results.");
+            var changed = a.Type != b.Type || a.Id != b.Id || a.ToolCallId != b.ToolCallId || a.Name != b.Name || a.ToolName != b.ToolName ? "tool identity"
+                : (a.IsError == true) != (b.IsError == true) ? "error status"
+                : (a.CallType == "custom") != (b.CallType == "custom") || a.Namespace != b.Namespace ? "tool encoding"
+                : !JsonNode.DeepEquals(a.Arguments, b.Arguments) ? "arguments"
+                : JsonSerializer.Serialize(a.Content, DeveSession.JsonOptions) != JsonSerializer.Serialize(b.Content, DeveSession.JsonOptions) ? "output content"
+                : null;
+            if (changed is not null)
+                throw new SessionMigrationException($"Verification found different {changed} in historical {(a.Type == "toolCall" ? "tool call" : "tool result")} {i + 1} ({a.Name ?? a.ToolName ?? "unnamed tool"}).");
         }
         var expectedImages = expected.ActivePath().Where(e => e.Role == DeveRole.User).SelectMany(e => e.Content ?? []).Count(b => b.Type == "image");
         var actualImages = actual.ActivePath().Where(e => e.Role == DeveRole.User).SelectMany(e => e.Content ?? []).Count(b => b.Type == "image");
-        if (expectedImages != actualImages) throw new FormatException("The destination lost user images.");
+        if (expectedImages != actualImages) throw new SessionMigrationException("The converted history lost one or more user images.");
     }
 
     private static bool ValidName(string? name) => name is { Length: > 0 and <= 64 } && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-');
@@ -260,4 +264,10 @@ public static class SessionMigration
         }
         static IEnumerable<DeveBlock> Images(IEnumerable<DeveBlock> blocks) => blocks.SelectMany(b => b.Type == "image" ? [b] : Images(b.Content ?? []));
     }
+}
+
+/// <summary>A rejected conversion, before any destination history was installed. Contains no arguments or output.</summary>
+public sealed class SessionMigrationException(string reason) : FormatException(
+    $"{reason} The converted history was not installed. Your original conversation is retained.")
+{
 }

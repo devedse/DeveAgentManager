@@ -3962,3 +3962,10 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .runner-reboot-icon { color: var(--dam-primary); width: 15px !important; height: 15px !important; }
 .runner-software-version strong { color: var(--dam-primary); font-weight: 600; }
 .runner-card-actions .runner-card-update .hold-button-control { padding-inline: 7px; }
+
+/* Keep failed switch context readable on phones; errors remain in an explicit recovery dialog. */
+.switch-failure-context { overflow-wrap: anywhere; }
+.switch-failure-route { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px; margin-top: 10px; border: 1px solid var(--dam-border); border-radius: 8px; }
+.switch-failure-route > span { color: var(--dam-muted); }
+.switch-failure-route .mud-icon-root { color: var(--dam-primary); }
+.switch-failure-error { margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }

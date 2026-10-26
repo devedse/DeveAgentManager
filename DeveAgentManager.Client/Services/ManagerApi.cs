@@ -14,9 +14,10 @@ using Microsoft.AspNetCore.Components.Forms;
 namespace DeveAgentManager.Client.Services;
 
 /// <summary>A problem the Manager reported; the message is meant for the user.</summary>
-public sealed class ApiException(string message, HttpStatusCode status) : Exception(message)
+public sealed class ApiException(string message, HttpStatusCode status, string? code = null) : Exception(message)
 {
     public HttpStatusCode Status { get; } = status;
+    public string? Code { get; } = code;
 }
 
 /// <summary>
@@ -425,11 +426,13 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
         }
 
         var message = $"The Manager answered {(int)response.StatusCode} {response.ReasonPhrase}.";
+        string? code = null;
         try
         {
             var text = await response.Content.ReadAsStringAsync();
             if (text.Length > 0 && JsonDocument.Parse(text).RootElement is { ValueKind: JsonValueKind.Object } problem)
             {
+                if (problem.TryGetProperty("code", out var problemCode) && problemCode.ValueKind == JsonValueKind.String) code = problemCode.GetString();
                 message = problem.TryGetProperty("detail", out var detail) && detail.GetString() is { Length: > 0 } d ? d
                     : problem.TryGetProperty("title", out var title) && title.GetString() is { Length: > 0 } t ? t
                     : message;
@@ -440,6 +443,6 @@ public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
             // Not a problem document; keep the status.
         }
 
-        throw new ApiException(message, response.StatusCode);
+        throw new ApiException(message, response.StatusCode, code);
     }
 }

@@ -11,6 +11,92 @@ namespace DeveAgentManager.Tests;
 
 public class SessionMigrationTests
 {
+    // Codex can emit empty text alongside other text/images, or as the entire output of a completed call.
+    // The JavaScript is historical input only; these regressions never execute it.
+    public const string CodexWithEmptyToolText = """
+        {"timestamp":"2026-10-26T12:00:00Z","type":"session_meta","payload":{"id":"empty-output-source","cwd":"/workspace","timestamp":"2026-10-26T12:00:00Z"}}
+        {"timestamp":"2026-10-26T12:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Inspect the output"}]}}
+        {"timestamp":"2026-10-26T12:00:02Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"mixed","name":"exec","namespace":"functions","input":"text('historical only');"}}
+        {"timestamp":"2026-10-26T12:00:02Z","type":"response_item","payload":{"type":"function_call","call_id":"empty","name":"read_file","arguments":"{\"path\":\"/workspace/empty.txt\"}"}}
+        {"timestamp":"2026-10-26T12:00:02Z","type":"response_item","payload":{"type":"function_call","call_id":"absent","name":"read_file","arguments":"{\"path\":\"/workspace/absent.txt\"}"}}
+        {"timestamp":"2026-10-26T12:00:03Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"mixed","output":[{"type":"input_text","text":""},{"type":"input_text","text":"Original output"},{"type":"input_text","text":""},{"type":"input_image","image_url":"data:image/png;base64,aGlzdG9yaWNhbA=="},{"type":"input_text","text":""},{"type":"input_text","text":""}]}}
+        {"timestamp":"2026-10-26T12:00:03Z","type":"response_item","payload":{"type":"function_call_output","call_id":"empty","output":""}}
+        {"timestamp":"2026-10-26T12:00:03Z","type":"response_item","payload":{"type":"function_call_output","call_id":"absent","output":[]}}
+        {"timestamp":"2026-10-26T12:00:04Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Continue without repeating the tools"}]}}
+        """;
+
+    [Theory]
+    [InlineData("claude")]
+    [InlineData("pi")]
+    [InlineData("grok")]
+    public void EmptyToolTextSurvivesConversionAndRepeatedSwitches(string target)
+    {
+        var source = Format("codex").Read(CodexWithEmptyToolText);
+        var original = source.ToJson();
+        foreach (var to in new[] { target, "codex", "claude" })
+        {
+            var before = source.ToJson();
+            var migrated = SessionMigration.Prepare(source, "source", to, to);
+            Assert.Equal(before, source.ToJson());
+            var written = Format(to).Write(migrated, "empty-output-target", "/workspace");
+            var actual = Format(to).Read(written);
+            SessionMigration.ValidateWritten(migrated, actual);
+            var results = actual.ActivePath().SelectMany(e => e.Content ?? []).Where(b => b.Type == "toolResult").ToList();
+            Assert.Equal(["text", "text", "text", "image", "text", "text"], results[0].Content!.Select(b => b.Type));
+            Assert.Equal(["", "Original output", "", null, "", ""], results[0].Content!.Select(b => b.Text));
+            Assert.Equal("", Assert.Single(results[1].Content!).Text);
+            Assert.Empty(results[2].Content!);
+            Assert.Equal(3, migrated.Migration!.PreservedCalls);
+            Assert.Equal(0, migrated.Migration.ArchivedExchanges);
+            if (to == "claude")
+            {
+                var lines = JsonLines.Parse(written).ToList();
+                var nativeResults = lines.SelectMany(l => (l["message"]?["content"] as JsonArray ?? []).OfType<JsonObject>())
+                    .Where(b => b["type"]?.GetValue<string>() == "tool_result").ToList();
+                // Model input stays valid; the envelope carries exact empty-block positions for lossless reads.
+                Assert.DoesNotContain(nativeResults.SelectMany(r => (r["content"] as JsonArray ?? []).OfType<JsonObject>()),
+                    b => b["type"]?.GetValue<string>() == "text" && b["text"]?.GetValue<string>() == "");
+                Assert.Empty(nativeResults[1]["content"]!.AsArray());
+                Assert.Empty(nativeResults[2]["content"]!.AsArray());
+            }
+            source = actual;
+        }
+        Assert.Equal(original, Format("codex").Read(CodexWithEmptyToolText).ToJson());
+    }
+
+    [Fact]
+    public void EmptyOutputHintsDoNotHideChangedOrLostNonemptyOutput()
+    {
+        var expected = SessionMigration.Prepare(Format("codex").Read(CodexWithEmptyToolText), "Codex", "Claude Code", "claude");
+        var written = Format("claude").Write(expected, "target", "/workspace");
+        var changed = Format("claude").Read(written.Replace("Original output", "Changed output", StringComparison.Ordinal));
+        var error = Assert.Throws<SessionMigrationException>(() => SessionMigration.ValidateWritten(expected, changed));
+        Assert.Contains("output content", error.Message);
+        Assert.Contains("tool result 4 (exec)", error.Message);
+        Assert.DoesNotContain("Changed output", error.Message);
+        var missingHint = JsonLines.Parse(written).ToList();
+        foreach (var line in missingHint)
+            foreach (var hint in (line["damToolHistory"] as JsonArray ?? []).OfType<JsonObject>()) hint.Remove("emptyResultTextPositions");
+        changed = Format("claude").Read(string.Join('\n', missingHint.Select(l => l.ToJsonString())));
+        Assert.Throws<SessionMigrationException>(() => SessionMigration.ValidateWritten(expected, changed));
+    }
+
+    [Theory]
+    [InlineData("[-1]")]
+    [InlineData("[2]")]
+    [InlineData("[0,0]")]
+    [InlineData("[0,\"1\"]")]
+    public void InvalidEmptyOutputPositionsAreRejected(string positions)
+    {
+        var result = Result("id", "kept");
+        var entry = new DeveEntry { Content = [result] };
+        var metadata = new JsonObject { ["damToolHistory"] = new JsonArray(new JsonObject
+        {
+            ["id"] = "id", ["emptyResultTextPositions"] = JsonNode.Parse(positions),
+        }) };
+        Assert.Throws<FormatException>(() => SessionToolMetadata.Read(entry, metadata));
+    }
+
     public static IEnumerable<object[]> Routes() =>
         from source in new[] { "claude", "codex", "pi", "grok" }
         from target in new[] { "claude", "codex", "pi", "grok" }
@@ -178,10 +264,14 @@ public class SessionMigrationTests
         var migrated = SessionMigration.Prepare(Sample("pi"), "pi", "claude", "claude");
         var changed = DeveSession.FromJson(migrated.ToJson());
         Calls(changed)[0].Arguments!["command"] = "different command";
-        Assert.Throws<FormatException>(() => SessionMigration.ValidateWritten(migrated, changed));
+        var error = Assert.Throws<SessionMigrationException>(() => SessionMigration.ValidateWritten(migrated, changed));
+        Assert.Contains("arguments", error.Message);
+        Assert.Contains("tool call 1 (", error.Message);
+        Assert.Contains("not installed", error.Message);
+        Assert.DoesNotContain("different command", error.Message);
         changed = DeveSession.FromJson(migrated.ToJson());
         changed.Entries.RemoveAll(e => e.Role == DeveRole.Tool);
-        Assert.Throws<FormatException>(() => SessionMigration.ValidateWritten(migrated, changed));
+        Assert.Throws<SessionMigrationException>(() => SessionMigration.ValidateWritten(migrated, changed));
     }
 
     [Fact]

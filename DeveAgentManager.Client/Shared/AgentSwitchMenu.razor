@@ -178,6 +178,8 @@
         }
 
         _busy = true;
+        var source = Agent;
+        var sourceLabel = CurrentHarnessName + (CurrentHarness?.AccountSupport is not null ? $" ({CurrentUsername} · {CurrentAccountName})" : "");
         StateHasChanged();
         try
         {
@@ -187,7 +189,18 @@
         }
         catch (Exception ex)
         {
-            Snackbar.Add(ex.Message, Severity.Error);
+            var dialog = await Dialogs.ShowAsync<SwitchFailureDialog>("Conversation switch failed", new DialogParameters<SwitchFailureDialog>
+            {
+                { d => d.Agent, source }, { d => d.SourceLabel, sourceLabel }, { d => d.TargetLabel, target },
+                { d => d.TargetHarnessId, harness.Id }, { d => d.AccountId, account?.Id },
+                { d => d.Error, ex is HttpRequestException ? "The connection was interrupted before the Manager confirmed the result." : ex.Message },
+                { d => d.CanRetry, ex is ApiException { Code: SessionMigrationProblems.VerificationFailed } },
+            }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small, BackdropClick = false, CloseOnEscapeKey = false, CloseButton = false });
+            if ((await dialog.Result) is { Canceled: false })
+            {
+                Snackbar.Add($"'{source.Name}' continues with {target}.", Severity.Success);
+                await Switched.InvokeAsync();
+            }
         }
         finally
         {

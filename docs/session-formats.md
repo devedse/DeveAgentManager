@@ -164,6 +164,9 @@ They remain in the original native archive. The new harness supplies its own sys
 branch moves; abandoned branches remain available in the source. A second move replaces the previous transfer
 notice. Envelope metadata (`damHistoryKind`, `damToolHistory`) preserves archival provenance and custom-call
 encoding through repeated switches without adding fields to provider message bodies or changing tool arguments.
+When Claude omits empty text blocks from a tool result's model input, `damToolHistory.emptyResultTextPositions`
+retains their original positions. The reader restores those empty blocks for exact verification, export and later
+switches. This stores only positions; it does not duplicate output or exempt changed nonempty content from validation.
 
 A conversation that continues in another folder than it last ran in (another workspace, or a new agent) gets a
 folder note at the end of its active branch: a user message between `[DAM workspace change v1]` and
@@ -179,6 +182,11 @@ staging file, verifies its SHA-256 and atomically renames it. A cancelled or fai
 last good file. An uncertain SSH acknowledgement is never permission to replay an installation or user work.
 The stored session mapping changes only after a successful installation. Failed startup leaves the selected
 conversation in an error state available for an explicit Start; it does not automatically rerun the switch.
+Failed switches open a persistent dialog showing the attempted source, destination harness/login and failure reason.
+Verification errors identify the tool record and changed field without including arguments or output. **Retry** is
+offered for a rejected conversion before installation and first checks the agent's current state. Other failures offer
+**Check status**, which reads the current state without resending an uncertain switch. **Cancel** closes the dialog;
+it does not discard the saved history or restart a stopped harness. Clicking outside or pressing Escape does not dismiss it.
 
 The original conversation is backed up as `/data/sessions/<id>.<time>.<harness>.json`. `HarnessTrail` records the
 route. Content-free conversion reports live in `/data/sessions/migrations/<id>.json`, bound to the destination's
