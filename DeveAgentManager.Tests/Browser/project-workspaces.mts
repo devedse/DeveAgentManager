@@ -79,16 +79,31 @@ try {
     await page.goto(base + '/agents');
     const project = page.getByRole('region', { name: 'Project Example project', exact: true });
     await project.waitFor({ timeout: 60000 });
-    assert.equal(await project.locator('.agent-row').count(), 1, 'stopped workspace hidden by default');
+    assert.equal(await project.locator('.agent-row').count(), 2, 'stopped workspaces show by default');
     const shortcut = page.locator('.app-nav .nav-agent');
     await shortcut.first().waitFor({ timeout: 60000 });
     assert.equal(await shortcut.count(), 1, 'one running and one stopped stays a single sidebar shortcut');
     assert.ok((await shortcut.locator('a').getAttribute('href'))?.endsWith(id(10)), 'shortcut targets the running agent');
-    await page.getByRole('region', { name: 'Project Stopped project', exact: true }).waitFor();
-    await page.getByLabel('Show stopped workspaces', { exact: true }).check();
-    assert.equal(await project.locator('.agent-row').count(), 2);
+    const stoppedProject = page.getByRole('region', { name: 'Project Stopped project', exact: true });
+    await stoppedProject.waitFor();
     await page.screenshot({ path: '/tmp/dam-project-workspaces-desktop.png', fullPage: true });
-    await page.getByLabel('Show stopped workspaces', { exact: true }).uncheck();
+    // Hide stopped agents leaves out stopped workspaces, and a project once all of it is stopped. Listing the agents
+    // that aren't running shows them anyway.
+    const hide = page.getByLabel('Hide stopped agents', { exact: true });
+    await hide.check();
+    await stoppedProject.waitFor({ state: 'detached' });
+    assert.equal(await project.locator('.agent-row').count(), 1, 'the stopped workspace is hidden');
+    await page.locator('.filter-bar .mud-chip', { hasText: 'Not running' }).click();
+    await stoppedProject.waitFor();
+    await page.locator('.filter-bar .mud-chip', { hasText: 'All' }).click();
+    await stoppedProject.waitFor({ state: 'detached' });
+    await project.getByRole('button', { name: /Show 1 stopped workspace/ }).click();
+    assert.equal(await project.locator('.agent-row').count(), 2, 'a project shows its own stopped workspaces on request');
+    await page.getByPlaceholder('Search agents').fill('Stopped project');
+    await page.getByText('Only stopped agents match.', { exact: true }).waitFor();
+    await page.getByPlaceholder('Search agents').fill('');
+    await hide.uncheck();
+    await stoppedProject.waitFor();
     agents[1].state = 'Running';
     await page.reload();
     await page.locator('.nav-project').waitFor({ timeout: 60000 });
@@ -99,9 +114,8 @@ try {
         await page.goto(base + path);
         const group = page.getByRole('region', { name: 'Project Example project', exact: true });
         await group.waitFor({ timeout: 60000 });
-        assert.equal(await group.locator('.agent-row').count(), 1, `${path}: the stopped workspace waits behind Show stopped`);
-        await group.getByRole('button', { name: /Show 1 stopped workspace/ }).click();
-        assert.equal(await group.locator('.agent-row').count(), 2, `${path}: both workspaces are under their project`);
+        await group.locator('.agent-row').nth(1).waitFor();
+        assert.equal(await group.locator('.agent-row').count(), 2, `${path}: both workspaces are under their project, the stopped one too`);
         await page.getByRole('region', { name: 'Project Stopped project', exact: true }).waitFor();
     }
 
@@ -109,7 +123,6 @@ try {
     // rows leave them out. A workspace's own menu keeps what is its own.
     Object.assign(agents[1], { lastAssistantMessageAt: new Date().toISOString() });
     await page.goto(base + '/agents');
-    await page.getByLabel('Show stopped workspaces', { exact: true }).check();
     await project.locator('.agent-row').nth(1).waitFor({ timeout: 60000 });
     assert.equal(await project.locator('.agent-row .list-title').first().innerText(), 'login-fix', 'the workspace that replied last comes first');
     for (const row of [0, 1]) {
@@ -161,7 +174,6 @@ try {
     for (const a of agents.slice(0, 2)) Object.assign(a, { movePending: false, state: 'Stopped', stateMessage: null });
     agents[0].state = 'Running';
     Object.assign(agents[1], { lastAssistantMessageAt: null });
-    await page.getByLabel('Show stopped workspaces', { exact: true }).uncheck();
 
     // The dropdown: rows labelled by their conversation, with ▶/■; opening sends nothing.
     await page.goto(base + `/agents/${id(10)}`);
@@ -307,5 +319,5 @@ try {
         await page.setViewportSize({ width: 1400, height: 1000 });
     }
     assert.deepEqual(errors, []);
-    console.log('PASS: project grouping, dropdown ▶/■ and branches, conversation chooser, New workspace sizes (calculating, retry, too large, pull), Keep files removal, project page, slow/failing menus and phone themes');
+    console.log('PASS: project grouping, Hide stopped agents, dropdown ▶/■ and branches, conversation chooser, New workspace sizes (calculating, retry, too large, pull), Keep files removal, project page, slow/failing menus and phone themes');
 } finally { await browser.close(); }

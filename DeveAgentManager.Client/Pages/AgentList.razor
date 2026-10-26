@@ -18,7 +18,7 @@
             <div class="filter-bar">
                 <MudTextField @bind-Value="_search" Immediate="true" Placeholder="Search agents" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Rounded.Search"
                               Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Class="filter-search" />
-                <MudSwitch T="bool" @bind-Value="_showStopped" Label="Show stopped workspaces" Color="Color.Primary" />
+                <MudSwitch T="bool" @bind-Value="_hideStopped" Label="Hide stopped agents" Color="Color.Primary" />
                 <MudChipSet T="string" @bind-SelectedValue="_filter" SelectionMode="SelectionMode.SingleSelection" CheckMark="false" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
                     <MudChip Value="@("all")" Default="true">All @_agents.Count</MudChip>
                     <MudChip Value="@("running")">Running @_agents.Count(a => a.State is AgentState.Running or AgentState.Starting)</MudChip>
@@ -29,7 +29,7 @@
         <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading agents">
             <Placeholder><SkeletonList Rows="5" /></Placeholder>
             <ChildContent>
-                <GroupedAgentTable Agents="Filtered" User="_user" ShowRunner="true" ShowStopped="@(_showStopped || _filter == "stopped")">
+                <GroupedAgentTable Agents="Filtered" User="_user" ShowRunner="true" HideStopped="@(_hideStopped && _filter != "stopped")">
                     <EmptyContent>
                         @if (_agents.Count == 0)
                         {
@@ -42,7 +42,7 @@
     </div>
     @if (Loaded)
     {
-        <GroupedAgentTable Agents="Filtered" User="_user" ShowRunner="true" ShowStopped="@(_showStopped || _filter == "stopped")" AdministrativeOnly="true" />
+        <GroupedAgentTable Agents="Filtered" User="_user" ShowRunner="true" HideStopped="@(_hideStopped && _filter != "stopped")" AdministrativeOnly="true" />
     }
 </MudContainer>
 
@@ -50,7 +50,7 @@
     protected override TimeSpan? RefreshInterval => TimeSpan.FromSeconds(5);
     private List<AgentDto> _agents = [];
     [SupplyParameterFromQuery(Name = "project")] public Guid? ProjectId { get; set; }
-    private bool _showStopped;
+    private bool _hideStopped;
     private string? _search;
     private string? _filter = "all";
     private CurrentUserDto? _user;

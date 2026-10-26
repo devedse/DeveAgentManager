@@ -8,7 +8,7 @@
     var first = group[0];
     // The project's own actions act on Main, whichever workspace replied last.
     var main = group.FirstOrDefault(a => !a.IsClone) ?? first;
-    var visible = group.Where(a => ShowStopped || !WorkspaceGroups.QuietStopped(a) || _revealed.Contains(WorkspaceGroups.ProjectKey(a))).ToList();
+    var visible = group.Where(a => !HideStopped || !WorkspaceGroups.QuietStopped(a) || _revealed.Contains(WorkspaceGroups.ProjectKey(a))).ToList();
     @if (group.Count == 1)
     {
         <AgentTable Agents="group" ShowRunner="ShowRunner" ShowOwner="ShowOwner" />
@@ -48,11 +48,11 @@
         </section>
     }
 }
-@if (Agents.Count == 0) { <AgentTable Agents="Agents" EmptyText="EmptyText"><EmptyContent>@EmptyContent</EmptyContent></AgentTable> }
+@if (Agents.Count == 0) { <AgentTable Agents="Agents" EmptyText="@EmptyText"><EmptyContent>@EmptyContent</EmptyContent></AgentTable> }
 
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<AgentDto> Agents { get; set; } = [];
-    [Parameter] public bool ShowStopped { get; set; }
+    [Parameter] public bool HideStopped { get; set; }
     [Parameter] public bool ShowRunner { get; set; }
     [Parameter] public bool ShowOwner { get; set; }
     [Parameter] public string EmptyText { get; set; } = "No agents match.";
