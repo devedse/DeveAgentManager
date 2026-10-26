@@ -4,7 +4,7 @@ namespace DeveAgentManager.Core.Data;
 public static class Roles
 {
     /// <summary>Every role, in the order the Portal lists them (Admin is all of them).</summary>
-    public static readonly IReadOnlyList<UserRoles> All = [UserRoles.SettingsManager, UserRoles.UserManager, UserRoles.RunnerCreator, UserRoles.RunnerManager, UserRoles.ConversationManager, UserRoles.LogViewer, UserRoles.HarnessLoginManager];
+    public static readonly IReadOnlyList<UserRoles> All = [UserRoles.SettingsManager, UserRoles.UserManager, UserRoles.RunnerCreator, UserRoles.RunnerManager, UserRoles.ConversationManager, UserRoles.LogViewer, UserRoles.HarnessLoginManager, UserRoles.DamagochiManager];
 
     public static string Name(UserRoles role) => role switch
     {
@@ -15,6 +15,7 @@ public static class Roles
         UserRoles.ConversationManager => "Conversation manager",
         UserRoles.LogViewer => "Log viewer",
         UserRoles.HarnessLoginManager => "Harness login manager",
+        UserRoles.DamagochiManager => "Damagochi manager",
         UserRoles.Admin => "Admin",
         _ => role.ToString(),
     };
@@ -28,6 +29,7 @@ public static class Roles
         UserRoles.ConversationManager => "Open, prompt, restart, share and delete every agent; read, export, rename, share and delete every conversation.",
         UserRoles.LogViewer => "Read and download Manager application logs, which may include deployment details and user activity.",
         UserRoles.HarnessLoginManager => "Manage every harness login: reconnect, disable, delete and give people access. Does not grant Runner or conversation access.",
+        UserRoles.DamagochiManager => "Manage Damagochi settings and everyone’s pet, level and happiness. Does not grant conversation or user-account access.",
         _ => "",
     };
 

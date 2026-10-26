@@ -23,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\DeveAgentManager.Pets\DeveAgentManager.Pets.csproj" />
     <ProjectReference Include="..\DeveAgentManager.Contracts\DeveAgentManager.Contracts.csproj" />
   </ItemGroup>
 

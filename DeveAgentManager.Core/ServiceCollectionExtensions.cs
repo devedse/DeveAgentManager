@@ -43,6 +43,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SshConnector>();
         services.AddSingleton<RunnerShell>();
         services.AddSingleton<UsageLimitReader>();
+        services.AddSingleton<DeveAgentManager.Pets.PetCatalog>();
+        services.AddSingleton<DeveAgentManager.Core.Pets.PetService>();
         services.AddSingleton<SettingsStore>();
         services.AddSingleton<UserSettingsStore>();
         services.AddSingleton<RunnerUsers>();

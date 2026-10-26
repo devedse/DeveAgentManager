@@ -96,6 +96,7 @@ public sealed class CodexSessionFormat : ISessionFormat
             SessionToolMetadata.Read(entry, line);
             if (True(line, "damErrorPrefix") && entry.Content?.SingleOrDefault() is { Type: "toolResult", Content: { Count: > 0 } } errorResult)
                 errorResult.Content.RemoveAt(0);
+            SessionUsageTracker.Observe(cursor, entry);
             session.Entries.Add(entry);
             previous = entry.Id;
         }

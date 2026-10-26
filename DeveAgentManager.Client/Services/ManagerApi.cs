@@ -24,7 +24,7 @@ public sealed class ApiException(string message, HttpStatusCode status, string? 
 /// The Manager's API (/api). Every request carries <see cref="ApiHeaders.Request"/> (see the Manager's CSRF check).
 /// When the login ran out, the browser goes to the login page and comes back afterwards.
 /// </summary>
-public sealed class ManagerApi(HttpClient http, NavigationManager navigation)
+public sealed partial class ManagerApi(HttpClient http, NavigationManager navigation)
 {
     private Task<ManagerInfoDto>? _info;
 

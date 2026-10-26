@@ -7,6 +7,9 @@ public sealed class SessionReadCursor
 {
     public DeveSession Session { get; set; } = new();
     public int LineCount { get; set; }
+    public List<DeveAgentManager.Contracts.Pets.SessionUsageTurn> UsageTurns { get; set; } = [];
+    public Dictionary<string, long> UsageMessageTotals { get; set; } = [];
+    public long CodexUsageTotal { get; set; }
     public string? CustomTitle { get; set; }
     public string? AutoTitle { get; set; }
     /// <summary>Small adapter state (for example the current streamed message index), never payloads.</summary>

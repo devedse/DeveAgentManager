@@ -9,16 +9,19 @@
 <PageTitle>Manager settings · DeveAgentManager</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.Large" Class="page">
-    <PageHeader Title="Manager settings" Help="The same for everyone, changed by settings managers. Values set in the compose file are shown read-only. Other Manager settings are stored in /data; secrets are encrypted. Each person's own settings are under My settings." />
+    <PageHeader Title="Manager settings" Help="Shared Manager configuration. Each section requires its management role. Personal preferences are under My settings." />
 
-    @if (_allowed == false)
+    @if (_allowed == false && !_petAllowed)
     {
-        <EmptyState Icon="@Icons.Material.Rounded.Lock" Title="For settings managers" Text="Changing the Manager's settings needs the Settings manager role." />
+        <EmptyState Icon="@Icons.Material.Rounded.Lock" Title="For Manager roles" Text="Manager settings require Settings manager or Damagochi manager." />
     }
     else
     {
     <div class="panel panel-flush">
         <MudTabs @ref="_tabs" Elevation="0" ApplyEffectsToContainer="true" Class="panel-tabs" TabPanelsClass="panel-tab-content" KeepPanelsAlive="true" MinimumTabWidth="0">
+            @if (_petAllowed) { <MudTabPanel Text="Damagochi" Icon="@Icons.Material.Rounded.Pets"><PetManagerPanel /></MudTabPanel> }
+            @if (_allowed == true)
+            {
             <MudTabPanel Text="Timezones" Icon="@Icons.Material.Rounded.Schedule">
                 <RunnerTimeZoneEditor />
             </MudTabPanel>
@@ -216,6 +219,7 @@
                 </ChildContent>
                 </LoadingSection>
             </MudTabPanel>
+            }
         </MudTabs>
     </div>
     }
@@ -257,6 +261,7 @@
     private bool _importing;
     private bool _saving;
     private bool? _allowed;
+    private bool _petAllowed;
 
     private string? _loadError;
 
@@ -271,7 +276,9 @@
         _loadError = null;
         try
         {
-            _allowed = (await Me.GetAsync()).Has(UserRoles.SettingsManager);
+            var user = await Me.GetAsync();
+            _allowed = user.Has(UserRoles.SettingsManager);
+            _petAllowed = user.Has(UserRoles.DamagochiManager);
             if (_allowed != true)
             {
                 return;

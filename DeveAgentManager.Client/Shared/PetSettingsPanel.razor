@@ -1,0 +1,62 @@
+@using DeveAgentManager.Contracts.Pets
+@implements IDisposable
+@inject PetClient Pets
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+
+<LoadingSection Loaded="@(Pets.State is not null)" Error="@Pets.Error" Retry="Pets.ReloadAsync" Label="Loading your pet">
+    <Placeholder><SkeletonForm Fields="4" /></Placeholder>
+    <ChildContent>
+    @if (Pets.State is { } state)
+    {
+        <div class="settings-section">
+            <div class="help-heading"><MudText Typo="Typo.subtitle1">Your Damagochi</MudText>
+                <HelpTip Label="Damagochi"><p>Your pet follows you through the Portal. Tokens from work you prompt grow it through four stages; levels continue after adulthood. Petting and playing improve happiness.</p><p>Snoozing hides your pet while it keeps growing. Disabling pauses growth without losing progress. Pet position is saved in this browser.</p></HelpTip></div>
+            @if (state.CanEdit)
+            {
+                <MudSwitch T="bool" @bind-Value="_enabled" Label="Enable my pet" Color="Color.Primary" />
+                <div class="form-row">
+                    <MudSelect T="string" Value="_species" ValueChanged="SpeciesChanged" Label="Pet type" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @foreach (var pet in state.Catalog) { <MudSelectItem Value="@pet.Id">@pet.Name</MudSelectItem> }
+                    </MudSelect>
+                    <MudTextField @bind-Value="_name" Label="Name" MaxLength="40" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </div>
+                <div class="dam-pet-stats"><span>Level @state.Pet.Level · @state.Pet.StageName</span><span>@state.Pet.Experience.ToString("N0") tokens</span><span>Happiness @state.Pet.Happiness%</span></div>
+                <MudProgressLinear Value="@(state.Pet.Level >= 1000 ? 100 : (state.Pet.Experience - state.Pet.LevelStart) * 100d / (state.Pet.NextLevel - state.Pet.LevelStart))" Color="Color.Primary" Class="my-3" aria-label="Progress to the next level" />
+                <MudNumericField T="int" @bind-Value="_size" Min="90" Max="240" Label="Pet size" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                <MudSwitch T="bool" @bind-Value="_reduced" Label="Reduce pet movement" Color="Color.Primary" />
+                @if (state.Pet.SnoozedUntil > DateTime.UtcNow)
+                {
+                    <MudText Typo="Typo.body2">Your pet is snoozing.</MudText>
+                    <MudButton OnClick="Wake" Disabled="_saving">Bring back now</MudButton>
+                }
+                <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving">Save pet</MudButton></div>
+                @if (!state.Options.Enabled) { <MudText Typo="Typo.body2">Damagochi is globally disabled; these preferences are saved for later.</MudText> }
+            }
+            else { <MudText Typo="Typo.body2">Damagochi is disabled by a Damagochi manager.</MudText> }
+        </div>
+    }
+    </ChildContent>
+</LoadingSection>
+@code {
+    private bool _enabled, _reduced, _saving, _loaded;
+    private string _name = "", _species = "snek";
+    private int _size = 140;
+    private PetPreferences? _shown;
+    protected override async Task OnInitializedAsync() { Pets.Changed += Changed; await Pets.StartAsync(); Load(); }
+    private void Changed() { Load(); _ = InvokeAsync(StateHasChanged); }
+    private void Load() {
+        if (Pets.State is not { } s) return;
+        var current = new PetPreferences(_enabled, _name, _species, _reduced, _size);
+        if (!_loaded || current == _shown) { _enabled = s.Pet.Enabled; _name = s.Pet.Name; _species = s.Pet.Species; _size = s.Pet.Size; _reduced = s.Pet.ReducedMotion; _loaded = true; }
+        _shown = new(s.Pet.Enabled, s.Pet.Name, s.Pet.Species, s.Pet.ReducedMotion, s.Pet.Size);
+    }
+    private void SpeciesChanged(string species) {
+        if (Pets.State is not { } s) return;
+        if (_name == s.Catalog.First(p => p.Id == _species).DefaultName) _name = s.Catalog.First(p => p.Id == species).DefaultName;
+        _species = species;
+    }
+    private async Task Save() { _saving = true; try { await Api.SavePetAsync(new(_enabled, _name, _species, _reduced, _size)); await Pets.ReloadAsync(); Snackbar.Add("Pet saved.", Severity.Success); } catch (Exception ex) when (ex is ApiException or HttpRequestException) { Snackbar.Add(ex.Message, Severity.Error); } finally { _saving = false; } }
+    private async Task Wake() { try { await Api.PetActionAsync("wake"); await Pets.ReloadAsync(); } catch (Exception ex) when (ex is ApiException or HttpRequestException) { Snackbar.Add(ex.Message, Severity.Error); } }
+    public void Dispose() => Pets.Changed -= Changed;
+}

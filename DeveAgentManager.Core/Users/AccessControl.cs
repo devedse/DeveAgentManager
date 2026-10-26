@@ -126,6 +126,7 @@ public sealed class AccessControl(IDbContextFactory<ManagerDbContext> dbFactory)
         {
             case ManagerEventKind.RunnerRemoved or ManagerEventKind.AgentRemoved or ManagerEventKind.SessionRemoved or ManagerEventKind.UserRemoved:
                 return null;
+            case ManagerEventKind.PetChanged when change.UserId is null:
             case ManagerEventKind.SettingsChanged when change.UserId is null:
                 return null;
             case ManagerEventKind.UserChanged:

@@ -16,6 +16,7 @@ builder.Services.AddSingleton(_ =>
 });
 builder.Services.AddSingleton<ManagerApi>();
 builder.Services.AddSingleton<LiveUpdates>();
+builder.Services.AddSingleton<PetClient>();
 builder.Services.AddSingleton<PageVisibility>();
 builder.Services.AddSingleton<BrowserClock>();
 builder.Services.AddSingleton<AgentTaskViews>();

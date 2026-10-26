@@ -4,3 +4,8 @@
         <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
     </Found>
 </Router>
+
+@if (OperatingSystem.IsBrowser())
+{
+    <PetHost />
+}

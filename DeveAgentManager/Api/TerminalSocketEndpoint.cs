@@ -35,7 +35,7 @@ public static partial class TerminalSocketEndpoint
 
     public static void MapTerminalSocket(this IEndpointRouteBuilder app) =>
         app.Map(TerminalSocket.Path, async (HttpContext context, TerminalService terminals, AgentService agents, AccountService accounts, RunnerService runners,
-            AccessControl access, OpenConnections connections, IHostApplicationLifetime lifetime, ILoggerFactory loggers) =>
+            AccessControl access, OpenConnections connections, IHostApplicationLifetime lifetime, ILoggerFactory loggers, DeveAgentManager.Core.Pets.PetService pets) =>
         {
             if (!context.WebSockets.IsWebSocketRequest)
             {
@@ -54,7 +54,7 @@ public static partial class TerminalSocketEndpoint
             var logger = loggers.CreateLogger("DeveAgentManager.Terminal");
 
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
-            var session = new TerminalSession(socket, logger, context.RequestAborted);
+            var session = new TerminalSession(socket, logger, context.RequestAborted, pets, user.Id);
             // Ends the terminal when the user's access ends while it is open, or the Manager stops.
             using var revoked = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, lifetime.ApplicationStopping);
             var stamp = SignIn.SecurityStamp(context);
@@ -141,7 +141,7 @@ public static partial class TerminalSocketEndpoint
         });
 
     /// <summary>One browser terminal: pumps the SSH terminal's output to the socket and the socket's input to the terminal.</summary>
-    private sealed class TerminalSession(WebSocket socket, ILogger logger, CancellationToken socketAborted)
+    private sealed class TerminalSession(WebSocket socket, ILogger logger, CancellationToken socketAborted, DeveAgentManager.Core.Pets.PetService pets, Guid userId)
     {
         private static readonly byte[] KickedMarker = Encoding.UTF8.GetBytes(AgentService.KickedMarker);
         private static readonly byte[] DetachedMarker = "[detached (from session"u8.ToArray();
@@ -226,6 +226,7 @@ public static partial class TerminalSocketEndpoint
         {
             var buffer = new byte[64 * 1024];
             var sizeClaimed = false;
+            var hasUserText = false;
             // A file being received: its announced bytes arrive in binary frames, which are not terminal input. On disk
             // until it is complete, so a large one isn't held in memory.
             (JsonNode? Id, string Name, FileStream Bytes, long Size)? image = null;
@@ -273,6 +274,17 @@ public static partial class TerminalSocketEndpoint
                     }
                     else if (received.MessageType == WebSocketMessageType.Binary)
                     {
+                        // Enter is only a candidate; the history must confirm a real prompt before usage is credited.
+                        var text = Encoding.UTF8.GetString(bytes);
+                        if (agentId is { } petAgent && !TerminalInput.IsTerminalReply(text)) {
+                            if (text.Contains('\u0003')) hasUserText = false;
+                            if (text.Any(c => char.IsLetterOrDigit(c))) hasUserText = true;
+                            if (text.Contains('\r') && hasUserText) {
+                                hasUserText = false;
+                                try { await pets.ClaimInputAsync(petAgent, userId, cancellationToken); await pets.ReactAsync(userId, "wave", cancellationToken); }
+                                catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogDebug(ex, "Could not record pet input activity"); }
+                            }
+                        }
                         connection.Write(bytes);
                         // A screen that joined watching sets the size once somebody types on it (not on the terminal's replies).
                         if (agentId is { } id && !sizeClaimed && connection.Tty is { } tty && !TerminalInput.IsTerminalReply(Encoding.UTF8.GetString(bytes)))
@@ -328,6 +340,8 @@ public static partial class TerminalSocketEndpoint
                 {
                     bytes.Position = 0;
                     answer["path"] = await uploads.Upload(name, bytes, cancellationToken);
+                    try { await pets.ReactAsync(userId, Regex.IsMatch(name, @"\.(png|jpe?g|webp|gif)$", RegexOptions.IgnoreCase) ? "surprised" : "peck", cancellationToken); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogDebug(ex, "Could not react to a file upload"); }
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

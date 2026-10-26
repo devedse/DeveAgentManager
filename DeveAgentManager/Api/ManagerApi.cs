@@ -85,6 +85,7 @@ public static class ManagerApi
         api.MapSessionEndpoints();
         api.MapAccountEndpoints();
         api.MapSettingsEndpoints();
+        api.MapPetEndpoints();
         api.MapCpuTraceEndpoints();
     }
 

@@ -102,6 +102,7 @@ public sealed class ClaudeSessionFormat : ISessionFormat
             }
 
             SessionToolMetadata.Read(entry, line);
+            SessionUsageTracker.Observe(cursor, entry);
             session.Entries.Add(entry);
             if (uuid is not null)
             {

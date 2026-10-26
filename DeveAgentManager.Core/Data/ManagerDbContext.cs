@@ -44,6 +44,10 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
     public DbSet<UserSecondFactor> UserSecondFactors => Set<UserSecondFactor>();
     public DbSet<EditorTicket> EditorTickets => Set<EditorTicket>();
 
+    public DbSet<DeveAgentManager.Pets.UserPet> UserPets => Set<DeveAgentManager.Pets.UserPet>();
+    public DbSet<DeveAgentManager.Pets.PetUsageCredit> PetUsageCredits => Set<DeveAgentManager.Pets.PetUsageCredit>();
+    public DbSet<DeveAgentManager.Pets.PetInputClaim> PetInputClaims => Set<DeveAgentManager.Pets.PetInputClaim>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // SQLite has no date type: store UTC and give values back as UTC.
@@ -53,6 +57,19 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<DeveAgentManager.Pets.UserPet>(pet => {
+            pet.HasKey(p => p.UserId);
+            pet.HasOne<User>().WithOne().HasForeignKey<DeveAgentManager.Pets.UserPet>(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<DeveAgentManager.Pets.PetUsageCredit>(credit => {
+            credit.HasKey(p => new { p.Source, p.PromptId });
+            credit.HasOne<User>().WithMany().HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        modelBuilder.Entity<DeveAgentManager.Pets.PetInputClaim>(claim => {
+            claim.HasKey(p => p.Id);
+            claim.HasIndex(p => new { p.SessionId, p.At });
+            claim.HasOne<User>().WithMany().HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<SignInSession>(session =>
         {
             session.HasKey(s => s.Id);

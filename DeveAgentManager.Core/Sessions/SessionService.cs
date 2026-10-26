@@ -38,7 +38,8 @@ public sealed class SessionService(
     ManagerEvents events,
     ILogger<SessionService> logger,
     AgentArtifacts? artifacts = null,
-    HistorySyncSettingsStore? historySettings = null)
+    HistorySyncSettingsStore? historySettings = null,
+    DeveAgentManager.Core.Pets.PetService? pets = null)
 {
     private readonly AgentArtifacts _artifacts = artifacts ?? new(dbFactory, options, files, images, new AccessControl(dbFactory), events);
     internal Task PreserveArtifactsAsync(Guid agentId, CancellationToken ct) => _artifacts.PreserveAsync(agentId, ct);
@@ -49,6 +50,16 @@ public sealed class SessionService(
     private readonly NativeHistoryStore _native = new(options.SessionsDirectory, logger: logger);
     private readonly SessionCompanionStore _companions = new(options.SessionsDirectory);
     private readonly HistorySyncSettingsStore _historySettings = historySettings ?? new(dbFactory, events);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, string> _petUsageVersions = new();
+    private async Task CreditPetUsageAsync(StoredSession session, CancellationToken ct)
+    {
+        if (pets is null || session.HarnessSessionId is not { } nativeId) return;
+        var summary = await _native.SummaryAsync(session.Id, ct);
+        if (summary?.UsageFile is not { } version || _petUsageVersions.GetValueOrDefault(session.Id) == version) return;
+        var usage = await _native.UsageAsync(session.Id, summary, ct);
+        await pets.CreditAsync(session.Id, session.HarnessId + ":" + nativeId, usage, ct);
+        _petUsageVersions[session.Id] = version;
+    }
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly Dictionary<Guid, (DateTime Version, string Text)> _previews = new();
     /// <summary>The latest reply of each agent whose conversations <paramref name="user"/> can read.</summary>
@@ -482,7 +493,7 @@ public sealed class SessionService(
                     Idle: session.Agent is { Working: false });
                 var incremental = _formats[session.HarnessId].SupportsIncrementalRead && stamp is not null;
                 if (incremental && !_formats[session.HarnessId].HasCompanionFiles && session.SourceSize == file.Size && session.SourcePath == file.Path
-                    && await _native.IsCurrentAsync(session.Id, session.HarnessId, file.Path, file.Size, stamp!, cancellationToken, policy)) continue;
+                    && await _native.IsCurrentAsync(session.Id, session.HarnessId, file.Path, file.Size, stamp!, cancellationToken, policy)) { await CreditPetUsageAsync(session, cancellationToken); continue; }
                 DeveSession deve;
                 if (incremental)
                 {
@@ -504,7 +515,7 @@ public sealed class SessionService(
                             }
                             return generation;
                         });
-                    if (!sync.Changed && session.SourceSize == file.Size && session.SourcePath == file.Path) continue;
+                    if (!sync.Changed && session.SourceSize == file.Size && session.SourcePath == file.Path) { await CreditPetUsageAsync(session, cancellationToken); continue; }
                     deve = sync.Metadata;
                     await _companions.PruneAsync(session.Id, (await _native.SummaryAsync(session.Id, cancellationToken))?.CompanionManifest, cancellationToken);
                     File.Delete(PathFor(session.Id)); // The verified native copy is now the authoritative full history.
@@ -523,6 +534,7 @@ public sealed class SessionService(
                 UpdateSizes(session);
                 session.LastSyncedAt = DateTime.UtcNow;
                 await db.SaveChangesAsync(cancellationToken);
+                await CreditPetUsageAsync(session, cancellationToken);
                 events.SessionChanged(session.Id, session.AgentId);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

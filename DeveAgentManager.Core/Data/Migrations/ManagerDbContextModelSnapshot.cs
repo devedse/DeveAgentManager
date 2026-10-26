@@ -15,7 +15,7 @@ namespace DeveAgentManager.Core.Data.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.13");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.Account", b =>
                 {
@@ -890,7 +890,7 @@ namespace DeveAgentManager.Core.Data.Migrations
                             FailedSignIns = 0,
                             MustChangePassword = false,
                             PasswordHash = "",
-                            Roles = 127,
+                            Roles = 255,
                             SecurityStamp = "bootstrap",
                             UpdatedAt = new DateTime(2026, 10, 6, 0, 0, 0, 0, DateTimeKind.Utc),
                             Username = "admin"
@@ -956,6 +956,103 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.HasKey("UserId", "Key");
 
                     b.ToTable("UserSettings");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Pets.PetInputClaim", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("SessionId", "At");
+
+                    b.ToTable("PetInputClaims");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Pets.PetUsageCredit", b =>
+                {
+                    b.Property<string>("Source")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PromptId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Tokens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Source", "PromptId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("PetUsageCredits");
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Pets.UserPet", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Experience")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Happiness")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("LastInteractionAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reaction")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ReactionAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("ReducedMotion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Revision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Size")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("SnoozedUntil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Species")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("UserPets");
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.Account", b =>
@@ -1236,6 +1333,32 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.HasOne("DeveAgentManager.Core.Data.User", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Pets.PetInputClaim", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Pets.PetUsageCredit", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Pets.UserPet", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.User", null)
+                        .WithOne()
+                        .HasForeignKey("DeveAgentManager.Pets.UserPet", "UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

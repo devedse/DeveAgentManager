@@ -75,7 +75,10 @@ public enum UserRoles
     /// <summary>Manage every harness login and its access list; usage requires an explicit grant.</summary>
     HarnessLoginManager = 64,
 
-    Admin = HarnessLoginManager | LogViewer | SettingsManager | UserManager | RunnerCreator | RunnerManager | ConversationManager,
+    /// <summary>Manage Damagochi settings and everyone’s pets.</summary>
+    DamagochiManager = 128,
+
+    Admin = DamagochiManager | HarnessLoginManager | LogViewer | SettingsManager | UserManager | RunnerCreator | RunnerManager | ConversationManager,
 }
 
 /// <summary>What a user may do with a Runner. Each level includes the ones before it.</summary>

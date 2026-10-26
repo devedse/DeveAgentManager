@@ -3979,3 +3979,27 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .switch-failure-route > span { color: var(--dam-muted); }
 .switch-failure-route .mud-icon-root { color: var(--dam-primary); }
 .switch-failure-error { margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Damagochi is outside the router and both layouts. Only the pet and its menu intercept input. */
+.dam-pet-host{position:fixed;width:140px;z-index:1250;pointer-events:none;user-select:none}
+.dam-pet-host[hidden]{display:none}
+.dam-pet-body{position:relative;pointer-events:auto;cursor:grab;touch-action:none;border-radius:18px;outline-offset:2px}
+.dam-pet-body:focus-visible{outline:2px solid var(--dam-primary)}
+.dam-pet-art{position:relative;aspect-ratio:1;pointer-events:none}
+.dam-pet-art .stage-part,.dam-pet-art .illustrated-pet{position:absolute;inset:0}
+.dam-pet-art [hidden]{display:none}
+.dam-pet-art canvas,.dam-pet-art svg{position:absolute;inset:0;width:100%;height:100%}
+.dam-pet-art .illustrated-rig{display:none}
+.dam-pet-art .art-loading{position:absolute;bottom:20px;font-size:11px;color:var(--dam-muted)}
+.dam-pet-name{display:block;width:max-content;max-width:100%;margin:-4px auto 0;padding:2px 8px;border-radius:12px;background:var(--dam-surface);color:var(--dam-muted);border:1px solid var(--dam-border);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dam-pet-host.dragging .dam-pet-body{cursor:grabbing}
+.dam-pet-menu{position:absolute;bottom:100%;right:0;pointer-events:auto;width:228px;max-width:calc(100vw - 16px);max-height:65dvh;overflow:auto;padding:6px;background:var(--dam-surface);border:1px solid var(--dam-border);border-radius:12px;box-shadow:0 6px 24px #0003;color:var(--dam-text);font-size:13px}
+.dam-pet-menu button,.dam-pet-menu a{display:block;width:100%;padding:8px 10px;text-align:left;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer;text-decoration:none}
+.dam-pet-menu button:hover,.dam-pet-menu a:hover{background:var(--dam-bg)}
+.dam-pet-summary{display:flex;flex-direction:column;gap:3px;padding:8px 10px;border-bottom:1px solid var(--dam-border);margin-bottom:4px}
+.dam-pet-summary span{font-size:11px;color:var(--dam-muted)}
+.dam-pet-hide-target{display:none;position:fixed;bottom:12px;left:50%;transform:translateX(-50%);padding:14px 18px;border:2px dashed var(--dam-border);border-radius:12px;background:var(--dam-surface);color:var(--dam-text);font-size:12px}
+.dam-pet-host.dragging .dam-pet-hide-target{display:block}
+.dam-pet-stats{display:flex;gap:16px;flex-wrap:wrap;margin-top:16px;color:var(--dam-muted);font-size:13px}
+.dam-pet-host[data-art-error]:after{content:attr(data-art-error);display:block;background:var(--dam-surface);color:var(--dam-text);font-size:11px;padding:8px;border-radius:8px}
+@media(prefers-reduced-motion:reduce){.dam-pet-host *{scroll-behavior:auto}}

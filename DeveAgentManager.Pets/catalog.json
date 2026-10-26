@@ -1,0 +1,4 @@
+[
+  { "id": "snek", "name": "Galaxy snake", "defaultName": "Snek", "renderer": "snake-art", "stages": ["Egg", "Noodle", "Young", "Adult"] },
+  { "id": "silkie", "name": "Silkie chicken", "defaultName": "Byte", "renderer": "silkie-art", "stages": ["Egg", "Chick", "Young", "Adult"] }
+]

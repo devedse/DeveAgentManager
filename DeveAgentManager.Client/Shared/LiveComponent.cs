@@ -113,6 +113,7 @@ public abstract class LiveComponent : ComponentBase, IDisposable
 
     private void OnManagerEvent(ManagerEvent managerEvent)
     {
+        if (managerEvent.Kind == ManagerEventKind.PetChanged) return;
         if (managerEvent.Kind == ManagerEventKind.RunnerUsageChanged && !ShowsRunnerUsage) return;
         if (managerEvent.Kind == ManagerEventKind.TasksChanged && !ShowsTasks) return;
         if (IsRelevant(managerEvent))

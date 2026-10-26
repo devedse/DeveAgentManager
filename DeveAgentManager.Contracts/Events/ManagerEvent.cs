@@ -25,6 +25,9 @@ public enum ManagerEventKind
 
     /// <summary>An agent's task list (dam-tools tasks) changed; only its tasks button reloads.</summary>
     TasksChanged,
+
+    /// <summary>Damagochi settings or one user’s pet changed.</summary>
+    PetChanged,
 }
 
 /// <param name="UserId">For changes that concern one user only: their settings, logins or account.</param>

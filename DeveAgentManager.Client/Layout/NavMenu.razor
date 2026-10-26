@@ -62,7 +62,7 @@
             <div class="nav-skeleton-row"><span class="skeleton nav-skeleton-icon"></span><span class="skeleton nav-skeleton-line" style="width:50%"></span></div>
         </Placeholder>
         <ChildContent>
-        @if (_user?.Has(UserRoles.SettingsManager) == true)
+        @if (_user?.Has(UserRoles.SettingsManager) == true || _user?.Has(UserRoles.DamagochiManager) == true)
         {
             <MudNavLink Href="manager-settings" Icon="@Icons.Material.Rounded.SettingsApplications">Manager settings</MudNavLink>
         }

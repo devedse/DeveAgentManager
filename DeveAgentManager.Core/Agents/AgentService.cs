@@ -31,7 +31,7 @@ public sealed partial class AgentService(
     ManagerEvents events,
     ILogger<AgentService> logger,
     AgentContinuations? continuations = null, AgentDiagnostics? diagnostics = null, UsageLimitReader? limitReader = null, ArtifactTokens? artifactTokens = null,
-    AuditLog? audit = null, Setup.UserSettingsStore? userSettings = null)
+    AuditLog? audit = null, Setup.UserSettingsStore? userSettings = null, DeveAgentManager.Core.Pets.PetService? pets = null)
 {
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
 
@@ -679,6 +679,10 @@ public sealed partial class AgentService(
             if (changedAgents.Contains(agent.Id))
             {
                 var activity = AgentActivityTracker.Read(agent).Snapshot;
+                if (pets is not null) {
+                    try { await pets.ObserveActivityAsync(agent.Id, agent.HarnessId, agent.HarnessSessionId, activity, cancellationToken); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogDebug(ex, "Could not update pet activity"); }
+                }
                 diagnostics?.Record(agent.Id, "Activity", $"{agent.State} / {activity.Status}: {activity.Reason}", activity.Rule);
             }
         }

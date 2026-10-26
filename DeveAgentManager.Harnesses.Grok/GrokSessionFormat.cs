@@ -156,7 +156,8 @@ public sealed class GrokSessionFormat : ISessionFormat
             SessionToolMetadata.Read(entry, line);
             if (!cursor.MetadataOnly || entry.Kind != DeveEntryKind.Native)
             {
-                session.Entries.Add(entry);
+                SessionUsageTracker.Observe(cursor, entry);
+            session.Entries.Add(entry);
                 session.LeafId = entry.Id;
             }
             session.UpdatedAt = timestamp;

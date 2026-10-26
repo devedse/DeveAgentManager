@@ -58,6 +58,7 @@ public sealed class PiSessionFormat : ISessionFormat
 
             var entry = ReadEntry(item);
             SessionToolMetadata.Read(entry, item);
+            SessionUsageTracker.Observe(cursor, entry);
             session.Entries.Add(entry);
             lastTimestamp = entry.Timestamp;
             if (entry is { Kind: DeveEntryKind.Event, Event: "title" } && entry.Text is { Length: > 0 } name)

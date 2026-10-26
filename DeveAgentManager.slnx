@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="DeveAgentManager.Pets/DeveAgentManager.Pets.csproj" />
   <Project Path="DeveAgentManager.Client/DeveAgentManager.Client.csproj" />
   <Project Path="DeveAgentManager.Contracts/DeveAgentManager.Contracts.csproj" />
   <Project Path="DeveAgentManager.Core/DeveAgentManager.Core.csproj" />

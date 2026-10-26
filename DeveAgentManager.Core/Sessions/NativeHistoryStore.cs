@@ -22,6 +22,9 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
     internal static readonly TimeSpan AuditInterval = TimeSpan.FromMinutes(30);
     internal sealed class State
     {
+        public int UsageSchema { get; set; }
+        public string? UsageFile { get; set; }
+        public long UsageBytes { get; set; }
         public string File { get; set; } = "";
         public string Harness { get; set; } = "";
         public string SourcePath { get; set; } = "";
@@ -46,7 +49,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
         if (!Exists(id)) return 0;
         using var input = new FileStream(Manifest(id), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
         var state = JsonSerializer.Deserialize<State>(input, DeveSession.JsonOptions) ?? throw new IOException("Empty native history checkpoint.");
-        return state.Bytes + state.IndexBytes + input.Length;
+        return state.Bytes + state.IndexBytes + state.UsageBytes + input.Length;
     }
 
     private async Task<State?> ReadState(Guid id, CancellationToken ct)
@@ -59,9 +62,16 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
     // Checkpoints are replaced atomically. Lists can read the previous summary during an in-flight SSH transfer.
     public Task<State?> SummaryAsync(Guid id, CancellationToken ct) => ReadState(id, ct);
 
+    public async Task<IReadOnlyList<DeveAgentManager.Contracts.Pets.SessionUsageTurn>> UsageAsync(Guid id, State summary, CancellationToken ct)
+    {
+        if (summary.UsageFile is null) return [];
+        await using var input = new FileStream(Path.Combine(Folder(id), summary.UsageFile), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 65536, true);
+        return await JsonSerializer.DeserializeAsync<List<DeveAgentManager.Contracts.Pets.SessionUsageTurn>>(input, DeveSession.JsonOptions, ct) ?? [];
+    }
+
     private bool AuditDue(Guid id, State state, NativeHistorySyncPolicy? policy) => policy?.Force == true
         || !verifiedThisProcess.TryGetValue(id, out var generation) || generation != state.File
-        || state.VerifiedAt is not { } at || clock.GetUtcNow() - at >= AuditInterval
+        || state.UsageSchema != 1 || state.UsageFile is null || state.VerifiedAt is not { } at || clock.GetUtcNow() - at >= AuditInterval
         || state.Sha256.Length == 0 && (policy?.Idle == true || policy?.Mode is HistorySyncMode.Full or HistorySyncMode.Shadow);
 
     internal static string? SourceIdentity(string stamp)
@@ -115,6 +125,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
         string? incoming = null;
         string? pendingRaw = null;
         string? pendingIndex = null;
+        string? pendingUsage = null;
         // The audit's hash of the committed prefix, continued over the appended bytes so the prefix is read only once.
         IncrementalHash? prefixHash = null;
         long prefixHashed = -1;
@@ -126,6 +137,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
             if (!keepGenerations)
                 foreach (var stale in Directory.EnumerateFiles(folder, "*.jsonl").Where(p => Path.GetFileName(p) != old?.File)) File.Delete(stale);
             foreach (var stale in Directory.EnumerateFiles(folder, "*.index.json").Where(p => Path.GetFileName(p) != old?.CursorFile)) File.Delete(stale);
+            foreach (var stale in Directory.EnumerateFiles(folder, "*.usage.json").Where(p => Path.GetFileName(p) != old?.UsageFile)) File.Delete(stale);
             var reusable = old is not null && old.Harness == format.HarnessId && old.SourcePath == sourcePath
                 && old.Bytes <= size && File.Exists(Path.Combine(folder, old.File))
                 && new FileInfo(Path.Combine(folder, old.File)).Length >= old.Bytes;
@@ -148,6 +160,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
                     old.EndsWithNewline = false; // Rebuild the disposable index from the verified raw copy.
                 }
             }
+            if (reusable && (old!.UsageSchema != 1 || old.UsageFile is null)) old.EndsWithNewline = false;
             if (reusable && old!.Bytes == size && old.Stamp == stamp && stamp.Length > 0 && !AuditDue(id, old, policy))
             {
                 if (beforeCommit is not null && format.HasCompanionFiles)
@@ -275,6 +288,12 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
                 using var input = File.OpenRead(path);
                 state.EndsWithNewline = size == 0 || (input.Seek(-1, SeekOrigin.End) >= 0 && input.ReadByte() == '\n');
             }
+            state.UsageSchema = 1;
+            state.UsageFile = Guid.NewGuid().ToString("N") + ".usage.json";
+            pendingUsage = Path.Combine(folder, state.UsageFile);
+            await using (var usageOutput = new FileStream(pendingUsage, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, true))
+                await JsonSerializer.SerializeAsync(usageOutput, state.Cursor.UsageTurns, DeveSession.JsonOptions, ct);
+            state.UsageBytes = new FileInfo(pendingUsage).Length;
             state.Harness = format.HarnessId; state.SourcePath = sourcePath; state.Bytes = size; state.Stamp = stamp;
             state.CursorFile = Guid.NewGuid().ToString("N") + ".index.json";
             pendingIndex = Path.Combine(folder, state.CursorFile);
@@ -291,10 +310,11 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
                 await JsonSerializer.SerializeAsync(output, state, DeveSession.JsonOptions, ct);
             File.Move(Manifest(id) + ".tmp", Manifest(id), true);
             if (received.FullyVerified) verifiedThisProcess[id] = state.File;
-            pendingRaw = null; pendingIndex = null;
+            pendingRaw = null; pendingIndex = null; pendingUsage = null;
             if (!keepGenerations)
                 foreach (var stale in Directory.EnumerateFiles(folder, "*.jsonl").Where(p => p != path)) File.Delete(stale);
             foreach (var stale in Directory.EnumerateFiles(folder, "*.index.json").Where(p => Path.GetFileName(p) != state.CursorFile)) File.Delete(stale);
+            foreach (var stale in Directory.EnumerateFiles(folder, "*.usage.json").Where(p => Path.GetFileName(p) != state.UsageFile)) File.Delete(stale);
             return (state.Cursor.Session, true);
         }
         finally
@@ -304,6 +324,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
                 if (incoming is not null) File.Delete(incoming);
                 if (pendingRaw is not null) File.Delete(pendingRaw);
                 if (pendingIndex is not null) File.Delete(pendingIndex);
+                if (pendingUsage is not null) File.Delete(pendingUsage);
             }
             finally { prefixHash?.Dispose(); gate.Release(); }
         }

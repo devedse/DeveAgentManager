@@ -25,7 +25,8 @@ public sealed partial class UserService(
     AuditLog audit,
     ManagerEvents events,
     ManagerOptions options,
-    ILogger<UserService> logger)
+    ILogger<UserService> logger,
+    DeveAgentManager.Core.Pets.PetService? pets = null)
 {
     public const int MinPasswordLength = 8;
     public const int MaxPasswordLength = 256;
@@ -137,6 +138,7 @@ public sealed partial class UserService(
         user.PasswordHash = _hasher.HashPassword(user, password);
         db.Users.Add(user);
         await db.SaveChangesAsync(cancellationToken);
+        if (pets is not null) await pets.InitializeAsync(user.Id, cancellationToken);
         await audit.RecordAsync(actor, AuditActions.UserCreated, $"User {user.Username}", $"Roles: {Roles.Describe(roles)}", cancellationToken);
         events.Publish(new ManagerEvent(ManagerEventKind.UserChanged, UserId: user.Id));
         return user;
