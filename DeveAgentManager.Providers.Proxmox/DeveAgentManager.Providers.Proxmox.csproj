@@ -9,9 +9,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Corsinvest.ProxmoxVE.Api" Version="9.2.3" />
-    <PackageReference Include="Corsinvest.ProxmoxVE.Api.Extension" Version="9.2.3" />
-    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.13" />
+    <PackageReference Include="Corsinvest.ProxmoxVE.Api" Version="9.2.5" />
+    <PackageReference Include="Corsinvest.ProxmoxVE.Api.Extension" Version="9.2.5" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.14" />
   </ItemGroup>
 
   <PropertyGroup>
