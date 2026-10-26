@@ -69,6 +69,7 @@ public class RunnerDesktopTests
 
     [Theory]
     [InlineData("runner-setup.sh")]
+    [InlineData("system-update.sh")]
     [InlineData("desktop-setup.sh")]
     [InlineData("desktop-shell.sh")]
     public void SetupScriptsHaveValidBashSyntax(string name)
@@ -80,6 +81,41 @@ public class RunnerDesktopTests
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
         Assert.True(process.ExitCode == 0, error);
+    }
+
+    [Fact]
+    public void SystemUpdate_ReadsThePackageListsThenUpgradesWithoutAskingAnything()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var folder = Path.Combine(Path.GetTempPath(), "dam-system-update-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var calls = Path.Combine(folder, "calls");
+            foreach (var (name, body) in new[]
+            {
+                ("sudo", "[ \"$1\" = -n ] && shift\nexec \"$@\"\n"),
+                ("apt-get", $"printf '%s %s|%s\\n' \"$DEBIAN_FRONTEND\" \"$NEEDRESTART_MODE\" \"$*\" >> '{calls}'\n"),
+            })
+            {
+                File.WriteAllText(Path.Combine(folder, name), "#!/bin/sh\n" + body);
+                File.SetUnixFileMode(Path.Combine(folder, name), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+
+            var start = new ProcessStartInfo("bash", ["-s"]) { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            start.Environment["PATH"] = folder + ":" + Environment.GetEnvironmentVariable("PATH");
+            using var process = Process.Start(start)!;
+            process.StandardInput.Write(RunnerSetupService.ReadResource("system-update.sh"));
+            process.StandardInput.Close();
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, output + error);
+            const string options = "-q -y -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold";
+            Assert.Equal([$"noninteractive l|{options} update", $"noninteractive l|{options} dist-upgrade"], File.ReadAllLines(calls));
+            Assert.Contains("==> Upgrading the system packages", output);
+        }
+        finally { Directory.Delete(folder, true); }
     }
 
     [Theory]

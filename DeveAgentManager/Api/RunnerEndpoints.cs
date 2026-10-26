@@ -49,6 +49,9 @@ internal static class RunnerEndpoints
             return Results.NoContent();
         }).RequireRunner(RunnerAccess.Manage);
 
+        runners.MapPost("/{runnerId:guid}/system/update", (Guid runnerId, RunnerService service, OperationNotifier notifier, CancellationToken ct) =>
+            ManagerApi.Track(runnerId, service, notifier, "update", () => service.UpdateSystemPackages(runnerId), ct)).RequireRunner(RunnerAccess.Manage);
+
         runners.MapPost("/{runnerId:guid}/harnesses/{harnessId}/update", (Guid runnerId, string harnessId, RunnerService service, OperationNotifier notifier, CancellationToken ct) =>
             ManagerApi.Track(runnerId, service, notifier, "update", () => service.UpdateHarness(runnerId, harnessId), ct)).RequireRunner(RunnerAccess.Manage);
 

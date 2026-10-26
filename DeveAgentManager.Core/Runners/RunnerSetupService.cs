@@ -33,6 +33,7 @@ public sealed partial class RunnerSetupService(
     public const int AgentToolsSetupVersion = 4;
 
     private static readonly Lazy<string> SetupScript = new(() => ReadResource("runner-setup.sh"));
+    private static readonly Lazy<string> SystemUpdateScript = new(() => ReadResource("system-update.sh"));
     private static readonly Lazy<string> AgentTools = new(() => ReadResource("dam-tools.py"));
 
     /// <summary>What <c>sha256sum</c> prints for the dam-tools this Manager installs.</summary>
@@ -81,7 +82,8 @@ public sealed partial class RunnerSetupService(
         log.Success($"Connected (host key {runner.HostKeyFingerprint})");
     }
 
-    public async Task RunAsync(Runner runner, IRunnerLog log, CancellationToken cancellationToken)
+    /// <param name="updateSystem">First update the system packages (Update all and Re-run setup; not a new Runner's first setup).</param>
+    public async Task RunAsync(Runner runner, IRunnerLog log, CancellationToken cancellationToken, bool updateSystem = false)
     {
         var profile = await settings.GetSetupProfileAsync(cancellationToken);
 
@@ -96,6 +98,11 @@ public sealed partial class RunnerSetupService(
         log.Step("Uploading setup files");
         await shell.UploadAsync(runner, "~/.deveagentmanager/agent-env.sh", BuildAgentEnv(runner.Kind == RunnerKind.Desktop), "600", cancellationToken);
         await shell.UploadAsync(runner, "~/.deveagentmanager/runner-setup.sh", SetupScript.Value, "700", cancellationToken);
+
+        if (updateSystem)
+        {
+            await UpdateSystemPackagesAsync(runner, log, cancellationToken);
+        }
 
         await RunScriptAsync(runner, log, "Base setup", "bash ~/.deveagentmanager/runner-setup.sh", TimeSpan.FromMinutes(30), cancellationToken);
         await passwords.ApplyAtSetupAsync(runner, log, cancellationToken);
@@ -204,6 +211,16 @@ public sealed partial class RunnerSetupService(
 
     public IRunnerTool GetTool(string toolId) =>
         _tools.GetValueOrDefault(toolId) ?? throw new ArgumentException($"Unknown tool '{toolId}'.");
+
+    /// <summary>
+    /// The latest versions of the Runner's Debian/Ubuntu packages: apt-get update and dist-upgrade, which may add or remove
+    /// packages and install a new kernel. Running agents keep running; the log says when the Runner needs a restart.
+    /// </summary>
+    public async Task UpdateSystemPackagesAsync(Runner runner, IRunnerLog log, CancellationToken cancellationToken = default)
+    {
+        await shell.UploadAsync(runner, "~/.deveagentmanager/system-update.sh", SystemUpdateScript.Value, "700", cancellationToken);
+        await RunScriptAsync(runner, log, "Updating the system packages", "bash ~/.deveagentmanager/system-update.sh", TimeSpan.FromMinutes(30), cancellationToken);
+    }
 
     /// <summary>Installs the latest version of a tool (its install script also updates) and refreshes the versions shown.</summary>
     public async Task UpdateToolAsync(Runner runner, string toolId, IRunnerLog log, CancellationToken cancellationToken = default)

@@ -43,7 +43,7 @@ async function mock(context) {
         const request = route.request();
         const path = new URL(request.url()).pathname;
         if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/build' || path === '/api/diagnostics/cpu') return route.continue();
-        if (request.method() === 'POST' && /^\/api\/runners\/[^/]+\/(start|stop|restart|setup)$/.test(path)) {
+        if (request.method() === 'POST' && /^\/api\/runners\/[^/]+\/(start|stop|restart|setup|system\/update)$/.test(path)) {
             posts.push(path.replace('/api/runners/', ''));
             return route.fulfill({ status: 202, body: '' });
         }
@@ -84,7 +84,7 @@ async function run(theme) {
     await tip.waitFor();
     assert.match(await tip.innerText(), /Shuts the VM down, which stops its 2 running agents\.[\s\S]*Hold for 3 seconds to confirm\./);
     await action(card('runner-01'), 'Update all').locator('button').hover();
-    await page.waitForFunction(() => /Re-runs the setup script/.test((document.querySelector('.help-tooltip.mud-popover-open') as HTMLElement)?.innerText ?? ''));
+    await page.waitForFunction(() => /Updates the system packages \(apt-get dist-upgrade\) and re-runs the setup script/.test((document.querySelector('.help-tooltip.mud-popover-open') as HTMLElement)?.innerText ?? ''));
 
     // A click: the hint, which fades again, and nothing happens.
     await press(stop);
@@ -139,6 +139,14 @@ async function run(theme) {
     await action(header, 'Stop').waitFor({ timeout: 60000 });
     assert.deepEqual((await header.locator('.hold-button button').allInnerTexts()), ['Stop', 'Restart', 'Update all']);
     await page.getByText('Same as Update all.').waitFor();
+    // Updating only the system packages is an operation of its own, confirmed in a dialog.
+    await page.locator('.operation', { hasText: 'Update system packages' }).getByRole('button', { name: 'Update', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByText(/apt-get update and apt-get dist-upgrade/).waitFor();
+    await dialog.getByRole('button', { name: 'Update', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    for (let i = 0; i < 50 && posts.at(-1) !== `${id(1)}/system/update`; i++) await page.waitForTimeout(100);
+    assert.deepEqual(posts.at(-1), `${id(1)}/system/update`);
     await action(header, 'Restart').locator('button').hover();
     await page.waitForFunction(() => /Shuts the VM down and starts it again, which stops its 2 running agents/.test((document.querySelector('.help-tooltip.mud-popover-open') as HTMLElement)?.innerText ?? ''));
     await press(action(header, 'Stop'), 3300);
@@ -190,7 +198,7 @@ try {
         await run(theme);
         await phone(theme);
     }
-    console.log(`Passed (${engine}): Runner Start/Stop, Restart and Update all on the cards and the Runner page need a 3-second hold; a click or an early release only shows the hint, which fades; mouse, keyboard and touch; help on hover; on screen on a phone; light and dark.`);
+    console.log(`Passed (${engine}): Runner Start/Stop, Restart and Update all on the cards and the Runner page need a 3-second hold, Update system packages asks first; a click or an early release only shows the hint, which fades; mouse, keyboard and touch; help on hover; on screen on a phone; light and dark.`);
 } finally {
     await browser.close();
 }

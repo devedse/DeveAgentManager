@@ -26,7 +26,7 @@
     }
     <HoldButton Text="Update all" ActiveText="Updating" Icon="@Icons.Material.Rounded.SystemUpdateAlt" Variant="Variant" Size="Size"
                 Disabled="@(Busy || Runner.State == RunnerState.Stopped)" Class="@UpdateClass"
-                Help="Re-runs the setup script: the latest harnesses and tools, the shared Setup Profile, and each person's git identity, GitHub token, environment and SSH keys. Running agents keep running; restart them to use the updates."
+                Help="Updates the system packages (apt-get dist-upgrade) and re-runs the setup script: the latest harnesses and tools, the shared Setup Profile, and each person's git identity, GitHub token, environment and SSH keys. Running agents keep running; restart them to use the updates."
                 OnConfirmed="() => RunAsync(() => Api.RerunSetupAsync(Runner.Id))" />
 }
 

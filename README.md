@@ -51,9 +51,11 @@ when you close the tab.
   page opens it in the Runner's home folder, an agent's terminal in the agent's folder. It opens inside the Portal,
   with buttons for a new tab and full screen. Public editors use separate Runner hostnames on port `8080`; local IP access can use port `8081`, see below.
 - A Runner's **Activity** tab lists what ran on it (setup, starts, installs, updates), how long it took and how it ended.
-- On a Runner's page, **Re-run setup** runs the whole setup again, and **Update pi** only installs the latest pi,
-  updates its packages and applies Manager settings → pi. Every step is idempotent, so both are safe to repeat. Running agents
-  keep running and use the new versions after a restart.
+- On a Runner's page, **Re-run setup** updates the system packages (`apt-get update` and `apt-get dist-upgrade`) and
+  runs the whole setup again, **Update system packages** only updates the system packages, and **Update pi** only
+  installs the latest pi, updates its packages and applies Manager settings → pi. Every step is idempotent, so all are
+  safe to repeat. Running agents keep running and use the new versions after a restart. When an update needs the Runner
+  restarted, such as a new kernel, the setup log says so. A new Runner's first setup doesn't upgrade its packages.
 - Each Runner card on the Runners page and the top of a Runner's page have **Start** or **Stop**, **Restart** (stop,
   then start; running agents stop as with Stop) and **Update all** (the same as Re-run setup). Each is held for 3
   seconds to confirm instead of asking in a dialog; hovering one says what it does.

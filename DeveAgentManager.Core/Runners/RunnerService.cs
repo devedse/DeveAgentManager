@@ -207,11 +207,24 @@ public sealed partial class RunnerService(
         await BringOnlineAsync(op, provider, runSetup: op.Runner.SetupVersion is null, cancellation);
     });
 
+    /// <summary>Update all: the system packages, then the whole setup again.</summary>
     public void RerunSetup(Guid runnerId) => StartOperation(runnerId, "Setting up", async (op, cancellation) =>
     {
         var provider = GetProvider(op.Runner);
-        await BringOnlineAsync(op, provider, runSetup: true, cancellation);
+        await BringOnlineAsync(op, provider, runSetup: true, cancellation, updateSystem: true);
     });
+
+    /// <summary>
+    /// Updates the system packages (apt-get dist-upgrade) without the rest of the setup. The Runner stays usable and
+    /// running agents keep running. Returns the error, or null when it worked.
+    /// </summary>
+    public Task<string?> UpdateSystemPackages(Guid runnerId) =>
+        StartOperation(runnerId, "Updating system packages", async (op, cancellation) =>
+        {
+            RequireReady(op.Runner);
+            await setup.UpdateSystemPackagesAsync(op.Runner, op.Log, cancellation);
+            op.Log.Success("System packages updated");
+        }, markFailed: false);
 
     /// <summary>
     /// Updates one harness without the rest of the setup: installs its latest version, updates its packages, then applies
@@ -447,7 +460,7 @@ public sealed partial class RunnerService(
         events.RunnerChanged(runner.Id);
     }
 
-    private async Task BringOnlineAsync(RunnerOperation op, IRunnerProvider provider, bool runSetup, CancellationToken cancellationToken)
+    private async Task BringOnlineAsync(RunnerOperation op, IRunnerProvider provider, bool runSetup, CancellationToken cancellationToken, bool updateSystem = false)
     {
         var machine = op.Runner.ToMachine();
         if (provider.Capabilities.CanStartStop)
@@ -472,7 +485,7 @@ public sealed partial class RunnerService(
         if (runSetup)
         {
             await op.SetStateAsync(RunnerState.SettingUp, "Installing tools and harnesses");
-            await setup.RunAsync(op.Runner, op.Log, cancellationToken);
+            await setup.RunAsync(op.Runner, op.Log, cancellationToken, updateSystem);
             await op.SaveAsync();
         }
 
