@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+const { chromium } = (await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright') as typeof import('playwright'));
 
 // Run against an isolated preview Manager; these checks change its pet settings.
 const base = process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5179';
@@ -9,6 +9,9 @@ const errors: string[] = [];
 async function login(context) {
     const p = await context.newPage();
     p.on('pageerror', e => errors.push(e.message));
+    p.on('console', message => {
+        if (message.type() === 'error' && message.text().includes('Unhandled exception')) errors.push(message.text());
+    });
     await p.goto(base + '/login');
     await p.locator('input[name="username"]').fill('admin');
     await p.locator('input[name="password"]').fill(password);

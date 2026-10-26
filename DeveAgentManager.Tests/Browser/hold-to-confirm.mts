@@ -73,7 +73,11 @@ async function run(theme) {
 
     await page.goto(base + '/runners');
     const stop = action(card('runner-01'), 'Stop');
-    await stop.waitFor({ timeout: 60000 });
+    await stop.waitFor({ timeout: 60000 }).catch(async error => {
+        await page.screenshot({ path: '/tmp/dam-hold-start-failure.png' });
+        console.log('Runner action startup:', theme, await page.locator('.runner-card').allInnerTexts(), errors);
+        throw error;
+    });
     assert.deepEqual(await card('runner-01').locator('.runner-card-actions button').allInnerTexts(), ['Stop', 'Restart', 'Update all']);
     assert.deepEqual(await card('runner-02').locator('.runner-card-actions button').allInnerTexts(), ['Start', 'Restart', 'Update all']);
     assert.ok(await action(card('runner-02'), 'Restart').locator('button').isDisabled(), 'Stopped: no restart');

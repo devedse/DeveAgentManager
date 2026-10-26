@@ -40,7 +40,7 @@ try {
             checks++;
             return route.fulfill({ status: fail ? 503 : 200, json: fail ? { detail: 'Test-only restart' } : deployed, headers: { 'Cache-Control': 'no-store' } });
         }
-        if (path === '/api/me' || path === '/api/me/settings/screen-awake' || path === '/api/diagnostics/cpu') return route.continue();
+        if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/diagnostics/cpu') return route.continue();
         return route.fulfill({ json: path === '/api/info' ? info : path === `/api/agents/${id}` ? agent
             : path === '/api/agents' ? [agent] : path.endsWith('/limit/automatic') ? { enabled: false, sent: 0 }
             : path.endsWith('/limit') || path.endsWith('/session') ? null : [] });

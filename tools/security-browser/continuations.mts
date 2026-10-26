@@ -61,6 +61,8 @@ if (suite === 'all' || suite === 'portal') {
 if (suite === 'all' || suite === 'interop') {
     await runSuite(['app-update.mjs', 'hold-to-confirm.mjs', 'runner-updates.mjs', 'touch-input.mjs', 'terminal-toolbar.mjs', 'file-paste.mjs',
         'terminal-copy.mjs', 'screen-awake.mjs', 'hidden-tabs.mjs', 'live-reconnect.mjs', 'shared-images.mjs']);
+    // Pet controls change global settings; keep their database separate from the other regressions.
+    await runSuite(['pets.mjs']);
 }
 // Its startup/uptime assertions require a fresh host, not the shared host after earlier regressions.
 if (suite === 'all' || suite === 'cpu-startup') {

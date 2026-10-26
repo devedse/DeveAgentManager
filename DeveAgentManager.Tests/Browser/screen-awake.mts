@@ -72,7 +72,7 @@ try {
             failNextSave = false;
             return route.fulfill({ status: 500, json: { message: 'Test-only save failure' } });
         }
-        if (path === '/api/me' || path === preferencePath || path === '/api/diagnostics/cpu') return route.continue();
+        if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/diagnostics/cpu') return route.continue();
         const body = path === '/api/info' ? info : path === `/api/agents/${id}` ? agent
             : path === `/api/agents/${otherId}` ? otherAgent : path === '/api/agents' ? [agent, otherAgent] : path.endsWith('/limit/automatic') ? { enabled: false, sent: 0 }
             : path.endsWith('/limit') || path.endsWith('/session') ? null : [];
