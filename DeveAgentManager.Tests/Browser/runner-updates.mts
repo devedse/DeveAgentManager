@@ -89,14 +89,23 @@ try {
         const card = page.locator('.runner-card').first();
         await card.locator('.runner-update-count').first().waitFor({ timeout: 60000 });
         await page.screenshot({ path: `/tmp/dam-runner-updates-cards-${theme}.png`, fullPage: true });
-        await page.setViewportSize({ width: 390, height: 844 });
-        await card.scrollIntoViewIfNeeded();
-        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Runner counts fit a phone');
         const buttons = card.locator('.runner-card-actions button');
-        for (let i = 0; i < await buttons.count(); i++) {
-            const box = await buttons.nth(i).boundingBox();
-            assert.ok(box.x >= 0 && box.x + box.width <= 390, 'Each hold button stays on screen');
+        for (const width of [320, 360, 390, 768, 1400]) {
+            await page.setViewportSize({ width, height: 844 });
+            await page.waitForTimeout(500); // Allow the responsive drawer and card widths to settle.
+            await card.scrollIntoViewIfNeeded();
+            assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}px: no horizontal scroll`);
+            const labels = [];
+            for (let i = 0; i < await buttons.count(); i++) {
+                const box = await buttons.nth(i).boundingBox();
+                assert.ok(box.x >= 0 && box.x + box.width <= width, `${width}px: each hold button stays on screen`);
+                const label = await buttons.nth(i).getByText(/^(Stop|Restart|Update all)$/).boundingBox();
+                labels.push(label.y + label.height / 2);
+            }
+            assert.ok(Math.max(...labels) - Math.min(...labels) <= 2, `${width}px: Stop, Restart and Update all share a baseline (${labels})`);
         }
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.waitForTimeout(500);
         await page.screenshot({ path: `/tmp/dam-runner-updates-phone-${theme}.png`, fullPage: true });
         await page.goto(base + `/runners/${id}`);
         await status.getByText('3 tool updates · 6 system updates', { exact: true }).waitFor({ timeout: 60000 });
