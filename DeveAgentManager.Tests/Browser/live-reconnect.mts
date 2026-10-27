@@ -64,7 +64,9 @@ try {
     await page.locator('input[name="password"]').fill(process.env.DAM_TEST_PASSWORD ?? 'preview-test-only');
     await Promise.all([page.waitForURL(base + '/'), page.locator('button[type="submit"]').click()]);
     await until(() => sockets.length === 1, 30000, 'The live connection did not open');
-    await sleep(1000);
+    // A socket is counted when the page creates it; the connection is up once the rendered layout drops the badge.
+    await page.locator('.app-bar').waitFor();
+    await page.locator('.live-offline').waitFor({ state: 'detached', timeout: 30000 });
     const badge = () => page.evaluate(() => ({ ...(window as any).__badge }));
     const lose = () => { const lost = Date.now(); socket.close(); return lost; };
     const failuresSince = since => negotiations.filter(n => n.at >= since && !n.ok);
@@ -74,7 +76,7 @@ try {
     let before = await badge();
     let lost = lose();
     await until(() => sockets.length === 2, 5000, 'A lost connection did not reconnect');
-    await sleep(300);
+    await page.locator('.live-offline').waitFor({ state: 'detached', timeout: 5000 });
     let after = await badge();
     assert.equal(after.shown, before.shown + 1, 'The lost connection was noticed');
     assert.equal(await page.locator('.live-offline').count(), 0, 'The badge is removed after reconnecting');
