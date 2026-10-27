@@ -181,8 +181,9 @@ public sealed class SessionLockTests
         public TaskCompletionSource Writing { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public ManualResetEventSlim Release { get; } = new();
         private string Home => _ssh.Root + "/home";
-        private string Source => CodexPath(Agent.HarnessSessionId);
-        public string CodexPath(string id) => new CodexSessionFormat().GetPath(id, Agent.WorkingDirectory, DateTime.UtcNow).Replace("~/", Home + "/", StringComparison.Ordinal);
+        // Where the agent's history was uploaded: a Codex path holds the second it was written.
+        private string Source { get; set; } = default!;
+        public string CodexPath(string id) => Assert.Single(NativeHistoryTransportTests.CodexHistories(Home, id));
 
         public static async Task<Rig> StartAsync()
         {
@@ -217,6 +218,7 @@ public sealed class SessionLockTests
             Directory.CreateDirectory(rig.Agent.WorkingDirectory);
             Directory.CreateDirectory(rig.Home + "/.deveagentmanager");
             await File.WriteAllTextAsync(rig.Home + "/.deveagentmanager/env.sh", "# test-only environment\n", Ct);
+            rig.Source = new CodexSessionFormat().GetPath(rig.Agent.HarnessSessionId, rig.Agent.WorkingDirectory, DateTime.UtcNow).Replace("~/", rig.Home + "/", StringComparison.Ordinal);
             await rig._ssh.Shell.UploadAtomicAsync(rig.Runner, rig.Source, SessionMigrationTests.CodexWithEmptyToolText, Ct);
             await rig.Sessions.AttachToAgentAsync(rig.Runner, rig.Agent, null, Ct);
             await rig.Sessions.SyncRunnerAsync(rig.Runner, Ct);

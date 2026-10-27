@@ -285,7 +285,7 @@ public class NativeHistoryTransportTests
             await Assert.ThrowsAsync<SessionMigrationException>(() => broken.MoveToHarnessAsync(runner, agent, "codex", "rejected-session", Ct));
         Assert.Equal(beforeFailure, (await service.LoadAsync(saved.Id, Ct)).ToJson());
         Assert.Equal("claude", (await service.GetAsync(saved.Id, Ct))!.HarnessId);
-        Assert.False(File.Exists(formats.Single(f => f.HarnessId == "codex").GetPath("rejected-session", agent.WorkingDirectory, DateTime.UtcNow)));
+        Assert.Empty(CodexHistories(fixture.Root + "/home", "rejected-session"));
         using (await service.LockAsync(Ct))
             await service.MoveToHarnessAsync(runner, agent, "codex", "moved-session", Ct);
         // Backups are the exact native records, copied rather than loaded: one per attempt, also the rejected one.
@@ -422,7 +422,7 @@ public class NativeHistoryTransportTests
         var expectedBack = SessionMigration.Prepare(synced, "Claude Code", "Codex", "codex");
         using (await service.LockAsync(Ct))
             await service.MoveToHarnessAsync(runner, agent, "codex", "empty-output-back", Ct);
-        var returnedPath = formats[0].GetPath("empty-output-back", agent.WorkingDirectory, DateTime.UtcNow);
+        var returnedPath = Assert.Single(CodexHistories(fixture.Root + "/home", "empty-output-back"));
         SessionMigration.ValidateWritten(expectedBack, new CodexSessionFormat().Read(await File.ReadAllTextAsync(returnedPath, Ct)));
         Assert.Equal("codex", (await service.GetAsync(stored.Id, Ct))!.HarnessId);
     }
@@ -475,6 +475,13 @@ public class NativeHistoryTransportTests
             await mutate();
         }
     }
+
+    /// <summary>
+    /// The Codex histories of <paramref name="sessionId"/> under <paramref name="home"/>. Their path holds the second they were
+    /// written, so a test finds a history the Manager wrote rather than computing its path again.
+    /// </summary>
+    internal static string[] CodexHistories(string home, string sessionId) => Directory.Exists(home + "/.codex/sessions")
+        ? Directory.GetFiles(home + "/.codex/sessions", $"rollout-*-{sessionId}.jsonl", SearchOption.AllDirectories) : [];
 
     // The fixture overrides shell HOME; SFTP still starts in the operating system user's home.
     /// <summary>A format whose home folder is the fixture's. <paramref name="beforeWrite"/> runs as a conversion writes.</summary>
