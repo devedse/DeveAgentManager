@@ -3,7 +3,7 @@ import type { PetRenderer, PetArtModule } from "./pets/types.js";
 interface PetSnapshot {
     userId: string; name: string; species: string; stage: number; stageProgress: number;
     happiness: number; size: number; reducedMotion: boolean; revision: number; reaction: string; reactionAt: string | null;
-    generation: number; needsAdoption: boolean;
+    generation: number; needsAdoption: boolean; enabled: boolean; snoozedUntil: string | null;
 }
 interface DotNetPet { invokeMethodAsync(method: "Pet" | "OpenMenu" | "CloseMenu" | "Dismiss"): Promise<void>; }
 interface Host {
@@ -13,6 +13,7 @@ interface Host {
     stage: number; stageAt: number; targetStage?: number; revision?: number; key: string; loadVersion: number;
     gaze: { x: number; y: number }; x: number; y: number;
     threatened: boolean; nextIdleAt: number; retiringAt?: number; retiringReduced?: boolean; requestedRenderer?: string; adopting?: boolean;
+    departure?: { at: number; expected: string; resolve: () => void };
 }
 const hosts = new WeakMap<HTMLElement, Host>();
 const artModules = new Map<string, Promise<PetArtModule>>();
@@ -65,7 +66,28 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
     }, { passive: true, signal });
     window.addEventListener("resize", () => clamp(h), { signal });
     window.visualViewport?.addEventListener("resize", () => clamp(h), { signal });
-    document.addEventListener("visibilitychange", () => { h.last = 0; if (document.hidden) { cancelAnimationFrame(h.frame); h.frame = 0; } else start(h); }, { signal });
+    document.addEventListener("visibilitychange", () => { h.last = 0; if (document.hidden) { finishDeparture(h, true); cancelAnimationFrame(h.frame); h.frame = 0; } else start(h); }, { signal });
+}
+function departureKey(snapshot: PetSnapshot): string {
+    return JSON.stringify([snapshot.generation, snapshot.species, snapshot.enabled, snapshot.snoozedUntil]);
+}
+function finishDeparture(h: Host, hide = false): void {
+    if (!h.departure) return;
+    const { resolve } = h.departure; h.departure = undefined;
+    if (hide) { h.root.hidden = true; h.visible = false; }
+    h.mount.style.opacity = ""; delete h.root.dataset.departing;
+    h.motion = "idle"; h.motionAt = h.time;
+    resolve();
+}
+export function depart(root: HTMLElement, expected: PetSnapshot): Promise<void> {
+    const h = hosts.get(root);
+    if (!h || root.hidden || !h.renderer || document.hidden) return Promise.resolve();
+    finishDeparture(h);
+    return new Promise(resolve => {
+        h.departure = { at: h.time, expected: departureKey(expected), resolve };
+        h.targetStage = undefined; root.dataset.departing = "true";
+        start(h);
+    });
 }
 function clamp(h: Host): void {
     const viewport = window.visualViewport;
@@ -77,6 +99,7 @@ function clamp(h: Host): void {
 export async function update(root: HTMLElement, snapshot: PetSnapshot, rendererId: string, visible: boolean, threatened = false): Promise<void> {
     const h = hosts.get(root); if (!h) return;
     const previous = h.snapshot;
+    if (h.departure && (!visible || departureKey(snapshot) !== h.departure.expected)) finishDeparture(h);
     h.threatened = threatened; h.requestedRenderer = rendererId;
     if (previous && previous.generation !== snapshot.generation) {
         if (!previous.needsAdoption && snapshot.needsAdoption && h.renderer && visible) {
@@ -102,7 +125,7 @@ export async function update(root: HTMLElement, snapshot: PetSnapshot, rendererI
         if (!menu.dataset.focused) { menu.dataset.focused = "true"; menu.querySelector<HTMLElement>('[role="menuitem"]')?.focus(); }
     }
     if (!visible) { ++h.loadVersion; h.pending = undefined; cancelAnimationFrame(h.frame); h.frame = 0; h.last = 0; return; }
-    if (h.retiringAt !== undefined) { start(h); return; }
+    if (h.retiringAt !== undefined || h.departure) { start(h); return; }
     if (h.species !== rendererId) {
         if (h.pending === rendererId) return;
         h.pending = rendererId; const version = ++h.loadVersion;
@@ -147,6 +170,19 @@ function start(h: Host): void {
         h.frame = 0; if (!h.visible || document.hidden || h.abort.signal.aborted) return;
         const reduced = h.snapshot!.reducedMotion || matchMedia("(prefers-reduced-motion: reduce)").matches;
         if (h.last) h.time += Math.min(.05, (timestamp - h.last) / 1000); h.last = timestamp;
+        if (h.departure) {
+            const elapsed = h.time - h.departure.at;
+            const cry = h.snapshot!.needsAdoption ? 0 : reduced ? .3 : 1;
+            const sleep = h.snapshot!.needsAdoption ? 0 : reduced ? .4 : 1.3, fade = reduced ? .2 : .8;
+            const motion = elapsed < cry ? "sad" : "sleep";
+            h.root.dataset.motion = motion;
+            h.mount.style.opacity = String(Math.max(0, 1 - Math.max(0, elapsed - cry - sleep) / fade));
+            h.renderer!.pose({ time: reduced ? 0 : h.time, motion, elapsed: reduced ? .8 : motion === "sad" ? elapsed : elapsed - cry,
+                gaze: { x: 0, y: 0 }, animate: !reduced, showRig: false, progress: h.snapshot!.stageProgress, transitioning: false });
+            if (elapsed >= cry + sleep + fade) finishDeparture(h, true);
+            else h.frame = requestAnimationFrame(draw);
+            return;
+        }
         if (h.retiringAt !== undefined) {
             const elapsed = h.time - h.retiringAt, sleep = h.retiringReduced ? .6 : 1.7, fade = h.retiringReduced ? .2 : 1;
             h.mount.style.opacity = String(Math.max(0, 1 - Math.max(0, elapsed - sleep) / fade));
@@ -177,5 +213,6 @@ function start(h: Host): void {
 }
 export function dispose(root: HTMLElement): void {
     const h = hosts.get(root); if (!h) return;
+    finishDeparture(h);
     h.abort.abort(); ++h.loadVersion; cancelAnimationFrame(h.frame); h.renderer?.dispose?.(); hosts.delete(root);
 }

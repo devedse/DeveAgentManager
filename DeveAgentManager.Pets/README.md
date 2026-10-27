@@ -131,7 +131,8 @@ mode may draw only one frame. Loading images after that frame can leave an other
 
 Support `idle`, `happy`, `wave`, `hop`, `peck`, `sleep`, `sad`, `surprised`, and `hatch`. The host occasionally chooses
 `peck`, `walk`, `wave` or `hop` during idle. `sad` also previews crying while hovering/focusing Kill Damagochi; `sleep`
-precedes the retirement fade. These are animation states, not a required number of image files: several
+precedes the retirement fade. Go away actions use `sad`, then `sleep`, then a shared fade, including drag-to-hide
+and indefinite hiding. Reduced motion uses still poses. These are animation states, not a required number of image files: several
 motions can reuse an expression with different movement. The host translates `working` into `idle` and `level` into
 `happy`. Affection uses `happy`, play uses `hop`, image uploads use `surprised`, and other uploads use `peck`.
 

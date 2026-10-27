@@ -4018,6 +4018,6 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .dam-pet-menu .dam-pet-xp{margin:6px 0}
 .dam-pet-menu .dam-pet-xp-labels span{font-size:12px}
 .dam-pet-kill{color:var(--dam-error);background:transparent;border:1px solid var(--dam-error);border-radius:8px;padding:10px 14px;cursor:pointer;font:inherit}
-.dam-pet-host[data-retiring] .dam-pet-body{pointer-events:none}
-.dam-pet-host[data-retiring] .dam-pet-name{visibility:hidden}
+.dam-pet-host[data-retiring] .dam-pet-body,.dam-pet-host[data-departing] .dam-pet-body{pointer-events:none}
+.dam-pet-host[data-retiring] .dam-pet-name,.dam-pet-host[data-departing] .dam-pet-name{visibility:hidden}
 @media(prefers-reduced-motion:reduce){.dam-pet-xp-fill{transition:none}}

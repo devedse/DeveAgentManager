@@ -11,6 +11,9 @@ Each person has one Damagochi across their agents and workspaces. The Damagochi 
 layouts, so internal navigation preserves its renderer. My settings → Damagochi controls the Damagochi type, name, size and
 reduced movement. The context menu offers affection, play, snooze and indefinite hiding. Dragging saves a position
 per user in that browser; keyboard arrows move it too. Shift+F10 opens its menu. A touch hold opens the same menu.
+All Go away durations (5, 15 and 60 minutes), drag-to-hide and indefinite hiding play a short cry, then sleep and
+fade. The request is saved before animation starts, so the original snooze deadline is preserved. Waking during
+the farewell cancels it. Reduced motion uses still expressions and a shorter fade; an unchosen egg simply fades.
 The context menu includes level XP, Damagochi lifetime tokens and a separate blue Account usage section.
 Enabled accounts without a Damagochi show an unchosen egg
 with a question mark and a “Choose Damagochi & name” action. Species and name start empty. Choosing both hatches a level-1 Damagochi.

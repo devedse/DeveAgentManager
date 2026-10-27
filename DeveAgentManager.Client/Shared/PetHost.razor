@@ -41,10 +41,10 @@
     private ElementReference _host, _mount;
     private IJSObjectReference? _module;
     private DotNetObjectReference<PetHost>? _self;
-    private bool _menu, _disposed;
+    private bool _menu, _disposed, _departing;
     private string? _error;
     private PeriodicTimer? _timer;
-    private bool Visible => Pets.State is { Options.Enabled: true, Pet.Enabled: true } s && (s.Pet.SnoozedUntil is null || s.Pet.SnoozedUntil <= DateTime.UtcNow);
+    private bool Visible => Pets.State is { Options.Enabled: true } s && (_departing || s.Pet.Enabled && (s.Pet.SnoozedUntil is null || s.Pet.SnoozedUntil <= DateTime.UtcNow));
     protected override void OnInitialized() => Pets.Changed += OnChanged;
     protected override async Task OnAfterRenderAsync(bool first)
     {
@@ -62,22 +62,33 @@
     }
     private async Task TickAsync() { try { while (_timer is not null && await _timer.WaitForNextTickAsync()) await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { } }
     private void OnChanged() { if (!_disposed) _ = InvokeAsync(StateHasChanged); }
-    [JSInvokable] public Task OpenMenu() { _menu = !_menu; return InvokeAsync(StateHasChanged); }
+    [JSInvokable] public Task OpenMenu() { if (!_departing) _menu = !_menu; return InvokeAsync(StateHasChanged); }
     [JSInvokable] public Task CloseMenu() { _menu = false; return InvokeAsync(StateHasChanged); }
     [JSInvokable] public Task Pet() {
+        if (_departing) return Task.CompletedTask;
         if (Pets.State?.Pet.NeedsAdoption == true) { Navigation.NavigateTo("settings?tab=damagochi"); return Task.CompletedTask; }
         return Action("pet");
     }
     [JSInvokable] public Task Dismiss() => Snooze(5);
     private async Task Action(string action) {
+        if (action == "hide") { await GoAway(() => Api.PetActionAsync(action)); return; }
         try { await Api.PetActionAsync(action); _menu = false; _error = null; await Pets.ReloadAsync(); }
         catch (Exception ex) when (ex is ApiException or HttpRequestException) { _error = ex.Message; _menu = true; }
         await InvokeAsync(StateHasChanged);
     }
-    private async Task Snooze(int minutes) {
-        try { await Api.SnoozePetAsync(minutes); _menu = false; _error = null; await Pets.ReloadAsync(); }
-        catch (Exception ex) when (ex is ApiException or HttpRequestException) { _error = ex.Message; _menu = true; }
+    private Task Snooze(int minutes) => GoAway(() => Api.SnoozePetAsync(minutes));
+    private async Task GoAway(Func<Task> save) {
+        if (_departing) return;
+        _departing = true; _menu = false; _error = null;
         await InvokeAsync(StateHasChanged);
+        try {
+            await save(); await Pets.ReloadAsync();
+            if (!_disposed && _module is not null && Pets.State is { } state)
+                await _module.InvokeVoidAsync("depart", _host, state.Pet);
+        }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException) { _error = ex.Message; _menu = true; }
+        catch (JSDisconnectedException) { }
+        finally { _departing = false; if (!_disposed) await InvokeAsync(StateHasChanged); }
     }
     public async ValueTask DisposeAsync() {
         _disposed = true; Pets.Changed -= OnChanged; _timer?.Dispose();
