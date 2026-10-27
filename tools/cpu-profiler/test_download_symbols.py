@@ -76,6 +76,18 @@ class DownloadSymbolsTests(unittest.TestCase):
         self.identity.assert_not_called()
         self.check_preserved()
 
+    def test_retries_403_from_redirected_storage_but_not_from_symbol_server(self):
+        storage = "https://storage.example.com/test.debug?sig=expired"
+        responses = [urllib.error.HTTPError(storage, 403, "Server failed to authenticate", {}, None), Response(b"complete symbols")]
+        with patch.object(symbols.urllib.request, "urlopen", side_effect=responses) as request:
+            symbols.download_symbols(URL, self.output, "expected")
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(self.output.read_bytes(), b"complete symbols")
+        with patch.object(symbols.urllib.request, "urlopen", side_effect=urllib.error.HTTPError(URL, 403, "Forbidden", {}, None)) as request:
+            with self.assertRaises(urllib.error.HTTPError):
+                symbols.download_symbols(URL, self.output, "expected")
+        self.assertEqual(request.call_count, 1)
+
     def test_identity_mismatch_fails_without_retry_or_replacing_good_file(self):
         self.identity.return_value = "wrong"
         with patch.object(symbols.urllib.request, "urlopen", return_value=Response(b"wrong symbols")) as request:

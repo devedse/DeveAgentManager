@@ -40,7 +40,9 @@ def download_symbols(url, output, identity):
             return
         except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.IncompleteRead) as error:
             # A missing file or invalid identity needs a fix; retry only transient transport failures.
-            if isinstance(error, urllib.error.HTTPError) and error.code not in (408, 429, 500, 502, 503, 504):
+            # msdl redirects to signed storage URLs that occasionally reject their own signature; a new redirect fixes it.
+            if isinstance(error, urllib.error.HTTPError) and error.code not in (408, 429, 500, 502, 503, 504) \
+                    and not (error.code == 403 and error.url != url):
                 raise
             if attempt == 3:
                 raise
