@@ -20,10 +20,18 @@ page open and reloaded it after every restart, so the Manager was killed repeate
 - **Fewer reloads.** The conversation page refreshes its facts on every change of its agent (status, activity), but
   fetches the conversation again only when the conversation changed (its sync time, message count, harness or update
   time).
-- **Exports and harness switches** load the conversation once and write the result to a temporary file in
-  `tmp/sessions` (line by line for Claude, Codex and pi), never as one string. A conversion is validated by reading that
-  file back, an export is streamed from it and deleted once sent, and a switch streams it to the Runner and installs it
-  only after its checksum matches.
+- **Exports** load the conversation once and write the result to a temporary file in `tmp/sessions` (line by line for
+  Claude, Codex and pi), never as one string; it is streamed from there and deleted once sent.
+- **Harness switches** never load the whole conversation from Claude Code, Codex or pi. The conversion reads the saved
+  native records one at a time, in three passes: the active branch, the size of each part of the conversation, and the
+  content of the parts that fit the continuation's budget. Only compact metadata and the kept parts are held. A 1 GB
+  Claude history (138,000 records) that needed 2.2 GB as a whole now converts in about 11 s with a peak of about
+  300 MB, with exactly the same result. The backup is a copy of the native records, not a loaded conversation. The
+  converted history is written to a temporary file, read back for validation and streamed to the Runner, which installs
+  it only after its checksum matches. Grok (whose records complete earlier messages) and histories whose active branch
+  doesn't run in file order are still loaded whole, one at a time.
+- **One history doesn't hold up others.** Each saved history has its own lock, so reading or syncing a large one never
+  delays the others.
 
 ## Logged large operations
 

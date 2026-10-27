@@ -264,6 +264,51 @@ public class NativeHistoryStoreTests
             actual.ActivePath().Where(e => e.Kind != DeveEntryKind.Native).Select(e => e.Id));
     }
 
+    [Fact]
+    public async Task SnapshotsKeepTheirCommittedBytesWhileSyncsAppendAndRebuild()
+    {
+        using var rig = new Rig("claude");
+        var lines = Sample("claude").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var first = lines[0] + "\n";
+        await rig.Sync(first);
+        using var snapshot = (await rig.Store.OpenAsync(rig.Id, Ct))!;
+        Assert.Equal(("claude", (long)Encoding.UTF8.GetByteCount(first)), (snapshot.Harness, snapshot.Bytes));
+        string Read() { using var reader = new StreamReader(snapshot.Read()); return reader.ReadToEnd(); }
+        await rig.Sync(first + lines[1] + "\n"); // Appended to the same generation.
+        Assert.Equal(first, Read());
+        await rig.Sync(lines[1] + "\n"); // Rewritten: a new generation replaces the file.
+        Assert.Equal(first, Read()); // Each pass reads the same bytes again.
+        Assert.Null(await rig.Store.OpenAsync(Guid.NewGuid(), Ct));
+    }
+
+    [Fact]
+    public async Task ReadingOneHistoryHoldsUpOnlyItsOwnSyncs()
+    {
+        using var rig = new Rig("claude");
+        await rig.Sync(Sample("claude") + "\n");
+        var holding = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var load = rig.Store.LoadAsync(rig.Id, new Dictionary<string, ISessionFormat> { ["claude"] = rig.Format }, Ct,
+            async (_, _, _) => { holding.TrySetResult(); await release.Task; });
+        await holding.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        // Another conversation syncs meanwhile.
+        var other = Encoding.UTF8.GetBytes(Sample("claude") + "\n");
+        await rig.Store.SyncAsync(Guid.NewGuid(), rig.Format, "/other.jsonl", other.Length, "other", async (offset, _, output, ct) =>
+        {
+            await output.WriteAsync(other.AsMemory((int)offset), ct);
+            return new NativeHistoryTransfer(true);
+        }, Ct).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        // This one's own sync waits for the read.
+        var own = rig.Sync(Sample("claude") + "\n" + Sample("claude").Split('\n')[0] + "\n");
+        await Task.Delay(200, Ct);
+        Assert.False(own.IsCompleted);
+        release.SetResult();
+        await load;
+        await own.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+    }
+
     private sealed class Rig(string harness) : IDisposable
     {
         public string Folder { get; } = Directory.CreateTempSubdirectory("dam-native-history-").FullName;

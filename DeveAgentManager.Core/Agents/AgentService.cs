@@ -34,6 +34,8 @@ public sealed partial class AgentService(
     AuditLog? audit = null, Setup.UserSettingsStore? userSettings = null, DeveAgentManager.Core.Pets.PetService? pets = null)
 {
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
+    // Agents whose harness switch is converting their conversation without the session lock (SwitchAsync).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> _switching = new();
 
     public IReadOnlyCollection<IHarness> Harnesses => _harnesses.Values;
 
@@ -214,66 +216,120 @@ public sealed partial class AgentService(
     {
         var target = GetHarness(harnessId);
         await RequireOwnLoginAsync(actor, agentId, target, accountId, cancellationToken);
-        using var lease = await sessions.LockAsync(cancellationToken);
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
-        RequireNotMoving(agent);
-        var runner = RequireReady(agent.Runner!);
-        if (!runner.HarnessIds.Contains(harnessId))
-        {
-            throw new InvalidOperationException($"{target.DisplayName} is not installed on '{runner.Name}'. Install it first (Runner → Operations).");
-        }
+        // Converting a conversation runs without the session lock, so other agents keep working; actions on this agent
+        // wait for the switch (RequireNotMoving), and the state monitor leaves it alone.
+        if (!_switching.TryAdd(agentId, true)) throw new InvalidOperationException("This agent is already switching. Wait for it to finish.");
+        try { await SwitchStepsAsync(actor, agentId, target, accountId, cancellationToken); }
+        finally { _switching.TryRemove(agentId, out _); }
+    }
 
-        var changesHarness = harnessId != agent.HarnessId;
-        if (!changesHarness && accountId == agent.AccountId && !agent.LoginBlocked)
-        {
-            return;
-        }
-
-        logger.LogInformation("Switching agent {Agent} from {From} to {To} (account {Account})", agent.Name, agent.HarnessId, harnessId, accountId);
+    private async Task SwitchStepsAsync(CurrentUser actor, Guid agentId, IHarness target, Guid? accountId, CancellationToken cancellationToken)
+    {
+        var harnessId = target.Id;
+        var stopping = false;
+        SessionService.HarnessMove? move = null;
         try
         {
-            (await shell.RunAsync(runner, BuildStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), cancellationToken))
-                .EnsureSuccess("Stopping the harness");
-
-            if (changesHarness)
+            // 1. Under the session lock: stop the harness and take its latest history. Once stopping, the switch finishes or
+            // fails by itself (CancellationToken.None): a closed tab or dropped request must not leave it halfway.
+            Runner runner;
+            string workingDirectory, sessionId;
+            using (await sessions.LockAsync(cancellationToken))
             {
+                await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+                var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
+                if (MoveBlocksActions(agent)) throw new InvalidOperationException(MoveInProgress);
+                runner = RequireReady(agent.Runner!);
+                if (!runner.HarnessIds.Contains(harnessId))
+                {
+                    throw new InvalidOperationException($"{target.DisplayName} is not installed on '{runner.Name}'. Install it first (Runner → Operations).");
+                }
+
+                var changesHarness = harnessId != agent.HarnessId;
+                if (!changesHarness && accountId == agent.AccountId && !agent.LoginBlocked)
+                {
+                    return;
+                }
+
+                logger.LogInformation("Switching agent {Agent} from {From} to {To} (account {Account})", agent.Name, agent.HarnessId, harnessId, accountId);
+                stopping = true;
+                (await shell.RunAsync(runner, BuildStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), CancellationToken.None))
+                    .EnsureSuccess("Stopping the harness");
+                if (!changesHarness)
+                {
+                    // Another login of the same harness: the conversation simply resumes.
+                    await StartSwitchedAsync(db, runner, agent, actor, accountId, transferred: false);
+                    return;
+                }
+
                 // The latest messages first, then the conversation moves to the new harness's own format.
-                await sessions.SyncRunnerLockedAsync(runner, cancellationToken, agent.Id);
-                var sessionId = target.NewSessionId(Guid.NewGuid());
-                await sessions.MoveToHarnessAsync(runner, agent, harnessId, sessionId, cancellationToken);
-                agent.HarnessId = harnessId;
-                agent.HarnessSessionId = sessionId;
+                await sessions.SyncRunnerLockedAsync(runner, CancellationToken.None, agent.Id);
+                move = await sessions.BeginMoveToHarnessAsync(agent, CancellationToken.None);
+                workingDirectory = agent.WorkingDirectory;
+                sessionId = target.NewSessionId(Guid.NewGuid());
+                agent.State = AgentState.Starting;
+                agent.StateMessage = $"Switching to {target.DisplayName}…";
+                agent.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync(CancellationToken.None);
+                events.AgentChanged(runner.Id, agent.Id);
             }
 
-            agent.AccountId = accountId;
-            agent.LoginBlocked = false;
-            agent.LoginStopPending = false;
-            db.AgentLoginGrants.RemoveRange(await db.AgentLoginGrants.Where(g => g.AgentId == agent.Id).ToListAsync(cancellationToken));
-            AgentActivityTracker.Reset(agent);
-            agent.State = AgentState.Starting;
-            agent.UpdatedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(cancellationToken);
-            events.AgentChanged(runner.Id, agent.Id);
+            // 2. Without it: back up, convert and install the conversation under the new session id.
+            await sessions.ConvertMoveAsync(runner, move, harnessId, sessionId, workingDirectory, CancellationToken.None);
 
-            await LaunchAsync(runner, agent, restart: true, cancellationToken, transferred: changesHarness, loginActor: actor);
-            agent.State = AgentState.Running;
-            agent.StateMessage = null;
-            agent.ExitCode = null;
-            agent.UpdatedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(cancellationToken);
-            events.AgentChanged(runner.Id, agent.Id);
+            // 3. Under the lock again: record the move, unless the agent changed meanwhile, and start the new harness.
+            using (await sessions.LockAsync(CancellationToken.None))
+            {
+                await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
+                var agent = await db.Agents.Include(a => a.Runner).FirstOrDefaultAsync(a => a.Id == agentId, CancellationToken.None)
+                    ?? throw new InvalidOperationException("The agent was removed while its conversation was being converted.");
+                if (agent.RunnerId != runner.Id || agent.HarnessId != move.Stored.HarnessId || agent.HarnessSessionId != move.Stored.HarnessSessionId || MoveBlocksActions(agent))
+                    throw new InvalidOperationException("The agent changed while its conversation was being converted, so it was not switched.");
+                await sessions.CompleteMoveToHarnessAsync(agent, move, harnessId, sessionId, CancellationToken.None);
+                agent.HarnessId = harnessId;
+                agent.HarnessSessionId = sessionId;
+                await StartSwitchedAsync(db, RequireReady(agent.Runner!), agent, actor, accountId, transferred: true);
+            }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (stopping)
         {
             // Keep the selected native session available for an explicit Start; never retry a failed switch.
-            agent.State = AgentState.Error;
-            agent.StateMessage = ex.Message;
-            agent.UpdatedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(CancellationToken.None);
-            events.AgentChanged(runner.Id, agent.Id);
+            await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
+            if (await db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, CancellationToken.None) is { } agent)
+            {
+                agent.State = AgentState.Error;
+                agent.StateMessage = ex.Message;
+                agent.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync(CancellationToken.None);
+                events.AgentChanged(agent.RunnerId, agent.Id);
+            }
             throw;
         }
+        finally { move?.Dispose(); }
+    }
+
+    /// <summary>The last step of a switch: the new login and harness start (the caller holds the session lock).</summary>
+    private async Task StartSwitchedAsync(ManagerDbContext db, Runner runner, Agent agent, CurrentUser actor, Guid? accountId, bool transferred)
+    {
+        var ct = CancellationToken.None;
+        agent.AccountId = accountId;
+        agent.LoginBlocked = false;
+        agent.LoginStopPending = false;
+        db.AgentLoginGrants.RemoveRange(await db.AgentLoginGrants.Where(g => g.AgentId == agent.Id).ToListAsync(ct));
+        AgentActivityTracker.Reset(agent);
+        agent.State = AgentState.Starting;
+        agent.StateMessage = null;
+        agent.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        events.AgentChanged(runner.Id, agent.Id);
+
+        await LaunchAsync(runner, agent, restart: true, ct, transferred: transferred, loginActor: actor);
+        agent.State = AgentState.Running;
+        agent.StateMessage = null;
+        agent.ExitCode = null;
+        agent.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        events.AgentChanged(runner.Id, agent.Id);
     }
 
     private async Task RequireOwnLoginAsync(CurrentUser actor, Guid agentId, IHarness harness, Guid? accountId, CancellationToken cancellationToken)
@@ -407,6 +463,7 @@ public sealed partial class AgentService(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         if (agent.MoveJson is not null) throw new InvalidOperationException("Finish the agent move before deleting it.");
+        if (_switching.ContainsKey(agent.Id)) throw new InvalidOperationException(SwitchInProgress);
         if (agent.IsClone)
             throw new InvalidOperationException("Use Remove workspace: it checks the workspace's uncommitted and unpushed work before deleting its folder.");
         if (agent.ProjectId is { } projectId && await db.Agents.AnyAsync(a => a.ProjectId == projectId && a.Id != agent.Id, cancellationToken))
@@ -612,7 +669,7 @@ public sealed partial class AgentService(
         using var lease = await sessions.LockAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agents = await db.Agents.Where(a => a.RunnerId == runner.Id && a.State != AgentState.Moving).ToListAsync(cancellationToken);
-        agents.RemoveAll(MoveBlocksActions);
+        agents.RemoveAll(a => MoveBlocksActions(a) || _switching.ContainsKey(a.Id));
 
         var script = BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern)), captureScreens: true,
             nativeSessions: agents.ToDictionary(a => a.TmuxSession, a => new NativeActivityTarget(a.HarnessId, a.HarnessSessionId)));

@@ -288,7 +288,10 @@ public class NativeHistoryTransportTests
         Assert.False(File.Exists(formats.Single(f => f.HarnessId == "codex").GetPath("rejected-session", agent.WorkingDirectory, DateTime.UtcNow)));
         using (await service.LockAsync(Ct))
             await service.MoveToHarnessAsync(runner, agent, "codex", "moved-session", Ct);
-        Assert.Equal(2, Directory.GetFiles(options.SessionsDirectory, $"{saved.Id:N}.*.json").Length);
+        // Backups are the exact native records, copied rather than loaded: one per attempt, also the rejected one.
+        var backups = Directory.GetFiles(options.SessionsDirectory, $"{saved.Id:N}.*.claude.jsonl");
+        Assert.Equal(2, backups.Length);
+        foreach (var backup in backups) Assert.Equal(beforeFailure, new ClaudeSessionFormat().Read(await File.ReadAllTextAsync(backup, Ct)).ToJson());
         var moved = (await service.GetAsync(saved.Id, Ct))!;
         var movedPath = Directory.EnumerateFiles(fixture.Root + "/home/.codex/sessions", "rollout-*-moved-session.jsonl", SearchOption.AllDirectories).Single();
         var migrated = new CodexSessionFormat().Read(await File.ReadAllTextAsync(movedPath, Ct));
@@ -403,8 +406,8 @@ public class NativeHistoryTransportTests
         using (await service.LockAsync(Ct))
             await service.MoveToHarnessAsync(runner, agent, "claude", "empty-output-claude", Ct);
         Assert.Equal(SessionMigrationTests.CodexWithEmptyToolText, await File.ReadAllTextAsync(sourcePath, Ct));
-        var backup = Directory.GetFiles(options.SessionsDirectory, $"{stored.Id:N}.*.codex.json").Single();
-        Assert.Equal(source.ToJson(), DeveSession.FromJson(await File.ReadAllTextAsync(backup, Ct)).ToJson());
+        var backup = Directory.GetFiles(options.SessionsDirectory, $"{stored.Id:N}.*.codex.jsonl").Single();
+        Assert.Equal(SessionMigrationTests.CodexWithEmptyToolText, await File.ReadAllTextAsync(backup, Ct));
         var targetPath = formats[1].GetPath("empty-output-claude", agent.WorkingDirectory, DateTime.UtcNow);
         SessionMigration.ValidateWritten(expected, new ClaudeSessionFormat().Read(await File.ReadAllTextAsync(targetPath, Ct)));
         agent.HarnessId = "claude"; agent.HarnessSessionId = "empty-output-claude";
@@ -474,15 +477,17 @@ public class NativeHistoryTransportTests
     }
 
     // The fixture overrides shell HOME; SFTP still starts in the operating system user's home.
-    private sealed class RootedFormat(ISessionFormat inner, string home) : ISessionFormat
+    /// <summary>A format whose home folder is the fixture's. <paramref name="beforeWrite"/> runs as a conversion writes.</summary>
+    internal sealed class RootedFormat(ISessionFormat inner, string home, Action? beforeWrite = null) : ISessionFormat
     {
         public string HarnessId => inner.HarnessId;
         public string LocateCommand(string id) => inner.LocateCommand(id);
         public string GetPath(string id, string cwd, DateTime at) => inner.GetPath(id, cwd, at).Replace("~/", home + "/", StringComparison.Ordinal);
         public DeveSession Read(string content) => inner.Read(content);
         public DeveSession Read(TextReader reader) => inner.Read(reader);
-        public string Write(DeveSession session, string id, string cwd) => inner.Write(session, id, cwd);
+        public string Write(DeveSession session, string id, string cwd) { beforeWrite?.Invoke(); return inner.Write(session, id, cwd); }
         public bool SupportsIncrementalRead => inner.SupportsIncrementalRead;
+        public bool AppendsCompleteEntries => inner.AppendsCompleteEntries;
         public bool HasCompanionFiles => inner.HasCompanionFiles;
         public IReadOnlyList<SessionCompanionFile> CompanionFiles(DeveSession session) => inner.CompanionFiles(session);
         public IReadOnlyDictionary<string, string> WriteCompanionFiles(DeveSession session, string id, string cwd) => inner.WriteCompanionFiles(session, id, cwd);

@@ -34,6 +34,7 @@ public sealed class ClaudeSessionFormat : ISessionFormat
         new(workingDirectory.Select(c => char.IsAsciiLetterOrDigit(c) ? c : '-').ToArray());
 
     public bool SupportsIncrementalRead => true;
+    public bool AppendsCompleteEntries => true;
     public DeveSession Read(string content) { using var reader = new StringReader(content); return Read(reader); }
     public DeveSession Read(TextReader reader)
     {

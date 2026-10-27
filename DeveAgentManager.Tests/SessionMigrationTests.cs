@@ -102,6 +102,160 @@ public class SessionMigrationTests
         from target in new[] { "claude", "codex", "pi", "grok" }
         where source != target select new object[] { source, target };
 
+    // Converting record by record must give exactly what converting the loaded history gives: generated native histories
+    // with abandoned branches, images over the limits, broken and oversized tool exchanges, summaries and small budgets.
+    [Theory]
+    [MemberData(nameof(StreamingCases))]
+    public void StreamingConversionEqualsWholeConversion(string harness, int seed)
+    {
+        var (text, budget, images) = GeneratedCase(harness, seed);
+        var format = Format(harness);
+        var loaded = format.Read(text);
+        var target = harness == "claude" ? "codex" : "claude";
+        string Run(Func<DeveSession?> prepare)
+        {
+            try { return Normalized(prepare() ?? throw new InvalidOperationException("Not streamed.")); }
+            catch (InvalidOperationException e) { return "refused: " + e.Message; }
+        }
+        var whole = Run(() => SessionMigration.Prepare(format.Read(text), "From", "To", target, budget, images));
+        var streamed = Run(() => SessionMigration.Prepare(() => new StringReader(text), format, loaded.Title, "From", "To", target, budget, images));
+        Assert.Equal(whole, streamed);
+    }
+
+    public static IEnumerable<object[]> StreamingCases() =>
+        Enumerable.Range(1, 40).SelectMany(seed => new[] { new object[] { "claude", seed }, ["codex", seed] });
+
+    private static (string Text, int Budget, int Images) GeneratedCase(string harness, int seed)
+    {
+        var random = new Random(seed);
+        var text = harness == "claude" ? GeneratedClaude(random) : GeneratedCodex(random);
+        return (text, random.Next(2) == 0 ? SessionMigration.DefaultMaxCharacters : random.Next(2_000, 30_000), random.Next(0, 4));
+    }
+
+    [Fact]
+    public void GeneratedHistoriesCoverTheConversionCases()
+    {
+        var reasons = new HashSet<string>();
+        var (refused, branched) = (0, 0);
+        foreach (var (harness, seed) in StreamingCases().Select(c => ((string)c[0], (int)c[1])))
+        {
+            var (text, budget, images) = GeneratedCase(harness, seed);
+            var loaded = Format(harness).Read(text);
+            if (loaded.ActivePath().Count < loaded.Entries.Count(e => e.Kind != DeveEntryKind.Native)) branched++;
+            try { reasons.UnionWith(SessionMigration.Prepare(loaded, "From", "To", harness == "claude" ? "codex" : "claude", budget, images).Migration!.Issues.Select(i => i.Reason)); }
+            catch (InvalidOperationException) { refused++; }
+        }
+        Assert.Superset(new HashSet<string> { "context-budget", "image-limit", "incomplete-exchange", "unsupported-call", "orphan-result", "oversized-exchange" }, reasons);
+        Assert.InRange(refused, 1, 20);
+        Assert.True(branched > 0, "Some generated Claude histories have abandoned branches.");
+    }
+
+    [Fact]
+    public void StreamingFallsBackWhenEntriesChangeLaterOrTheBranchIsOutOfFileOrder()
+    {
+        // Grok merges message chunks into earlier entries: it is loaded whole.
+        Assert.Null(SessionMigration.Prepare(() => new StringReader(GrokTests.History), Format("grok"), null, "Grok", "Codex", "codex"));
+        // A Claude record whose parent comes later in the file.
+        var lines = GeneratedClaude(new Random(7)).Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
+        (lines[1], lines[2]) = (lines[2], lines[1]);
+        Assert.Null(SessionMigration.Prepare(() => new StringReader(string.Join('\n', lines)), Format("claude"), null, "Claude Code", "Codex", "codex"));
+        // Nothing to convert.
+        Assert.Empty(SessionMigration.Prepare(() => new StringReader(""), Format("codex"), null, "Codex", "Claude Code", "claude")!.Entries);
+    }
+
+    private static string Normalized(DeveSession migrated)
+    {
+        var ids = new Dictionary<string, string>();
+        string Map(string id) => ids.TryGetValue(id, out var mapped) ? mapped : ids[id] = "e" + ids.Count;
+        foreach (var entry in migrated.Entries) { entry.Id = Map(entry.Id); if (entry.ParentId is not null) entry.ParentId = Map(entry.ParentId); }
+        if (migrated.LeafId is not null) migrated.LeafId = Map(migrated.LeafId);
+        if (migrated.Migration is not null) migrated.Migration.CreatedAt = default;
+        return migrated.ToJson();
+    }
+
+    private static string Words(Random random, int count) => string.Join(' ', Enumerable.Range(0, count).Select(_ => "word" + random.Next(1000)));
+    private static string ImageData(Random random) => Convert.ToBase64String(Enumerable.Range(0, random.Next(0, 3) == 0 ? 0 : random.Next(10, 4_000)).Select(i => (byte)i).ToArray());
+
+    // Claude Code lines; every fifth turn starts from an earlier record, leaving the records after it as an abandoned branch.
+    private static string GeneratedClaude(Random random)
+    {
+        var lines = new List<JsonObject>();
+        var uuids = new List<string>();
+        string? parent = null;
+        var time = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+        void Add(string type, JsonNode content, bool summary = false)
+        {
+            var uuid = Guid.NewGuid().ToString();
+            var line = new JsonObject { ["type"] = type, ["uuid"] = uuid, ["parentUuid"] = parent, ["sessionId"] = "generated", ["cwd"] = "/workspace",
+                ["timestamp"] = (time = time.AddSeconds(1)).ToString("O"), ["message"] = new JsonObject { ["role"] = type, ["content"] = content } };
+            if (summary) line["isCompactSummary"] = true;
+            lines.Add(line); uuids.Add(uuid); parent = uuid;
+        }
+        for (var turn = 0; turn < random.Next(4, 30); turn++)
+        {
+            if (turn % 5 == 4 && uuids.Count > 2) parent = uuids[random.Next(uuids.Count - 1)];
+            if (random.Next(12) == 0) { Add("user", Words(random, 40), summary: true); continue; }
+            var user = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = Words(random, random.Next(1, 60)) });
+            for (var i = random.Next(0, 3); i > 0; i--)
+                user.Add(new JsonObject { ["type"] = "image", ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = "image/png", ["data"] = ImageData(random) } });
+            Add("user", user);
+            if (random.Next(8) == 0) // Output whose call isn't in the history.
+                Add("user", new JsonArray(new JsonObject { ["type"] = "tool_result", ["tool_use_id"] = "toolu_stray", ["content"] = Words(random, 30) }));
+            for (var step = random.Next(0, 4); step > 0; step--)
+            {
+                var calls = Enumerable.Range(0, random.Next(1, 3)).Select(_ => "toolu_" + random.Next(100_000)).ToList();
+                var assistant = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = Words(random, random.Next(0, 20)) });
+                foreach (var id in calls)
+                    assistant.Add(new JsonObject { ["type"] = "tool_use", ["id"] = id, ["name"] = random.Next(10) == 0 ? "not valid!" : "Bash",
+                        ["input"] = new JsonObject { ["command"] = Words(random, random.Next(1, 10)) } });
+                Add("assistant", assistant);
+                var results = new JsonArray();
+                foreach (var id in calls.Where(_ => random.Next(8) != 0))
+                {
+                    var output = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = Words(random, random.Next(0, 2) == 0 ? 20 : random.Next(500, 40_000)) });
+                    if (random.Next(5) == 0)
+                        output.Add(new JsonObject { ["type"] = "image", ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = "image/png", ["data"] = ImageData(random) } });
+                    results.Add(new JsonObject { ["type"] = "tool_result", ["tool_use_id"] = random.Next(15) == 0 ? "toolu_orphan" : id, ["content"] = output, ["is_error"] = random.Next(6) == 0 });
+                }
+                if (results.Count > 0) Add("user", results);
+            }
+            Add("assistant", new JsonArray(new JsonObject { ["type"] = "text", ["text"] = Words(random, random.Next(1, 80)) }));
+        }
+        return string.Concat(lines.Select(l => l.ToJsonString() + "\n"));
+    }
+
+    // Codex rollout lines: messages, parallel function and custom calls, outputs (some missing) and compactions.
+    private static string GeneratedCodex(Random random)
+    {
+        var lines = new List<JsonObject>();
+        var time = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+        void Add(string type, JsonObject payload) => lines.Add(new JsonObject { ["timestamp"] = (time = time.AddSeconds(1)).ToString("O"), ["type"] = type, ["payload"] = payload });
+        Add("session_meta", new JsonObject { ["id"] = "generated", ["cwd"] = "/workspace", ["timestamp"] = time.ToString("O") });
+        for (var turn = 0; turn < random.Next(4, 30); turn++)
+        {
+            if (random.Next(12) == 0) { Add("compacted", new JsonObject { ["message"] = Words(random, 50) }); continue; }
+            var user = new JsonArray(new JsonObject { ["type"] = "input_text", ["text"] = Words(random, random.Next(1, 60)) });
+            for (var i = random.Next(0, 3); i > 0; i--) user.Add(new JsonObject { ["type"] = "input_image", ["image_url"] = "data:image/png;base64," + ImageData(random) });
+            Add("response_item", new JsonObject { ["type"] = "message", ["role"] = "user", ["content"] = user });
+            if (random.Next(8) == 0) // Output whose call isn't in the history.
+                Add("response_item", new JsonObject { ["type"] = "function_call_output", ["call_id"] = "call_stray", ["output"] = Words(random, 30) });
+            for (var step = random.Next(0, 4); step > 0; step--)
+            {
+                var calls = Enumerable.Range(0, random.Next(1, 3)).Select(_ => "call_" + random.Next(100_000)).ToList();
+                foreach (var id in calls)
+                    Add("response_item", random.Next(3) == 0
+                        ? new JsonObject { ["type"] = "custom_tool_call", ["call_id"] = id, ["name"] = "exec", ["input"] = Words(random, random.Next(1, 10)) }
+                        : new JsonObject { ["type"] = "function_call", ["call_id"] = id, ["name"] = "shell", ["arguments"] = new JsonObject { ["cmd"] = Words(random, 5) }.ToJsonString() });
+                foreach (var id in calls.Where(_ => random.Next(8) != 0))
+                    Add("response_item", new JsonObject { ["type"] = "function_call_output", ["call_id"] = id,
+                        ["output"] = Words(random, random.Next(0, 2) == 0 ? 20 : random.Next(500, 40_000)) });
+            }
+            Add("response_item", new JsonObject { ["type"] = "message", ["role"] = "assistant",
+                ["content"] = new JsonArray(new JsonObject { ["type"] = "output_text", ["text"] = Words(random, random.Next(1, 80)) }) });
+        }
+        return string.Concat(lines.Select(l => l.ToJsonString() + "\n"));
+    }
+
     public static ISessionFormat Format(string id) => id switch
     {
         "claude" => new ClaudeSessionFormat(), "codex" => new CodexSessionFormat(), "pi" => new PiSessionFormat(), "grok" => new GrokSessionFormat(),

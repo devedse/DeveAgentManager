@@ -20,8 +20,13 @@ Newly synchronized conversations use `/data/sessions/native/<session-id>/`:
   source fingerprint, reply preview and last assistant timestamp.
 
 The Portal's list previews read the small checkpoint, not the full conversation
-or index. Import, copy and harness-switch backups still use the DeveSession JSON
-format, now serialized directly to a stream. Legacy `<session-id>.json` files
+or index. Import and copy still use the DeveSession JSON format, serialized
+directly to a stream; harness-switch backups copy the native records (see
+[session-formats.md](session-formats.md)). Each history has its own lock: reading
+or syncing one never waits for another. A conversion opens a snapshot of the
+committed bytes under that lock and reads it after releasing it; syncs only
+append past the committed size or publish a new generation file, so the snapshot
+stays unchanged. Legacy `<session-id>.json` files
 remain readable and migrate only after a successful native sync. Existing
 attachments and access checks are unchanged. Back up the entire data directory,
 including its native subdirectory; older builds cannot directly read the new

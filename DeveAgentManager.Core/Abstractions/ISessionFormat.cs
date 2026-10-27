@@ -23,6 +23,11 @@ public interface ISessionFormat
     // Implementations may opt into streaming and incremental metadata parsing.
     DeveSession Read(TextReader reader) => Read(reader.ReadToEnd());
     bool SupportsIncrementalRead => false;
+    /// <summary>
+    /// True when an entry is complete once its native line is appended: later lines never change it. A conversion can
+    /// then read the history one record at a time instead of holding it whole.
+    /// </summary>
+    bool AppendsCompleteEntries => false;
     /// <summary>False for a companion stream that needs exact byte synchronization without a second conversation index.</summary>
     bool IndexNativeRecords => true;
     /// <summary>Replay files may change after the latest log event and must be checked on otherwise idle passes.</summary>

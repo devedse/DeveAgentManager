@@ -33,6 +33,7 @@ public sealed class CodexSessionFormat : ISessionFormat
     }
 
     public bool SupportsIncrementalRead => true;
+    public bool AppendsCompleteEntries => true;
     public DeveSession Read(string content) { using var reader = new StringReader(content); return Read(reader); }
     public DeveSession Read(TextReader reader)
     {

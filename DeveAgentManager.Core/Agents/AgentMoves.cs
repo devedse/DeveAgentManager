@@ -53,9 +53,12 @@ public sealed partial class AgentService
         "python3 - " + ShellQuote.Quote(phase) + " " + ShellQuote.Quote(JsonSerializer.Serialize(move with { Steps = null, Progress = null })) + " <<'DAM_MOVE'\n" + MoveScript + "\nDAM_MOVE";
     internal static bool MoveBlocksActions(Agent agent) => agent.MoveJson is not null
         && JsonSerializer.Deserialize<AgentMoveState>(agent.MoveJson)?.Phase is not ("Cleanup" or "CleanupFailed" or "TargetCleanup" or "TargetCleanupFailed");
-    private static void RequireNotMoving(Agent agent)
+    private const string MoveInProgress = "This agent has a move in progress. Wait for it or recover the failed move first.";
+    private const string SwitchInProgress = "This agent is switching harness. Wait for it to finish.";
+    private void RequireNotMoving(Agent agent)
     {
-        if (MoveBlocksActions(agent)) throw new InvalidOperationException("This agent has a move in progress. Wait for it or recover the failed move first.");
+        if (MoveBlocksActions(agent)) throw new InvalidOperationException(MoveInProgress);
+        if (_switching.ContainsKey(agent.Id)) throw new InvalidOperationException(SwitchInProgress);
     }
 
     private async Task<IDisposable> ReserveWorkspaceAsync(Guid runner, string name, string path, CancellationToken ct)
@@ -112,6 +115,7 @@ public sealed partial class AgentService
             var workspaces = await db.Agents.Where(a => a.Id == agent.Id || agent.ProjectId != null && a.ProjectId == agent.ProjectId).ToListAsync(ct);
             if (workspaces.Any(a => a.RunnerId != agent.RunnerId || a.OwnerId != agent.OwnerId || a.MoveJson != null || a.WorkspaceCreationJson != null))
                 throw new InvalidOperationException("Finish workspace creation, moves or recovery in this project first.");
+            if (workspaces.Any(a => _switching.ContainsKey(a.Id))) throw new InvalidOperationException("Wait for the harness switch in this project to finish first.");
             agent = workspaces.FirstOrDefault(a => !a.IsClone) ?? throw new InvalidOperationException("The project's Main workspace is missing.");
             if (await db.Projects.AnyAsync(p => p.Id == agent.ProjectId && p.KeptFoldersJson != null && p.KeptFoldersJson != "[]", ct))
                 throw new InvalidOperationException("Delete or reuse the project's kept workspace folders first (Manage workspaces).");

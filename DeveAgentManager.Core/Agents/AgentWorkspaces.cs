@@ -268,6 +268,7 @@ public sealed partial class AgentService
             if (!agent.IsClone || project is null)
                 throw new InvalidOperationException("Main is the project's own folder and is never removed. Delete the agent once the other workspaces are gone.");
             if (agent.MoveJson is not null) throw new InvalidOperationException("Finish the project move first.");
+            if (_switching.ContainsKey(agent.Id)) throw new InvalidOperationException(SwitchInProgress);
             var token = agent.Id.ToString("N");
             await shell.RunAsync(runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: ct);
             try { await sessions.SyncRunnerLockedAsync(runner, ct, agent.Id); }

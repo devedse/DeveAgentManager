@@ -16,7 +16,9 @@ internal sealed record NativeHistorySyncPolicy(HistorySyncMode Mode, bool Force 
 /// <summary>Native history with sampled appends and full-audit checkpoints; indexes contain compact metadata only.</summary>
 internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider = null, ILogger? logger = null, bool keepGenerations = false)
 {
-    private readonly SemaphoreSlim gate = new(1, 1);
+    // One gate per history: reading or syncing a large conversation never holds up the others.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, SemaphoreSlim> gates = new();
+    private SemaphoreSlim Gate(Guid id) => gates.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, string> verifiedThisProcess = new();
     internal static readonly TimeSpan AuditInterval = TimeSpan.FromMinutes(30);
@@ -93,6 +95,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
     public async Task<DeveSession?> LoadAsync(Guid id, IReadOnlyDictionary<string, ISessionFormat> formats, CancellationToken ct,
         Func<DeveSession, string?, CancellationToken, Task>? loadCompanions = null)
     {
+        var gate = Gate(id);
         await gate.WaitAsync(ct);
         try
         {
@@ -111,6 +114,47 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
         finally { gate.Release(); }
     }
 
+    /// <summary>
+    /// The committed native history, opened while syncs of it wait and read after. A sync only appends past the
+    /// committed size or publishes a new generation file, so these bytes stay as they are until the snapshot is disposed.
+    /// </summary>
+    public async Task<Snapshot?> OpenAsync(Guid id, CancellationToken ct)
+    {
+        var gate = Gate(id);
+        await gate.WaitAsync(ct);
+        try
+        {
+            var state = await ReadState(id, ct);
+            if (state is null) return null;
+            var file = new FileStream(Path.Combine(Folder(id), state.File), FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.SequentialScan);
+            if (file.Length < state.Bytes)
+            {
+                await file.DisposeAsync();
+                throw new IOException("The saved native history is incomplete.");
+            }
+            return new Snapshot(state.Harness, state.Bytes, state.CompanionManifest, file);
+        }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>A history's committed native bytes (<see cref="OpenAsync"/>), read again from the start for each pass.</summary>
+    internal sealed class Snapshot(string harness, long bytes, string? companionManifest, FileStream file) : IDisposable
+    {
+        public string Harness => harness;
+        public long Bytes => bytes;
+        public string? CompanionManifest => companionManifest;
+
+        /// <summary>The committed bytes from the start. Starting another read ends the previous one.</summary>
+        public Stream Read()
+        {
+            file.Position = 0;
+            return new PrefixStream(file, bytes);
+        }
+
+        public void Dispose() => file.Dispose();
+    }
+
     // transfer validates the old prefix's SHA-256, then writes exactly size-offset bytes. False requests a full rebuild.
     public async Task<(DeveSession Metadata, bool Changed)> SyncAsync(Guid id, ISessionFormat format, string sourcePath,
         long size, string stamp, Func<long, string?, Stream, CancellationToken, Task<NativeHistoryTransfer>> transfer, CancellationToken ct,
@@ -119,6 +163,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
         Func<DeveSession, CancellationToken, Task<string?>>? beforeCommit = null)
     {
         using var queueTiming = Diagnostics.CaptureOperations.Start("history.gate", session: id, bytes: size);
+        var gate = Gate(id);
         await gate.WaitAsync(ct);
         queueTiming?.Stop();
         using var syncTiming = Diagnostics.CaptureOperations.Start("history.sync", session: id, bytes: size);
@@ -332,6 +377,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
 
     public async Task DeleteAsync(Guid id, CancellationToken ct)
     {
+        var gate = Gate(id);
         await gate.WaitAsync(ct);
         try { verifiedThisProcess.TryRemove(id, out _); if (Directory.Exists(Folder(id))) Directory.Delete(Folder(id), true); }
         finally { gate.Release(); }

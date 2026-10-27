@@ -180,7 +180,16 @@ Before installation, the destination bytes are read back and checked for paired 
 error state, encoding hints and user images. A failed writer aborts before upload. The Runner receives a private
 staging file, verifies its SHA-256 and atomically renames it. A cancelled or failed transfer cannot overwrite the
 last good file. An uncertain SSH acknowledgement is never permission to replay an installation or user work.
-The stored session mapping changes only after a successful installation. Failed startup leaves the selected
+The stored session mapping changes only after a successful installation.
+
+A switch holds the Manager's session lock only to stop the harness, synchronize and verify the latest history, and
+later to record the move and start the new harness. Backing up, converting and installing run without it, so other
+agents' synchronization, state checks and actions continue meanwhile. The agent shows **Starting** with "Switching to
+…"; its own actions (start, stop, another switch, moves, workspace removal, deletion and terminal attach) are refused
+until the switch ends, and the state monitor leaves it alone. Recording the move first checks that the agent and its
+conversation are unchanged. Once the harness has been stopped, the switch is no longer tied to the request: a closed
+tab or proxy timeout doesn't cancel it halfway.
+Failed startup leaves the selected
 conversation in an error state available for an explicit Start; it does not automatically rerun the switch.
 Failed switches open a persistent dialog showing the attempted source, destination harness/login and failure reason.
 Verification errors identify the tool record and changed field without including arguments or output. **Retry** is
@@ -188,7 +197,9 @@ offered for a rejected conversion before installation and first checks the agent
 **Check status**, which reads the current state without resending an uncertain switch. **Cancel** closes the dialog;
 it does not discard the saved history or restart a stopped harness. Clicking outside or pressing Escape does not dismiss it.
 
-The original conversation is backed up as `/data/sessions/<id>.<time>.<harness>.json`. `HarnessTrail` records the
+The original conversation is backed up as `/data/sessions/<id>.<time>.<harness>.jsonl`: an exact copy of its saved
+native records, copied rather than loaded. (Grok, whose replay files belong with its log, and legacy histories keep a
+whole-conversation `<id>.<time>.<harness>.json` instead.) `HarnessTrail` records the
 route. Content-free conversion reports live in `/data/sessions/migrations/<id>.json`, bound to the destination's
 native session ID; they survive subsequent native sync and are copied with a continued session. They contain
 adapter version, time, route, budget and counts/reasons, never commands or output. The session page shows the

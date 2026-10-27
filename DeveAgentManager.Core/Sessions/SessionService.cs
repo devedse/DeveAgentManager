@@ -283,19 +283,56 @@ public sealed class SessionService(
     /// Moves an agent's conversation to another harness, on the same Runner and in the same folder: the stored
     /// conversation is converted (see <see cref="SessionMigration"/>) and written as the new harness's own
     /// session under <paramref name="harnessSessionId"/>, which the harness then resumes. The conversation as it was
-    /// before is kept next to it in /data/sessions. Sync the Runner first, so the latest messages move along.
+    /// before is kept next to it in /data/sessions. Sync the Runner first, so the latest messages move along. The caller
+    /// holds the session lock; <see cref="AgentService"/> releases it while converting (the three steps below).
     /// </summary>
     public async Task MoveToHarnessAsync(Runner runner, Agent agent, string harnessId, string harnessSessionId, CancellationToken cancellationToken)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var stored = await db.Sessions.FirstOrDefaultAsync(s => s.AgentId == agent.Id, cancellationToken)
-            ?? throw new InvalidOperationException("This agent has no stored conversation to move.");
-        await EnsureVerifiedLockedAsync(stored.Id, cancellationToken);
-        await db.Entry(stored).ReloadAsync(cancellationToken);
-        await BackupAsync(stored, cancellationToken);
+        using var move = await BeginMoveToHarnessAsync(agent, cancellationToken);
+        await ConvertMoveAsync(runner, move, harnessId, harnessSessionId, agent.WorkingDirectory, cancellationToken);
+        await CompleteMoveToHarnessAsync(agent, move, harnessId, harnessSessionId, cancellationToken);
+    }
 
+    /// <summary>A conversation being moved to another harness: the stored row as it was, and its verified history.</summary>
+    internal sealed class HarnessMove(StoredSession stored, NativeHistoryStore.Snapshot? snapshot) : IDisposable
+    {
+        public StoredSession Stored => stored;
+        public NativeHistoryStore.Snapshot? Snapshot => snapshot;
+        public SessionMigrationReport? Report { get; set; }
+        public void Dispose() => snapshot?.Dispose();
+    }
+
+    /// <summary>Under the session lock: verifies the latest history and opens it as it is now.</summary>
+    internal async Task<HarnessMove> BeginMoveToHarnessAsync(Agent agent, CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var id = await db.Sessions.Where(s => s.AgentId == agent.Id).Select(s => (Guid?)s.Id).FirstOrDefaultAsync(cancellationToken)
+            ?? throw new InvalidOperationException("This agent has no stored conversation to move.");
+        await EnsureVerifiedLockedAsync(id, cancellationToken);
+        var stored = await db.Sessions.AsNoTracking().SingleAsync(s => s.Id == id, cancellationToken);
+        return new HarnessMove(stored, await _native.OpenAsync(id, cancellationToken));
+    }
+
+    /// <summary>
+    /// Without the session lock: backs up the history and installs it, converted, on the Runner under the new session id.
+    /// Nothing refers to that session until <see cref="CompleteMoveToHarnessAsync"/>.
+    /// </summary>
+    internal async Task ConvertMoveAsync(Runner runner, HarnessMove move, string harnessId, string harnessSessionId, string workingDirectory, CancellationToken cancellationToken)
+    {
+        await BackupAsync(move.Stored, move.Snapshot, cancellationToken);
+        move.Report = await InstallForHarnessAsync(runner, move.Stored, move.Snapshot, harnessId, harnessSessionId, workingDirectory, null, cancellationToken);
+    }
+
+    /// <summary>Under the session lock again: records the move, unless the conversation changed meanwhile.</summary>
+    internal async Task CompleteMoveToHarnessAsync(Agent agent, HarnessMove move, string harnessId, string harnessSessionId, CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var stored = await db.Sessions.SingleOrDefaultAsync(s => s.Id == move.Stored.Id, cancellationToken);
+        if (stored is null || stored.AgentId != agent.Id || stored.HarnessId != move.Stored.HarnessId || stored.HarnessSessionId != move.Stored.HarnessSessionId)
+            throw new InvalidOperationException("The conversation changed while it was being converted, so it was not switched. Try again.");
         stored.TitlePinned = true; // Keep the conversation name across format conversion.
-        await WriteForHarnessAsync(runner, stored, harnessId, harnessSessionId, agent.WorkingDirectory, null, cancellationToken);
+        if (move.Report is { } report) await SaveMigrationReportAsync(stored.Id, report, cancellationToken);
+        RecordHarness(stored, harnessId, harnessSessionId);
         await db.SaveChangesAsync(cancellationToken);
         events.SessionChanged(stored.Id, agent.Id);
     }
@@ -307,14 +344,14 @@ public sealed class SessionService(
     /// </summary>
     private async Task WriteForHarnessAsync(Runner runner, StoredSession stored, string harnessId, string harnessSessionId, string workingDirectory, string? ranIn, CancellationToken cancellationToken)
     {
-        var format = _formats.GetValueOrDefault(harnessId) ?? throw new InvalidOperationException($"Conversations can't be continued in '{harnessId}' yet.");
-        if (stored.MessageCount > 0 && !HasSaved(stored.Id))
-            throw new IOException("The saved history is missing. Restore it before switching sessions.");
-        logger.LogInformation("Loading conversation {Session} ({Size:0.0} MB saved) to continue it in {Harness} on {Runner}", stored.Id, Megabytes(stored.SavedSize), harnessId, runner.Name);
-        await _wholeLoads.WaitAsync(cancellationToken);
-        try { await WriteForHarnessLockedAsync(runner, stored, format, harnessId, harnessSessionId, workingDirectory, ranIn, cancellationToken); }
-        finally { _wholeLoads.Release(); }
+        using var snapshot = await _native.OpenAsync(stored.Id, cancellationToken);
+        var report = await InstallForHarnessAsync(runner, stored, snapshot, harnessId, harnessSessionId, workingDirectory, ranIn, cancellationToken);
+        if (report is not null) await SaveMigrationReportAsync(stored.Id, report, cancellationToken);
+        RecordHarness(stored, harnessId, harnessSessionId);
+    }
 
+    private static void RecordHarness(StoredSession stored, string harnessId, string harnessSessionId)
+    {
         var trail = (stored.HarnessTrail ?? stored.HarnessId).Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
         if (trail.Count == 0 || trail[^1] != harnessId)
         {
@@ -329,52 +366,84 @@ public sealed class SessionService(
         stored.LastSyncedAt = null;
     }
 
-    // One whole conversation at a time (_wholeLoads), converted and written for the harness that continues it.
-    private async Task WriteForHarnessLockedAsync(Runner runner, StoredSession stored, ISessionFormat format, string harnessId, string harnessSessionId, string workingDirectory, string? ranIn, CancellationToken cancellationToken)
+    /// <summary>
+    /// Writes the conversation to the Runner for <paramref name="harnessId"/> and returns the conversion's report, if any.
+    /// Converting from a format that reads one record at a time streams the saved history (<see cref="SessionMigration.Prepare(Func{TextReader}, ISessionFormat, string?, string, string, string, int, int, CancellationToken)"/>),
+    /// so a large one is never held whole. Otherwise one whole conversation at a time (_wholeLoads) is loaded.
+    /// </summary>
+    private async Task<SessionMigrationReport?> InstallForHarnessAsync(Runner runner, StoredSession stored, NativeHistoryStore.Snapshot? snapshot, string harnessId, string harnessSessionId, string workingDirectory, string? ranIn, CancellationToken cancellationToken)
     {
-        var session = await LoadAsync(stored.Id, cancellationToken);
-        session.Title = stored.Title;
-        var from = session.Sources.LastOrDefault()?.Harness ?? session.Entries.LastOrDefault(e => e.Harness is not null)?.Harness ?? stored.HarnessId;
-        if (session.Entries.Count > 0 && from != harnessId)
+        var format = _formats.GetValueOrDefault(harnessId) ?? throw new InvalidOperationException($"Conversations can't be continued in '{harnessId}' yet.");
+        if (stored.MessageCount > 0 && !HasSaved(stored.Id))
+            throw new IOException("The saved history is missing. Restore it before switching sessions.");
+        if (snapshot is not null && snapshot.Harness != harnessId && _formats.GetValueOrDefault(snapshot.Harness) is { AppendsCompleteEntries: true } source)
         {
-            session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(harnessId), harnessId);
+            logger.LogInformation("Converting conversation {Session} ({Size:0.0} MB saved) record by record to continue it in {Harness} on {Runner}", stored.Id, Megabytes(snapshot.Bytes), harnessId, runner.Name);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var converted = await Task.Run(() => SessionMigration.Prepare(() => new StreamReader(snapshot.Read(), Encoding.UTF8), source, stored.Title,
+                DisplayName(snapshot.Harness), DisplayName(harnessId), harnessId, ct: cancellationToken), cancellationToken);
+            if (converted is not null)
+            {
+                logger.LogInformation("Converted conversation {Session} in {Seconds:0.0} s", stored.Id, watch.Elapsed.TotalSeconds);
+                return await InstallAsync(runner, stored, format, converted, snapshot.Harness, harnessId, harnessSessionId, workingDirectory, ranIn, cancellationToken);
+            }
+            logger.LogInformation("Conversation {Session}'s active branch isn't in file order; loading it whole to convert it", stored.Id);
         }
 
+        logger.LogInformation("Loading conversation {Session} ({Size:0.0} MB saved) to continue it in {Harness} on {Runner}", stored.Id, Megabytes(stored.SavedSize), harnessId, runner.Name);
+        await _wholeLoads.WaitAsync(cancellationToken);
+        try
+        {
+            var session = await LoadAsync(stored.Id, cancellationToken);
+            session.Title = stored.Title;
+            var from = session.Sources.LastOrDefault()?.Harness ?? session.Entries.LastOrDefault(e => e.Harness is not null)?.Harness ?? stored.HarnessId;
+            if (session.Entries.Count > 0 && from != harnessId)
+            {
+                session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(harnessId), harnessId);
+            }
+            return await InstallAsync(runner, stored, format, session, from, harnessId, harnessSessionId, workingDirectory, ranIn, cancellationToken);
+        }
+        finally { _wholeLoads.Release(); }
+    }
+
+    private async Task<SessionMigrationReport?> InstallAsync(Runner runner, StoredSession stored, ISessionFormat format, DeveSession session, string from, string harnessId, string harnessSessionId, string workingDirectory, string? ranIn, CancellationToken cancellationToken)
+    {
         NoteFolderChange(session, ranIn, workingDirectory);
 
         // Nothing to move (e.g. pi writes its file only with the first message): the new harness starts a conversation
         // of its own under the id, instead of being handed an empty one (claude --resume refuses those).
-        if (session.Entries.Count > 0)
+        if (session.Entries.Count == 0) return null;
+        var path = format.GetPath(harnessSessionId, workingDirectory, DateTime.UtcNow);
+        // Written to a local file and streamed to the Runner, never held as one string as well.
+        var local = NewWorkFile("jsonl");
+        try
         {
-            var path = format.GetPath(harnessSessionId, workingDirectory, DateTime.UtcNow);
-            // Written to a local file and streamed to the Runner, never held as one string as well.
-            var local = NewWorkFile("jsonl");
-            try
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            await WriteTextFileAsync(local, output => format.Write(session, harnessSessionId, workingDirectory, output), cancellationToken);
+            if (session.Migration is not null && from != harnessId)
             {
-                var watch = System.Diagnostics.Stopwatch.StartNew();
-                await WriteTextFileAsync(local, output => format.Write(session, harnessSessionId, workingDirectory, output), cancellationToken);
-                if (session.Migration is not null && from != harnessId)
-                {
-                    using var reader = new StreamReader(local);
-                    SessionMigration.ValidateWritten(session, format.Read(reader));
-                }
+                using var reader = new StreamReader(local);
+                SessionMigration.ValidateWritten(session, format.Read(reader));
+            }
 
-                foreach (var (name, companion) in format.WriteCompanionFiles(session, harnessSessionId, workingDirectory))
-                    await shell.UploadAtomicAsync(runner, path[..path.LastIndexOf('/')] + "/" + SessionCompanionStore.ValidatePath(name), companion, cancellationToken);
-                await shell.UploadAtomicFromFileAsync(runner, path, local, cancellationToken);
-                logger.LogInformation("Wrote conversation {Session} to {Runner} for {Harness}{Conversion}: {Entries} entries, {Size:0.0} MB in {Seconds:0.0} s",
-                    stored.Id, runner.Name, harnessId, from != harnessId ? $" (converted from {from})" : "", session.Entries.Count,
-                    Megabytes(new FileInfo(local).Length), watch.Elapsed.TotalSeconds);
-            }
-            finally { File.Delete(local); }
-            if (session.Migration is { } report)
-            {
-                report.TargetSessionId = harnessSessionId;
-                await SaveMigrationAsync(stored.Id, report, cancellationToken);
-                logger.LogInformation("Session {Session} migration v{Version} {From} to {To}: {Preserved} calls, {Archived} archived, {Omitted} omitted exchanges, {Images} omitted images",
-                    stored.Id, report.Version, report.From, report.To, report.PreservedCalls, report.ArchivedExchanges, report.OmittedExchanges, report.OmittedImages);
-            }
+            foreach (var (name, companion) in format.WriteCompanionFiles(session, harnessSessionId, workingDirectory))
+                await shell.UploadAtomicAsync(runner, path[..path.LastIndexOf('/')] + "/" + SessionCompanionStore.ValidatePath(name), companion, cancellationToken);
+            await shell.UploadAtomicFromFileAsync(runner, path, local, cancellationToken);
+            logger.LogInformation("Wrote conversation {Session} to {Runner} for {Harness}{Conversion}: {Entries} entries, {Size:0.0} MB in {Seconds:0.0} s",
+                stored.Id, runner.Name, harnessId, from != harnessId ? $" (converted from {from})" : "", session.Entries.Count,
+                Megabytes(new FileInfo(local).Length), watch.Elapsed.TotalSeconds);
         }
+        finally { File.Delete(local); }
+        if (session.Migration is not { } report) return null;
+        report.TargetSessionId = harnessSessionId;
+        return report;
+    }
+
+    private async Task SaveMigrationReportAsync(Guid sessionId, SessionMigrationReport report, CancellationToken cancellationToken)
+    {
+        await SaveMigrationAsync(sessionId, report, cancellationToken);
+        logger.LogInformation("Session {Session} migration v{Version} {From} to {To}: {Preserved} calls, {Archived} archived, {Omitted} omitted exchanges, {Images} omitted images",
+            sessionId, report.Version, report.From, report.To, report.PreservedCalls, report.ArchivedExchanges, report.OmittedExchanges, report.OmittedImages);
     }
 
     private bool HasSaved(Guid id) => _native.Exists(id) || File.Exists(PathFor(id));
@@ -397,17 +466,37 @@ public sealed class SessionService(
         session.LeafId = note.Id;
     }
 
-    private async Task BackupAsync(StoredSession stored, CancellationToken ct)
+    /// <summary>
+    /// Keeps the conversation as it was before a harness switch next to it in /data/sessions. The exact native records
+    /// are copied, not loaded; a format with companion files keeps a whole-conversation copy instead.
+    /// </summary>
+    private async Task BackupAsync(StoredSession stored, NativeHistoryStore.Snapshot? snapshot, CancellationToken ct)
     {
         if (!HasSaved(stored.Id)) return;
-        var backup = Path.Combine(options.SessionsDirectory, $"{stored.Id:N}.{DateTime.UtcNow:yyyyMMdd-HHmmss-fffffff}.{stored.HarnessId}.json");
-        if (_native.Exists(stored.Id))
+        var name = Path.Combine(options.SessionsDirectory, $"{stored.Id:N}.{DateTime.UtcNow:yyyyMMdd-HHmmss-fffffff}");
+        if (snapshot is not null && _formats.GetValueOrDefault(snapshot.Harness) is { HasCompanionFiles: false })
         {
-            var conversation = await LoadAsync(stored.Id, ct);
-            await using var output = File.Create(backup);
-            await conversation.WriteAsync(output, ct);
+            var backup = $"{name}.{snapshot.Harness}.jsonl";
+            try
+            {
+                await using (var output = new FileStream(backup + ".tmp", FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, true))
+                    await snapshot.Read().CopyToAsync(output, 1 << 20, ct);
+                File.Move(backup + ".tmp", backup);
+            }
+            finally { File.Delete(backup + ".tmp"); }
         }
-        else File.Copy(PathFor(stored.Id), backup);
+        else if (_native.Exists(stored.Id))
+        {
+            await _wholeLoads.WaitAsync(ct);
+            try
+            {
+                var conversation = await LoadAsync(stored.Id, ct);
+                await using var output = File.Create($"{name}.{stored.HarnessId}.json");
+                await conversation.WriteAsync(output, ct);
+            }
+            finally { _wholeLoads.Release(); }
+        }
+        else File.Copy(PathFor(stored.Id), $"{name}.{stored.HarnessId}.json");
     }
 
     private string DisplayName(string harnessId) => harnessDisplayNames.GetValueOrDefault(harnessId, harnessId);
@@ -688,7 +777,8 @@ public sealed class SessionService(
         await _native.DeleteAsync(sessionId, cancellationToken);
         _companions.Delete(sessionId);
         if (Directory.Exists(options.SessionsDirectory))
-            foreach (var backup in Directory.EnumerateFiles(options.SessionsDirectory, $"{sessionId:N}.*.json")) File.Delete(backup);
+            foreach (var backup in Directory.EnumerateFiles(options.SessionsDirectory, $"{sessionId:N}.*.json")
+                .Concat(Directory.EnumerateFiles(options.SessionsDirectory, $"{sessionId:N}.*.jsonl"))) File.Delete(backup);
         events.Publish(new ManagerEvent(ManagerEventKind.SessionRemoved, SessionId: sessionId));
     }
 
