@@ -46,10 +46,11 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
     }
     private static async Task PauseUsage(ManagerDbContext db, Guid? userId, CancellationToken ct)
     {
-        // Closing eligibility also closes in-flight turns, so delayed history cannot grant catch-up growth.
-        await db.PetInputClaims.Where(c => userId == null || c.UserId == userId).ExecuteDeleteAsync(ct);
+        // Pause Damagochi growth permanently for these turns; retain account usage attribution.
+        await db.PetInputClaims.Where(c => userId == null || c.UserId == userId)
+            .ExecuteUpdateAsync(update => update.SetProperty(c => c.PetEligible, false), ct);
         await db.PetUsageCredits.Where(c => userId == null || c.UserId == userId)
-            .ExecuteUpdateAsync(update => update.SetProperty(c => c.UserId, (Guid?)null), ct);
+            .ExecuteUpdateAsync(update => update.SetProperty(c => c.PetEligible, false), ct);
     }
     private void Notify(Guid? userId = null) => events.Publish(new ManagerEvent(ManagerEventKind.PetChanged, UserId: userId));
     public async Task InitializeAsync(Guid userId, CancellationToken ct)
@@ -139,7 +140,7 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
             await db.SaveChangesAsync(ct);
         }
         finally { gate.Release(); }
-        await audit.RecordAsync(actor, "PetRetired", "Damagochi", "Damagochi progress reset; lifetime tokens preserved.", ct);
+        await audit.RecordAsync(actor, "PetRetired", "Damagochi", "Damagochi lifetime reset; account tokens preserved.", ct);
         Notify(actor.Id);
     }
     public async Task InteractAsync(CurrentUser actor, string action, int minutes, CancellationToken ct)
@@ -200,11 +201,11 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
     public async Task ClaimInputAsync(Guid agentId, Guid userId, CancellationToken ct)
     {
         await gate.WaitAsync(ct);
-        try { await using var db = await factory.CreateDbContextAsync(ct); if (!(await Options(db, ct)).Enabled) return;
-            var pet = await Pet(db, userId, ct); if (!pet.Enabled) return;
+        try { await using var db = await factory.CreateDbContextAsync(ct);
+            var options = await Options(db, ct); var pet = await Pet(db, userId, ct);
             var session = await db.Sessions.Where(s => s.AgentId == agentId).Select(s => (Guid?)s.Id).FirstOrDefaultAsync(ct);
             if (session is null) return;
-            db.PetInputClaims.Add(new() { AgentId = agentId, SessionId = session.Value, UserId = userId, Generation = pet.Generation, At = Now });
+            db.PetInputClaims.Add(new() { AgentId = agentId, SessionId = session.Value, UserId = userId, Generation = pet.Generation, PetEligible = options.Enabled && pet.Enabled, At = Now });
             await db.PetInputClaims.Where(c => c.At < Now.AddDays(-7)).ExecuteDeleteAsync(ct); await db.SaveChangesAsync(ct);
         } finally { gate.Release(); }
     }
@@ -257,18 +258,18 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
                 var credit = existing.GetValueOrDefault(turn.PromptId);
                 if (credit is null) {
                     var claim = claims.LastOrDefault(c => c.At <= turn.StartedAt.AddSeconds(5) && c.At >= turn.StartedAt.AddMinutes(-2));
-                    credit = new PetUsageCredit { Source = source, PromptId = turn.PromptId, UserId = claim?.UserId, Generation = claim?.Generation ?? 0 };
+                    credit = new PetUsageCredit { Source = source, PromptId = turn.PromptId, UserId = claim?.UserId, Generation = claim?.Generation ?? 0, PetEligible = claim?.PetEligible == true };
                     db.PetUsageCredits.Add(credit); existing[turn.PromptId] = credit;
                 }
                 var delta = Math.Max(0, turn.Tokens - credit.Tokens); credit.Tokens = Math.Max(credit.Tokens, turn.Tokens);
-                if (delta == 0 || credit.UserId is not { } userId || !options.Enabled || !await db.Users.AnyAsync(u => u.Id == userId && !u.Disabled, ct)) continue;
-                var p = await Pet(db, userId, ct); if (!p.Enabled) continue;
+                if (delta == 0 || credit.UserId is not { } userId || !await db.Users.AnyAsync(u => u.Id == userId && !u.Disabled, ct)) continue;
+                var p = await Pet(db, userId, ct);
                 p.LifetimeTokens = Math.Min(long.MaxValue - delta, p.LifetimeTokens) + delta;
-                if (p.Species.Length != 0 && credit.Generation == p.Generation) {
+                if (options.Enabled && p.Enabled && credit.PetEligible && p.Species.Length != 0 && credit.Generation == p.Generation) {
                     var level = PetRules.Level(p.Experience); p.Experience = Math.Min(long.MaxValue - delta, p.Experience) + delta;
                     p.Happiness = Math.Min(100, p.Happiness + 1); Changed(p, PetRules.Level(p.Experience) > level ? "level" : "working");
                 }
-                else Changed(p);
+                else p.Revision++;
                 notified.Add(userId);
             }
             await db.SaveChangesAsync(ct);

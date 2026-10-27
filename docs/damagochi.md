@@ -11,7 +11,8 @@ Each person has one Damagochi across their agents and workspaces. The Damagochi 
 layouts, so internal navigation preserves its renderer. My settings → Damagochi controls the Damagochi type, name, size and
 reduced movement. The context menu offers affection, play, snooze and indefinite hiding. Dragging saves a position
 per user in that browser; keyboard arrows move it too. Shift+F10 opens its menu. A touch hold opens the same menu.
-The context menu includes current-level XP and lifetime tokens. Enabled accounts without a Damagochi show an unchosen egg
+The context menu includes level XP, Damagochi lifetime tokens and a separate blue Account usage section.
+Enabled accounts without a Damagochi show an unchosen egg
 with a question mark and a “Choose Damagochi & name” action. Species and name start empty. Choosing both hatches a level-1 Damagochi.
 
 ## Growth and usage
@@ -20,18 +21,19 @@ Level N starts at `25,000,000 × (N − 1) × N` Damagochi tokens, fifty times t
 hatchling, 6–9 young (750 million tokens), and 10+ adult (2.25 billion tokens). At 32 million tokens per hour this
 means about 70 active hours to adulthood; actual time depends on usage. The unchosen egg has no level. The maximum
 level is 1000. Existing token balances are preserved and levels/stages are recalculated with these thresholds.
-Each Damagochi has its own tokens/XP, separate from remembered lifetime tokens. Choosing a Damagochi starts its XP at zero;
-tokens credited while choosing an egg increase lifetime usage only. Killing a Damagochi requires confirmation, resets
-its XP, level and happiness, and returns to an unnamed, unchosen egg. Lifetime usage survives. Delayed usage from an
-older Damagochi generation still counts toward lifetime usage while enabled, but cannot grow a replacement Damagochi.
+Each Damagochi has its own lifetime tokens/XP. Choosing a Damagochi starts that balance at zero. Killing it requires
+confirmation, resets its XP, level and happiness, and returns to an unnamed, unchosen egg. Account tokens survive.
+Delayed usage from an older generation and usage while choosing an egg count toward the account without growing a
+replacement Damagochi.
 
 Users can rename their Damagochi; changing species requires the “Kill Damagochi and create new one” flow, available
 only in My settings → Damagochi. The right-click menu links to settings and has no kill action. Hovering or focusing
 the settings button previews crying locally. Confirmation plays sleep, then a fade, then the unchosen egg. Reduced motion
 uses a shorter still-pose fade. Hidden tabs pause animation; ordinary idle includes occasional pecking, walks and waves.
-Damagochi managers can directly change species, name, happiness, level, exact Damagochi tokens and lifetime tokens, or choose
+Damagochi managers can directly change species, name, happiness, level and exact Damagochi lifetime tokens, or choose
 an unchosen egg. Manager species changes keep current progress unless explicitly adjusted. Level adjustments move
-experience to the start of the chosen level. Existing token balances survive migration and initialize lifetime usage;
+experience to the start of the chosen level. A separate Account usage override explicitly replaces account tokens;
+ordinary Damagochi settings saves leave the live account total unchanged. Existing token balances survive migration;
 levels are recalculated with the slower curve. Untouched, disabled, zero-token default Damagochi become unchosen eggs.
 Happiness ranges from 0–100; affection has a cooldown and low happiness changes
 the idle expression. Snoozing still earns progress; disabling closes the current turn’s growth eligibility; new prompts earn growth after re-enabling. Administrator changes are audited.
@@ -42,12 +44,29 @@ counted by message id; pi uses recorded message usage. Codex cumulative token co
 its cached input and reasoning totals are subsets and are not counted twice. Harnesses without recorded usage do
 not receive guessed tokens. The Damagochi feature performs no model calls.
 
-The XP bar shows only progress within the current level. Total Damagochi tokens include the XP spent reaching
-earlier levels. For example, 64,203,424 total tokens now means level 2 with 14,203,424 / 100,000,000 XP toward level 3.
-Lifetime tokens retain usage across Damagochi resets and while waiting to choose an egg. When lifetime tracking was
-introduced, it was initialized from the existing Damagochi XP balance; earlier account usage was not imported.
+The three displays have distinct scopes:
+
+| Display | Meaning | When a Damagochi is killed |
+| --- | --- | --- |
+| Level XP | Tokens earned within the current level. | Resets. |
+| Damagochi lifetime tokens | Total XP earned by the current Damagochi, including earlier levels. | Resets. |
+| Account tokens | Recorded usage since tracking began, across replacements and disabled periods. | Kept. |
+
+For example, 64,203,424 Damagochi lifetime tokens means level 2 with 14,203,424 / 100,000,000 XP toward level 3.
+Account usage appears in a separate blue section in settings and the context menu, including the unchosen egg menu.
+Its bar shows cumulative tokens toward a usage milestone (one million, ten million, one hundred million, and so on),
+independent of Damagochi XP. Milestones have no effect on growth. The account total remains visible in Damagochi
+settings while the module is disabled.
+
+Account usage keeps counting with the module or individual Damagochi disabled. An attribution claim records whether
+its turn can grow a Damagochi. Disabling permanently closes that eligibility for existing claims/credits while
+retaining account attribution, so enabling again does not grant catch-up XP. New enabled prompts can grow normally.
+Existing recorded totals are preserved; previously untracked usage is not backfilled. When cross-generation tracking
+was introduced, its baseline came from the existing Damagochi XP balance; earlier account history was not imported.
 Counts include recorded input, output and cached context, so they can greatly exceed the words typed or displayed.
-The shared XP component explains these counters in its help tip.
+The account usage component and shared XP component explain their counters in help tips. The legacy API/storage field
+`LifetimeTokens` continues to hold account usage; `Experience` holds the current Damagochi lifetime balance. This
+retains compatibility and avoids duplicating either balance.
 
 A terminal submission records only an attribution candidate: user, session and time, never prompt text. A matching
 real user message and recorded token usage are required to award experience. Unattributed work, imported history,

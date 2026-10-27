@@ -4006,6 +4006,12 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 @media(prefers-reduced-motion:reduce){.dam-pet-host *{scroll-behavior:auto}}
 .dam-pet-xp{width:100%;margin:12px 0;color:var(--dam-text)}
 .dam-pet-xp-labels{display:flex;justify-content:space-between;gap:8px;font-size:12px;margin-bottom:6px}
+.account-usage{margin-top:24px;padding-top:16px;border-top:1px solid var(--dam-border);color:var(--dam-text)}
+.account-usage-total{margin:4px 0 8px;font-weight:600;color:var(--dam-info)}
+.account-usage-track{height:7px;overflow:hidden;border-radius:20px;background:var(--dam-border)}
+.account-usage-fill{height:100%;border-radius:inherit;background:var(--dam-info)}
+.account-usage-detail{margin-top:5px;color:var(--dam-muted);font-size:11px;overflow-wrap:anywhere}
+.account-usage-compact{margin:0 0 4px;padding:8px 10px;border-top:0;border-bottom:1px solid var(--dam-border);font-size:12px}
 .dam-pet-xp-track{height:9px;overflow:hidden;border-radius:20px;background:var(--dam-border)}
 .dam-pet-xp-fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--dam-primary),var(--dam-primary-text));transition:width .35s ease}
 .dam-pet-xp-detail{margin-top:5px;font-size:11px;color:var(--dam-muted);overflow-wrap:anywhere}

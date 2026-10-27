@@ -17,8 +17,9 @@
                 <b>@(state.Pet.NeedsAdoption ? "Your egg is waiting" : state.Pet.Name)</b>
                 @if (state.Pet.NeedsAdoption) { <span>Choose a Damagochi and give it a name.</span> }
                 else { <span>@state.Pet.StageName · Happiness @state.Pet.Happiness%</span><PetXpBar Pet="state.Pet" /> }
-                <span>@state.Pet.LifetimeTokens.ToString("N0") lifetime tokens</span>
+                @if (!state.Pet.NeedsAdoption) { <span>@state.Pet.Experience.ToString("N0") Damagochi lifetime tokens</span> }
             </div>
+            <AccountUsageBar Tokens="state.Pet.LifetimeTokens" Compact="true" />
             @if (state.Pet.NeedsAdoption) { <a role="menuitem" href="settings?tab=damagochi" @onclick="() => _menu = false">Choose Damagochi and name…</a> }
             else {
                 <button role="menuitem" @onclick='() => Action("pet")'>Show affection</button>

@@ -20,7 +20,7 @@
         try
         {
             var name = string.IsNullOrEmpty(pet.Name) ? "your Damagochi" : pet.Name;
-            var message = $"{name} will go to sleep and fade away. This permanently resets this Damagochi’s {pet.Experience:N0} XP, level and happiness. Your {pet.LifetimeTokens:N0} lifetime tokens are kept. An unchosen egg appears so you can choose and name a new Damagochi. This cannot be undone.";
+            var message = $"{name} will go to sleep and fade away. This permanently resets this Damagochi’s {pet.Experience:N0} lifetime tokens, level XP and happiness. Your {pet.LifetimeTokens:N0} account tokens are kept. An unchosen egg appears so you can choose and name a new Damagochi. This cannot be undone.";
             if (await Dialogs.ShowMessageBoxAsync($"Kill {name}?", message, yesText: "Kill Damagochi", cancelText: "Keep Damagochi") != true) return;
             Preview(false);
             await Api.RetirePetAsync(new(pet.Generation));

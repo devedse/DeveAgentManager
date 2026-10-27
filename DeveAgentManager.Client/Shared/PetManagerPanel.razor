@@ -20,7 +20,7 @@
         </div>
         <div class="settings-section">
             <div class="help-heading"><MudText Typo="Typo.subtitle1">People’s Damagochi</MudText>
-                <HelpTip Label="People’s Damagochi"><p>Managers can change species and names directly while preserving progress. Choose Unchosen egg to clear the current Damagochi. Set a level or an exact Damagochi token count, and edit lifetime tokens separately. All administrator changes are audited.</p></HelpTip></div>
+                <HelpTip Label="People’s Damagochi"><p>Managers can change species and names directly while preserving progress. Choose Unchosen egg to clear the current Damagochi. Set a level or an exact Damagochi lifetime token count. Account usage is separate; changing it requires explicitly selecting the override below. All administrator changes are audited.</p></HelpTip></div>
             <MudTextField @bind-Value="_search" Label="Find a person" Immediate="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
             <MudSelect T="Guid?" Value="_selected" ValueChanged="Select" Label="Person" Variant="Variant.Outlined" Margin="Margin.Dense">
                 @foreach (var person in _people.Where(p => (p.DisplayName + " " + p.Username).Contains(_search, StringComparison.OrdinalIgnoreCase)))
@@ -42,14 +42,18 @@
                     <MudNumericField T="int" @bind-Value="_happiness" Min="0" Max="100" Label="Happiness" Variant="Variant.Outlined" Margin="Margin.Dense" />
                 </div>
                 <MudSwitch T="bool" @bind-Value="_exactTokens" Label="Set exact Damagochi tokens instead of level" Color="Color.Primary" />
-                <MudNumericField T="long" @bind-Value="_lifetimeTokens" Min="0" Label="Lifetime tokens" Variant="Variant.Outlined" Margin="Margin.Dense" />
-                <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SavePerson" Disabled="_busy">Save person’s Damagochi</MudButton></div>
+                <div class="account-usage">
+                    <div class="help-heading"><MudText Typo="Typo.subtitle2">Account usage</MudText><HelpTip Label="Account usage override"><p>This account total is independent of the Damagochi. Leave the override off to preserve live usage when saving Damagochi settings. An override replaces the recorded account total with the value entered.</p></HelpTip></div>
+                    <MudSwitch T="bool" @bind-Value="_editAccountTokens" Label="Override account tokens" Color="Color.Primary" />
+                    @if (_editAccountTokens) { <MudNumericField T="long" @bind-Value="_lifetimeTokens" Min="0" Label="Account tokens" Variant="Variant.Outlined" Margin="Margin.Dense" /> }
+                </div>
+                <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SavePerson" Disabled="_busy">Save person’s settings</MudButton></div>
             }
         </div>
     </ChildContent>
 </LoadingSection>
 @code {
-    private bool _loaded, _busy, _enabled, _default, _petEnabled, _exactTokens;
+    private bool _loaded, _busy, _enabled, _default, _petEnabled, _exactTokens, _editAccountTokens;
     private string? _error;
     private string _search = "", _name = "", _species = "";
     private long _petTokens, _lifetimeTokens;
@@ -63,10 +67,10 @@
         try { var options = await Api.PetOptionsAsync(); _people = await Api.PetPeopleAsync(); _catalog = (await Api.MyPetAsync()).Catalog; _enabled = options.Enabled; _default = options.DefaultForNewUsers; _loaded = true; }
         catch (Exception ex) when (ex is ApiException or HttpRequestException) { _error = ex is ApiException ? ex.Message : LoadingSection.Unreachable; }
     }
-    private void Select(Guid? id) { _selected = id; if (_people.FirstOrDefault(p => p.UserId == id)?.Pet is { } p) { _name = p.Name; _species = p.Species; _petEnabled = p.Enabled; _level = Math.Max(1, p.Level); _happiness = p.Happiness; _petTokens = p.Experience; _lifetimeTokens = p.LifetimeTokens; _exactTokens = false; } }
+    private void Select(Guid? id) { _selected = id; if (_people.FirstOrDefault(p => p.UserId == id)?.Pet is { } p) { _name = p.Name; _species = p.Species; _petEnabled = p.Enabled; _level = Math.Max(1, p.Level); _happiness = p.Happiness; _petTokens = p.Experience; _lifetimeTokens = p.LifetimeTokens; _exactTokens = false; _editAccountTokens = false; } }
     private async Task Run(Func<Task> work) { _busy = true; try { await work(); await Pets.ReloadAsync(); Snackbar.Add("Damagochi saved.", Severity.Success); } catch (Exception ex) when (ex is ApiException or HttpRequestException) { Snackbar.Add(ex.Message, Severity.Error); } finally { _busy = false; } }
     private Task SaveOptions() => Run(async () => { await Api.SavePetOptionsAsync(new(_enabled, _default)); });
-    private Task SavePerson() => Run(async () => { await Api.AdjustPetAsync(_selected!.Value, new(_petEnabled, _name, _species, _level, _happiness, _exactTokens ? _petTokens : null, _lifetimeTokens)); await Load(); Select(_selected); });
+    private Task SavePerson() => Run(async () => { await Api.AdjustPetAsync(_selected!.Value, new(_petEnabled, _name, _species, _level, _happiness, _exactTokens ? _petTokens : null, _editAccountTokens ? _lifetimeTokens : null)); await Load(); Select(_selected); });
     private async Task Bulk(bool enabled) {
         var verb = enabled ? "Enable" : "Disable";
         if (await Dialogs.ShowMessageBoxAsync($"{verb} everyone’s Damagochi?", $"This changes every existing user’s Damagochi switch. Individual progress is preserved.", yesText: verb, cancelText: "Cancel") == true)

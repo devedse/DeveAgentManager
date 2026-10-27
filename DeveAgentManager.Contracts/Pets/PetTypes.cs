@@ -7,6 +7,7 @@ public sealed record PetStateDto(Guid UserId, string Name, string Species, bool 
     DateTime? SnoozedUntil, bool ReducedMotion, int Size, long Revision, string Reaction, DateTime? ReactionAt,
     long LifetimeTokens, long Generation)
 {
+    // Experience is this Damagochi's lifetime; LifetimeTokens is the legacy API name for account usage.
     public bool NeedsAdoption => string.IsNullOrEmpty(Species);
     public double LevelProgress => NextLevel <= LevelStart ? 100 : Math.Clamp((Experience - LevelStart) * 100d / (NextLevel - LevelStart), 0, 100);
 }

@@ -63,10 +63,12 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
         });
         modelBuilder.Entity<DeveAgentManager.Pets.PetUsageCredit>(credit => {
             credit.HasKey(p => new { p.Source, p.PromptId });
+            credit.Property(p => p.PetEligible).HasDefaultValue(true);
             credit.HasOne<User>().WithMany().HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.SetNull);
         });
         modelBuilder.Entity<DeveAgentManager.Pets.PetInputClaim>(claim => {
             claim.HasKey(p => p.Id);
+            claim.Property(p => p.PetEligible).HasDefaultValue(true);
             claim.HasIndex(p => new { p.SessionId, p.At });
             claim.HasOne<User>().WithMany().HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
         });

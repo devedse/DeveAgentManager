@@ -973,6 +973,11 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<long>("Generation")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("PetEligible")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true);
+
                     b.Property<Guid>("SessionId")
                         .HasColumnType("TEXT");
 
@@ -998,6 +1003,11 @@ namespace DeveAgentManager.Core.Data.Migrations
 
                     b.Property<long>("Generation")
                         .HasColumnType("INTEGER");
+
+                    b.Property<bool>("PetEligible")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true);
 
                     b.Property<long>("Tokens")
                         .HasColumnType("INTEGER");

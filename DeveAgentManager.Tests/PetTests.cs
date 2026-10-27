@@ -78,6 +78,7 @@ public sealed class PetTests : IAsyncLifetime
         await pets.SavePreferencesAsync(User, new(true, "Snek", "snek", Generation: 1), Ct);
         await pets.CreditAsync(session, "codex:native-session", [turn], Ct);
         Assert.Equal(300_000, (await pets.MineAsync(User, Ct)).Pet.Experience);
+        Assert.Equal(400_000, (await pets.MineAsync(User, Ct)).Pet.LifetimeTokens);
         await pets.CreditAsync(session, "codex:native-session", [new() { PromptId = "old-import", StartedAt = at.AddDays(-30), Tokens = 9_000_000 }], Ct);
         Assert.Equal(300_000, (await pets.MineAsync(User, Ct)).Pet.Experience);
     }
@@ -90,6 +91,43 @@ public sealed class PetTests : IAsyncLifetime
         await pets.SavePreferencesAsync(User, new(true, "Snek", "snek", Generation: 1), Ct);
         await pets.CreditAsync(session, "claude:delayed", [new() { PromptId = "delayed", StartedAt = at, Tokens = 1_000_000 }], Ct);
         Assert.Equal(0, (await pets.MineAsync(User, Ct)).Pet.Experience);
+        Assert.Equal(1_000_000, (await pets.MineAsync(User, Ct)).Pet.LifetimeTokens);
+    }
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task AccountUsageCountsIndependentlyOfModuleAndPersonalGrowthSwitches(bool moduleEnabled, bool personalEnabled) {
+        await pets.SaveOptionsAsync(TestUsers.Admin, new(moduleEnabled), Ct);
+        await pets.AdjustAsync(TestUsers.Admin, person, new(personalEnabled, "Byte", "silkie", 1, 70), Ct);
+        var agent = Guid.NewGuid(); var runner = Guid.NewGuid();
+        await using (var db = factory.CreateDbContext()) {
+            db.Runners.Add(new() { Id = runner, OwnerId = person });
+            db.Agents.Add(new() { Id = agent, RunnerId = runner, OwnerId = person });
+            db.Sessions.Add(new() { Id = session, AgentId = agent, OwnerId = person, HarnessId = "codex" });
+            await db.SaveChangesAsync(Ct);
+        }
+        await pets.ClaimInputAsync(agent, person, Ct);
+        DateTime at;
+        await using (var db = factory.CreateDbContext()) {
+            var claim = await db.PetInputClaims.SingleAsync(Ct);
+            Assert.Equal(moduleEnabled && personalEnabled, claim.PetEligible); at = claim.At;
+        }
+        var turn = new SessionUsageTurn { PromptId = "account-work", StartedAt = at, Tokens = 200_000 };
+        await pets.CreditAsync(session, "codex:account", [turn], Ct);
+        await Service().CreditAsync(Guid.NewGuid(), "codex:account", [turn], Ct);
+        var state = (await Service().MineAsync(User, Ct)).Pet;
+        Assert.Equal(200_000, state.LifetimeTokens);
+        Assert.Equal(moduleEnabled && personalEnabled ? 200_000 : 0, state.Experience);
+        if (!moduleEnabled || !personalEnabled) {
+            await pets.SaveOptionsAsync(TestUsers.Admin, new(true), Ct);
+            await pets.SavePreferencesAsync(User, new(true, "Byte", "silkie", Generation: state.Generation), Ct);
+            turn.Tokens += 100_000;
+            await pets.CreditAsync(session, "codex:account", [turn], Ct);
+            state = (await Service().MineAsync(User, Ct)).Pet;
+            Assert.Equal(300_000, state.LifetimeTokens); Assert.Equal(0, state.Experience);
+        }
     }
     [Fact] public async Task InteractionsHaveCooldownAndHidePreservesProgress() {
         await pets.SaveOptionsAsync(TestUsers.Admin, new(true), Ct);

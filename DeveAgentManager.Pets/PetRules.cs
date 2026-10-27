@@ -46,6 +46,7 @@ public sealed class UserPet
     public string Species { get; set; } = "";
     public string Name { get; set; } = "";
     public long Experience { get; set; }
+    /// <summary>Account usage across all generations, including work while Damagochi is disabled.</summary>
     public long LifetimeTokens { get; set; }
     public long Generation { get; set; }
     public int Happiness { get; set; } = 70;
@@ -66,6 +67,7 @@ public sealed class PetUsageCredit
     public long Tokens { get; set; }
     public Guid? UserId { get; set; }
     public long Generation { get; set; }
+    public bool PetEligible { get; set; } = true;
 }
 public sealed class PetInputClaim
 {
@@ -74,5 +76,6 @@ public sealed class PetInputClaim
     public Guid SessionId { get; set; }
     public Guid UserId { get; set; }
     public long Generation { get; set; }
+    public bool PetEligible { get; set; } = true;
     public DateTime At { get; set; }
 }

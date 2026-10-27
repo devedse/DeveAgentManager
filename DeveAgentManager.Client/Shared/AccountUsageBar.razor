@@ -1,0 +1,26 @@
+@using System.Globalization
+
+<section class="account-usage @(Compact ? "account-usage-compact" : null)" aria-label="Account usage">
+    <div class="help-heading"><b>Account usage</b>
+        <HelpTip Label="Account tokens"><p>Account tokens are recorded usage since tracking began, across your agents and all Damagochi. Killing, replacing or disabling a Damagochi does not reset or pause this counter.</p><p>Usage includes recorded input, output and cached context from prompts submitted through the Manager. Earlier account history and unattributed work are not imported. The existing tracked total is preserved.</p><p>The blue bar shows progress toward the next usage milestone. Milestones grow from one million in powers of ten; they do not grant XP or change a Damagochi’s level.</p></HelpTip>
+    </div>
+    <div class="account-usage-total">@Tokens.ToString("N0") account tokens</div>
+    <div class="account-usage-track" role="progressbar" aria-label="Account token milestone" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@Percent" aria-valuetext="@Description">
+        <div class="account-usage-fill" style="@($"width:{Percent}%")"></div>
+    </div>
+    <div class="account-usage-detail">Since tracking began · @Milestone.ToString("N0") milestone</div>
+</section>
+
+@code {
+    [Parameter] public long Tokens { get; set; }
+    [Parameter] public bool Compact { get; set; }
+    private long Milestone {
+        get {
+            long next = 1_000_000;
+            while (Tokens >= next && next <= long.MaxValue / 10) next *= 10;
+            return Tokens >= next ? long.MaxValue : next;
+        }
+    }
+    private string Percent => Math.Clamp(Tokens * 100d / Milestone, 0, 100).ToString("0.##", CultureInfo.InvariantCulture);
+    private string Description => $"{Tokens:N0} account tokens since tracking began; {Milestone:N0} usage milestone";
+}

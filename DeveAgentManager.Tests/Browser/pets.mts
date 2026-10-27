@@ -75,8 +75,12 @@ try {
     assert.equal(await menu.getByRole('menuitem', { name: /Kill/ }).count(), 0, 'Reset is only available in settings');
     await menu.getByText('14,203,424 / 100,000,000 XP to level 3', { exact: true }).waitFor();
     await menu.getByRole('button', { name: 'Help about Damagochi XP and lifetime tokens' }).click();
-    await page.getByText('This Damagochi has 64,203,424 total XP.', { exact: false }).waitFor();
+    await page.getByText('This Damagochi has 64,203,424 lifetime tokens.', { exact: false }).waitFor();
     await menu.getByRole('button', { name: 'Help about Damagochi XP and lifetime tokens' }).click();
+    await menu.getByText('64,203,424 Damagochi lifetime tokens', { exact: true }).waitFor();
+    const account = menu.getByRole('region', { name: 'Account usage', exact: true });
+    await account.getByText('64,203,424 account tokens', { exact: true }).waitFor();
+    await account.getByRole('progressbar', { name: 'Account token milestone' }).waitFor();
     await page.screenshot({ path: '/tmp/damagochi-desktop.png' });
     await page.getByRole('menuitem', { name: 'Go away for 5 minutes', exact: true }).click();
     await pet.waitFor({ state: 'hidden' });
@@ -115,7 +119,7 @@ try {
     assert.equal((await api(context, 'me/pet')).pet.species, 'silkie');
     console.log("Opening retirement confirmation");
     await kill.click();
-    await dialog.getByText(/lifetime tokens are kept/).waitFor();
+    await dialog.getByText(/account tokens are kept/).waitFor();
     await dialog.getByRole('button', { name: 'Kill Damagochi', exact: true }).click();
     console.log("Checking sleep/fade sequence");
     await page.locator('.dam-pet-host[data-retiring="true"]').waitFor();
@@ -125,12 +129,23 @@ try {
     await page.locator('.dam-pet-art .egg-svg').waitFor();
     current = (await api(context, 'me/pet')).pet;
     assert.equal(current.experience, 0); assert.equal(current.lifetimeTokens, 7_000_000); assert.equal(current.name, '');
+    await page.getByRole('region', { name: 'Account usage', exact: true }).getByText('7,000,000 account tokens', { exact: true }).waitFor();
+    await pet.click({ button: 'right' });
+    await account.getByText('7,000,000 account tokens', { exact: true }).waitFor();
+    assert.equal(await menu.getByRole('progressbar', { name: 'Damagochi experience' }).count(), 0);
     await page.screenshot({ path: '/tmp/damagochi-new-egg.png' });
+    await menu.getByRole('menuitem', { name: 'Close', exact: true }).click();
     await api(context, 'me/pet/adopt', 'POST', { name: 'Byte', species: 'silkie', generation: current.generation });
     await page.locator('.dam-pet-name', { hasText: 'Byte' }).waitFor();
     assert.equal((await api(context, 'me/pet')).pet.level, 1);
+    await page.getByText('0 Damagochi lifetime tokens', { exact: true }).waitFor();
+    await page.getByRole('region', { name: 'Account usage', exact: true }).getByText('7,000,000 account tokens', { exact: true }).waitFor();
     // Autonomous actions eventually interrupt idle, without changing server happiness or token totals.
     await page.waitForFunction(() => ['peck', 'walk', 'wave', 'hop'].includes(document.querySelector<HTMLElement>('.dam-pet-host')?.dataset.motion ?? ''), undefined, { timeout: 35000 });
+    await api(context, 'pets/settings', 'PUT', { enabled: false, defaultForNewUsers: false });
+    await pet.waitFor({ state: 'hidden' });
+    await page.getByRole('region', { name: 'Account usage', exact: true }).getByText('7,000,000 account tokens', { exact: true }).waitFor();
+    await api(context, 'pets/settings', 'PUT', { enabled: true, defaultForNewUsers: false });
     await context.close();
     const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce' });
     const mobile = await login(phone);
@@ -152,5 +167,5 @@ try {
     await touch.detach();
     await phone.close();
     assert.deepEqual(errors, []);
-    console.log('PASS unchosen egg, named adoption, XP, persistent canvas, idle actions, reversible crying, confirmed sleep/fade/reset, lifetime retention, snooze and phone/reduced motion');
+    console.log('PASS unchosen egg, named adoption, XP, persistent canvas, idle actions, reversible crying, confirmed sleep/fade/reset, separate persistent account usage, snooze and phone/reduced motion');
 } finally { await browser.close(); }

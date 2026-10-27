@@ -11,7 +11,7 @@
     {
         <div class="settings-section">
             <div class="help-heading"><MudText Typo="Typo.subtitle1">Your Damagochi</MudText>
-                <HelpTip Label="Damagochi"><p>Choose a species and give your egg a name to hatch your Damagochi. New Damagochi start at level 1 with zero Damagochi XP. Tokens from new work you prompt grow the current Damagochi; lifetime tokens are remembered separately.</p><p>Changing species requires killing your current Damagochi and confirming its permanent reset. Lifetime tokens are kept. Damagochi managers can change Damagochi directly in Manager settings.</p><p>Snoozing hides your Damagochi while it keeps growing. Disabling pauses growth without losing progress. Position is saved in this browser.</p></HelpTip></div>
+                <HelpTip Label="Damagochi"><p>Choose a species and give your egg a name to hatch your Damagochi. New Damagochi start at level 1 with zero lifetime tokens. The XP bar shows progress within the current level.</p><p>Changing species requires killing your current Damagochi and confirming its permanent reset. Damagochi lifetime tokens reset; account tokens are kept separately. Damagochi managers can change Damagochi directly in Manager settings.</p><p>Snoozing hides your Damagochi while it keeps growing. Disabling pauses Damagochi growth; account usage keeps counting. Position is saved in this browser.</p></HelpTip></div>
             @if (state.CanEdit)
             {
                 <MudSwitch T="bool" @bind-Value="_enabled" Label="Enable my Damagochi" Color="Color.Primary" />
@@ -33,10 +33,9 @@
                         <MudTextField Value="@(state.Catalog.First(p => p.Id == state.Pet.Species).Name)" Label="Damagochi type" ReadOnly="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
                         <MudTextField @bind-Value="_name" Label="Name" MaxLength="40" Variant="Variant.Outlined" Margin="Margin.Dense" />
                     </div>
-                    <div class="dam-pet-stats"><span>@state.Pet.StageName</span><span>@state.Pet.Experience.ToString("N0") Damagochi tokens</span><span>Happiness @state.Pet.Happiness%</span></div>
+                    <div class="dam-pet-stats"><span>@state.Pet.StageName</span><span>@state.Pet.Experience.ToString("N0") Damagochi lifetime tokens</span><span>Happiness @state.Pet.Happiness%</span></div>
                     <PetXpBar Pet="state.Pet" />
                 }
-                <div class="dam-pet-stats"><span>@state.Pet.LifetimeTokens.ToString("N0") lifetime tokens</span></div>
                 <MudNumericField T="int" @bind-Value="_size" Min="90" Max="240" Label="Damagochi size" Variant="Variant.Outlined" Margin="Margin.Dense" />
                 <MudSwitch T="bool" @bind-Value="_reduced" Label="Reduce Damagochi movement" Color="Color.Primary" />
                 @if (state.Pet.SnoozedUntil > DateTime.UtcNow)
@@ -50,6 +49,7 @@
             }
             else { <MudText Typo="Typo.body2">Damagochi is disabled by a Damagochi manager.</MudText> }
         </div>
+        <AccountUsageBar Tokens="state.Pet.LifetimeTokens" />
     }
     </ChildContent>
 </LoadingSection>

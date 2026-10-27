@@ -58,12 +58,13 @@ Append an object to [catalog.json](catalog.json), keeping the surrounding JSON a
 The catalog feeds the existing settings picker and API. Adding a species normally needs no new endpoint,
 authorization rule, database migration, or settings component. Users choose a species once; replacement requires the
 confirmed Kill Damagochi action in My settings → Damagochi and resets that Damagochi's XP. It is absent from the
-right-click menu. Lifetime tokens survive. Damagochi managers can change species
+right-click menu. Account tokens survive; the current Damagochi's lifetime tokens reset. Damagochi managers can change species
 directly while retaining progress. New names and species start empty until the user completes adoption.
 
 All species share `PetRules.GrowthScale`: level N begins at `25,000,000 × (N − 1) × N` tokens. Young begins at
 750 million and adult at 2.25 billion tokens. Keep growth out of individual renderers. Changing this curve preserves
-saved token balances and recalculates levels/stages; it does not reset lifetime usage.
+saved token balances and recalculates levels/stages; it does not reset account usage. The blue Account usage bar is
+separate from species renderers and XP, stays visible for an egg, and continues counting when Damagochi is disabled.
 
 ## 2. Implement the renderer
 
@@ -291,7 +292,8 @@ and choose **Unchosen egg** for the waiting state. Adopt a named Damagochi to in
 
 - Every expression has the right face, stable proportions, intact extremities, and a consistent ground anchor.
 - Adoption starts at zero XP, the hatch transition works, and the chosen name is visible.
-- Kill Damagochi previews crying, requires confirmation, sleeps/fades into an unchosen egg, and keeps lifetime tokens.
+- Kill Damagochi previews crying, requires confirmation, sleeps/fades into an unchosen egg, resets Damagochi lifetime
+  tokens and preserves the separate Account usage bar.
 - Administrator species changes preserve Damagochi progress; user replacement starts a fresh Damagochi.
 - Navigation between normal pages and the terminal retains the same renderer/canvas for the selected species.
 - Dragging, context menu, touch hold, snooze/wake, and hiding/restoring work at desktop and phone sizes.
