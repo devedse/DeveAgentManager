@@ -14,7 +14,7 @@ namespace DeveAgentManager.Core.Agents;
 /// </summary>
 public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> factory, ILimitTerminal terminal,
     ManagerEvents events, TimeProvider clock, ILogger<AgentContinuations> logger, AgentDiagnostics? diagnostics = null,
-    UsageLimitReader? limitReader = null) : IDisposable
+    UsageLimitReader? limitReader = null, Sessions.SessionService? sessions = null) : IDisposable
 {
     private readonly UsageLimitReader _reader = limitReader ?? UsageLimitReader.Default;
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _gates = new();
@@ -369,6 +369,8 @@ public sealed class AgentContinuations(IDbContextFactory<ManagerDbContext> facto
                     if (claimed == 0) return;
                     try
                     {
+                        // Typing waits for agent operations (stop, switch, a conversation change), as a job's report does.
+                        using var lease = sessions is null ? null : await sessions.LockAsync(ct);
                         using var loginLease = await Accounts.AccountCoordination.LockAsync(ct);
                         var allowed = await db.Agents.AsNoTracking().AnyAsync(a => a.Id == id && !a.LoginBlocked && !a.LoginStopPending
                             && a.State == AgentState.Running && a.HarnessSessionId == agent.HarnessSessionId && a.HarnessId == agent.HarnessId, ct);

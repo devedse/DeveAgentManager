@@ -86,7 +86,7 @@ public sealed class AgentSwitchTests
             // This agent waits for the switch instead.
             Assert.Contains("switching", (await Assert.ThrowsAsync<InvalidOperationException>(() => agents.StartAsync(agent.Id, cancellationToken: Ct))).Message);
             Assert.Contains("switching", (await Assert.ThrowsAsync<InvalidOperationException>(() => agents.StopAsync(agent.Id, Ct))).Message);
-            Assert.Contains("already switching", (await Assert.ThrowsAsync<InvalidOperationException>(() => agents.SwitchAsync(TestUsers.Admin, agent.Id, "claude", null, Ct))).Message);
+            Assert.Contains("switching harness", (await Assert.ThrowsAsync<InvalidOperationException>(() => agents.SwitchAsync(TestUsers.Admin, agent.Id, "claude", null, Ct))).Message);
 
             // The request is dropped (a closed tab): the switch still finishes.
             request.Cancel();
@@ -121,6 +121,6 @@ public sealed class AgentSwitchTests
         public string InstallScript => "true";
         public string VersionCommand => "true";
         public IReadOnlyList<string> ConfigFiles => [];
-        public string BuildLaunchCommand(HarnessLaunch launch) => "exec sleep 600";
+        public string BuildLaunchCommand(HarnessLaunch launch) => "sleep 600";
     }
 }

@@ -34,8 +34,6 @@ public sealed partial class AgentService(
     AuditLog? audit = null, Setup.UserSettingsStore? userSettings = null, DeveAgentManager.Core.Pets.PetService? pets = null)
 {
     private readonly Dictionary<string, IHarness> _harnesses = harnesses.ToDictionary(h => h.Id);
-    // Agents whose harness switch is converting their conversation without the session lock (SwitchAsync).
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> _switching = new();
 
     public IReadOnlyCollection<IHarness> Harnesses => _harnesses.Values;
 
@@ -144,6 +142,9 @@ public sealed partial class AgentService(
 
         agent.Project = new Project { Id = agent.Id, RunnerId = runner.Id, OwnerId = actor.Id,
             Name = agent.Name, RootDirectory = agent.WorkingDirectory, CreatedAt = now };
+        // Until it runs, the new agent is busy (actions on it wait) and its conversation is its own to prepare.
+        using var creating = await BeginLongOperationAsync(agent.Id, "being created", cancellationToken);
+        using var preparing = sessions.PrepareConversation(agent.Id);
         db.Agents.Add(agent);
         await db.SaveChangesAsync(cancellationToken);
         try
@@ -188,7 +189,7 @@ public sealed partial class AgentService(
     /// </summary>
     public async Task StartAsync(Guid agentId, bool restart = false, CancellationToken cancellationToken = default)
     {
-        using var lease = await sessions.LockAsync(cancellationToken);
+        using var lease = await LockAgentAsync(agentId, cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         RequireNotMoving(agent);
@@ -218,9 +219,8 @@ public sealed partial class AgentService(
         await RequireOwnLoginAsync(actor, agentId, target, accountId, cancellationToken);
         // Converting a conversation runs without the session lock, so other agents keep working; actions on this agent
         // wait for the switch (RequireNotMoving), and the state monitor leaves it alone.
-        if (!_switching.TryAdd(agentId, true)) throw new InvalidOperationException("This agent is already switching. Wait for it to finish.");
-        try { await SwitchStepsAsync(actor, agentId, target, accountId, cancellationToken); }
-        finally { _switching.TryRemove(agentId, out _); }
+        using (await BeginLongOperationAsync(agentId, "switching harness", cancellationToken))
+            await SwitchStepsAsync(actor, agentId, target, accountId, cancellationToken);
     }
 
     private async Task SwitchStepsAsync(CurrentUser actor, Guid agentId, IHarness target, Guid? accountId, CancellationToken cancellationToken)
@@ -360,65 +360,117 @@ public sealed partial class AgentService(
     /// </summary>
     public async Task SelectSessionAsync(Guid agentId, Guid? sessionId, string? title, CancellationToken ct = default, bool update = false)
     {
-        using var lease = await sessions.LockAsync(ct);
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var agent = await db.Agents.Include(a => a.Runner).SingleAsync(a => a.Id == agentId, ct);
-        RequireNotMoving(agent);
-        var runner = RequireReady(agent.Runner!);
-        var targetHarnessId = agent.HarnessId;
-        if (sessionId is { } id)
+        Runner runner;
+        Agent checkedAgent;
+        string nativeId;
+        IDisposable changing;
+        // 1. Under the session lock: check the choice. The agent is then busy until it is done (other actions on it wait),
+        // and the lock is released while the branch is pulled and the conversation installed.
+        using (await LockAgentAsync(agentId, ct))
         {
-            var selected = await sessions.GetAsync(id, ct) ?? throw new ArgumentException("Conversation not found.");
-            if (selected.WorkspaceAgentId != agent.Id && !(agent.ProjectId is { } projectId && await InProjectAsync(db, selected, projectId, ct)))
-                throw new InvalidOperationException("Choose a conversation from this project.");
-            if (selected.AgentId == agent.Id) return;
-            if (selected.AgentId is not null) throw new InvalidOperationException("This conversation is active in another workspace. Open that workspace instead.");
-            targetHarnessId = selected.HarnessId;
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            var agent = await db.Agents.AsNoTracking().Include(a => a.Runner).SingleAsync(a => a.Id == agentId, ct);
+            RequireNotMoving(agent);
+            runner = RequireReady(agent.Runner!);
+            var targetHarnessId = agent.HarnessId;
+            if (sessionId is { } id)
+            {
+                var selected = await sessions.GetAsync(id, ct) ?? throw new ArgumentException("Conversation not found.");
+                if (selected.WorkspaceAgentId != agent.Id && !(agent.ProjectId is { } projectId && await InProjectAsync(db, selected, projectId, ct)))
+                    throw new InvalidOperationException("Choose a conversation from this project.");
+                if (selected.AgentId == agent.Id) return;
+                if (selected.AgentId is not null) throw new InvalidOperationException("This conversation is active in another workspace. Open that workspace instead.");
+                targetHarnessId = selected.HarnessId;
+            }
+            if (!string.IsNullOrWhiteSpace(title)) SessionService.ValidateTitle(title);
+            var target = GetHarness(targetHarnessId);
+            var changesHarness = targetHarnessId != agent.HarnessId;
+            if (changesHarness && !runner.HarnessIds.Contains(targetHarnessId))
+                throw new InvalidOperationException($"{target.DisplayName} is not installed on '{runner.Name}'. Install it first (Runner → Operations).");
+            if (agent.LoginStopPending || !changesHarness && agent.LoginBlocked)
+                throw new InvalidOperationException("Choose a permitted login after pending enforcement completes.");
+            // A login belongs to a harness. When restoring another harness, resolve the owner's permitted default for it
+            // before stopping anything; never carry an incompatible login over or use ambient Runner credentials.
+            await accounts.ResolveAsync(new Agent { Id = agent.Id, OwnerId = agent.OwnerId, HarnessId = targetHarnessId,
+                AccountId = changesHarness ? null : agent.AccountId }, ct);
+            nativeId = target.NewSessionId(Guid.NewGuid());
+            checkedAgent = agent;
+            changing = await BeginLongOperationAsync(agentId, "changing its conversation", ct);
         }
-        if (!string.IsNullOrWhiteSpace(title)) SessionService.ValidateTitle(title);
-        var target = GetHarness(targetHarnessId);
-        var changesHarness = targetHarnessId != agent.HarnessId;
-        if (changesHarness && !runner.HarnessIds.Contains(targetHarnessId))
-            throw new InvalidOperationException($"{target.DisplayName} is not installed on '{runner.Name}'. Install it first (Runner → Operations).");
-        if (agent.LoginStopPending || !changesHarness && agent.LoginBlocked)
-            throw new InvalidOperationException("Choose a permitted login after pending enforcement completes.");
-        // A login belongs to a harness. When restoring another harness, resolve the owner's permitted default for it
-        // before stopping anything; never carry an incompatible login over or use ambient Runner credentials.
-        await accounts.ResolveAsync(new Agent { Id = agent.Id, OwnerId = agent.OwnerId, HarnessId = targetHarnessId,
-            AccountId = changesHarness ? null : agent.AccountId }, ct);
-        var nativeId = target.NewSessionId(Guid.NewGuid());
-        // Before stopping anything: a refused or failed pull leaves the current conversation running.
-        if (update) await UpdateWorkspaceAsync(runner, agent, ct);
-        try
+
+        using (changing)
         {
-            agent.State = AgentState.Starting;
-            await db.SaveChangesAsync(ct);
-            events.AgentChanged(runner.Id, agent.Id);
-            (await shell.RunAsync(runner, BuildStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), ct))
-                .EnsureSuccess("Stopping the current session");
-            await sessions.SyncRunnerLockedAsync(runner, ct, agent.Id);
-            await sessions.SelectLockedAsync(runner, agent, sessionId, title, nativeId, ct);
-            AgentActivityTracker.Reset(agent);
-            agent.State = AgentState.Starting;
-            agent.StateMessage = null;
-            await db.SaveChangesAsync(ct);
-            events.AgentChanged(runner.Id, agent.Id);
-            await LaunchAsync(runner, agent, restart: true, ct);
-            agent.State = AgentState.Running;
-            agent.ExitCode = null;
-        }
-        catch (Exception ex)
-        {
-            // Selection is committed before launching. Start can retry the selected chat without losing either history.
-            agent.State = AgentState.Error;
-            agent.StateMessage = $"Session change failed: {ex.Message}. Use Start to resume the selected session.";
-            throw;
-        }
-        finally
-        {
-            agent.UpdatedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(CancellationToken.None);
-            events.AgentChanged(runner.Id, agent.Id);
+            // 2. Before stopping anything: a refused or failed pull leaves the current conversation running.
+            if (update) await UpdateWorkspaceAsync(runner, checkedAgent, ct);
+            var stopping = false;
+            var selected = false;
+            try
+            {
+                // 3. Under the lock: stop the harness and take the latest histories. Once stopping, the change finishes or fails
+                // by itself: a dropped request must not leave it halfway.
+                SessionService.Selection selection;
+                using (await sessions.LockAsync(ct))
+                {
+                    await using var db = await dbFactory.CreateDbContextAsync(ct);
+                    var agent = await db.Agents.SingleAsync(a => a.Id == agentId, ct);
+                    if (MoveBlocksActions(agent) || agent.HarnessId != checkedAgent.HarnessId || agent.HarnessSessionId != checkedAgent.HarnessSessionId)
+                        throw new InvalidOperationException("The agent changed while the conversation change was being prepared. Try again.");
+                    stopping = true;
+                    agent.State = AgentState.Starting;
+                    agent.StateMessage = "Changing its conversation…";
+                    agent.UpdatedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync(CancellationToken.None);
+                    events.AgentChanged(runner.Id, agent.Id);
+                    (await shell.RunAsync(runner, BuildStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), CancellationToken.None))
+                        .EnsureSuccess("Stopping the current session");
+                    await sessions.SyncRunnerLockedAsync(runner, CancellationToken.None, agent.Id);
+                    selection = await sessions.BeginSelectAsync(sessionId, CancellationToken.None);
+                }
+
+                using (selection)
+                {
+                    // 4. Without it: write the chosen conversation to the Runner under the new session id.
+                    await sessions.InstallSelectionAsync(runner, checkedAgent, selection, nativeId, CancellationToken.None);
+
+                    // 5. Under the lock again: record the choice and start.
+                    using (await sessions.LockAsync(CancellationToken.None))
+                    {
+                        await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
+                        var agent = await db.Agents.Include(a => a.Runner).SingleAsync(a => a.Id == agentId, CancellationToken.None);
+                        if (MoveBlocksActions(agent) || agent.HarnessId != checkedAgent.HarnessId || agent.HarnessSessionId != checkedAgent.HarnessSessionId)
+                            throw new InvalidOperationException("The agent changed while its conversation was being changed.");
+                        await sessions.SelectLockedAsync(runner, agent, sessionId, title, nativeId, CancellationToken.None, selection);
+                        selected = true;
+                        AgentActivityTracker.Reset(agent);
+                        agent.State = AgentState.Starting;
+                        agent.StateMessage = null;
+                        agent.UpdatedAt = DateTime.UtcNow;
+                        await db.SaveChangesAsync(CancellationToken.None);
+                        events.AgentChanged(runner.Id, agent.Id);
+                        await LaunchAsync(RequireReady(agent.Runner!), agent, restart: true, CancellationToken.None);
+                        agent.State = AgentState.Running;
+                        agent.ExitCode = null;
+                        agent.UpdatedAt = DateTime.UtcNow;
+                        await db.SaveChangesAsync(CancellationToken.None);
+                        events.AgentChanged(runner.Id, agent.Id);
+                    }
+                }
+            }
+            catch (Exception ex) when (stopping)
+            {
+                // Selection is committed before launching. Start can retry the selected chat without losing either history.
+                await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
+                if (await db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, CancellationToken.None) is { } agent)
+                {
+                    agent.State = AgentState.Error;
+                    agent.StateMessage = selected ? $"Session change failed: {ex.Message}. Use Start to resume the selected session."
+                        : $"Session change failed: {ex.Message}. The current conversation was kept; use Start to resume it.";
+                    agent.UpdatedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync(CancellationToken.None);
+                    events.AgentChanged(runner.Id, agent.Id);
+                }
+                throw;
+            }
         }
     }
 
@@ -440,7 +492,7 @@ public sealed partial class AgentService(
 
     public async Task StopAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
-        using var lease = await sessions.LockAsync(cancellationToken);
+        using var lease = await LockAgentAsync(agentId, cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         RequireNotMoving(agent);
@@ -459,11 +511,11 @@ public sealed partial class AgentService(
     /// <summary>Stops the agent and forgets it. Its folder and the harness's own session files stay on the Runner.</summary>
     public async Task DeleteAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
-        using var lease = await sessions.LockAsync(cancellationToken);
+        using var lease = await LockAgentAsync(agentId, cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
         if (agent.MoveJson is not null) throw new InvalidOperationException("Finish the agent move before deleting it.");
-        if (_switching.ContainsKey(agent.Id)) throw new InvalidOperationException(SwitchInProgress);
+        if (InLongOperation(agent.Id)) throw new InvalidOperationException(Busy(agent.Id));
         if (agent.IsClone)
             throw new InvalidOperationException("Use Remove workspace: it checks the workspace's uncommitted and unpushed work before deleting its folder.");
         if (agent.ProjectId is { } projectId && await db.Agents.AnyAsync(a => a.ProjectId == projectId && a.Id != agent.Id, cancellationToken))
@@ -666,70 +718,101 @@ public sealed partial class AgentService(
     /// </summary>
     public async Task RefreshRunnerAsync(Runner runner, CancellationToken cancellationToken = default, string? leadingScript = null, Action<string>? leadingOutput = null)
     {
-        using var lease = await sessions.LockAsync(cancellationToken);
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var agents = await db.Agents.Where(a => a.RunnerId == runner.Id && a.State != AgentState.Moving).ToListAsync(cancellationToken);
-        agents.RemoveAll(a => MoveBlocksActions(a) || _switching.ContainsKey(a.Id));
+        // Read without the session lock: a slow or unreachable Runner, or a long operation on another agent, never holds up
+        // status checks elsewhere. Busy agents are left alone (AgentOperations).
+        List<Agent> read;
+        await using (var db = await dbFactory.CreateDbContextAsync(cancellationToken))
+            read = await db.Agents.AsNoTracking().Where(a => a.RunnerId == runner.Id && a.State != AgentState.Moving).ToListAsync(cancellationToken);
+        read.RemoveAll(a => MoveBlocksActions(a) || Operations(a.Id).Running > 0);
+        var begun = read.ToDictionary(a => a.Id, a => Operations(a.Id).Begun);
 
-        var script = BuildStateScript(agents.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern)), captureScreens: true,
-            nativeSessions: agents.ToDictionary(a => a.TmuxSession, a => new NativeActivityTarget(a.HarnessId, a.HarnessSessionId)));
+        var script = BuildStateScript(read.Select(a => (a.TmuxSession, _harnesses.GetValueOrDefault(a.HarnessId)?.BusyPattern)), captureScreens: true,
+            nativeSessions: read.ToDictionary(a => a.TmuxSession, a => new NativeActivityTarget(a.HarnessId, a.HarnessSessionId)));
         if (leadingScript is not null) script = leadingScript.TrimEnd('\n') + $"\necho '{StateStartMarker}'\n" + script;
         var result = (await shell.RunAsync(runner, script, TimeSpan.FromSeconds(30), cancellationToken)).EnsureSuccess("Reading agent state");
         var output = SplitLeadingOutput(result.Output, leadingScript is not null, leadingOutput);
         var (_, panes, _) = ParsePanes(output);
-        var knownLimits = await db.AgentLimits.AsNoTracking().Where(l => db.Agents.Any(a => a.Id == l.AgentId && a.RunnerId == runner.Id)).ToDictionaryAsync(l => l.AgentId, cancellationToken);
         var changedAgents = new List<Guid>();
         var screens = ParseScreens(output);
+        var agents = new List<Agent>();
 
-        foreach (var agent in agents)
+        await _observationWrites.WaitAsync(cancellationToken);
+        try
         {
-            AgentState state;
-            int? exitCode = null;
-            var working = false;
-            var activityChanged = false;
-            if (panes.TryGetValue(agent.TmuxSession, out var pane))
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+            var ids = read.Select(a => a.Id).ToList();
+            var current = await db.Agents.Where(a => ids.Contains(a.Id)).ToDictionaryAsync(a => a.Id, cancellationToken);
+            var knownLimits = await db.AgentLimits.AsNoTracking().Where(l => ids.Contains(l.AgentId)).ToDictionaryAsync(l => l.AgentId, cancellationToken);
+            foreach (var before in read)
             {
-                state = pane.Dead ? AgentState.Exited : AgentState.Running;
-                exitCode = pane.Dead ? pane.ExitCode : null;
-                if (!pane.Dead)
+                // An operation began, or the agent changed, while its terminal was read: the next check sees it as it is now.
+                if (!current.TryGetValue(before.Id, out var agent) || Operations(agent.Id) is var now && (now.Running > 0 || now.Begun != begun[agent.Id])
+                    || agent.State != before.State || agent.UpdatedAt != before.UpdatedAt || agent.RunnerId != before.RunnerId || agent.TmuxSession != before.TmuxSession
+                    || agent.HarnessId != before.HarnessId || agent.HarnessSessionId != before.HarnessSessionId || MoveBlocksActions(agent))
+                    continue;
+                agents.Add(agent);
+                AgentState state;
+                int? exitCode = null;
+                var working = false;
+                var activityChanged = false;
+                if (panes.TryGetValue(agent.TmuxSession, out var pane))
                 {
-                    var screen = screens.GetValueOrDefault(agent.TmuxSession);
-                    var observedAt = screen?.ObservedAt ?? DateTime.UtcNow;
-                    var detection = screen?.Screen is { } text ? AgentScreenDetector.Detect(agent.HarnessId, text, observedAt)
-                        : new AgentScreenDetection(AgentActivityStatus.Unknown, "The terminal snapshot could not be read.", "snapshot-unavailable");
-                    if (screen?.Screen is { } currentScreen)
-                        detection = UsageLimitState.ApplyResetStatus(agent, knownLimits.GetValueOrDefault(agent.Id), currentScreen, screen.Identity, detection, DateTime.UtcNow, limitReader);
-                    activityChanged = AgentActivityTracker.Apply(agent, detection,
-                        screen?.Identity ?? AgentActivityTracker.Read(agent).Identity, observedAt, screen?.NativeTurn);
-                    working = agent.Working;
+                    state = pane.Dead ? AgentState.Exited : AgentState.Running;
+                    exitCode = pane.Dead ? pane.ExitCode : null;
+                    if (!pane.Dead)
+                    {
+                        var screen = screens.GetValueOrDefault(agent.TmuxSession);
+                        var observedAt = screen?.ObservedAt ?? DateTime.UtcNow;
+                        var detection = screen?.Screen is { } text ? AgentScreenDetector.Detect(agent.HarnessId, text, observedAt)
+                            : new AgentScreenDetection(AgentActivityStatus.Unknown, "The terminal snapshot could not be read.", "snapshot-unavailable");
+                        if (screen?.Screen is { } currentScreen)
+                            detection = UsageLimitState.ApplyResetStatus(agent, knownLimits.GetValueOrDefault(agent.Id), currentScreen, screen.Identity, detection, DateTime.UtcNow, limitReader);
+                        activityChanged = AgentActivityTracker.Apply(agent, detection,
+                            screen?.Identity ?? AgentActivityTracker.Read(agent).Identity, observedAt, screen?.NativeTurn);
+                        working = agent.Working;
+                    }
+                }
+                else
+                {
+                    // Just created agents may not show up yet.
+                    state = agent.State == AgentState.Starting && DateTime.UtcNow - agent.UpdatedAt < TimeSpan.FromMinutes(1) ? AgentState.Starting : AgentState.Stopped;
+                    if (state == AgentState.Stopped && agent.State == AgentState.Running)
+                        agent.StateMessage = "The harness terminal disappeared unexpectedly. Start it to resume the conversation.";
+                }
+
+                if (agent.State != state || agent.ExitCode != exitCode)
+                {
+                    agent.State = state;
+                    agent.ExitCode = exitCode;
+                    agent.StateMessage = state == AgentState.Exited ? $"The harness exited (code {exitCode}). Start it again to resume the conversation."
+                        : state == AgentState.Stopped ? agent.StateMessage : null;
+                    agent.UpdatedAt = DateTime.UtcNow;
+                    agent.Working = working;
+                    changedAgents.Add(agent.Id);
+                }
+                else if (agent.Working != working || activityChanged)
+                {
+                    agent.Working = working;
+                    changedAgents.Add(agent.Id);
                 }
             }
-            else
-            {
-                // Just created agents may not show up yet.
-                state = agent.State == AgentState.Starting && DateTime.UtcNow - agent.UpdatedAt < TimeSpan.FromMinutes(1) ? AgentState.Starting : AgentState.Stopped;
-                if (state == AgentState.Stopped && agent.State == AgentState.Running)
-                    agent.StateMessage = "The harness terminal disappeared unexpectedly. Start it to resume the conversation.";
-            }
 
-            if (agent.State != state || agent.ExitCode != exitCode)
+            for (var attempt = 0; ; attempt++)
             {
-                agent.State = state;
-                agent.ExitCode = exitCode;
-                agent.StateMessage = state == AgentState.Exited ? $"The harness exited (code {exitCode}). Start it again to resume the conversation."
-                    : state == AgentState.Stopped ? agent.StateMessage : null;
-                agent.UpdatedAt = DateTime.UtcNow;
-                agent.Working = working;
-                changedAgents.Add(agent.Id);
-            }
-            else if (agent.Working != working || activityChanged)
-            {
-                agent.Working = working;
-                changedAgents.Add(agent.Id);
+                try { await db.SaveChangesAsync(cancellationToken); break; }
+                catch (DbUpdateConcurrencyException ex) when (attempt < 3)
+                {
+                    foreach (var entry in ex.Entries)
+                    {
+                        changedAgents.Remove(((Agent)entry.Entity).Id);
+                        agents.Remove((Agent)entry.Entity);
+                        entry.State = EntityState.Detached;
+                    }
+                }
             }
         }
+        finally { _observationWrites.Release(); }
 
-        await db.SaveChangesAsync(cancellationToken);
         foreach (var id in changedAgents) events.AgentChanged(runner.Id, id);
         foreach (var agent in agents)
         {
@@ -763,12 +846,17 @@ public sealed partial class AgentService(
 
     public async Task MarkObservationUnavailableAsync(Guid runnerId, CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var agents = await db.Agents.Where(a => a.RunnerId == runnerId && a.State == AgentState.Running).ToListAsync(ct);
         var changed = new List<Guid>();
-        foreach (var agent in agents)
-            if (AgentActivityTracker.Apply(agent, new(AgentActivityStatus.Unknown, "Terminal observation failed. Check the Runner connection and Manager logs.", "observation-failed"), AgentActivityTracker.Read(agent).Identity, DateTime.UtcNow)) changed.Add(agent.Id);
-        await db.SaveChangesAsync(ct);
+        await _observationWrites.WaitAsync(ct);
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            var agents = await db.Agents.Where(a => a.RunnerId == runnerId && a.State == AgentState.Running).ToListAsync(ct);
+            foreach (var agent in agents.Where(a => Operations(a.Id).Running == 0))
+                if (AgentActivityTracker.Apply(agent, new(AgentActivityStatus.Unknown, "Terminal observation failed. Check the Runner connection and Manager logs.", "observation-failed"), AgentActivityTracker.Read(agent).Identity, DateTime.UtcNow)) changed.Add(agent.Id);
+            await db.SaveChangesAsync(ct);
+        }
+        finally { _observationWrites.Release(); }
         foreach (var id in changed)
         {
             diagnostics?.Record(id, "Connection", "Terminal observation failed. Retrying on the next monitor pass.");

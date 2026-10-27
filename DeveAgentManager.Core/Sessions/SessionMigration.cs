@@ -44,7 +44,7 @@ public static class SessionMigration
         var migration = new Migration(from, to, targetHarness, maxCharacters, maxImages);
         if (!format.AppendsCompleteEntries) return null;
         var cursor = new SessionReadCursor();
-        foreach (var _ in Entries(read, format, cursor, ct)) { }
+        foreach (var _ in NativeRecords.Read(read, format, cursor, ct)) { }
         var metadata = cursor.Session;
         if (metadata.Entries.Count == 0) return new DeveSession();
         var position = new Dictionary<DeveEntry, int>(ReferenceEqualityComparer.Instance);
@@ -53,7 +53,7 @@ public static class SessionMigration
         for (var i = 1; i < path.Count; i++)
             if (path[i] <= path[i - 1]) return null;
         var active = path.ToHashSet();
-        IEnumerable<DeveEntry> ActiveEntries() => Entries(read, format, new SessionReadCursor(), ct).Where((_, i) => active.Contains(i));
+        IEnumerable<DeveEntry> ActiveEntries() => NativeRecords.Read(read, format, new SessionReadCursor(), ct).Where((_, i) => active.Contains(i));
 
         var plan = migration.Plan(migration.Read(ActiveEntries()).Select(Measure).ToList());
         var keep = plan.Kept.ToHashSet();
@@ -64,23 +64,6 @@ public static class SessionMigration
         if (count != plan.Units) throw new IOException("The history changed while it was converted.");
         metadata.Title = title;
         return migration.Build(metadata, kept);
-    }
-
-    /// <summary>
-    /// A history's entries in native order. Each entry's content is only valid until the next one is read; the cursor keeps
-    /// compact metadata (the tree and short snippets), as the synchronization index does.
-    /// </summary>
-    private static IEnumerable<DeveEntry> Entries(Func<TextReader> read, ISessionFormat format, SessionReadCursor cursor, CancellationToken ct)
-    {
-        using var reader = read();
-        foreach (var line in JsonLines.Parse(reader))
-        {
-            ct.ThrowIfCancellationRequested();
-            var start = cursor.Session.Entries.Count;
-            format.AppendLines(cursor, [line]);
-            for (var i = start; i < cursor.Session.Entries.Count; i++) yield return cursor.Session.Entries[i];
-            cursor.Compact(start);
-        }
     }
 
     /// <summary>One conversion: reads the active branch into units, plans what fits and builds the continuation.</summary>

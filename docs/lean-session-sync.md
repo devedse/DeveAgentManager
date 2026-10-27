@@ -80,7 +80,8 @@ continues the committed prefix's hash over the appended bytes read back from dis
 writing truncates to the prefix and appends, so the prefix is read once per audit.
 
 Export, shared copies, and session/harness continuation require verification of
-any pending checkpoint under the session operation lock. If the source Runner is
+any pending checkpoint first (exports verify without holding the session lock;
+see [session-lock.md](session-lock.md)). If the source Runner is
 unavailable, the operation fails instead of exporting or replaying a provisional
 history. Already verified archives remain readable/exportable offline. A failed
 best-effort final sync can leave a provisional archive requiring source recovery;

@@ -54,11 +54,10 @@ public sealed partial class AgentService
     internal static bool MoveBlocksActions(Agent agent) => agent.MoveJson is not null
         && JsonSerializer.Deserialize<AgentMoveState>(agent.MoveJson)?.Phase is not ("Cleanup" or "CleanupFailed" or "TargetCleanup" or "TargetCleanupFailed");
     private const string MoveInProgress = "This agent has a move in progress. Wait for it or recover the failed move first.";
-    private const string SwitchInProgress = "This agent is switching harness. Wait for it to finish.";
     private void RequireNotMoving(Agent agent)
     {
         if (MoveBlocksActions(agent)) throw new InvalidOperationException(MoveInProgress);
-        if (_switching.ContainsKey(agent.Id)) throw new InvalidOperationException(SwitchInProgress);
+        if (InLongOperation(agent.Id)) throw new InvalidOperationException(Busy(agent.Id));
     }
 
     private async Task<IDisposable> ReserveWorkspaceAsync(Guid runner, string name, string path, CancellationToken ct)
@@ -115,7 +114,7 @@ public sealed partial class AgentService
             var workspaces = await db.Agents.Where(a => a.Id == agent.Id || agent.ProjectId != null && a.ProjectId == agent.ProjectId).ToListAsync(ct);
             if (workspaces.Any(a => a.RunnerId != agent.RunnerId || a.OwnerId != agent.OwnerId || a.MoveJson != null || a.WorkspaceCreationJson != null))
                 throw new InvalidOperationException("Finish workspace creation, moves or recovery in this project first.");
-            if (workspaces.Any(a => _switching.ContainsKey(a.Id))) throw new InvalidOperationException("Wait for the harness switch in this project to finish first.");
+            if (workspaces.FirstOrDefault(a => InLongOperation(a.Id)) is { } busy) throw new InvalidOperationException(Busy(busy.Id));
             agent = workspaces.FirstOrDefault(a => !a.IsClone) ?? throw new InvalidOperationException("The project's Main workspace is missing.");
             if (await db.Projects.AnyAsync(p => p.Id == agent.ProjectId && p.KeptFoldersJson != null && p.KeptFoldersJson != "[]", ct))
                 throw new InvalidOperationException("Delete or reuse the project's kept workspace folders first (Manage workspaces).");
@@ -166,7 +165,10 @@ public sealed partial class AgentService
                 workspace.StateMessage = $"Moving project to {target.Name}…";
                 workspace.UpdatedAt = DateTime.UtcNow;
             }
-            await db.SaveChangesAsync(ct);
+            // With status-check writes held off, so a reading taken just before can't put the state back.
+            await _observationWrites.WaitAsync(ct);
+            try { await db.SaveChangesAsync(ct); }
+            finally { _observationWrites.Release(); }
             logger.LogInformation("Queued agent move {MoveId} for agent {AgentId} from runner {SourceRunner} to {TargetRunner}", move.Id, agent.Id, agent.RunnerId, target.Id);
             foreach (var workspace in workspaces) events.AgentChanged(workspace.RunnerId, workspace.Id);
         }
@@ -187,6 +189,8 @@ public sealed partial class AgentService
             (move.SourceRunner == runnerId || move.TargetRunner == runnerId)
             && (deleting || move.Phase is not ("Failed" or "Cleanup" or "CleanupFailed" or "TargetCleanup" or "TargetCleanupFailed"))))
             throw new AgentMoveBusyException("An agent is moving to or from this runner. Wait for the move to finish.");
+        if (AgentMoveCoordination.Creating.Values.Any(c => c.Runner == runnerId))
+            throw new AgentMoveBusyException("An agent or workspace is being created on this runner. Wait for it to finish.");
     }
 
     public async Task RecoverMoveAsync(CurrentUser actor, Guid agentId, CancellationToken ct)

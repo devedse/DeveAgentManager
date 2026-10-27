@@ -215,108 +215,133 @@ public sealed class RunnerMonitor(
         await runners.RecoverInterruptedAsync(stoppingToken);
 
         using var timer = new PeriodicTimer(Interval);
-        do
+        try
         {
-            try
+            do
             {
-                await PollAsync(stoppingToken);
+                try
+                {
+                    await PollAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Runner monitor pass failed");
+                }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Runner monitor pass failed");
-            }
+            while (await timer.WaitForNextTickAsync(stoppingToken));
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+        finally
+        {
+            // Checks and syncs still running end with the stopping token; wait for them before the services they use go.
+            try { await Task.WhenAll(_checking.Values.Concat(_syncing.Values)); }
+            catch (Exception) when (stoppingToken.IsCancellationRequested) { }
+        }
     }
+
+    // Each Runner is checked on its own schedule: a slow or unreachable Runner never delays the others' next check. Its
+    // conversations sync on their own too, so a long sync (an audit of large histories) never delays its agents' status.
+    private readonly Dictionary<Guid, Task> _checking = new();
+    private readonly Dictionary<Guid, Task> _syncing = new();
+    private readonly Dictionary<Guid, int> _passes = new();
 
     private async Task PollAsync(CancellationToken cancellationToken)
     {
-        var full = _pass++ % FullPassEvery == 0;
         var all = await runners.ListAsync(cancellationToken);
-        if (full)
+        if (_pass++ % FullPassEvery == 0)
         {
-            statusCache.RemoveMissing(all.Select(r => r.Id).ToHashSet());
+            var ids = all.Select(r => r.Id).ToHashSet();
+            statusCache.RemoveMissing(ids);
+            foreach (var gone in _passes.Keys.Where(id => !ids.Contains(id)).ToList()) _passes.Remove(gone);
         }
-        await Parallel.ForEachAsync(all, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (runner, ct) =>
+        foreach (var done in _checking.Where(c => c.Value.IsCompleted).Select(c => c.Key).ToList()) _checking.Remove(done);
+        foreach (var done in _syncing.Where(c => c.Value.IsCompleted).Select(c => c.Key).ToList()) _syncing.Remove(done);
+        foreach (var runner in all)
         {
-            if (runners.CurrentOperation(runner.Id) is not null && runner.State != RunnerState.Ready)
-            {
-                return;
-            }
+            if (_checking.ContainsKey(runner.Id)) continue; // Still checking it: its next check starts once that is done.
+            var pass = _passes.GetValueOrDefault(runner.Id);
+            _passes[runner.Id] = pass + 1;
+            var full = pass % FullPassEvery == 0;
+            _checking[runner.Id] = Task.Run(() => PollRunnerAsync(runner, full, cancellationToken), cancellationToken);
+            if (full && runner.State == RunnerState.Ready && runner.Agents.Count > 0 && !_syncing.ContainsKey(runner.Id))
+                _syncing[runner.Id] = Task.Run(() => sessions.TrySyncRunnerAsync(runner, cancellationToken), cancellationToken);
+        }
+    }
 
-            try
+    private async Task PollRunnerAsync(Runner runner, bool full, CancellationToken ct)
+    {
+        if (runners.CurrentOperation(runner.Id) is not null && runner.State != RunnerState.Ready)
+        {
+            return;
+        }
+
+        try
+        {
+            // Usage is read inside the Runner, in the agent check's SSH command; Runners without agents get their own
+            // command every third pass. A Runner that can't be reached shows no usage rather than an old reading.
+            // Agents' task lists whose revision changed come along in the same command.
+            GuestUsage.Reading? guest = null;
+            string? leading = null;
+            var unreachable = false;
+            if (runner.State == RunnerState.Ready && runner.Agents.Count > 0)
             {
-                // Usage is read inside the Runner, in the agent check's SSH command; Runners without agents get their own
-                // command every third pass. A Runner that can't be reached shows no usage rather than an old reading.
-                // Agents' task lists whose revision changed come along in the same command.
-                GuestUsage.Reading? guest = null;
-                string? leading = null;
-                var unreachable = false;
-                if (runner.State == RunnerState.Ready && runner.Agents.Count > 0)
+                try
                 {
-                    try
-                    {
-                        await agents.RefreshRunnerAsync(runner, ct, GuestUsage.Script(disk: full) + AgentTasks.CollectScript(runner.Agents), output => leading = output);
-                        guest = GuestUsage.Parse(leading ?? "");
-                    }
-                    catch (Exception ex) when (!ct.IsCancellationRequested)
-                    {
-                        logger.LogWarning(ex, "Could not observe terminal state for runner {Runner}", runner.Name);
-                        await agents.MarkObservationUnavailableAsync(runner.Id, ct);
-                        guest = leading is null ? null : GuestUsage.Parse(leading);
-                        unreachable = guest is null;
-                    }
-
-                    if (leading is not null && tasks is not null)
-                    {
-                        try { await tasks.ApplyAsync(runner.Id, AgentTasks.Parse(leading), ct); }
-                        catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Could not keep the task lists from runner {Runner}", runner.Name); }
-                    }
+                    await agents.RefreshRunnerAsync(runner, ct, GuestUsage.Script(disk: full) + AgentTasks.CollectScript(runner.Agents), output => leading = output);
+                    guest = GuestUsage.Parse(leading ?? "");
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    logger.LogWarning(ex, "Could not observe terminal state for runner {Runner}", runner.Name);
+                    await agents.MarkObservationUnavailableAsync(runner.Id, ct);
+                    guest = leading is null ? null : GuestUsage.Parse(leading);
+                    unreachable = guest is null;
                 }
 
-                var provider = runners.FindProvider(runner.ProviderId);
-                if (full && provider is not null && runner.MachineId is not null && runner.State is RunnerState.Ready or RunnerState.Stopped or RunnerState.Error)
+                if (leading is not null && tasks is not null)
                 {
-                    try
-                    {
-                        var status = await provider.GetStatusAsync(runner.ToMachine(), ct);
-                        statusCache.SetProviderStatus(runner.Id, status);
-                        await runners.ApplyObservedStatusAsync(runner.Id, status, ct);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    { logger.LogWarning(ex, "Provider status unavailable for runner {Runner}; terminal observation will still run", runner.Name); }
+                    try { await tasks.ApplyAsync(runner.Id, AgentTasks.Parse(leading), ct); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Could not keep the task lists from runner {Runner}", runner.Name); }
                 }
-                if (full && runner.State == RunnerState.Ready && guest is null && !unreachable)
-                {
-                    try
-                    {
-                        var result = (await shell.RunAsync(runner, GuestUsage.Script(disk: true), TimeSpan.FromSeconds(10), ct)).EnsureSuccess("Reading usage");
-                        guest = GuestUsage.Parse(result.Output);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        unreachable = true;
-                        logger.LogDebug(ex, "Usage unavailable for runner {Runner}", runner.Name);
-                    }
-                }
-
-                if (runner.State == RunnerState.Ready && guest is not null) statusCache.SetGuestReading(runner.Id, guest);
-                else if (unreachable) statusCache.ClearGuestReading(runner.Id);
-                // Usage displays refresh every third pass; nothing else about the Runner changed, so other pages don't reload.
-                if (full && runner.State == RunnerState.Ready) events.RunnerUsageChanged(runner.Id);
-
-                if (full && runner.State == RunnerState.Ready && runner.Agents.Count > 0)
-                    await sessions.TrySyncRunnerAsync(runner, ct);
-
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+
+            var provider = runners.FindProvider(runner.ProviderId);
+            if (full && provider is not null && runner.MachineId is not null && runner.State is RunnerState.Ready or RunnerState.Stopped or RunnerState.Error)
             {
-                logger.LogWarning(ex, "Could not refresh runner {Runner}", runner.Name);
+                try
+                {
+                    var status = await provider.GetStatusAsync(runner.ToMachine(), ct);
+                    statusCache.SetProviderStatus(runner.Id, status);
+                    await runners.ApplyObservedStatusAsync(runner.Id, status, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                { logger.LogWarning(ex, "Provider status unavailable for runner {Runner}; terminal observation will still run", runner.Name); }
             }
-        });
+            if (full && runner.State == RunnerState.Ready && guest is null && !unreachable)
+            {
+                try
+                {
+                    var result = (await shell.RunAsync(runner, GuestUsage.Script(disk: true), TimeSpan.FromSeconds(10), ct)).EnsureSuccess("Reading usage");
+                    guest = GuestUsage.Parse(result.Output);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    unreachable = true;
+                    logger.LogDebug(ex, "Usage unavailable for runner {Runner}", runner.Name);
+                }
+            }
+
+            if (runner.State == RunnerState.Ready && guest is not null) statusCache.SetGuestReading(runner.Id, guest);
+            else if (unreachable) statusCache.ClearGuestReading(runner.Id);
+            // Usage displays refresh every third pass; nothing else about the Runner changed, so other pages don't reload.
+            if (full && runner.State == RunnerState.Ready) events.RunnerUsageChanged(runner.Id);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Could not refresh runner {Runner}", runner.Name);
+        }
     }
 }

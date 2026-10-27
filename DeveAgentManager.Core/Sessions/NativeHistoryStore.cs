@@ -16,6 +16,9 @@ internal sealed record NativeHistorySyncPolicy(HistorySyncMode Mode, bool Force 
 /// <summary>Native history with sampled appends and full-audit checkpoints; indexes contain compact metadata only.</summary>
 internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider = null, ILogger? logger = null, bool keepGenerations = false)
 {
+    /// <summary>A transfer located its source before the history saved now: saving it would lose the newer records.</summary>
+    internal sealed class StaleLocationException() : IOException("A newer history was saved meanwhile.");
+    private readonly string process = Guid.NewGuid().ToString("N");
     // One gate per history: reading or syncing a large conversation never holds up the others.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, SemaphoreSlim> gates = new();
     private SemaphoreSlim Gate(Guid id) => gates.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
@@ -41,6 +44,9 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
         public string ReplyPreview { get; set; } = "";
         public string? CompanionManifest { get; set; }
         public DateTime? LastAssistantMessageAt { get; set; }
+        /// <summary>Which process saved this history, and when it located the source (<see cref="SyncAsync"/>'s location).</summary>
+        public string? LocatedBy { get; set; }
+        public long Location { get; set; }
         [JsonIgnore] public SessionReadCursor Cursor { get; set; } = new();
     }
     private string Folder(Guid id) => Path.Combine(root, "native", id.ToString("N"));
@@ -138,6 +144,17 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
         finally { gate.Release(); }
     }
 
+    /// <summary>
+    /// Saves a snapshot's records as another conversation's history (a copy for another owner), record by record: the copy
+    /// gets its own generation, index and checkpoint, as a sync would make them.
+    /// </summary>
+    public async Task CopyAsync(Snapshot snapshot, Guid to, ISessionFormat format, CancellationToken ct) =>
+        await SyncAsync(to, format, "copy", snapshot.Bytes, "", async (_, _, output, token) =>
+        {
+            await snapshot.Read().CopyToAsync(output, 1 << 20, token);
+            return new NativeHistoryTransfer(true);
+        }, ct);
+
     /// <summary>A history's committed native bytes (<see cref="OpenAsync"/>), read again from the start for each pass.</summary>
     internal sealed class Snapshot(string harness, long bytes, string? companionManifest, FileStream file) : IDisposable
     {
@@ -160,7 +177,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
         long size, string stamp, Func<long, string?, Stream, CancellationToken, Task<NativeHistoryTransfer>> transfer, CancellationToken ct,
         NativeHistorySyncPolicy? policy = null,
         Func<long, IReadOnlyList<NativeHistorySample>, Stream, CancellationToken, Task<bool>>? append = null,
-        Func<DeveSession, CancellationToken, Task<string?>>? beforeCommit = null)
+        Func<DeveSession, CancellationToken, Task<string?>>? beforeCommit = null, long? location = null)
     {
         using var queueTiming = Diagnostics.CaptureOperations.Start("history.gate", session: id, bytes: size);
         var gate = Gate(id);
@@ -179,6 +196,10 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
             var folder = Folder(id);
             Directory.CreateDirectory(folder);
             var old = await ReadState(id, ct);
+            // Syncs locate a source, then transfer it. One that located it earlier than the history saved now (by another
+            // sync of this process) would replace newer records with an older, shorter copy.
+            if (location is { } located && old is { LocatedBy: { } by } && by == process && old.Location > located)
+                throw new StaleLocationException();
             if (!keepGenerations)
                 foreach (var stale in Directory.EnumerateFiles(folder, "*.jsonl").Where(p => Path.GetFileName(p) != old?.File)) File.Delete(stale);
             foreach (var stale in Directory.EnumerateFiles(folder, "*.index.json").Where(p => Path.GetFileName(p) != old?.CursorFile)) File.Delete(stale);
@@ -339,6 +360,7 @@ internal sealed class NativeHistoryStore(string root, TimeProvider? timeProvider
             await using (var usageOutput = new FileStream(pendingUsage, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, true))
                 await JsonSerializer.SerializeAsync(usageOutput, state.Cursor.UsageTurns, DeveSession.JsonOptions, ct);
             state.UsageBytes = new FileInfo(pendingUsage).Length;
+            state.LocatedBy = location is null ? null : process; state.Location = location ?? 0;
             state.Harness = format.HarnessId; state.SourcePath = sourcePath; state.Bytes = size; state.Stamp = stamp;
             state.CursorFile = Guid.NewGuid().ToString("N") + ".index.json";
             pendingIndex = Path.Combine(folder, state.CursorFile);

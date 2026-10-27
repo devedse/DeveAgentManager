@@ -46,6 +46,15 @@ public interface ISessionFormat
     /// </summary>
     void Write(DeveSession session, string sessionId, string workingDirectory, TextWriter output) => output.Write(Write(session, sessionId, workingDirectory));
 
+    /// <summary>
+    /// <see cref="Write(DeveSession, string, string, TextWriter)"/> with the records read one at a time, so a large history
+    /// is never held whole: <paramref name="session"/> holds the history's metadata (its sources with their header records,
+    /// times and folder), <paramref name="entries"/> its records in order. Formats with <see cref="AppendsCompleteEntries"/>
+    /// implement it.
+    /// </summary>
+    void Write(DeveSession session, IEnumerable<DeveEntry> entries, string sessionId, string workingDirectory, TextWriter output) =>
+        throw new NotSupportedException($"The {HarnessId} format writes whole conversations only.");
+
     /// <summary>Small metadata and immutable replay checkpoints beside the authoritative log.</summary>
     IReadOnlyList<SessionCompanionFile> CompanionFiles(DeveSession metadata) => [];
 

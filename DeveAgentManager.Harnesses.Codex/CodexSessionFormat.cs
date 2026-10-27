@@ -246,7 +246,10 @@ public sealed class CodexSessionFormat : ISessionFormat
 
     public void Export(DeveSession session, string sessionId, string workingDirectory, TextWriter output) => Write(session, sessionId, workingDirectory, output);
 
-    public void Write(DeveSession session, string sessionId, string workingDirectory, TextWriter output)
+    public void Write(DeveSession session, string sessionId, string workingDirectory, TextWriter output) =>
+        Write(session, session.Entries, sessionId, workingDirectory, output);
+
+    public void Write(DeveSession session, IEnumerable<DeveEntry> entries, string sessionId, string workingDirectory, TextWriter output)
     {
         var header = session.Sources.FirstOrDefault(s => s.Harness == HarnessId)?.Header?.DeepClone() as JsonObject
             ?? new JsonObject
@@ -277,7 +280,7 @@ public sealed class CodexSessionFormat : ISessionFormat
         }
 
         Append(output, header);
-        foreach (var entry in session.Entries)
+        foreach (var entry in entries)
         {
             if (entry.Harness == HarnessId && entry.Native is not null)
             {

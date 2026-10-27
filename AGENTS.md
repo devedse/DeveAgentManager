@@ -134,6 +134,11 @@ must preserve the last good checkpoint or rebuild safely. Test bounded reads, de
 metadata and active-branch parity plus real SSH transfer and copy/switch/export behavior. See
 [docs/lean-session-sync.md](docs/lean-session-sync.md).
 
+Never hold the session lock across SSH transfers, hashing, conversions, clones, uploads or exports: status checks and
+syncs of every Runner must keep going. Lock to check and to record, recheck what may have changed in between, and mark
+the agent busy for the whole operation (`LockAgentAsync`, `BeginLongOperationAsync`). Read large histories one record
+at a time. See [docs/session-lock.md](docs/session-lock.md).
+
 ## Browser code
 
 Prefer C# for application logic. Browser APIs, DOM measurements and adapters for JavaScript libraries belong in

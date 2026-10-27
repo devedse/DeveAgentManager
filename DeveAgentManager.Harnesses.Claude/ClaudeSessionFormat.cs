@@ -232,12 +232,15 @@ public sealed class ClaudeSessionFormat : ISessionFormat
 
     public void Export(DeveSession session, string sessionId, string workingDirectory, TextWriter output) => Write(session, sessionId, workingDirectory, output);
 
-    public void Write(DeveSession session, string sessionId, string workingDirectory, TextWriter output)
+    public void Write(DeveSession session, string sessionId, string workingDirectory, TextWriter output) =>
+        Write(session, session.Entries, sessionId, workingDirectory, output);
+
+    public void Write(DeveSession session, IEnumerable<DeveEntry> entries, string sessionId, string workingDirectory, TextWriter output)
     {
         // Children of entries that are not written (another harness's extras) attach to the last line written before.
         var written = new Dictionary<string, string>();
         string? previous = null;
-        foreach (var entry in session.Entries)
+        foreach (var entry in entries)
         {
             if (entry.Harness == HarnessId && entry.Native is not null)
             {

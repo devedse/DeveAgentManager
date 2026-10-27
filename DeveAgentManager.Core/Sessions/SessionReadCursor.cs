@@ -17,9 +17,10 @@ public sealed class SessionReadCursor
     /// <summary>Adapters may omit streaming-only records from this disposable index. Raw records remain on disk.</summary>
     public bool MetadataOnly { get; set; }
 
-    public void Compact(int from)
+    /// <param name="keepHeaders">Keeps the sources' header records, which a writer needs to write the history again.</param>
+    public void Compact(int from, bool keepHeaders = false)
     {
-        foreach (var source in Session.Sources) source.Header = null;
+        if (!keepHeaders) foreach (var source in Session.Sources) source.Header = null;
         for (var i = from; i < Session.Entries.Count; i++)
         {
             var e = Session.Entries[i];
