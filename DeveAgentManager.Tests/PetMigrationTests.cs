@@ -23,7 +23,7 @@ public sealed class PetMigrationTests
         var pet = await db.UserPets.SingleAsync(ct);
         Assert.Equal("Byte", pet.Name); Assert.Equal("silkie", pet.Species);
         Assert.Equal(4_477_262, pet.Experience); Assert.Equal(4_477_262, pet.LifetimeTokens); Assert.Equal(0, pet.Generation);
-        Assert.Equal(3, DeveAgentManager.Pets.PetRules.Level(pet.Experience));
+        Assert.Equal(1, DeveAgentManager.Pets.PetRules.Level(pet.Experience));
         db.ChangeTracker.Clear();
         await db.GetService<IMigrator>().MigrateAsync("20261026205238_Damagochi", ct);
         await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE UserPets SET Enabled = 0, Species = 'snek', Name = 'Snek', Experience = 0 WHERE UserId = {user}", ct);

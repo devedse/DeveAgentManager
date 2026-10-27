@@ -88,15 +88,15 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
     }
     public async Task SavePreferencesAsync(CurrentUser actor, PetPreferences request, CancellationToken ct)
     {
-        if (request.Size is < 90 or > 240) throw new ArgumentException("Pet size must be between 90 and 240.");
+        if (request.Size is < 90 or > 240) throw new ArgumentException("Damagochi size must be between 90 and 240.");
         await gate.WaitAsync(ct);
         try { await using var db = await factory.CreateDbContextAsync(ct); await using var transaction = await db.Database.BeginTransactionAsync(ct);
             if (!(await Options(db, ct)).Enabled && !actor.Has(UserRoles.DamagochiManager)) throw new UnauthorizedAccessException("Damagochi is disabled by a Damagochi manager.");
             var p = await Pet(db, actor.Id, ct);
             RequireGeneration(p, request.Generation);
-            if (p.Species != request.Species) throw new InvalidOperationException("Kill your current pet before choosing a new one. Damagochi managers can change types in Manager settings.");
+            if (p.Species != request.Species) throw new InvalidOperationException("Kill your current Damagochi before choosing a new one. Damagochi managers can change types in Manager settings.");
             var name = PetRules.CleanName(request.Name, p.Species.Length == 0);
-            if (p.Species.Length == 0 && name.Length != 0) throw new InvalidOperationException("Choose a pet and give it a name to hatch your egg.");
+            if (p.Species.Length == 0 && name.Length != 0) throw new InvalidOperationException("Choose a Damagochi and give it a name to hatch your egg.");
             if (p.Enabled && !request.Enabled) await PauseUsage(db, actor.Id, ct);
             p.Enabled = request.Enabled; p.Name = name; p.Species = request.Species;
             p.ReducedMotion = request.ReducedMotion; p.Size = request.Size; p.SnoozedUntil = null; Changed(p); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
@@ -105,7 +105,7 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
     }
     private static void RequireGeneration(UserPet pet, long generation)
     {
-        if (pet.Generation != generation) throw new InvalidOperationException("Your pet changed in another tab. Refresh and try again.");
+        if (pet.Generation != generation) throw new InvalidOperationException("Your Damagochi changed in another tab. Refresh and try again.");
     }
     public async Task AdoptAsync(CurrentUser actor, PetAdoption request, CancellationToken ct)
     {
@@ -116,7 +116,7 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
             await using var db = await factory.CreateDbContextAsync(ct);
             if (!(await Options(db, ct)).Enabled && !actor.Has(UserRoles.DamagochiManager)) throw new UnauthorizedAccessException("Damagochi is disabled by a Damagochi manager.");
             var p = await Pet(db, actor.Id, ct); RequireGeneration(p, request.Generation);
-            if (p.Species.Length != 0) throw new InvalidOperationException("Kill your current pet before choosing a new one.");
+            if (p.Species.Length != 0) throw new InvalidOperationException("Kill your current Damagochi before choosing a new one.");
             p.Generation++; p.Species = request.Species; p.Name = name; p.Experience = 0; p.Happiness = 70;
             p.Enabled = true; p.SnoozedUntil = null; p.LastInteractionAt = null; Changed(p, "adopted");
             await db.SaveChangesAsync(ct);
@@ -132,24 +132,24 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
             await using var db = await factory.CreateDbContextAsync(ct);
             if (!(await Options(db, ct)).Enabled && !actor.Has(UserRoles.DamagochiManager)) throw new UnauthorizedAccessException("Damagochi is disabled by a Damagochi manager.");
             var p = await Pet(db, actor.Id, ct); RequireGeneration(p, request.Generation);
-            if (p.Species.Length == 0) throw new InvalidOperationException("Choose a pet first.");
+            if (p.Species.Length == 0) throw new InvalidOperationException("Choose a Damagochi first.");
             // Credits retain lifetime attribution. Their generation prevents delayed work growing the next pet.
             p.Generation++; p.Species = ""; p.Name = ""; p.Experience = 0; p.Happiness = 70;
             p.SnoozedUntil = null; p.LastInteractionAt = null; Changed(p, "retired");
             await db.SaveChangesAsync(ct);
         }
         finally { gate.Release(); }
-        await audit.RecordAsync(actor, "PetRetired", "Damagochi", "Pet progress reset; lifetime tokens preserved.", ct);
+        await audit.RecordAsync(actor, "PetRetired", "Damagochi", "Damagochi progress reset; lifetime tokens preserved.", ct);
         Notify(actor.Id);
     }
     public async Task InteractAsync(CurrentUser actor, string action, int minutes, CancellationToken ct)
     {
-        if (action is not ("pet" or "play" or "snooze" or "wake" or "hide")) throw new ArgumentException("Unknown pet interaction.");
+        if (action is not ("pet" or "play" or "snooze" or "wake" or "hide")) throw new ArgumentException("Unknown Damagochi interaction.");
         if (action == "snooze" && minutes is not (5 or 15 or 60)) throw new ArgumentException("Choose 5, 15 or 60 minutes.");
         await gate.WaitAsync(ct);
         try { await using var db = await factory.CreateDbContextAsync(ct); await using var transaction = await db.Database.BeginTransactionAsync(ct); var p = await Pet(db, actor.Id, ct);
-            if (!(await Options(db, ct)).Enabled || !p.Enabled) throw new InvalidOperationException("Enable your pet first.");
-            if (p.Species.Length == 0 && action is "pet" or "play") throw new InvalidOperationException("Choose and name your pet first.");
+            if (!(await Options(db, ct)).Enabled || !p.Enabled) throw new InvalidOperationException("Enable your Damagochi first.");
+            if (p.Species.Length == 0 && action is "pet" or "play") throw new InvalidOperationException("Choose and name your Damagochi first.");
             if (action == "hide") { p.Enabled = false; await PauseUsage(db, actor.Id, ct); }
             if (action == "snooze") p.SnoozedUntil = Now.AddMinutes(minutes);
             if (action == "wake") p.SnoozedUntil = null;
@@ -184,7 +184,7 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
             if (request.LifetimeTokens is { } total) p.LifetimeTokens = total;
             Changed(p); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
         } finally { gate.Release(); }
-        await audit.RecordAsync(actor, "PetAdjusted", $"User {userId}", $"Species: {request.Species}; level: {request.Level}; pet tokens: {request.Experience}; lifetime tokens: {request.LifetimeTokens}; happiness: {request.Happiness}; enabled: {request.Enabled}", ct); Notify(userId);
+        await audit.RecordAsync(actor, "PetAdjusted", $"User {userId}", $"Species: {request.Species}; level: {request.Level}; Damagochi tokens: {request.Experience}; lifetime tokens: {request.LifetimeTokens}; happiness: {request.Happiness}; enabled: {request.Enabled}", ct); Notify(userId);
     }
     public async Task BulkAsync(CurrentUser actor, bool enabled, CancellationToken ct)
     {

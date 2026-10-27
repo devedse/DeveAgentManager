@@ -5,23 +5,23 @@
 @inject NavigationManager Navigation
 
 <div class="dam-pet-host" @ref="_host" hidden="@(!Visible)" data-pet-user="@Pets.State?.Pet.UserId">
-    <div class="dam-pet-body" role="button" tabindex="0" aria-label="@(Pets.State?.Pet.NeedsAdoption == true ? "Unchosen egg. Choose a pet and give it a name." : $"{Pets.State?.Pet.Name}, level {Pets.State?.Pet.Level}. Tap to pet; right-click or press Shift+F10 for the menu.")">
+    <div class="dam-pet-body" role="button" tabindex="0" aria-label="@(Pets.State?.Pet.NeedsAdoption == true ? "Unchosen egg. Choose a Damagochi and give it a name." : $"{Pets.State?.Pet.Name}, level {Pets.State?.Pet.Level}. Tap to show affection; right-click or press Shift+F10 for the menu.")">
         <div class="dam-pet-art" @ref="_mount"></div>
-        <span class="dam-pet-name">@(Pets.State?.Pet.NeedsAdoption == true ? "Choose pet & name" : $"{Pets.State?.Pet.Name} ♡")</span>
+        <span class="dam-pet-name @(Pets.State?.Pet.NeedsAdoption == true ? "dam-pet-choose" : null)">@(Pets.State?.Pet.NeedsAdoption == true ? "Choose Damagochi & name" : $"{Pets.State?.Pet.Name} ♡")</span>
     </div>
     <div class="dam-pet-hide-target" aria-hidden="true">Drop here to hide for 5 minutes</div>
     @if (_menu && Pets.State is { } state)
     {
-        <div class="dam-pet-menu" role="menu" aria-label="Pet interactions">
+        <div class="dam-pet-menu" role="menu" aria-label="Damagochi interactions">
             <div class="dam-pet-summary">
                 <b>@(state.Pet.NeedsAdoption ? "Your egg is waiting" : state.Pet.Name)</b>
-                @if (state.Pet.NeedsAdoption) { <span>Choose a pet and give it a name.</span> }
+                @if (state.Pet.NeedsAdoption) { <span>Choose a Damagochi and give it a name.</span> }
                 else { <span>@state.Pet.StageName · Happiness @state.Pet.Happiness%</span><PetXpBar Pet="state.Pet" /> }
                 <span>@state.Pet.LifetimeTokens.ToString("N0") lifetime tokens</span>
             </div>
-            @if (state.Pet.NeedsAdoption) { <a role="menuitem" href="settings?tab=damagochi" @onclick="() => _menu = false">Choose pet and name…</a> }
+            @if (state.Pet.NeedsAdoption) { <a role="menuitem" href="settings?tab=damagochi" @onclick="() => _menu = false">Choose Damagochi and name…</a> }
             else {
-                <button role="menuitem" @onclick='() => Action("pet")'>Pet</button>
+                <button role="menuitem" @onclick='() => Action("pet")'>Show affection</button>
                 <button role="menuitem" @onclick='() => Action("play")'>Play</button>
             }
             @foreach (var minutes in new[] { 5, 15, 60 })
@@ -29,8 +29,7 @@
                 <button role="menuitem" @onclick="() => Snooze(minutes)">Go away for @minutes minutes</button>
             }
             <button role="menuitem" @onclick='() => Action("hide")'>Hide until I turn it on again</button>
-            <a role="menuitem" href="settings?tab=damagochi" @onclick="() => _menu = false">Pet settings</a>
-            @if (!state.Pet.NeedsAdoption) { <PetRetireButton InMenu="true" OnRetired="CloseMenu" /> }
+            <a role="menuitem" href="settings?tab=damagochi" @onclick="() => _menu = false">Damagochi settings</a>
             <button role="menuitem" @onclick="() => _menu = false">Close</button>
             @if (_error is not null) { <span role="alert">@_error</span> }
         </div>

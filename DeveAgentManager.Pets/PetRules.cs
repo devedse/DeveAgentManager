@@ -12,17 +12,17 @@ public sealed class PetCatalog
         using var stream = typeof(PetCatalog).Assembly.GetManifestResourceStream("DeveAgentManager.Pets.catalog.json")!;
         All = JsonSerializer.Deserialize<PetDefinition[]>(stream, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
         if (All.Count == 0 || All.Select(x => x.Id).Distinct().Count() != All.Count || All.Any(x => x.Stages.Length != 4))
-            throw new InvalidOperationException("Pet definitions need unique ids and four growth stages.");
+            throw new InvalidOperationException("Damagochi definitions need unique ids and four growth stages.");
     }
-    public PetDefinition Require(string id) => All.FirstOrDefault(x => x.Id == id) ?? throw new ArgumentException("Choose a pet from the catalog.");
+    public PetDefinition Require(string id) => All.FirstOrDefault(x => x.Id == id) ?? throw new ArgumentException("Choose a Damagochi from the catalog.");
 }
 
 public static class PetRules
 {
     public const int MaxLevel = 1000;
-    public const long GrowthScale = 500_000;
+    public const long GrowthScale = 25_000_000;
     public static long LevelStart(int level) => GrowthScale * (Math.Clamp(level, 1, MaxLevel) - 1) * Math.Clamp(level, 1, MaxLevel);
-    public static int Level(long experience) => Math.Clamp((int)((1 + Math.Sqrt(1 + 4 * Math.Max(0, experience) / (double)GrowthScale)) / 2), 1, MaxLevel);
+    public static int Level(long experience) => Math.Clamp((int)((1 + Math.Sqrt(1 + 4d * Math.Max(0, experience) / GrowthScale)) / 2), 1, MaxLevel);
     public static int Stage(int level) => level < 6 ? 1 : level < 10 ? 2 : 3;
     public static double StageProgress(long experience)
     {
@@ -34,7 +34,7 @@ public static class PetRules
     public static string CleanName(string name, bool allowEmpty = false)
     {
         var clean = (name ?? "").Trim();
-        if ((!allowEmpty && clean.Length == 0) || clean.Length > 40 || clean.Any(char.IsControl)) throw new ArgumentException("Use a pet name of 1–40 characters.");
+        if ((!allowEmpty && clean.Length == 0) || clean.Length > 40 || clean.Any(char.IsControl)) throw new ArgumentException("Use a Damagochi name of 1–40 characters.");
         return clean;
     }
 }

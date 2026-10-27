@@ -1,10 +1,10 @@
-# Adding Damagochi pets
+# Adding Damagochi
 
 A new species is a catalog entry, a browser renderer, and any artwork that renderer needs. Growth, saved
 progress, permissions, settings, dragging, interactions, and persistence across navigation belong to the shared
-Damagochi module. Keep those behaviors in the shared code when adding another pet.
+Damagochi module. Keep those behaviors in the shared code when adding another Damagochi.
 
-The included pets demonstrate two approaches: **Byte**, the Silkie chicken, uses AI-generated expression sheets
+The included Damagochi demonstrate two approaches: **Byte**, the Silkie chicken, uses AI-generated expression sheets
 animated by a mesh rig; **Snek**, the galaxy snake, is drawn and animated in code from a supplied character reference.
 See [How we used AI](#how-we-used-ai) and the [original artwork prompts](ARTWORK_PROMPTS.md).
 
@@ -22,7 +22,7 @@ Paths below are relative to the repository root.
 | `DeveAgentManager/Browser/pets/` | Renderer implementations, shared egg, rig, and TypeScript contracts. |
 | `DeveAgentManager/wwwroot/pets/` | Published artwork and frame metadata. |
 | `DeveAgentManager.Client/Shared/PetHost.razor` | Persistent UI host outside the page router. |
-| `DeveAgentManager.Tests/Browser/pets.mts` | Browser regression checks for the included pets. |
+| `DeveAgentManager.Tests/Browser/pets.mts` | Browser regression checks for the included Damagochi. |
 
 For the feature's settings and token-accounting behavior, see [Damagochi](../docs/damagochi.md).
 
@@ -42,23 +42,28 @@ Append an object to [catalog.json](catalog.json), keeping the surrounding JSON a
 
 | Field | Meaning |
 | --- | --- |
-| `id` | Unique, stable species key saved in user accounts. Use a lowercase slug; renaming an existing key requires migrating saved pets. |
+| `id` | Unique, stable species key saved in user accounts. Use a lowercase slug; renaming an existing key requires migrating saved Damagochi. |
 | `name` | Species label in the settings picker. |
-| `defaultName` | Retained catalog field; leave it empty. Users explicitly name their pet when adopting it. |
+| `defaultName` | Retained catalog field; leave it empty. Users explicitly name their Damagochi when adopting it. |
 | `renderer` | Module filename without `.ts` or `.js`. It must match `^[a-z][a-z0-9-]*$`; paths and extensions are rejected by the host. |
 | `stages` | Exactly four labels in the order below. Labels do not change the growth thresholds. |
 
 | Stage passed to the renderer | Levels | Role |
 | --- | --- | --- |
-| `0` | No level | Egg-to-pet transition when a user chooses and names a pet. The unchosen egg has its own shared renderer. |
-| `1` | 1–5 | Newly hatched pet. |
-| `2` | 6–9 | Young pet. |
+| `0` | No level | Egg-to-Damagochi transition when a user chooses and names a Damagochi. The unchosen egg has its own shared renderer. |
+| `1` | 1–5 | Newly hatched Damagochi. |
+| `2` | 6–9 | Young Damagochi. |
 | `3` | 10+ | Adult. |
 
 The catalog feeds the existing settings picker and API. Adding a species normally needs no new endpoint,
 authorization rule, database migration, or settings component. Users choose a species once; replacement requires the
-confirmed Kill pet action and resets that pet's XP. Lifetime tokens survive. Damagochi managers can change species
+confirmed Kill Damagochi action in My settings → Damagochi and resets that Damagochi's XP. It is absent from the
+right-click menu. Lifetime tokens survive. Damagochi managers can change species
 directly while retaining progress. New names and species start empty until the user completes adoption.
+
+All species share `PetRules.GrowthScale`: level N begins at `25,000,000 × (N − 1) × N` tokens. Young begins at
+750 million and adult at 2.25 billion tokens. Keep growth out of individual renderers. Changing this curve preserves
+saved token balances and recalculates levels/stages; it does not reset lifetime usage.
 
 ## 2. Implement the renderer
 
@@ -108,7 +113,7 @@ The illustrated rig grounds the feet at `RIG_GROUND` (442).
 
 An optional exported `async prepare(): Promise<void>` loads frame metadata and images. The host awaits it before
 creating the renderer and caches the prepared module. Await image decoding/loading as well as JSON: reduced-motion
-mode may draw only one frame. Loading images after that frame can leave an otherwise valid pet blank.
+mode may draw only one frame. Loading images after that frame can leave an otherwise valid Damagochi blank.
 
 ### Frames, motions, and cleanup
 
@@ -120,18 +125,18 @@ mode may draw only one frame. Loading images after that frame can leave an other
 | `gaze` | Pointer direction, with `x` and `y` clamped to −1…1. |
 | `animate` | Whether movement is allowed; render a complete still pose when false. |
 | `progress` | Progress through the current growth stage, 0…1. Used for egg cracks. |
-| `transitioning` | Whether the host is playing the egg-to-pet transition. |
+| `transitioning` | Whether the host is playing the egg-to-Damagochi transition. |
 | `showRig` | Debug drawing flag; the Portal currently supplies false. |
 
 Support `idle`, `happy`, `wave`, `hop`, `peck`, `sleep`, `sad`, `surprised`, and `hatch`. The host occasionally chooses
-`peck`, `walk`, `wave` or `hop` during idle. `sad` also previews crying while hovering/focusing Kill pet; `sleep`
+`peck`, `walk`, `wave` or `hop` during idle. `sad` also previews crying while hovering/focusing Kill Damagochi; `sleep`
 precedes the retirement fade. These are animation states, not a required number of image files: several
 motions can reuse an expression with different movement. The host translates `working` into `idle` and `level` into
 `happy`. Affection uses `happy`, play uses `hop`, image uploads use `surprised`, and other uploads use `peck`.
 
 Use `frame.animate` to stop breathing, blinks, wobble, and similar movement. Respect the supplied frame instead of
 starting your own `requestAnimationFrame`, interval, token counter, API polling, or navigation listener. The host owns
-the loop, pauses it for hidden tabs and hidden pets, and preserves the renderer through internal navigation.
+the loop, pauses it for hidden tabs and hidden Damagochi, and preserves the renderer through internal navigation.
 
 Implement `dispose()` whenever you allocate observers, event handlers, DOM nodes, or graphics resources. The host
 calls it when changing renderer or disposing the host. Return `{ rootX, lift }` as pose metadata, or `null` when there
@@ -187,7 +192,7 @@ Measure those anchors against the new artwork. Keep transparent margins around e
 
 ## How we used AI
 
-We developed the pets in a standalone HTML playground before integrating the approved renderers into the Manager.
+We developed the Damagochi in a standalone HTML playground before integrating the approved renderers into the Manager.
 AI assisted both artwork iteration and implementation, with the supplied character references and user feedback
 deciding the result.
 
@@ -218,13 +223,13 @@ drawn in code from the supplied reference. User reviews refined the face while k
 the correction that the mouth should open from the lower jaw. This route allows coiling, slithering, and face
 adjustments through geometry and choreography rather than replacing sprite sheets.
 
-### A repeatable AI workflow for the next pet
+### A repeatable AI workflow for the next Damagochi
 
 Start with an approved reference and neutral adult pose, then derive the growth stages and expressions from that
 same reference. Keep the face, markings, outline style, proportions within each stage, and palette consistent.
-Review a browser preview at the pet's actual display size after each meaningful change.
+Review a browser preview at the Damagochi's actual display size after each meaningful change.
 
-For an atlas-based pet, this is a starting prompt template, adapted from Byte's prompts:
+For an atlas-based Damagochi, this is a starting prompt template, adapted from Byte's prompts:
 
 ```text
 Use the attached approved [species] character as the identity and style reference.
@@ -247,10 +252,10 @@ Enable transparent output in the image tool as well as requesting it in the prom
 cell spacing, cropping, anatomy, and consistency; the prompt's requested grid and dimensions need verification.
 For a targeted repair, reference the approved image and describe exactly what should change and what should stay.
 Keep the original references, prompts, generation settings/tool version when available, and processing notes with
-the new pet's development assets. Add a prompt record like [ARTWORK_PROMPTS.md](ARTWORK_PROMPTS.md) for future edits.
+the new Damagochi's development assets. Add a prompt record like [ARTWORK_PROMPTS.md](ARTWORK_PROMPTS.md) for future edits.
 
-AI is used during development. The shipped pets render locally, and pet growth reads recorded usage from users'
-normal agent work. The pet module makes no model calls of its own.
+AI is used during development. The shipped Damagochi render locally, and Damagochi growth reads recorded usage from users'
+normal agent work. The Damagochi module makes no model calls of its own.
 
 ## 4. Build and validate
 
@@ -276,18 +281,18 @@ node .typescript/tools/security-browser/continuations.mjs interop
 ```
 
 The wrapper creates its own temporary database and test-only login, starts a local Manager, and cleans it up.
-It needs local port 19081 available. The pet test changes global settings and user pets, so use an isolated
+It needs local port 19081 available. The Damagochi test changes global settings and user Damagochi, so use an isolated
 development instance for manual checks too.
 
 The current browser test explicitly exercises Snek and Byte. Extend it for the new species rather than assuming a
 catalog entry is covered automatically. With a Damagochi manager account, enable the module, select the new species,
-and choose **Unchosen egg** for the waiting state. Adopt a named pet to inspect its hatch transition, then set levels
+and choose **Unchosen egg** for the waiting state. Adopt a named Damagochi to inspect its hatch transition, then set levels
 **1, 6, and 10** to inspect its three body stages. Check:
 
 - Every expression has the right face, stable proportions, intact extremities, and a consistent ground anchor.
 - Adoption starts at zero XP, the hatch transition works, and the chosen name is visible.
-- Kill pet previews crying, requires confirmation, sleeps/fades into an unchosen egg, and keeps lifetime tokens.
-- Administrator species changes preserve pet progress; user replacement starts a fresh pet.
+- Kill Damagochi previews crying, requires confirmation, sleeps/fades into an unchosen egg, and keeps lifetime tokens.
+- Administrator species changes preserve Damagochi progress; user replacement starts a fresh Damagochi.
 - Navigation between normal pages and the terminal retains the same renderer/canvas for the selected species.
 - Dragging, context menu, touch hold, snooze/wake, and hiding/restoring work at desktop and phone sizes.
 - Reduced motion draws a complete still pose after a cold asset load; light/dark themes both keep edges clean.

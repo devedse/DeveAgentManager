@@ -3992,10 +3992,11 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .dam-pet-art .illustrated-rig{display:none}
 .dam-pet-art .art-loading{position:absolute;bottom:20px;font-size:11px;color:var(--dam-muted)}
 .dam-pet-name{display:block;width:max-content;max-width:100%;margin:-4px auto 0;padding:2px 8px;border-radius:12px;background:var(--dam-surface);color:var(--dam-muted);border:1px solid var(--dam-border);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dam-pet-choose{white-space:normal;text-align:center;line-height:1.4}
 .dam-pet-host.dragging .dam-pet-body{cursor:grabbing}
 .dam-pet-menu{position:absolute;bottom:100%;right:0;pointer-events:auto;width:228px;max-width:calc(100vw - 16px);max-height:65dvh;overflow:auto;padding:6px;background:var(--dam-surface);border:1px solid var(--dam-border);border-radius:12px;box-shadow:0 6px 24px #0003;color:var(--dam-text);font-size:13px}
-.dam-pet-menu button,.dam-pet-menu a{display:block;width:100%;padding:8px 10px;text-align:left;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer;text-decoration:none}
-.dam-pet-menu button:hover,.dam-pet-menu a:hover{background:var(--dam-bg)}
+.dam-pet-menu > button,.dam-pet-menu > a{display:block;width:100%;padding:8px 10px;text-align:left;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer;text-decoration:none}
+.dam-pet-menu > button:hover,.dam-pet-menu > a:hover{background:var(--dam-bg)}
 .dam-pet-summary{display:flex;flex-direction:column;gap:3px;padding:8px 10px;border-bottom:1px solid var(--dam-border);margin-bottom:4px}
 .dam-pet-summary span{font-size:11px;color:var(--dam-muted)}
 .dam-pet-hide-target{display:none;position:fixed;bottom:12px;left:50%;transform:translateX(-50%);padding:14px 18px;border:2px dashed var(--dam-border);border-radius:12px;background:var(--dam-surface);color:var(--dam-text);font-size:12px}
@@ -4011,7 +4012,6 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .dam-pet-menu .dam-pet-xp{margin:6px 0}
 .dam-pet-menu .dam-pet-xp-labels span{font-size:12px}
 .dam-pet-kill{color:var(--dam-error);background:transparent;border:1px solid var(--dam-error);border-radius:8px;padding:10px 14px;cursor:pointer;font:inherit}
-.dam-pet-menu .dam-pet-kill{color:var(--dam-error)}
 .dam-pet-host[data-retiring] .dam-pet-body{pointer-events:none}
 .dam-pet-host[data-retiring] .dam-pet-name{visibility:hidden}
 @media(prefers-reduced-motion:reduce){.dam-pet-xp-fill{transition:none}}

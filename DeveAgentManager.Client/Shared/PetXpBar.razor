@@ -4,8 +4,16 @@
 @if (!Pet.NeedsAdoption)
 {
     <div class="dam-pet-xp">
-        <div class="dam-pet-xp-labels"><b>Level @Pet.Level</b><span>@(Pet.Level >= 1000 ? "Maximum level" : $"Level {Pet.Level + 1}")</span></div>
-        <div class="dam-pet-xp-track" role="progressbar" aria-label="Pet experience" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@Percent" aria-valuetext="@Description">
+        <div class="dam-pet-xp-labels">
+            <div class="help-heading"><b>Level @Pet.Level</b>
+                <HelpTip Label="Damagochi XP and lifetime tokens"><p>This Damagochi has @Pet.Experience.ToString("N0") total XP. The bar shows only XP earned in the current level; @Pet.LevelStart.ToString("N0") XP was needed to reach this level.</p>
+                    <p>Each credited token earns one XP. Usage includes input, output and cached context. Lifetime tokens also include previous Damagochi and tokens earned while choosing an egg, and are kept after a reset.</p>
+                    <p>Lifetime tracking started with Damagochi and was initialized from the existing Damagochi counter. Earlier account usage was not imported. Growth stages are recalculated when the shared growth curve changes; earned tokens are kept.</p>
+                </HelpTip>
+            </div>
+            <span>@(Pet.Level >= 1000 ? "Maximum level" : $"Level {Pet.Level + 1}")</span>
+        </div>
+        <div class="dam-pet-xp-track" role="progressbar" aria-label="Damagochi experience" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@Percent" aria-valuetext="@Description">
             <div class="dam-pet-xp-fill" style="@($"width:{Percent}%")"></div>
         </div>
         <div class="dam-pet-xp-detail">@Description</div>
@@ -15,5 +23,5 @@
 @code {
     [Parameter, EditorRequired] public PetStateDto Pet { get; set; } = default!;
     private string Percent => Pet.LevelProgress.ToString("0.##", CultureInfo.InvariantCulture);
-    private string Description => Pet.Level >= 1000 ? $"{Pet.Experience:N0} pet XP · maximum level" : $"{Pet.Experience - Pet.LevelStart:N0} / {Pet.NextLevel - Pet.LevelStart:N0} XP to level {Pet.Level + 1}";
+    private string Description => Pet.Level >= 1000 ? $"{Pet.Experience:N0} Damagochi XP · maximum level" : $"{Pet.Experience - Pet.LevelStart:N0} / {Pet.NextLevel - Pet.LevelStart:N0} XP to level {Pet.Level + 1}";
 }

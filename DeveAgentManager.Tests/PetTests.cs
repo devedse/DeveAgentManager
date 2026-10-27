@@ -143,14 +143,21 @@ public sealed class PetTests : IAsyncLifetime
     [Fact] public async Task ManagerCanSetExactCountersAndReturnAPetToAnEgg() {
         await pets.AdjustAsync(TestUsers.Admin, person, new(true, "Byte", "silkie", 1, 40, 4_000_000, 12_000_000), Ct);
         var pet = (await pets.MineAsync(User, Ct)).Pet;
-        Assert.Equal(3, pet.Level); Assert.Equal(4_000_000, pet.Experience); Assert.Equal(12_000_000, pet.LifetimeTokens);
+        Assert.Equal(1, pet.Level); Assert.Equal(4_000_000, pet.Experience); Assert.Equal(12_000_000, pet.LifetimeTokens);
         await pets.AdjustAsync(TestUsers.Admin, person, new(true, "", "", 1, 70), Ct);
         pet = (await pets.MineAsync(User, Ct)).Pet;
         Assert.True(pet.NeedsAdoption); Assert.Equal(12_000_000, pet.LifetimeTokens); Assert.Equal(0, pet.Experience);
     }
-    [Fact] public void FourMillionTokensAreStillAYoungPetAndAdulthoodNeedsFortyFiveMillion() {
-        Assert.Equal(3, PetRules.Level(4_000_000)); Assert.Equal(1, PetRules.Stage(PetRules.Level(4_000_000)));
-        Assert.Equal(45_000_000, PetRules.LevelStart(10));
+    [Theory]
+    [InlineData(4_000_000, 1, 1)]
+    [InlineData(64_203_424, 2, 1)]
+    [InlineData(749_999_999, 5, 1)]
+    [InlineData(750_000_000, 6, 2)]
+    [InlineData(2_249_999_999, 9, 2)]
+    [InlineData(2_250_000_000, 10, 3)]
+    [InlineData(long.MaxValue, PetRules.MaxLevel, 3)]
+    public void GrowthTakesDaysOfHeavyUsageAndHandlesLargeBalances(long tokens, int level, int stage) {
+        Assert.Equal(level, PetRules.Level(tokens)); Assert.Equal(stage, PetRules.Stage(PetRules.Level(tokens)));
     }
     [Fact] public void CodexUsesCumulativeUsageWithoutCountingCachedAndReasoningSubsetsAgain() {
         var format = new CodexSessionFormat(); var cursor = new SessionReadCursor();

@@ -4,47 +4,47 @@
 @inject ManagerApi Api
 @inject ISnackbar Snackbar
 
-<LoadingSection Loaded="@(Pets.State is not null)" Error="@Pets.Error" Retry="Pets.ReloadAsync" Label="Loading your pet">
+<LoadingSection Loaded="@(Pets.State is not null)" Error="@Pets.Error" Retry="Pets.ReloadAsync" Label="Loading your Damagochi">
     <Placeholder><SkeletonForm Fields="4" /></Placeholder>
     <ChildContent>
     @if (Pets.State is { } state)
     {
         <div class="settings-section">
             <div class="help-heading"><MudText Typo="Typo.subtitle1">Your Damagochi</MudText>
-                <HelpTip Label="Damagochi"><p>Choose a species and give your egg a name to hatch your pet. New pets start at level 1 with zero pet XP. Tokens from new work you prompt grow the current pet; lifetime tokens are remembered separately.</p><p>Changing species requires killing your current pet and confirming its permanent reset. Lifetime tokens are kept. Damagochi managers can change pets directly in Manager settings.</p><p>Snoozing hides your pet while it keeps growing. Disabling pauses growth without losing progress. Position is saved in this browser.</p></HelpTip></div>
+                <HelpTip Label="Damagochi"><p>Choose a species and give your egg a name to hatch your Damagochi. New Damagochi start at level 1 with zero Damagochi XP. Tokens from new work you prompt grow the current Damagochi; lifetime tokens are remembered separately.</p><p>Changing species requires killing your current Damagochi and confirming its permanent reset. Lifetime tokens are kept. Damagochi managers can change Damagochi directly in Manager settings.</p><p>Snoozing hides your Damagochi while it keeps growing. Disabling pauses growth without losing progress. Position is saved in this browser.</p></HelpTip></div>
             @if (state.CanEdit)
             {
-                <MudSwitch T="bool" @bind-Value="_enabled" Label="Enable my pet" Color="Color.Primary" />
+                <MudSwitch T="bool" @bind-Value="_enabled" Label="Enable my Damagochi" Color="Color.Primary" />
                 @if (state.Pet.NeedsAdoption)
                 {
-                    <div class="help-heading"><MudText Typo="Typo.subtitle2">Your egg needs a pet and a name</MudText>
-                        <HelpTip Label="Choosing your pet"><p>Choose the pet you want to raise and enter its name. Hatching starts a new pet at zero XP; previous lifetime tokens do not grow it. You can rename it later, but replacing it requires the confirmed Kill pet action.</p></HelpTip></div>
+                    <div class="help-heading"><MudText Typo="Typo.subtitle2">Your egg needs a Damagochi and a name</MudText>
+                        <HelpTip Label="Choosing your Damagochi"><p>Choose the Damagochi you want to raise and enter its name. Hatching starts a new Damagochi at zero XP; previous lifetime tokens do not grow it. You can rename it later, but replacing it requires the confirmed Kill Damagochi action.</p></HelpTip></div>
                     <div class="form-row">
-                        <MudSelect T="string" @bind-Value="_species" Label="Choose a pet" Placeholder="Choose a pet" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        <MudSelect T="string" @bind-Value="_species" Label="Choose a Damagochi" Placeholder="Choose a Damagochi" Variant="Variant.Outlined" Margin="Margin.Dense">
                             @foreach (var pet in state.Catalog) { <MudSelectItem Value="@pet.Id">@pet.Name</MudSelectItem> }
                         </MudSelect>
-                        <MudTextField @bind-Value="_name" Immediate="true" Label="Name your pet" MaxLength="40" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        <MudTextField @bind-Value="_name" Immediate="true" Label="Name your Damagochi" MaxLength="40" Variant="Variant.Outlined" Margin="Margin.Dense" />
                     </div>
-                    <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Adopt" Disabled="@(_saving || string.IsNullOrWhiteSpace(_name) || string.IsNullOrEmpty(_species))">Choose pet and hatch egg</MudButton></div>
+                    <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Adopt" Disabled="@(_saving || string.IsNullOrWhiteSpace(_name) || string.IsNullOrEmpty(_species))">Choose Damagochi and hatch egg</MudButton></div>
                 }
                 else
                 {
                     <div class="form-row">
-                        <MudTextField Value="@(state.Catalog.First(p => p.Id == state.Pet.Species).Name)" Label="Pet type" ReadOnly="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        <MudTextField Value="@(state.Catalog.First(p => p.Id == state.Pet.Species).Name)" Label="Damagochi type" ReadOnly="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
                         <MudTextField @bind-Value="_name" Label="Name" MaxLength="40" Variant="Variant.Outlined" Margin="Margin.Dense" />
                     </div>
-                    <div class="dam-pet-stats"><span>@state.Pet.StageName</span><span>@state.Pet.Experience.ToString("N0") pet tokens</span><span>Happiness @state.Pet.Happiness%</span></div>
+                    <div class="dam-pet-stats"><span>@state.Pet.StageName</span><span>@state.Pet.Experience.ToString("N0") Damagochi tokens</span><span>Happiness @state.Pet.Happiness%</span></div>
                     <PetXpBar Pet="state.Pet" />
                 }
                 <div class="dam-pet-stats"><span>@state.Pet.LifetimeTokens.ToString("N0") lifetime tokens</span></div>
-                <MudNumericField T="int" @bind-Value="_size" Min="90" Max="240" Label="Pet size" Variant="Variant.Outlined" Margin="Margin.Dense" />
-                <MudSwitch T="bool" @bind-Value="_reduced" Label="Reduce pet movement" Color="Color.Primary" />
+                <MudNumericField T="int" @bind-Value="_size" Min="90" Max="240" Label="Damagochi size" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                <MudSwitch T="bool" @bind-Value="_reduced" Label="Reduce Damagochi movement" Color="Color.Primary" />
                 @if (state.Pet.SnoozedUntil > DateTime.UtcNow)
                 {
-                    <MudText Typo="Typo.body2">Your pet is snoozing.</MudText>
+                    <MudText Typo="Typo.body2">Your Damagochi is snoozing.</MudText>
                     <MudButton OnClick="Wake" Disabled="_saving">Bring back now</MudButton>
                 }
-                <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving">Save pet settings</MudButton></div>
+                <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving">Save Damagochi settings</MudButton></div>
                 @if (!state.Pet.NeedsAdoption) { <div class="settings-actions"><PetRetireButton /></div> }
                 @if (!state.Options.Enabled) { <MudText Typo="Typo.body2">Damagochi is globally disabled; these preferences are saved for later.</MudText> }
             }
@@ -80,8 +80,8 @@
     private Task Save() => Run(async () => {
         var pending = Pets.State!.Pet.NeedsAdoption;
         await Api.SavePetAsync(new(_enabled, pending ? "" : _name, pending ? "" : _species, _reduced, _size, _generation));
-    }, "Pet settings saved.");
-    private Task Adopt() => Run(async () => { await Api.AdoptPetAsync(new(_name, _species, _generation)); }, "Your pet has hatched.");
-    private Task Wake() => Run(() => Api.PetActionAsync("wake"), "Pet brought back.");
+    }, "Damagochi settings saved.");
+    private Task Adopt() => Run(async () => { await Api.AdoptPetAsync(new(_name, _species, _generation)); }, "Your Damagochi has hatched.");
+    private Task Wake() => Run(() => Api.PetActionAsync("wake"), "Damagochi brought back.");
     public void Dispose() => Pets.Changed -= Changed;
 }

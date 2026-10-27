@@ -4,15 +4,13 @@
 @inject IDialogService Dialogs
 @inject ISnackbar Snackbar
 
-<button type="button" class="dam-pet-kill" role="@(InMenu ? "menuitem" : null)" disabled="@_busy" data-pet-kill
+<button type="button" class="dam-pet-kill" disabled="@_busy" data-pet-kill
         @onpointerenter="() => Preview(true)" @onpointerleave="() => Preview(false)"
         @onfocus="() => Preview(true)" @onblur="() => Preview(false)" @onclick="Retire">
-    Kill pet and create new one…
+    Kill Damagochi and create new one…
 </button>
 
 @code {
-    [Parameter] public bool InMenu { get; set; }
-    [Parameter] public EventCallback OnRetired { get; set; }
     private bool _busy;
     private void Preview(bool value) => Pets.PreviewRetirement(value);
     private async Task Retire()
@@ -21,13 +19,12 @@
         _busy = true;
         try
         {
-            var name = string.IsNullOrEmpty(pet.Name) ? "your pet" : pet.Name;
-            var message = $"{name} will go to sleep and fade away. This permanently resets this pet’s {pet.Experience:N0} XP, level and happiness. Your {pet.LifetimeTokens:N0} lifetime tokens are kept. An unchosen egg appears so you can choose and name a new pet. This cannot be undone.";
-            if (await Dialogs.ShowMessageBoxAsync($"Kill {name}?", message, yesText: "Kill pet", cancelText: "Keep pet") != true) return;
+            var name = string.IsNullOrEmpty(pet.Name) ? "your Damagochi" : pet.Name;
+            var message = $"{name} will go to sleep and fade away. This permanently resets this Damagochi’s {pet.Experience:N0} XP, level and happiness. Your {pet.LifetimeTokens:N0} lifetime tokens are kept. An unchosen egg appears so you can choose and name a new Damagochi. This cannot be undone.";
+            if (await Dialogs.ShowMessageBoxAsync($"Kill {name}?", message, yesText: "Kill Damagochi", cancelText: "Keep Damagochi") != true) return;
             Preview(false);
             await Api.RetirePetAsync(new(pet.Generation));
             await Pets.ReloadAsync();
-            await OnRetired.InvokeAsync();
         }
         catch (Exception ex) when (ex is ApiException or HttpRequestException) { Snackbar.Add(ex.Message, Severity.Error); }
         finally { _busy = false; Preview(false); }

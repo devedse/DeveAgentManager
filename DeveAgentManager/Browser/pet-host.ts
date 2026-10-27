@@ -99,7 +99,7 @@ export async function update(root: HTMLElement, snapshot: PetSnapshot, rendererI
         const bounds = menu.getBoundingClientRect();
         if (bounds.left < 8) menu.style.right = (bounds.left - 8) + "px";
         if (bounds.bottom > innerHeight - 8) menu.style.maxHeight = Math.max(90, innerHeight - bounds.top - 16) + "px";
-        if (!menu.dataset.focused) { menu.dataset.focused = "true"; menu.querySelector<HTMLElement>("button")?.focus(); }
+        if (!menu.dataset.focused) { menu.dataset.focused = "true"; menu.querySelector<HTMLElement>('[role="menuitem"]')?.focus(); }
     }
     if (!visible) { ++h.loadVersion; h.pending = undefined; cancelAnimationFrame(h.frame); h.frame = 0; h.last = 0; return; }
     if (h.retiringAt !== undefined) { start(h); return; }
@@ -122,7 +122,7 @@ export async function update(root: HTMLElement, snapshot: PetSnapshot, rendererI
             if (hatch) { h.stageAt = h.time; h.motion = "hatch"; h.motionAt = h.time; }
             root.removeAttribute("data-art-error");
         } catch {
-            artModules.delete(rendererId); root.dataset.artError = "Artwork could not load. Open pet settings to try again.";
+            artModules.delete(rendererId); root.dataset.artError = "Artwork could not load. Open Damagochi settings to try again.";
             return;
         } finally { if (h.loadVersion === version) h.pending = undefined; }
     }
