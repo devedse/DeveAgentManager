@@ -74,8 +74,8 @@ function departureKey(snapshot: PetSnapshot): string {
 function finishDeparture(h: Host, hide = false): void {
     if (!h.departure) return;
     const { resolve } = h.departure; h.departure = undefined;
-    if (hide) { h.root.hidden = true; h.visible = false; }
-    h.mount.style.opacity = ""; delete h.root.dataset.departing;
+    if (hide) { h.visible = false; h.mount.style.opacity = "0"; }
+    else { h.mount.style.opacity = ""; delete h.root.dataset.departing; }
     h.motion = "idle"; h.motionAt = h.time;
     resolve();
 }
@@ -100,6 +100,8 @@ export async function update(root: HTMLElement, snapshot: PetSnapshot, rendererI
     const h = hosts.get(root); if (!h) return;
     const previous = h.snapshot;
     if (h.departure && (!visible || departureKey(snapshot) !== h.departure.expected)) finishDeparture(h);
+    // Blazor owns the host's hidden attribute. Hold the last fade frame until its next visibility update.
+    if (!h.departure && root.dataset.departing) { h.mount.style.opacity = ""; delete h.root.dataset.departing; }
     h.threatened = threatened; h.requestedRenderer = rendererId;
     if (previous && previous.generation !== snapshot.generation) {
         if (!previous.needsAdoption && snapshot.needsAdoption && h.renderer && visible) {
