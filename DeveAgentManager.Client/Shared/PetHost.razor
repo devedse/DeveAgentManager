@@ -1,4 +1,5 @@
 @implements IAsyncDisposable
+@using DeveAgentManager.Contracts.Pets
 @inject PetClient Pets
 @inject ManagerApi Api
 @inject IJSRuntime JS
@@ -41,11 +42,15 @@
     private ElementReference _host, _mount;
     private IJSObjectReference? _module;
     private DotNetObjectReference<PetHost>? _self;
-    private bool _menu, _disposed, _departing;
+    private bool _menu, _disposed, _departing, _savingGoAway;
+    private MyPetDto? _observedState;
+    private PetStateDto? _pendingDeparture;
+    private long _departureVersion;
     private string? _error;
     private PeriodicTimer? _timer;
-    private bool Visible => Pets.State is { Options.Enabled: true } s && (_departing || s.Pet.Enabled && (s.Pet.SnoozedUntil is null || s.Pet.SnoozedUntil <= DateTime.UtcNow));
-    protected override void OnInitialized() => Pets.Changed += OnChanged;
+    private static bool IsVisible(MyPetDto? state) => state is { Options.Enabled: true, Pet.Enabled: true } s && (s.Pet.SnoozedUntil is null || s.Pet.SnoozedUntil <= DateTime.UtcNow);
+    private bool Visible => Pets.State is { Options.Enabled: true } && (_departing || IsVisible(Pets.State));
+    protected override void OnInitialized() { _observedState = Pets.State; Pets.Changed += OnChanged; }
     protected override async Task OnAfterRenderAsync(bool first)
     {
         if (first) {
@@ -58,14 +63,36 @@
         if (_module is not null && Pets.State is { } state) {
             var renderer = state.Pet.NeedsAdoption ? "unclaimed-egg" : state.Catalog.First(d => d.Id == state.Pet.Species).Renderer;
             await _module.InvokeVoidAsync("update", _host, state.Pet, renderer, Visible, Pets.Threatened);
+            if (_pendingDeparture is { } expected) {
+                _pendingDeparture = null;
+                var version = _departureVersion;
+                try { await _module.InvokeVoidAsync("depart", _host, expected); }
+                catch (JSDisconnectedException) { }
+                finally {
+                    if (version == _departureVersion) _departing = false;
+                    if (!_disposed) await InvokeAsync(StateHasChanged);
+                }
+            }
         }
     }
     private async Task TickAsync() { try { while (_timer is not null && await _timer.WaitForNextTickAsync()) await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { } }
-    private void OnChanged() { if (!_disposed) _ = InvokeAsync(StateHasChanged); }
-    [JSInvokable] public Task OpenMenu() { if (!_departing) _menu = !_menu; return InvokeAsync(StateHasChanged); }
+    private void OnChanged() {
+        if (_disposed) return;
+        _ = InvokeAsync(() => {
+            var previous = _observedState; var current = Pets.State; _observedState = current;
+            // Every screen observes the saved transition before rendering the hidden state.
+            // Initial loads and global disabling do not replay a farewell.
+            if (IsVisible(previous) && current is { Options.Enabled: true } && !IsVisible(current) &&
+                previous!.Pet.UserId == current.Pet.UserId && previous.Pet.Generation == current.Pet.Generation && previous.Pet.Species == current.Pet.Species) {
+                _departing = true; _pendingDeparture = current.Pet; _departureVersion++; _menu = false;
+            }
+            StateHasChanged();
+        });
+    }
+    [JSInvokable] public Task OpenMenu() { if (!_departing && !_savingGoAway) _menu = !_menu; return InvokeAsync(StateHasChanged); }
     [JSInvokable] public Task CloseMenu() { _menu = false; return InvokeAsync(StateHasChanged); }
     [JSInvokable] public Task Pet() {
-        if (_departing) return Task.CompletedTask;
+        if (_departing || _savingGoAway) return Task.CompletedTask;
         if (Pets.State?.Pet.NeedsAdoption == true) { Navigation.NavigateTo("settings?tab=damagochi"); return Task.CompletedTask; }
         return Action("pet");
     }
@@ -78,17 +105,15 @@
     }
     private Task Snooze(int minutes) => GoAway(() => Api.SnoozePetAsync(minutes));
     private async Task GoAway(Func<Task> save) {
-        if (_departing) return;
-        _departing = true; _menu = false; _error = null;
+        if (_departing || _savingGoAway) return;
+        _savingGoAway = true; _menu = false; _error = null;
         await InvokeAsync(StateHasChanged);
         try {
             await save(); await Pets.ReloadAsync();
-            if (!_disposed && _module is not null && Pets.State is { } state)
-                await _module.InvokeVoidAsync("depart", _host, state.Pet);
         }
         catch (Exception ex) when (ex is ApiException or HttpRequestException) { _error = ex.Message; _menu = true; }
         catch (JSDisconnectedException) { }
-        finally { _departing = false; if (!_disposed) await InvokeAsync(StateHasChanged); }
+        finally { _savingGoAway = false; if (!_disposed) await InvokeAsync(StateHasChanged); }
     }
     public async ValueTask DisposeAsync() {
         _disposed = true; Pets.Changed -= OnChanged; _timer?.Dispose();

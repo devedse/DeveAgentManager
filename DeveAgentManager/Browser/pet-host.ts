@@ -81,7 +81,7 @@ function finishDeparture(h: Host, hide = false): void {
 }
 export function depart(root: HTMLElement, expected: PetSnapshot): Promise<void> {
     const h = hosts.get(root);
-    if (!h || root.hidden || !h.renderer || document.hidden) return Promise.resolve();
+    if (!h || root.hidden || !h.renderer || document.hidden || !h.snapshot || departureKey(h.snapshot) !== departureKey(expected)) return Promise.resolve();
     finishDeparture(h);
     return new Promise(resolve => {
         h.departure = { at: h.time, expected: departureKey(expected), resolve };
