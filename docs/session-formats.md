@@ -185,10 +185,10 @@ The stored session mapping changes only after a successful installation.
 A switch holds the Manager's session lock only to stop the harness, synchronize and verify the latest history, and
 later to record the move and start the new harness. Backing up, converting and installing run without it, so other
 agents' synchronization, state checks and actions continue meanwhile. The agent shows **Starting** with "Switching to
-…"; its own actions (start, stop, another switch, moves, workspace removal, deletion and terminal attach) are refused
-until the switch ends, and the state monitor leaves it alone. Recording the move first checks that the agent and its
-conversation are unchanged. Once the harness has been stopped, the switch is no longer tied to the request: a closed
-tab or proxy timeout doesn't cancel it halfway.
+…" and refuses other actions until the switch ends; see [session-lock.md](session-lock.md). Recording the move first
+checks that the agent and its conversation are unchanged. Once the harness has been stopped, the switch is no longer
+tied to the request: a closed tab or proxy timeout doesn't cancel it halfway. **Resume here** and continuing a
+conversation in its own harness work the same way, writing the saved records again one at a time.
 Failed startup leaves the selected
 conversation in an error state available for an explicit Start; it does not automatically rerun the switch.
 Failed switches open a persistent dialog showing the attempted source, destination harness/login and failure reason.

@@ -22,7 +22,7 @@ public sealed partial class AgentService
     /// <summary>Switches the git identity; a running harness restarts with it and resumes the same conversation.</summary>
     public async Task SetGitIdentityAsync(CurrentUser actor, Guid agentId, Guid userId, CancellationToken cancellationToken = default)
     {
-        using var lease = await sessions.LockAsync(cancellationToken);
+        using var lease = await LockAgentAsync(agentId, cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken)
             ?? throw new KeyNotFoundException("Agent not found.");

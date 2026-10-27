@@ -73,19 +73,28 @@ public sealed partial class AgentService
             e.GetProperty("CopyOnWrite").GetBoolean(), Text(e, "Branch"), e.GetProperty("CanPull").GetBoolean());
     }
 
+    /// <summary>
+    /// Creates a workspace of the project. The checks and the reservation (the new agent, with its creation plan) run under
+    /// the project, move and session locks; the clone and writing a resumed conversation don't, so other agents and
+    /// projects keep working meanwhile. Until it is done the new agent is busy: actions on it wait and status checks leave it alone.
+    /// </summary>
     public async Task<Agent> CreateWorkspaceAsync(CurrentUser actor, Guid sourceId, CreateWorkspaceRequest request, CancellationToken ct = default)
     {
+        WorkspaceCreation creation;
         await ProjectGate.WaitAsync(ct);
         try
         {
             await AgentMoveCoordination.Gate.WaitAsync(ct);
-            try { return await CreateWorkspaceLockedAsync(actor, sourceId, request, ct); }
+            try { creation = await BeginWorkspaceAsync(actor, sourceId, request, ct); }
             finally { AgentMoveCoordination.Gate.Release(); }
         }
         finally { ProjectGate.Release(); }
+        using (creation.Busy) return await FinishWorkspaceAsync(actor, request, creation, ct);
     }
 
-    private async Task<Agent> CreateWorkspaceLockedAsync(CurrentUser actor, Guid sourceId, CreateWorkspaceRequest request, CancellationToken ct)
+    private sealed record WorkspaceCreation(Runner Runner, Agent Agent, WorkspacePlan? Plan, KeptFolder? Reuse, StoredSession? Resume, IDisposable Busy);
+
+    private async Task<WorkspaceCreation> BeginWorkspaceAsync(CurrentUser actor, Guid sourceId, CreateWorkspaceRequest request, CancellationToken ct)
     {
         // Reuse lifecycle coordination: source deletion, moves and conversation selection cannot race creation.
         using var lease = await sessions.LockAsync(ct);
@@ -156,57 +165,94 @@ public sealed partial class AgentService
         agent.Shares = source.Shares.Select(s => new AgentShare { AgentId = id, UserId = s.UserId, Access = s.Access,
             GrantedAt = s.GrantedAt, GrantedById = s.GrantedById }).ToList();
         await accounts.ResolveAsync(agent, ct);
-        db.Agents.Add(agent);
-        await db.SaveChangesAsync(ct);
+        // Until it is done: the new agent is busy, its conversation is its own to prepare, and its Runner's maintenance waits.
+        var claim = Guid.NewGuid();
+        AgentMoveCoordination.Creating[claim] = new(runner.Id, name, path);
+        var preparing = sessions.PrepareConversation(id);
+        IDisposable busy = new Released(() => AgentMoveCoordination.Creating.TryRemove(claim, out _), preparing.Dispose);
+        try
+        {
+            busy = new Released(busy.Dispose, (await BeginLongOperationAsync(id, "being created", ct)).Dispose);
+            db.Agents.Add(agent);
+            await db.SaveChangesAsync(ct);
+        }
+        catch { busy.Dispose(); throw; }
         events.AgentChanged(runner.Id, id);
+        return new WorkspaceCreation(runner, agent, plan, reuse, resume, busy);
+    }
+
+    /// <summary>Without the session lock: clones or adopts the folder and writes a resumed conversation; then records and starts it.</summary>
+    private async Task<Agent> FinishWorkspaceAsync(CurrentUser actor, CreateWorkspaceRequest request, WorkspaceCreation creation, CancellationToken ct)
+    {
+        var (runner, agent) = (creation.Runner, creation.Agent);
         var prepared = false;
         try
         {
-            var result = reuse is null
-                ? await WorkspacePhaseAsync(runner, "create", plan!, TimeSpan.FromMinutes(30), ct)
-                : await WorkspacePhaseAsync(runner, "adopt", new { reuse.Path, reuse.Token, NewToken = token }, TimeSpan.FromMinutes(1), ct);
+            var result = creation.Reuse is { } reuse
+                ? await WorkspacePhaseAsync(runner, "adopt", new { reuse.Path, reuse.Token, NewToken = agent.Id.ToString("N") }, TimeSpan.FromMinutes(1), ct)
+                : await WorkspacePhaseAsync(runner, "create", creation.Plan!, TimeSpan.FromMinutes(30), ct);
             prepared = true;
             agent.RepositoryBranch = Text(result, "Branch") ?? agent.RepositoryBranch;
-            if (reuse is not null) project.KeptFoldersJson = JsonSerializer.Serialize(kept.Where(k => k.Path != reuse.Path).ToList());
-            await sessions.AttachToAgentLockedAsync(runner, agent, resume?.Id, ct);
-            agent.WorkspaceCreationJson = null;
-            agent.State = AgentState.Stopped;
-            agent.StateMessage = null;
-            await db.SaveChangesAsync(CancellationToken.None);
-            if (request.StartAgent)
+            await sessions.AttachToAgentAsync(runner, agent, creation.Resume?.Id, ct);
+            using (await sessions.LockAsync(ct))
             {
-                await LaunchAsync(runner, agent, false, ct, transferred: resume is not null && resume.HarnessId != agent.HarnessId, loginActor: actor);
-                agent.State = AgentState.Running;
+                await using var db = await dbFactory.CreateDbContextAsync(ct);
+                var saved = await db.Agents.Include(a => a.Project).SingleAsync(a => a.Id == agent.Id, ct);
+                saved.RepositoryBranch = agent.RepositoryBranch;
+                if (creation.Reuse is { } reused && saved.Project is { } project)
+                    project.KeptFoldersJson = JsonSerializer.Serialize(KeptFolders(project).Where(k => k.Path != reused.Path).ToList());
+                saved.WorkspaceCreationJson = null;
+                saved.State = AgentState.Stopped;
+                saved.StateMessage = null;
+                saved.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync(CancellationToken.None);
+                events.AgentChanged(runner.Id, agent.Id);
+                if (request.StartAgent)
+                {
+                    await LaunchAsync(runner, saved, false, ct, transferred: creation.Resume is not null && creation.Resume.HarnessId != saved.HarnessId, loginActor: actor);
+                    saved.State = AgentState.Running;
+                    saved.UpdatedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync(CancellationToken.None);
+                    events.AgentChanged(runner.Id, agent.Id);
+                }
+                return saved;
             }
         }
         catch (Exception ex) when (!prepared && ex is WorkspaceRefusedException or RunnerCommandException)
         {
             // The script ran and cleaned up after itself: nothing exists on the Runner, so forget the reservation.
-            if (ex is RunnerCommandException) logger.LogWarning(ex, "Creating workspace {Workspace} failed on the Runner", path);
-            db.Agents.Remove(agent);
-            await db.SaveChangesAsync(CancellationToken.None);
-            events.Publish(new ManagerEvent(ManagerEventKind.AgentRemoved, runner.Id, id));
+            if (ex is RunnerCommandException) logger.LogWarning(ex, "Creating workspace {Workspace} failed on the Runner", agent.WorkingDirectory);
+            using (await sessions.LockAsync(CancellationToken.None))
+            {
+                await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
+                if (await db.Agents.SingleOrDefaultAsync(a => a.Id == agent.Id, CancellationToken.None) is { } reserved)
+                {
+                    db.Agents.Remove(reserved);
+                    await db.SaveChangesAsync(CancellationToken.None);
+                }
+            }
+            events.Publish(new ManagerEvent(ManagerEventKind.AgentRemoved, runner.Id, agent.Id));
             if (ex is WorkspaceRefusedException) throw;
             throw new InvalidOperationException("Creating the workspace failed on the Runner, and nothing was kept. The Manager log has the details.");
         }
         catch (Exception ex)
         {
-            agent.State = AgentState.Error;
-            agent.StateMessage = prepared
-                ? $"Starting the workspace failed: {ex.Message}. Use Start to try again."
-                : $"Creating the workspace may not have finished: {ex.Message}. Start checks the folder before using it; Remove cleans it up.";
+            using (await sessions.LockAsync(CancellationToken.None))
+            {
+                await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
+                if (await db.Agents.SingleOrDefaultAsync(a => a.Id == agent.Id, CancellationToken.None) is { } saved)
+                {
+                    saved.State = AgentState.Error;
+                    saved.StateMessage = prepared
+                        ? $"Starting the workspace failed: {ex.Message}. Use Start to try again."
+                        : $"Creating the workspace may not have finished: {ex.Message}. Start checks the folder before using it; Remove cleans it up.";
+                    saved.UpdatedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync(CancellationToken.None);
+                }
+            }
+            events.AgentChanged(runner.Id, agent.Id);
             throw;
         }
-        finally
-        {
-            if (db.Entry(agent).State != EntityState.Detached)
-            {
-                agent.UpdatedAt = DateTime.UtcNow;
-                await db.SaveChangesAsync(CancellationToken.None);
-                events.AgentChanged(runner.Id, id);
-            }
-        }
-        return agent;
     }
 
     /// <summary>Free agent names on the Runner for a workspace: the requested name, then name-2, name-3…</summary>
@@ -259,33 +305,84 @@ public sealed partial class AgentService
     /// </summary>
     public async Task RemoveWorkspaceAsync(Guid agentId, bool keepFiles, CancellationToken ct)
     {
+        // Stopping and the final sync run under the locks; deleting or checking the folder doesn't, so other agents and
+        // projects keep working meanwhile. The workspace is busy until it is gone: actions on it wait.
+        Runner runner;
+        Agent agent;
+        string root;
+        IDisposable removing;
         await ProjectGate.WaitAsync(ct);
         try
         {
-            using var lease = await sessions.LockAsync(ct);
-            await using var db = await dbFactory.CreateDbContextAsync(ct);
-            var (runner, agent, project) = await LoadWorkspaceAsync(db, agentId, ct);
-            if (!agent.IsClone || project is null)
-                throw new InvalidOperationException("Main is the project's own folder and is never removed. Delete the agent once the other workspaces are gone.");
-            if (agent.MoveJson is not null) throw new InvalidOperationException("Finish the project move first.");
-            if (_switching.ContainsKey(agent.Id)) throw new InvalidOperationException(SwitchInProgress);
-            var token = agent.Id.ToString("N");
-            await shell.RunAsync(runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: ct);
-            try { await sessions.SyncRunnerLockedAsync(runner, ct, agent.Id); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Final session sync failed for {Agent}", agentId); }
-            await sessions.PreserveArtifactsAsync(agent.Id, ct);
-            if (!keepFiles)
-                await WorkspacePhaseAsync(runner, "remove", new { Path = agent.WorkingDirectory, Container = WorkspaceContainer(project.RootDirectory), Token = token }, TimeSpan.FromMinutes(30), ct);
-            else if ((await WorkspacePhaseAsync(runner, "changes", new { Path = agent.WorkingDirectory, Token = token }, TimeSpan.FromMinutes(1), ct)).GetProperty("Exists").GetBoolean())
-                project.KeptFoldersJson = JsonSerializer.Serialize(KeptFolders(project).Append(new KeptFolder(agent.WorkingDirectory, agent.Name, agent.RepositoryBranch, DateTime.UtcNow, token)).ToList());
-            // Its conversations keep the project; the workspace reference clears with the agent.
-            await db.Sessions.Where(s => (s.WorkspaceAgentId == agent.Id || s.AgentId == agent.Id) && s.ProjectId == null)
-                .ExecuteUpdateAsync(s => s.SetProperty(x => x.ProjectId, project.Id), ct);
-            db.Agents.Remove(agent);
-            await db.SaveChangesAsync(ct);
-            events.Publish(new ManagerEvent(ManagerEventKind.AgentRemoved, agent.RunnerId, agent.Id));
+            using (await LockAgentAsync(agentId, ct))
+            {
+                await using var db = await dbFactory.CreateDbContextAsync(ct);
+                (runner, agent, var project) = await LoadWorkspaceAsync(db, agentId, ct);
+                if (!agent.IsClone || project is null)
+                    throw new InvalidOperationException("Main is the project's own folder and is never removed. Delete the agent once the other workspaces are gone.");
+                if (agent.MoveJson is not null) throw new InvalidOperationException("Finish the project move first.");
+                if (InLongOperation(agent.Id)) throw new InvalidOperationException(Busy(agent.Id));
+                // A workspace being created may copy from this one's folder.
+                if ((await db.Agents.Where(a => a.ProjectId == project.Id && a.Id != agent.Id).Select(a => a.Id).ToListAsync(ct)).FirstOrDefault(InLongOperation) is { } other && other != Guid.Empty)
+                    throw new InvalidOperationException("Another workspace of this project is busy. " + Busy(other));
+                root = project.RootDirectory;
+                removing = await BeginLongOperationAsync(agent.Id, "being removed", ct);
+                try
+                {
+                    await shell.RunAsync(runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: ct);
+                    try { await sessions.SyncRunnerLockedAsync(runner, ct, agent.Id); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Final session sync failed for {Agent}", agentId); }
+                    await sessions.PreserveArtifactsAsync(agent.Id, ct);
+                    agent.State = AgentState.Stopped;
+                    agent.StateMessage = keepFiles ? "Removing the workspace, keeping its folder…" : "Removing the workspace and its folder…";
+                    agent.UpdatedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync(ct);
+                    events.AgentChanged(runner.Id, agent.Id);
+                }
+                catch { removing.Dispose(); throw; }
+            }
         }
         finally { ProjectGate.Release(); }
+
+        using (removing)
+        {
+            var token = agent.Id.ToString("N");
+            var kept = false;
+            try
+            {
+                if (!keepFiles)
+                    await WorkspacePhaseAsync(runner, "remove", new { Path = agent.WorkingDirectory, Container = WorkspaceContainer(root), Token = token }, TimeSpan.FromMinutes(30), ct);
+                else kept = (await WorkspacePhaseAsync(runner, "changes", new { Path = agent.WorkingDirectory, Token = token }, TimeSpan.FromMinutes(1), ct)).GetProperty("Exists").GetBoolean();
+            }
+            catch (Exception ex)
+            {
+                await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
+                await db.Agents.Where(a => a.Id == agent.Id).ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.StateMessage, $"Removing the workspace failed: {ex.Message}. Remove it again to retry.")
+                    .SetProperty(a => a.UpdatedAt, DateTime.UtcNow), CancellationToken.None);
+                events.AgentChanged(runner.Id, agent.Id);
+                throw;
+            }
+
+            await ProjectGate.WaitAsync(CancellationToken.None);
+            try
+            {
+                using (await sessions.LockAsync(CancellationToken.None))
+                {
+                    await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
+                    var project = await db.Projects.SingleAsync(p => p.Id == agent.ProjectId, CancellationToken.None);
+                    if (kept)
+                        project.KeptFoldersJson = JsonSerializer.Serialize(KeptFolders(project).Append(new KeptFolder(agent.WorkingDirectory, agent.Name, agent.RepositoryBranch, DateTime.UtcNow, token)).ToList());
+                    // Its conversations keep the project; the workspace reference clears with the agent.
+                    await db.Sessions.Where(s => (s.WorkspaceAgentId == agent.Id || s.AgentId == agent.Id) && s.ProjectId == null)
+                        .ExecuteUpdateAsync(s => s.SetProperty(x => x.ProjectId, project.Id), CancellationToken.None);
+                    db.Agents.Remove(await db.Agents.SingleAsync(a => a.Id == agent.Id, CancellationToken.None));
+                    await db.SaveChangesAsync(CancellationToken.None);
+                }
+            }
+            finally { ProjectGate.Release(); }
+            events.Publish(new ManagerEvent(ManagerEventKind.AgentRemoved, agent.RunnerId, agent.Id));
+        }
     }
 
     public async Task<IReadOnlyList<KeptFolderDto>> ListKeptFoldersAsync(Guid agentId, CancellationToken ct)

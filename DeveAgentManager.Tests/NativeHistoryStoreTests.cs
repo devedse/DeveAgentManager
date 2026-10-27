@@ -282,6 +282,25 @@ public class NativeHistoryStoreTests
     }
 
     [Fact]
+    public async Task ATransferLocatedBeforeTheSavedHistoryNeverReplacesIt()
+    {
+        // An unlocked sync located the file, a lifecycle step's sync then saved more of it, and the first one transfers late.
+        using var rig = new Rig("claude");
+        var lines = Sample("claude").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var older = Encoding.UTF8.GetBytes(lines[0] + "\n");
+        var newer = Encoding.UTF8.GetBytes(lines[0] + "\n" + lines[1] + "\n");
+        Task<(DeveSession, bool)> Sync(byte[] bytes, long location) => rig.Store.SyncAsync(rig.Id, rig.Format, "/history.jsonl", bytes.Length, "s" + location,
+            async (offset, _, output, ct) => { await output.WriteAsync(bytes.AsMemory((int)offset), ct); return new NativeHistoryTransfer(true); }, Ct, location: location);
+        await Sync(newer, 2);
+        await Assert.ThrowsAsync<NativeHistoryStore.StaleLocationException>(() => Sync(older, 1));
+        Assert.Equal(newer.Length, (await rig.Store.SummaryAsync(rig.Id, Ct))!.Bytes);
+        // A later location replaces it as usual, also after the Manager restarted.
+        rig.Restart();
+        await Sync(older, 1);
+        Assert.Equal(older.Length, (await rig.Store.SummaryAsync(rig.Id, Ct))!.Bytes);
+    }
+
+    [Fact]
     public async Task ReadingOneHistoryHoldsUpOnlyItsOwnSyncs()
     {
         using var rig = new Rig("claude");

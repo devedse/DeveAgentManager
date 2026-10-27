@@ -486,6 +486,7 @@ public class NativeHistoryTransportTests
         public DeveSession Read(string content) => inner.Read(content);
         public DeveSession Read(TextReader reader) => inner.Read(reader);
         public string Write(DeveSession session, string id, string cwd) { beforeWrite?.Invoke(); return inner.Write(session, id, cwd); }
+        public void Write(DeveSession session, IEnumerable<DeveEntry> entries, string id, string cwd, TextWriter output) { beforeWrite?.Invoke(); inner.Write(session, entries, id, cwd, output); }
         public bool SupportsIncrementalRead => inner.SupportsIncrementalRead;
         public bool AppendsCompleteEntries => inner.AppendsCompleteEntries;
         public bool HasCompanionFiles => inner.HasCompanionFiles;

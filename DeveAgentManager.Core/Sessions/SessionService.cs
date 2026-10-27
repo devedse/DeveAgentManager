@@ -51,14 +51,14 @@ public sealed class SessionService(
     private readonly SessionCompanionStore _companions = new(options.SessionsDirectory);
     private readonly HistorySyncSettingsStore _historySettings = historySettings ?? new(dbFactory, events);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, string> _petUsageVersions = new();
-    private async Task CreditPetUsageAsync(StoredSession session, CancellationToken ct)
+    private async Task CreditPetUsageAsync(Guid sessionId, string harnessId, string? nativeId, CancellationToken ct)
     {
-        if (pets is null || session.HarnessSessionId is not { } nativeId) return;
-        var summary = await _native.SummaryAsync(session.Id, ct);
-        if (summary?.UsageFile is not { } version || _petUsageVersions.GetValueOrDefault(session.Id) == version) return;
-        var usage = await _native.UsageAsync(session.Id, summary, ct);
-        await pets.CreditAsync(session.Id, session.HarnessId + ":" + nativeId, usage, ct);
-        _petUsageVersions[session.Id] = version;
+        if (pets is null || nativeId is null) return;
+        var summary = await _native.SummaryAsync(sessionId, ct);
+        if (summary?.UsageFile is not { } version || _petUsageVersions.GetValueOrDefault(sessionId) == version) return;
+        var usage = await _native.UsageAsync(sessionId, summary, ct);
+        await pets.CreditAsync(sessionId, harnessId + ":" + nativeId, usage, ct);
+        _petUsageVersions[sessionId] = version;
     }
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly Dictionary<Guid, (DateTime Version, string Text)> _previews = new();
@@ -203,60 +203,137 @@ public sealed class SessionService(
             }
             else result = new DeveSession();
         }
-        var reportPath = MigrationPathFor(sessionId);
-        if (File.Exists(reportPath))
-        {
-            try
-            {
-                await using var reportStream = File.OpenRead(reportPath);
-                var report = await JsonSerializer.DeserializeAsync<SessionMigrationReport>(reportStream, DeveSession.JsonOptions, cancellationToken);
-                if (report?.TargetSessionId == result.Sources.LastOrDefault()?.SessionId) result.Migration = report;
-            }
-            catch (Exception ex) when (ex is IOException or JsonException)
-            { logger.LogWarning("Could not read migration diagnostics for {Session}: {ErrorType}", sessionId, ex.GetType().Name); }
-        }
+        result.Migration = await ReadMigrationAsync(sessionId, result, cancellationToken) ?? result.Migration;
         return result;
     }
 
     /// <summary>
     /// Registers the session of a new agent. With <paramref name="continueSessionId"/>, the stored conversation is written
     /// to the Runner first, so the harness starts with the full history. Someone else's conversation (one shared with the
-    /// agent's owner) is continued as a copy that belongs to the agent's owner; the original stays as it is.
+    /// agent's owner) is continued as a copy that belongs to the agent's owner; the original stays as it is. The session lock
+    /// is held to check and to record, not while the conversation is written to the Runner.
     /// </summary>
     public async Task AttachToAgentAsync(Runner runner, Agent agent, Guid? continueSessionId, CancellationToken cancellationToken)
     {
-        using var lease = await LockAsync(cancellationToken);
-        await AttachToAgentLockedAsync(runner, agent, continueSessionId, cancellationToken);
+        Attachment? attachment;
+        using (await LockAsync(cancellationToken))
+            attachment = await BeginAttachAsync(agent, continueSessionId, cancellationToken);
+        using (attachment)
+        {
+            if (attachment is not null) await InstallAttachmentAsync(runner, agent, attachment, cancellationToken);
+            using (await LockAsync(CancellationToken.None))
+                await CompleteAttachAsync(runner, agent, attachment, CancellationToken.None);
+        }
     }
 
+    /// <summary><see cref="AttachToAgentAsync"/> for a caller that holds the session lock throughout.</summary>
     internal async Task AttachToAgentLockedAsync(Runner runner, Agent agent, Guid? continueSessionId, CancellationToken cancellationToken)
+    {
+        using var attachment = await BeginAttachAsync(agent, continueSessionId, cancellationToken);
+        if (attachment is not null) await InstallAttachmentAsync(runner, agent, attachment, cancellationToken);
+        await CompleteAttachAsync(runner, agent, attachment, cancellationToken);
+    }
+
+    /// <summary>A saved conversation being continued by a new agent: as it was checked, its history, and whether it is copied.</summary>
+    internal sealed class Attachment(StoredSession stored, bool copy, NativeHistoryStore.Snapshot? snapshot) : IDisposable
+    {
+        public StoredSession Stored => stored;
+        public bool Copy => copy;
+        public Guid CopyId { get; } = Guid.NewGuid();
+        public NativeHistoryStore.Snapshot? Snapshot => snapshot;
+        public SessionMigrationReport? Report { get; set; }
+        public void Dispose() => snapshot?.Dispose();
+    }
+
+    /// <summary>Under the session lock: checks the conversation to continue, verifies its latest history and opens it.</summary>
+    internal async Task<Attachment?> BeginAttachAsync(Agent agent, Guid? continueSessionId, CancellationToken cancellationToken)
+    {
+        if (continueSessionId is not { } existingId) return null;
+        await EnsureVerifiedLockedAsync(existingId, cancellationToken);
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var stored = await db.Sessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == existingId, cancellationToken) ?? throw new ArgumentException("Session not found.");
+        // A saved conversation of the same project resumes in another of its workspaces as it is.
+        var sameProject = agent.ProjectId is { } projectId && stored.AgentId is null && stored.OwnerId == agent.OwnerId
+            && (stored.ProjectId == projectId || await db.Agents.AnyAsync(a => a.Id == stored.WorkspaceAgentId && a.ProjectId == projectId, cancellationToken));
+        var copy = false;
+        if (!sameProject && stored.OwnerId != agent.OwnerId)
+        {
+            copy = true;
+        }
+        else if (!sameProject && (stored.AgentId is not null || stored.WorkspaceAgentId is not null))
+        {
+            throw new InvalidOperationException("This session already belongs to a running agent. Open that agent instead.");
+        }
+        else if (!sameProject && await _artifacts.HasCollectionAsync(stored.Id, cancellationToken))
+        {
+            // A deleted agent's archives still reference this source folder. Continue an independent copy so
+            // future publications by the new agent cannot appear in the old agent's remaining archives.
+            copy = true;
+        }
+
+        return new Attachment(stored, copy, await _native.OpenAsync(existingId, cancellationToken));
+    }
+
+    /// <summary>Without the session lock: saves the copy's history, if any, and writes the conversation to the Runner.</summary>
+    internal async Task InstallAttachmentAsync(Runner runner, Agent agent, Attachment attachment, CancellationToken cancellationToken)
+    {
+        var stored = attachment.Stored;
+        try
+        {
+            if (attachment.Copy && HasSaved(stored.Id))
+            {
+                if (attachment.Snapshot is { } snapshot && _formats.GetValueOrDefault(snapshot.Harness) is { HasCompanionFiles: false } format)
+                    await _native.CopyAsync(snapshot, attachment.CopyId, format, cancellationToken);
+                else
+                {
+                    await _wholeLoads.WaitAsync(cancellationToken);
+                    try { await SaveAsync(attachment.CopyId, await LoadAsync(stored.Id, cancellationToken), cancellationToken); }
+                    finally { _wholeLoads.Release(); }
+                }
+            }
+
+            attachment.Report = await InstallForHarnessAsync(runner, stored, attachment.Snapshot, agent.HarnessId, agent.HarnessSessionId,
+                agent.WorkingDirectory, stored.WorkingDirectory, cancellationToken);
+        }
+        catch
+        {
+            if (attachment.Copy) await DiscardCopyAsync(attachment.CopyId);
+            throw;
+        }
+    }
+
+    private async Task DiscardCopyAsync(Guid copyId)
+    {
+        await _native.DeleteAsync(copyId, CancellationToken.None);
+        File.Delete(PathFor(copyId));
+    }
+
+    /// <summary>Under the session lock again: records the agent's conversation, unless the one to continue changed meanwhile.</summary>
+    internal async Task CompleteAttachAsync(Runner runner, Agent agent, Attachment? attachment, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         StoredSession stored;
-        if (continueSessionId is { } existingId)
+        if (attachment is not null)
         {
-            await EnsureVerifiedLockedAsync(existingId, cancellationToken);
-            stored = await db.Sessions.FirstOrDefaultAsync(s => s.Id == existingId, cancellationToken) ?? throw new ArgumentException("Session not found.");
-            var ranIn = stored.WorkingDirectory;
-            // A saved conversation of the same project resumes in another of its workspaces as it is.
-            var sameProject = agent.ProjectId is { } projectId && stored.AgentId is null && stored.OwnerId == agent.OwnerId
-                && (stored.ProjectId == projectId || await db.Agents.AnyAsync(a => a.Id == stored.WorkspaceAgentId && a.ProjectId == projectId, cancellationToken));
-            if (!sameProject && stored.OwnerId != agent.OwnerId)
+            try
             {
-                stored = await CopyAsync(db, stored, agent.OwnerId, cancellationToken);
+                if (attachment.Copy) stored = await CopyAsync(db, attachment.Stored, attachment.CopyId, agent.OwnerId, cancellationToken);
+                else
+                {
+                    stored = await db.Sessions.FirstOrDefaultAsync(s => s.Id == attachment.Stored.Id, cancellationToken) ?? throw new ArgumentException("Session not found.");
+                    if (stored.AgentId != attachment.Stored.AgentId || stored.WorkspaceAgentId != attachment.Stored.WorkspaceAgentId
+                        || stored.HarnessId != attachment.Stored.HarnessId || stored.HarnessSessionId != attachment.Stored.HarnessSessionId)
+                        throw new InvalidOperationException("The conversation changed while it was being prepared. Try again.");
+                }
             }
-            else if (!sameProject && (stored.AgentId is not null || stored.WorkspaceAgentId is not null))
+            catch
             {
-                throw new InvalidOperationException("This session already belongs to a running agent. Open that agent instead.");
-            }
-            else if (!sameProject && await _artifacts.HasCollectionAsync(stored.Id, cancellationToken))
-            {
-                // A deleted agent's archives still reference this source folder. Continue an independent copy so
-                // future publications by the new agent cannot appear in the old agent's remaining archives.
-                stored = await CopyAsync(db, stored, agent.OwnerId, cancellationToken);
+                if (attachment.Copy) await DiscardCopyAsync(attachment.CopyId);
+                throw;
             }
 
-            await WriteForHarnessAsync(runner, stored, agent.HarnessId, agent.HarnessSessionId, agent.WorkingDirectory, ranIn, cancellationToken);
+            if (attachment.Report is { } report) await SaveMigrationReportAsync(stored.Id, report, cancellationToken);
+            RecordHarness(stored, agent.HarnessId, agent.HarnessSessionId);
         }
         else
         {
@@ -389,6 +466,11 @@ public sealed class SessionService(
             }
             logger.LogInformation("Conversation {Session}'s active branch isn't in file order; loading it whole to convert it", stored.Id);
         }
+        else if (snapshot is not null && snapshot.Harness == harnessId && format.AppendsCompleteEntries)
+        {
+            await InstallStreamedAsync(runner, stored, snapshot, format, harnessSessionId, workingDirectory, ranIn, cancellationToken);
+            return null;
+        }
 
         logger.LogInformation("Loading conversation {Session} ({Size:0.0} MB saved) to continue it in {Harness} on {Runner}", stored.Id, Megabytes(stored.SavedSize), harnessId, runner.Name);
         await _wholeLoads.WaitAsync(cancellationToken);
@@ -439,6 +521,39 @@ public sealed class SessionService(
         return report;
     }
 
+    /// <summary>
+    /// Its own harness: the saved records are written again under the new session id one at a time (sources' headers and
+    /// times from a first pass), so a large history is never held whole.
+    /// </summary>
+    private async Task InstallStreamedAsync(Runner runner, StoredSession stored, NativeHistoryStore.Snapshot snapshot, ISessionFormat format,
+        string harnessSessionId, string workingDirectory, string? ranIn, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Copying conversation {Session} ({Size:0.0} MB saved) record by record to continue it in {Harness} on {Runner}", stored.Id, Megabytes(snapshot.Bytes), format.HarnessId, runner.Name);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        TextReader Read() => new StreamReader(snapshot.Read(), Encoding.UTF8);
+        var metadata = await Task.Run(() => NativeRecords.Metadata(Read, format, cancellationToken), cancellationToken);
+        // Nothing to move: the harness starts a conversation of its own under the id (see InstallAsync).
+        if (metadata.Entries.Count == 0) return;
+        metadata.Title = stored.Title;
+        var note = FolderNote(metadata, ranIn, workingDirectory);
+        IEnumerable<DeveEntry> Records()
+        {
+            foreach (var entry in NativeRecords.Read(Read, format, new SessionReadCursor(), cancellationToken)) yield return entry;
+            if (note is not null) yield return note;
+        }
+
+        var path = format.GetPath(harnessSessionId, workingDirectory, DateTime.UtcNow);
+        var local = NewWorkFile("jsonl");
+        try
+        {
+            await Task.Run(() => WriteTextFileAsync(local, output => format.Write(metadata, Records(), harnessSessionId, workingDirectory, output), cancellationToken), cancellationToken);
+            await shell.UploadAtomicFromFileAsync(runner, path, local, cancellationToken);
+            logger.LogInformation("Wrote conversation {Session} to {Runner} for {Harness}: {Entries} entries, {Size:0.0} MB in {Seconds:0.0} s",
+                stored.Id, runner.Name, format.HarnessId, metadata.Entries.Count + (note is null ? 0 : 1), Megabytes(new FileInfo(local).Length), watch.Elapsed.TotalSeconds);
+        }
+        finally { File.Delete(local); }
+    }
+
     private async Task SaveMigrationReportAsync(Guid sessionId, SessionMigrationReport report, CancellationToken cancellationToken)
     {
         await SaveMigrationAsync(sessionId, report, cancellationToken);
@@ -454,16 +569,21 @@ public sealed class SessionService(
     /// </summary>
     internal static void NoteFolderChange(DeveSession session, string? ranIn, string workingDirectory)
     {
-        if (session.Entries.Count == 0 || ranIn is not { Length: > 0 } || ranIn.TrimEnd('/') == workingDirectory.TrimEnd('/')) return;
-        var parent = session.LeafId ?? session.Entries.LastOrDefault()?.Id;
-        var note = new DeveEntry
+        if (FolderNote(session, ranIn, workingDirectory) is not { } note) return;
+        session.Entries.Add(note);
+        session.LeafId = note.Id;
+    }
+
+    /// <summary>The note of <see cref="NoteFolderChange"/>, or null; <paramref name="session"/> may hold only metadata.</summary>
+    private static DeveEntry? FolderNote(DeveSession session, string? ranIn, string workingDirectory)
+    {
+        if (session.Entries.Count == 0 || ranIn is not { Length: > 0 } || ranIn.TrimEnd('/') == workingDirectory.TrimEnd('/')) return null;
+        return new DeveEntry
         {
-            Id = Guid.NewGuid().ToString("N"), ParentId = parent, Kind = DeveEntryKind.Message, Role = DeveRole.User,
+            Id = Guid.NewGuid().ToString("N"), ParentId = session.LeafId ?? session.Entries.LastOrDefault()?.Id, Kind = DeveEntryKind.Message, Role = DeveRole.User,
             Timestamp = DateTime.UtcNow, Content = [DeveBlock.OfText(ManagerNotes.FolderNote(ranIn, workingDirectory))],
             MigrationKind = ManagerNotes.FolderKind,
         };
-        session.Entries.Add(note);
-        session.LeafId = note.Id;
     }
 
     /// <summary>
@@ -501,21 +621,118 @@ public sealed class SessionService(
 
     private string DisplayName(string harnessId) => harnessDisplayNames.GetValueOrDefault(harnessId, harnessId);
 
-    /// <summary>Copies the session files of all agents on a Runner that changed since the last sync. One SSH command when nothing changed.</summary>
-    public async Task SyncRunnerAsync(Runner runner, CancellationToken cancellationToken = default, bool forceVerification = false)
+    /// <summary>
+    /// Copies the session files of all agents on a Runner that changed since the last sync. One SSH command when nothing
+    /// changed. Transfers and checks run without the session lock, so a large or slow history never holds up other work;
+    /// each result is recorded under the lock, unless its conversation changed meanwhile (another harness or agent).
+    /// </summary>
+    public async Task SyncRunnerAsync(Runner runner, CancellationToken cancellationToken = default, bool forceVerification = false,
+        Guid? strictAgentId = null, Guid? onlySessionId = null)
     {
-        using var lease = await LockAsync(cancellationToken);
-        await SyncRunnerLockedAsync(runner, cancellationToken, forceVerification: forceVerification);
+        var gate = _runnerSyncs.GetOrAdd(runner.Id, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try { await SyncRunnerCoreAsync(runner, cancellationToken, locked: false, strictAgentId, forceVerification, onlySessionId); }
+        finally { gate.Release(); }
     }
 
-    internal async Task SyncRunnerLockedAsync(Runner runner, CancellationToken cancellationToken, Guid? strictAgentId = null,
+    // One unlocked sync per Runner at a time. Syncs under the session lock (lifecycle steps) never wait for it: they would
+    // otherwise wait for an unlocked sync that waits for the lock to record its result.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, SemaphoreSlim> _runnerSyncs = new();
+
+    /// <summary><see cref="SyncRunnerAsync"/> for a caller that holds the session lock (a lifecycle step's final sync).</summary>
+    internal Task SyncRunnerLockedAsync(Runner runner, CancellationToken cancellationToken, Guid? strictAgentId = null,
+        bool forceVerification = false, Guid? onlySessionId = null) =>
+        SyncRunnerCoreAsync(runner, cancellationToken, locked: true, strictAgentId, forceVerification, onlySessionId);
+
+    /// <summary>The conversations to sync, as they were when the sync began.</summary>
+    private sealed record SyncTarget(Guid Id, Guid? AgentId, string HarnessId, string HarnessSessionId, string? SourcePath, long SourceSize,
+        DateTime? LastSyncedAt, bool Idle);
+
+    private async Task SyncRunnerCoreAsync(Runner runner, CancellationToken cancellationToken, bool locked, Guid? strictAgentId = null,
         bool forceVerification = false, Guid? onlySessionId = null)
     {
         using var timing = Diagnostics.CaptureOperations.Start("runner.history-sync", runner: runner.Id);
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        // Agents created before sessions were stored (or whose registration failed) get a session now, under the lock.
+        if (onlySessionId is null && (locked || await MissingSessionsAsync(runner, cancellationToken)))
+            using (locked ? null : await LockAsync(cancellationToken))
+                await AddMissingSessionsAsync(runner, cancellationToken);
+        var sessions = await SyncTargetsAsync(runner, strictAgentId, onlySessionId, cancellationToken);
+        if (sessions.Count == 0)
+        {
+            return;
+        }
 
-        // Agents created before sessions were stored (or whose registration failed) get a session now.
-        var missing = await db.Agents.Where(a => onlySessionId == null && a.RunnerId == runner.Id && !db.Sessions.Any(s => s.AgentId == a.Id)).ToListAsync(cancellationToken);
+        var historySettings = await _historySettings.GetAsync(cancellationToken);
+        // Taken before locating: a sync that located the files later saved a newer history (NativeHistoryStore.SyncAsync).
+        var location = Interlocked.Increment(ref _locations);
+        var script = new StringBuilder();
+        foreach (var session in sessions)
+        {
+            script.Append($"echo {LocateMarker} {session.Id:N}; f=; ").Append(_formats[session.HarnessId].LocateCommand(session.HarnessSessionId)).Append("; if [ -n \"$f\" ]; then printf '__DAM_STAMP__ %s\\n' \"$(stat -L -c '%d:%i:%y:%z' \"$f\")\"; fi\n");
+        }
+
+        var result = await shell.RunAsync(runner, script.ToString(), TimeSpan.FromSeconds(30), cancellationToken);
+        result.EnsureSuccess("Locating session histories");
+        var located = ParseLocated(result.Output);
+        var stamps = ParseStamps(result.Output);
+        foreach (var session in sessions)
+        {
+            if (!located.TryGetValue(session.Id, out var file))
+            {
+                if (session.AgentId == strictAgentId && strictAgentId is not null && (session.SourcePath != null || await HadHistoryAsync(session, cancellationToken)))
+                    throw new IOException("The current history could not be found. Session selection was not changed.");
+                continue;
+            }
+            if (!_formats[session.HarnessId].SupportsIncrementalRead && file.Size == session.SourceSize && file.Path == session.SourcePath)
+            {
+                continue;
+            }
+
+            try
+            {
+                stamps.TryGetValue(session.Id, out var stamp);
+                if (await TransferAsync(runner, session, file, stamp, location, historySettings, forceVerification || session.AgentId == strictAgentId, cancellationToken) is not { } deve)
+                    continue;
+                using (locked ? null : await LockAsync(cancellationToken))
+                    await RecordSyncAsync(runner, session, file, deve, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Could not sync session {Session} from {Runner}", session.Id, runner.Name);
+                if (session.AgentId == strictAgentId && strictAgentId is not null) throw;
+            }
+        }
+    }
+
+    // New agents whose conversation is being prepared (created, cloned, a saved one written to the Runner): syncs don't give
+    // them one meanwhile, which would take the place of the conversation they continue.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, int> _preparing = new();
+
+    /// <summary>Until disposed, syncs leave <paramref name="agentId"/> without a conversation for its creation to attach.</summary>
+    internal IDisposable PrepareConversation(Guid agentId)
+    {
+        _preparing.AddOrUpdate(agentId, 1, (_, n) => n + 1);
+        return new Preparing(() => { if (_preparing.AddOrUpdate(agentId, 0, (_, n) => n - 1) <= 0) _preparing.TryRemove(agentId, out _); });
+    }
+
+    private sealed class Preparing(Action release) : IDisposable
+    {
+        private int _disposed;
+        public void Dispose() { if (Interlocked.Exchange(ref _disposed, 1) == 0) release(); }
+    }
+
+    private async Task<bool> MissingSessionsAsync(Runner runner, CancellationToken cancellationToken)
+    {
+        var preparing = _preparing.Keys.ToList();
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.Agents.AnyAsync(a => a.RunnerId == runner.Id && !preparing.Contains(a.Id) && !db.Sessions.Any(s => s.AgentId == a.Id), cancellationToken);
+    }
+
+    private async Task AddMissingSessionsAsync(Runner runner, CancellationToken cancellationToken)
+    {
+        var preparing = _preparing.Keys.ToList();
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var missing = await db.Agents.Where(a => a.RunnerId == runner.Id && !preparing.Contains(a.Id) && !db.Sessions.Any(s => s.AgentId == a.Id)).ToListAsync(cancellationToken);
         foreach (var agent in missing)
         {
             db.Sessions.Add(new StoredSession
@@ -540,98 +757,106 @@ public sealed class SessionService(
         {
             await db.SaveChangesAsync(cancellationToken);
         }
+    }
 
-        var sessions = await db.Sessions.Include(s => s.Agent)
-            .Where(s => s.Agent != null && s.Agent.RunnerId == runner.Id && (s.Agent.State != AgentState.Moving || s.Agent.Id == strictAgentId) && s.HarnessSessionId != null && (onlySessionId == null || s.Id == onlySessionId))
+    /// <summary>The conversations of this Runner's agents, as they are now; recording a result checks them again.</summary>
+    private async Task<List<SyncTarget>> SyncTargetsAsync(Runner runner, Guid? strictAgentId, Guid? onlySessionId, CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var sessions = await db.Sessions.AsNoTracking().Include(s => s.Agent)
+            .Where(s => s.Agent != null && s.Agent.RunnerId == runner.Id && (s.Agent.State != AgentState.Moving || s.Agent.Id == strictAgentId) && s.HarnessSessionId != null
+                && (onlySessionId == null || s.Id == onlySessionId) && (strictAgentId == null || s.AgentId == strictAgentId))
             .ToListAsync(cancellationToken);
-        sessions = sessions.Where(s => _formats.ContainsKey(s.HarnessId)).ToList();
-        if (sessions.Count == 0)
+        return sessions.Where(s => _formats.ContainsKey(s.HarnessId))
+            .Select(s => new SyncTarget(s.Id, s.AgentId, s.HarnessId, s.HarnessSessionId!, s.SourcePath, s.SourceSize, s.LastSyncedAt, s.Agent is { Working: false }))
+            .ToList();
+    }
+
+    private async Task<bool> HadHistoryAsync(SyncTarget session, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        return await db.Sessions.AnyAsync(s => s.Id == session.Id && (s.MessageCount > 0 || s.Agent!.LastAssistantMessageAt != null), ct);
+    }
+
+    /// <summary>Brings the saved native history up to date; the conversation's metadata when it changed, else null.</summary>
+    private long _locations;
+
+    private async Task<DeveSession?> TransferAsync(Runner runner, SyncTarget session, (long Size, string Path) file, string? stamp, long location,
+        DeveAgentManager.Contracts.HistorySyncSettings historySettings, bool force, CancellationToken cancellationToken)
+    {
+        var format = _formats[session.HarnessId];
+        var policy = new NativeHistorySyncPolicy(historySettings.Mode, Force: force, Idle: session.Idle);
+        var incremental = format.SupportsIncrementalRead && stamp is not null;
+        if (incremental && !format.HasCompanionFiles && session.SourceSize == file.Size && session.SourcePath == file.Path
+            && await _native.IsCurrentAsync(session.Id, session.HarnessId, file.Path, file.Size, stamp!, cancellationToken, policy)) { await CreditPetUsageAsync(session.Id, session.HarnessId, session.HarnessSessionId, cancellationToken); return null; }
+        if (!incremental)
         {
+            var content = await shell.DownloadAsync(runner, file.Path, cancellationToken)
+                ?? throw new IOException("Could not download the current conversation.");
+            var whole = format.Read(content);
+            await SaveAsync(session.Id, whole, cancellationToken);
+            return whole;
+        }
+
+        (DeveSession Metadata, bool Changed) sync;
+        try
+        {
+            sync = await _native.SyncAsync(session.Id, format, file.Path, file.Size, stamp!,
+                async (offset, hash, output, ct) =>
+                {
+                    var ok = await shell.DownloadHistoryRangeAsync(runner, file.Path, offset, file.Size, hash, output, ct);
+                    return new NativeHistoryTransfer(ok is not null, ok);
+                }, cancellationToken, policy, (offset, samples, output, ct) =>
+                    shell.DownloadHistoryAppendAsync(runner, file.Path, offset, file.Size, stamp!, samples, output, ct),
+                async (metadata, ct) =>
+                {
+                    var generation = await _companions.SyncAsync(shell, runner, session.Id, format, file.Path, metadata, ct, policy);
+                    if (generation is not null)
+                    {
+                        var current = await shell.RunAsync(runner, "stat -L -c '%d:%i:%y:%z' -- " + ShellQuote.Quote(file.Path), cancellationToken: ct);
+                        current.EnsureSuccess("Checking native session snapshot");
+                        if (current.Output.TrimEnd('\r', '\n') != stamp) throw new IOException("The native log changed while its replay files were saved; synchronization will retry.");
+                    }
+                    return generation;
+                }, location: location);
+        }
+        catch (NativeHistoryStore.StaleLocationException)
+        {
+            // Another sync located and saved a newer history meanwhile; the next sync starts from it.
+            return null;
+        }
+        if (!sync.Changed && session.SourceSize == file.Size && session.SourcePath == file.Path) { await CreditPetUsageAsync(session.Id, session.HarnessId, session.HarnessSessionId, cancellationToken); return null; }
+        await _companions.PruneAsync(session.Id, (await _native.SummaryAsync(session.Id, cancellationToken))?.CompanionManifest, cancellationToken);
+        File.Delete(PathFor(session.Id)); // The verified native copy is now the authoritative full history.
+        return sync.Metadata;
+    }
+
+    /// <summary>
+    /// Under the session lock: records a synced history on its stored conversation, unless the conversation changed while it
+    /// was transferred (another harness, agent or Runner, or a newer sync recorded first): the next sync sees it as it is now.
+    /// </summary>
+    private async Task RecordSyncAsync(Runner runner, SyncTarget session, (long Size, string Path) file, DeveSession deve, CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var stored = await db.Sessions.Include(s => s.Agent).SingleOrDefaultAsync(s => s.Id == session.Id, cancellationToken);
+        if (stored is null)
+        {
+            // Deleted while it was transferred: drop what the transfer saved.
+            await _native.DeleteAsync(session.Id, cancellationToken);
             return;
         }
-
-        var historySettings = await _historySettings.GetAsync(cancellationToken);
-        var script = new StringBuilder();
-        foreach (var session in sessions)
-        {
-            script.Append($"echo {LocateMarker} {session.Id:N}; f=; ").Append(_formats[session.HarnessId].LocateCommand(session.HarnessSessionId!)).Append("; if [ -n \"$f\" ]; then printf '__DAM_STAMP__ %s\\n' \"$(stat -L -c '%d:%i:%y:%z' \"$f\")\"; fi\n");
-        }
-
-        var result = await shell.RunAsync(runner, script.ToString(), TimeSpan.FromSeconds(30), cancellationToken);
-        result.EnsureSuccess("Locating session histories");
-        var located = ParseLocated(result.Output);
-        var stamps = ParseStamps(result.Output);
-        foreach (var session in sessions)
-        {
-            if (!located.TryGetValue(session.Id, out var file))
-            {
-                if (session.AgentId == strictAgentId && (session.SourcePath != null || session.MessageCount > 0 || session.Agent?.LastAssistantMessageAt != null))
-                    throw new IOException("The current history could not be found. Session selection was not changed.");
-                continue;
-            }
-            if (!_formats[session.HarnessId].SupportsIncrementalRead && file.Size == session.SourceSize && file.Path == session.SourcePath)
-            {
-                continue;
-            }
-
-            try
-            {
-                stamps.TryGetValue(session.Id, out var stamp);
-                var policy = new NativeHistorySyncPolicy(historySettings.Mode,
-                    Force: forceVerification || session.AgentId == strictAgentId,
-                    Idle: session.Agent is { Working: false });
-                var incremental = _formats[session.HarnessId].SupportsIncrementalRead && stamp is not null;
-                if (incremental && !_formats[session.HarnessId].HasCompanionFiles && session.SourceSize == file.Size && session.SourcePath == file.Path
-                    && await _native.IsCurrentAsync(session.Id, session.HarnessId, file.Path, file.Size, stamp!, cancellationToken, policy)) { await CreditPetUsageAsync(session, cancellationToken); continue; }
-                DeveSession deve;
-                if (incremental)
-                {
-                    var sync = await _native.SyncAsync(session.Id, _formats[session.HarnessId], file.Path, file.Size, stamp!,
-                        async (offset, hash, output, ct) =>
-                        {
-                            var ok = await shell.DownloadHistoryRangeAsync(runner, file.Path, offset, file.Size, hash, output, ct);
-                            return new NativeHistoryTransfer(ok is not null, ok);
-                        }, cancellationToken, policy, (offset, samples, output, ct) =>
-                            shell.DownloadHistoryAppendAsync(runner, file.Path, offset, file.Size, stamp!, samples, output, ct),
-                        async (metadata, ct) =>
-                        {
-                            var generation = await _companions.SyncAsync(shell, runner, session.Id, _formats[session.HarnessId], file.Path, metadata, ct, policy);
-                            if (generation is not null)
-                            {
-                                var current = await shell.RunAsync(runner, "stat -L -c '%d:%i:%y:%z' -- " + ShellQuote.Quote(file.Path), cancellationToken: ct);
-                                current.EnsureSuccess("Checking native session snapshot");
-                                if (current.Output.TrimEnd('\r', '\n') != stamp) throw new IOException("The native log changed while its replay files were saved; synchronization will retry.");
-                            }
-                            return generation;
-                        });
-                    if (!sync.Changed && session.SourceSize == file.Size && session.SourcePath == file.Path) { await CreditPetUsageAsync(session, cancellationToken); continue; }
-                    deve = sync.Metadata;
-                    await _companions.PruneAsync(session.Id, (await _native.SummaryAsync(session.Id, cancellationToken))?.CompanionManifest, cancellationToken);
-                    File.Delete(PathFor(session.Id)); // The verified native copy is now the authoritative full history.
-                }
-                else
-                {
-                    var content = await shell.DownloadAsync(runner, file.Path, cancellationToken)
-                        ?? throw new IOException("Could not download the current conversation.");
-                    deve = _formats[session.HarnessId].Read(content);
-                    await SaveAsync(session.Id, deve, cancellationToken);
-                }
-                Apply(session, deve, session.Agent?.Name);
-                if (session.Agent is { } agent) UpdateLastAssistantMessage(agent, deve);
-                session.SourcePath = file.Path;
-                session.SourceSize = file.Size;
-                UpdateSizes(session);
-                session.LastSyncedAt = DateTime.UtcNow;
-                await db.SaveChangesAsync(cancellationToken);
-                await CreditPetUsageAsync(session, cancellationToken);
-                events.SessionChanged(session.Id, session.AgentId);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "Could not sync session {Session} from {Runner}", session.Id, runner.Name);
-                if (session.AgentId == strictAgentId) throw;
-            }
-        }
+        if (stored.AgentId != session.AgentId || stored.HarnessId != session.HarnessId || stored.HarnessSessionId != session.HarnessSessionId
+            || stored.Agent?.RunnerId != runner.Id || stored.LastSyncedAt != session.LastSyncedAt)
+            return;
+        Apply(stored, deve, stored.Agent?.Name);
+        if (stored.Agent is { } agent) UpdateLastAssistantMessage(agent, deve);
+        stored.SourcePath = file.Path;
+        stored.SourceSize = file.Size;
+        UpdateSizes(stored);
+        stored.LastSyncedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        await CreditPetUsageAsync(stored.Id, stored.HarnessId, stored.HarnessSessionId!, cancellationToken);
+        events.SessionChanged(stored.Id, stored.AgentId);
     }
 
     /// <summary>Best-effort synchronization, with explicit context for lifecycle operations. Never throws.</summary>
@@ -670,23 +895,121 @@ public sealed class SessionService(
     /// <summary>Exports as a DeveSession ("deve") or in a harness's own format (its id, e.g. "pi").</summary>
     public async Task<SessionExport> ExportAsync(Guid sessionId, string format, CancellationToken cancellationToken = default)
     {
-        using var lease = await LockAsync(cancellationToken);
-        await EnsureVerifiedLockedAsync(sessionId, cancellationToken);
+        // Verified, then exported without the session lock: exporting a large history never holds up other work.
+        await EnsureVerifiedAsync(sessionId, cancellationToken);
         var stored = await GetAsync(sessionId, cancellationToken) ?? throw new ArgumentException("Session not found.");
-        await _wholeLoads.WaitAsync(cancellationToken);
+        logger.LogInformation("Exporting conversation {Session} ({Size:0.0} MB saved) as {Format}", sessionId, Megabytes(stored.SavedSize), format);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        SessionExport export;
+        using (var snapshot = await _native.OpenAsync(sessionId, cancellationToken))
+        {
+            if (snapshot is not null && _formats.GetValueOrDefault(snapshot.Harness) is { AppendsCompleteEntries: true } source)
+                export = await ExportStreamedAsync(stored, snapshot, source, format, cancellationToken);
+            else
+            {
+                await _wholeLoads.WaitAsync(cancellationToken);
+                try { export = await ExportAsync(stored, await LoadAsync(sessionId, cancellationToken), format, cancellationToken); }
+                finally { _wholeLoads.Release(); }
+            }
+        }
+        logger.LogInformation("Exported conversation {Session} as {Format}: {Size:0.0} MB in {Seconds:0.0} s", sessionId, format, Megabytes(export.Bytes), watch.Elapsed.TotalSeconds);
+        return export;
+    }
+
+    /// <summary>
+    /// <see cref="ExportAsync(StoredSession, DeveSession, string, CancellationToken)"/> from the saved records, one at a time:
+    /// its own format and DeveSession JSON are written record by record, another harness's format is converted by streaming.
+    /// </summary>
+    private async Task<SessionExport> ExportStreamedAsync(StoredSession stored, NativeHistoryStore.Snapshot snapshot, ISessionFormat source, string format, CancellationToken ct)
+    {
+        TextReader Read() => new StreamReader(snapshot.Read(), Encoding.UTF8);
+        var name = SafeFileName(stored.Title);
+        if (format != "deve" && format != snapshot.Harness)
+        {
+            var converted = await Task.Run(() => SessionMigration.Prepare(Read, source, stored.Title, DisplayName(snapshot.Harness), DisplayName(format), format, ct: ct), ct);
+            // Out of file order: converted from the loaded conversation instead.
+            if (converted is null)
+            {
+                await _wholeLoads.WaitAsync(ct);
+                try { return await ExportAsync(stored, await LoadAsync(stored.Id, ct), format, ct); }
+                finally { _wholeLoads.Release(); }
+            }
+            return await ExportAsync(stored, converted, format, ct, converted: true);
+        }
+
+        var metadata = await Task.Run(() => NativeRecords.Metadata(Read, source, ct), ct);
+        metadata.Title = stored.Title;
+        IEnumerable<DeveEntry> Records() => NativeRecords.Read(Read, source, new SessionReadCursor(), ct);
+        var path = NewWorkFile("export");
         try
         {
-            logger.LogInformation("Exporting conversation {Session} ({Size:0.0} MB saved) as {Format}", sessionId, Megabytes(stored.SavedSize), format);
-            var watch = System.Diagnostics.Stopwatch.StartNew();
-            var export = await ExportAsync(stored, await LoadAsync(sessionId, cancellationToken), format, cancellationToken);
-            logger.LogInformation("Exported conversation {Session} as {Format}: {Size:0.0} MB in {Seconds:0.0} s", sessionId, format, Megabytes(export.Bytes), watch.Elapsed.TotalSeconds);
-            return export;
+            if (format == "deve")
+            {
+                metadata.Migration = await ReadMigrationAsync(stored.Id, metadata, ct);
+                await Task.Run(() => WriteDeveAsync(path, metadata, Records(), ct), ct);
+                return new SessionExport($"{name}.deve.json", "application/json", path, new FileInfo(path).Length);
+            }
+
+            var harnessSessionId = stored.HarnessSessionId ?? stored.Id.ToString("N");
+            var cwd = metadata.Cwd ?? stored.WorkingDirectory ?? "/";
+            await Task.Run(() => WriteTextFileAsync(path, output => source.Write(metadata, Records(), harnessSessionId, cwd, output), ct), ct);
+            return new SessionExport($"{name}.{format}.{source.ExportExtension}", source.ExportContentType, path, new FileInfo(path).Length);
         }
-        finally { _wholeLoads.Release(); }
+        catch
+        {
+            File.Delete(path);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// DeveSession JSON as <see cref="JsonSerializer"/> writes it with <see cref="IndentedJson"/>, with the entries written
+    /// one at a time: <paramref name="metadata"/> gives every other property.
+    /// </summary>
+    internal static async Task WriteDeveAsync(string path, DeveSession metadata, IEnumerable<DeveEntry> entries, CancellationToken ct)
+    {
+        var head = new DeveSession { Format = metadata.Format, Version = metadata.Version, Title = metadata.Title, Cwd = metadata.Cwd, CreatedAt = metadata.CreatedAt,
+            UpdatedAt = metadata.UpdatedAt, LeafId = metadata.LeafId, Sources = metadata.Sources, Migration = metadata.Migration };
+        var properties = JsonSerializer.SerializeToNode(head, IndentedJson)!.AsObject();
+        await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, FileOptions.Asynchronous);
+        await using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true, Encoder = IndentedJson.Encoder, MaxDepth = IndentedJson.MaxDepth });
+        writer.WriteStartObject();
+        foreach (var (property, value) in properties)
+        {
+            writer.WritePropertyName(property);
+            if (property != "entries") { if (value is null) writer.WriteNullValue(); else value.WriteTo(writer, IndentedJson); continue; }
+            writer.WriteStartArray();
+            foreach (var entry in entries)
+            {
+                JsonSerializer.Serialize(writer, entry, IndentedJson);
+                if (writer.BytesPending > 1 << 20) await writer.FlushAsync(ct);
+            }
+            writer.WriteEndArray();
+        }
+        writer.WriteEndObject();
+        await writer.FlushAsync(ct);
+    }
+
+    /// <summary>The conversion report of the conversation's current native session, as <see cref="LoadAsync"/> attaches it.</summary>
+    private async Task<SessionMigrationReport?> ReadMigrationAsync(Guid sessionId, DeveSession metadata, CancellationToken ct)
+    {
+        var reportPath = MigrationPathFor(sessionId);
+        if (!File.Exists(reportPath)) return null;
+        try
+        {
+            await using var reportStream = File.OpenRead(reportPath);
+            var report = await JsonSerializer.DeserializeAsync<SessionMigrationReport>(reportStream, DeveSession.JsonOptions, ct);
+            return report?.TargetSessionId == metadata.Sources.LastOrDefault()?.SessionId ? report : null;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException)
+        {
+            logger.LogWarning("Could not read migration diagnostics for {Session}: {ErrorType}", sessionId, ex.GetType().Name);
+            return null;
+        }
     }
 
     // Written to a file, never one string: a large conversation is already held once as a DeveSession.
-    private async Task<SessionExport> ExportAsync(StoredSession stored, DeveSession session, string format, CancellationToken ct)
+    private async Task<SessionExport> ExportAsync(StoredSession stored, DeveSession session, string format, CancellationToken ct, bool converted = false)
     {
         session.Title = stored.Title;
         var name = SafeFileName(stored.Title);
@@ -703,8 +1026,8 @@ public sealed class SessionService(
             var harnessFormat = _formats.GetValueOrDefault(format) ?? throw new ArgumentException($"Unknown export format '{format}'.");
             var harnessSessionId = stored.HarnessSessionId ?? stored.Id.ToString("N");
             var cwd = session.Cwd ?? stored.WorkingDirectory ?? "/";
-            var from = session.Sources.LastOrDefault()?.Harness ?? stored.HarnessId;
-            if (from != format && session.Entries.Count > 0)
+            var from = converted ? "" : session.Sources.LastOrDefault()?.Harness ?? stored.HarnessId;
+            if (!converted && from != format && session.Entries.Count > 0)
                 session = SessionMigration.Prepare(session, DisplayName(from), DisplayName(format), format);
             await WriteTextFileAsync(path, output => harnessFormat.Export(session, harnessSessionId, cwd, output), ct);
             if (from != format)
@@ -748,8 +1071,11 @@ public sealed class SessionService(
         await writer.FlushAsync(ct);
     }
 
-    // Caller holds the operation lock. Never export/continue a sampled checkpoint while its source is unavailable.
-    private async Task EnsureVerifiedLockedAsync(Guid id, CancellationToken ct)
+    // Never export/continue a sampled checkpoint while its source is unavailable.
+    private Task EnsureVerifiedLockedAsync(Guid id, CancellationToken ct) => EnsureVerifiedAsync(id, ct, locked: true);
+
+    /// <summary>Verifies a sampled checkpoint by syncing the conversation; without the lock, as an unlocked sync does.</summary>
+    private async Task EnsureVerifiedAsync(Guid id, CancellationToken ct, bool locked = false)
     {
         var state = await _native.SummaryAsync(id, ct);
         if (state is null || state.Sha256.Length > 0 && !await _companions.HasPendingVerificationAsync(id, state.CompanionManifest, ct)) return;
@@ -758,7 +1084,8 @@ public sealed class SessionService(
             .SingleAsync(s => s.Id == id, ct);
         if (stored.Agent?.Runner is not { State: RunnerState.Ready } runner)
             throw new IOException("This history has pending verification. Reconnect its Runner and synchronize before exporting or continuing it.");
-        await SyncRunnerLockedAsync(runner, ct, stored.Agent.Id, onlySessionId: id);
+        if (locked) await SyncRunnerLockedAsync(runner, ct, stored.Agent.Id, onlySessionId: id);
+        else await SyncRunnerAsync(runner, ct, strictAgentId: stored.Agent.Id, onlySessionId: id);
         var verified = await _native.SummaryAsync(id, ct);
         if (verified?.Sha256 is not { Length: > 0 } || await _companions.HasPendingVerificationAsync(id, verified.CompanionManifest, ct))
             throw new IOException("The current history could not be fully verified. Try again after synchronization succeeds.");
@@ -809,14 +1136,13 @@ public sealed class SessionService(
     }
 
     /// <summary>A copy of someone's conversation for <paramref name="ownerId"/>: its content and its shared images and files, not its history of moves.</summary>
-    private async Task<StoredSession> CopyAsync(ManagerDbContext db, StoredSession source, Guid ownerId, CancellationToken cancellationToken)
+    /// <summary>The row of a copy of <paramref name="source"/> for <paramref name="ownerId"/>, whose history is already saved under <paramref name="copyId"/>.</summary>
+    private async Task<StoredSession> CopyAsync(ManagerDbContext db, StoredSession source, Guid copyId, Guid ownerId, CancellationToken cancellationToken)
     {
-        await EnsureVerifiedLockedAsync(source.Id, cancellationToken);
-        await db.Entry(source).ReloadAsync(cancellationToken);
         var now = DateTime.UtcNow;
         var copy = new StoredSession
         {
-            Id = Guid.NewGuid(),
+            Id = copyId,
             OwnerId = ownerId,
             Title = source.Title,
             TitlePinned = source.TitlePinned,
@@ -828,11 +1154,6 @@ public sealed class SessionService(
             CreatedAt = now,
             UpdatedAt = now,
         };
-        if (HasSaved(source.Id))
-        {
-            await SaveAsync(copy.Id, await LoadAsync(source.Id, cancellationToken), cancellationToken);
-        }
-
         var owner = await db.Users.AsNoTracking().SingleAsync(u => u.Id == ownerId, cancellationToken);
         await _artifacts.CopyAttachmentsAsync(source.Id, copy.Id, CurrentUser.From(owner), cancellationToken);
         db.Sessions.Add(copy);
@@ -849,7 +1170,40 @@ public sealed class SessionService(
     }
 
     // Caller holds LockAsync and has stopped and synced the outgoing harness.
-    internal async Task SelectLockedAsync(Runner runner, Agent agent, Guid? id, string? title, string nativeId, CancellationToken ct)
+    /// <summary>A saved conversation chosen for a workspace: as it was checked, its history, and whether it is installed.</summary>
+    internal sealed class Selection(StoredSession? selected, NativeHistoryStore.Snapshot? snapshot) : IDisposable
+    {
+        public StoredSession? Selected => selected;
+        public NativeHistoryStore.Snapshot? Snapshot => snapshot;
+        public SessionMigrationReport? Report { get; set; }
+        public bool Installed { get; set; }
+        public void Dispose() => snapshot?.Dispose();
+    }
+
+    /// <summary>Under the session lock: verifies the chosen conversation's latest history and opens it (none for a new one).</summary>
+    internal async Task<Selection> BeginSelectAsync(Guid? id, CancellationToken ct)
+    {
+        if (id is not { } sessionId) return new Selection(null, null);
+        await EnsureVerifiedLockedAsync(sessionId, ct);
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var selected = await db.Sessions.AsNoTracking().SingleAsync(s => s.Id == sessionId, ct);
+        return new Selection(selected, await _native.OpenAsync(sessionId, ct));
+    }
+
+    /// <summary>Without the session lock: writes the chosen conversation to the Runner under the new session id.</summary>
+    internal async Task InstallSelectionAsync(Runner runner, Agent agent, Selection selection, string nativeId, CancellationToken ct)
+    {
+        if (selection.Selected is not { } selected) return;
+        selection.Report = await InstallForHarnessAsync(runner, selected, selection.Snapshot, selected.HarnessId, nativeId, agent.WorkingDirectory, selected.WorkingDirectory, ct);
+        selection.Installed = true;
+    }
+
+    /// <summary>
+    /// Makes the chosen conversation the agent's (the caller holds the session lock). A <paramref name="prepared"/> one was
+    /// installed without the lock (<see cref="InstallSelectionAsync"/>) and is recorded unless it changed meanwhile;
+    /// otherwise it is installed here.
+    /// </summary>
+    internal async Task SelectLockedAsync(Runner runner, Agent agent, Guid? id, string? title, string nativeId, CancellationToken ct, Selection? prepared = null)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var selected = id.HasValue ? await db.Sessions.SingleAsync(s => s.Id == id, ct) : new StoredSession
@@ -865,7 +1219,14 @@ public sealed class SessionService(
         var changesHarness = selected.HarnessId != agent.HarnessId;
         if (changesHarness && agent.LoginStopPending) throw new InvalidOperationException("Wait for pending login enforcement before changing harnesses.");
         var accountId = changesHarness ? null : agent.AccountId;
-        if (id.HasValue)
+        if (id.HasValue && prepared is { Installed: true, Selected: { } before })
+        {
+            if (selected.AgentId != before.AgentId || selected.HarnessId != before.HarnessId || selected.HarnessSessionId != before.HarnessSessionId)
+                throw new InvalidOperationException("The conversation changed while it was being prepared. Try again.");
+            if (prepared.Report is { } report) await SaveMigrationReportAsync(selected.Id, report, ct);
+            RecordHarness(selected, selected.HarnessId, nativeId);
+        }
+        else if (id.HasValue)
         {
             await EnsureVerifiedLockedAsync(selected.Id, ct);
             await db.Entry(selected).ReloadAsync(ct);
