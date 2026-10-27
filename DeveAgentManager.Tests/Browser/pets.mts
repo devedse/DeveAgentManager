@@ -93,8 +93,31 @@ try {
     await page.screenshot({ path: '/tmp/damagochi-desktop.png' });
     for (const minutes of [5, 15, 60]) {
         if (minutes !== 5) await pet.click({ button: 'right' });
+        if (minutes === 5) {
+            // Hold the acknowledgement so live updates can render the saved reaction before depart() starts.
+            await page.waitForFunction(() => document.querySelector<HTMLElement>('.dam-pet-host')?.dataset.motion === 'idle');
+            await page.route('**/api/me/pet/snooze', async route => {
+                const response = await route.fetch();
+                await new Promise(resolve => setTimeout(resolve, 800));
+                await route.fulfill({ response });
+            });
+            await page.evaluate(() => {
+                const host = document.querySelector<HTMLElement>('.dam-pet-host')!;
+                const motions: string[] = [];
+                const observer = new MutationObserver(() => motions.push(host.dataset.motion ?? ''));
+                observer.observe(host, { attributes: true, attributeFilter: ['data-motion'] });
+                (window as any).farewellTrace = { motions, observer };
+            });
+        }
         const requestedAt = Date.now();
         await farewell(page, () => page.getByRole('menuitem', { name: `Go away for ${minutes} minutes`, exact: true }).click());
+        if (minutes === 5) {
+            const motions: string[] = await page.evaluate(() => {
+                const trace = (window as any).farewellTrace; trace.observer.disconnect(); return trace.motions;
+            });
+            assert.ok(!motions.includes('happy'), 'Snoozing must not smile before the cry/sleep/fade sequence');
+            await page.unroute('**/api/me/pet/snooze');
+        }
         const state = (await api(context, 'me/pet')).pet;
         assert.equal(state.enabled, true);
         assert.ok(Math.abs(Date.parse(state.snoozedUntil) - requestedAt - minutes * 60_000) < 10_000);

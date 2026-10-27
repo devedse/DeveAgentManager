@@ -129,6 +129,20 @@ public sealed class PetTests : IAsyncLifetime
             Assert.Equal(300_000, state.LifetimeTokens); Assert.Equal(0, state.Experience);
         }
     }
+    [Theory]
+    [InlineData("pet", 0, "happy")]
+    [InlineData("play", 0, "hop")]
+    [InlineData("wake", 0, "happy")]
+    [InlineData("snooze", 5, "sad")]
+    [InlineData("snooze", 15, "sad")]
+    [InlineData("snooze", 60, "sad")]
+    [InlineData("hide", 0, "sad")]
+    public async Task InteractionReactionsMatchTheAction(string action, int minutes, string reaction) {
+        await pets.SaveOptionsAsync(TestUsers.Admin, new(true), Ct);
+        await pets.AdjustAsync(TestUsers.Admin, person, new(true, "Byte", "silkie", 1, 70), Ct);
+        await pets.InteractAsync(User, action, minutes, Ct);
+        Assert.Equal(reaction, (await pets.MineAsync(User, Ct)).Pet.Reaction);
+    }
     [Fact] public async Task InteractionsHaveCooldownAndHidePreservesProgress() {
         await pets.SaveOptionsAsync(TestUsers.Admin, new(true), Ct);
         await pets.AdjustAsync(TestUsers.Admin, person, new(true, "Snek", "snek", 6, 70), Ct);

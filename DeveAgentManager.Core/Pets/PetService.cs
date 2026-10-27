@@ -157,7 +157,8 @@ public sealed class PetService(IDbContextFactory<ManagerDbContext> factory, PetC
             if (action is "pet" or "play" && (p.LastInteractionAt is null || Now - p.LastInteractionAt >= TimeSpan.FromSeconds(30))) {
                 p.Happiness = Math.Min(100, p.Happiness + 3); p.LastInteractionAt = Now;
             }
-            Changed(p, action == "play" ? "hop" : "happy"); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
+            Changed(p, action switch { "play" => "hop", "snooze" or "hide" => "sad", _ => "happy" });
+            await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
         } finally { gate.Release(); }
         Notify(actor.Id);
     }
