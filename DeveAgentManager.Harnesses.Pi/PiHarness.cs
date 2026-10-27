@@ -79,6 +79,8 @@ public sealed class PiHarness : IHarness
             new("npm:pi-plugin-manager", "Manage plugins from inside pi"),
             new("npm:@dietrichgebert/ponytail", "Lazy senior dev mode: the best code is the code you never wrote"),
             new("npm:@pi-archimedes/image-paste", "Image paste with preview (reads the Runner's clipboard: in the browser terminal, use Ctrl+V or 📎)"),
+            // Not on npm; npm's unscoped pi-claude-code is another author's package.
+            new("git:github.com/earendil-works/pi-claude-code", "Claude Pro/Max subscription through Claude Code (needs claude auth login on the Runner)"),
         ],
         SettingsFile: "~/.pi/agent/settings.json",
         KeybindingsFile: "~/.pi/agent/keybindings.json",
