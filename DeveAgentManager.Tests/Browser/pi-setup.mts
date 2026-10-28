@@ -79,8 +79,8 @@ try{
     await page.setViewportSize({width:390,height:900});await page.goto(base+`/agents/${agent.id}`);
     await page.locator('.switch-chip').click();
     const menu=page.locator('.switch-menu:visible');
-    await menu.locator('.pi-switch-row .switch-option').waitFor();
-    assert.equal((await menu.locator('.pi-switch-row .switch-option-label').innerText()).trim(),'pi');
+    await menu.locator('.pi-switch-row .switch-harness-button').waitFor();
+    assert.equal((await menu.locator('.pi-switch-row .switch-option-label').textContent()).trim(),'pi');
     assert.equal(await menu.getByText('Saved login (preview)',{exact:true}).count(),0);
     assert.equal(await menu.getByText('Runner logins (/login)',{exact:true}).count(),0);
     accountFailure=true;

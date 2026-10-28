@@ -10,6 +10,24 @@ try {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: theme });
     await context.addInitScript(theme => localStorage.setItem('dam-theme', theme), theme);
     const page = await context.newPage();
+    const assertHarnessAlignment = async menu => {
+        const headings = menu.locator('.switch-harness');
+        const icons = await headings.locator('.harness-logo').evaluateAll(nodes => nodes.map(node => Math.round(node.getBoundingClientRect().left)));
+        const labels = await headings.locator('.switch-harness-label').evaluateAll(nodes => nodes.map(node => Math.round(node.getBoundingClientRect().left)));
+        assert.ok(icons.length >= 4, 'pi and the other harness headings are present');
+        await page.screenshot({ path: `/tmp/dam-harness-alignment-${theme}-${page.viewportSize().width}.png` });
+        const layout = await headings.evaluateAll(nodes => nodes.map(node => ({
+            classes: node.className, left: node.getBoundingClientRect().left,
+            padding: getComputedStyle(node).paddingLeft, justify: getComputedStyle(node).justifyContent,
+        })));
+        assert.equal(new Set(icons).size, 1, `all harness logos share an aligned left edge: ${JSON.stringify({ icons, labels, layout })}`);
+        assert.equal(new Set(labels).size, 1, 'all harness names share an aligned left edge');
+        const fonts = await headings.locator('.switch-harness-label').evaluateAll(nodes => nodes.map(node => {
+            const style = getComputedStyle(node);
+            return [style.fontSize, style.fontWeight, style.letterSpacing, style.textTransform].join('|');
+        }));
+        assert.equal(new Set(fonts).size, 1, 'pi uses the shared harness heading style');
+    };
     const errors = []; page.on('pageerror', e => errors.push(e.message));
     await page.goto(base + '/login');
     await page.locator('[name=username]').fill('admin');
@@ -104,6 +122,7 @@ try {
     assert.equal(await menu.getByRole('button', { name: /carol · Disabled/ }).count(), 0, 'disabled logins do not appear in the switcher');
     assert.ok(accountRequests.length > 0 && accountRequests.every(path => path === '/api/accounts'), 'switcher requests personal visibility, not the administrator catalog');
     await menu.getByRole('link', { name: 'Install Grok on test-runner' }).waitFor();
+    await assertHarnessAlignment(menu);
     // pi is a top-level harness choice; only saved-login rows carry account identities and share this indent.
     const lefts = await menu.locator('.switch-option-label').filter({ has: page.locator('.account-identity') })
         .evaluateAll(nodes => nodes.map(n => Math.round(n.getBoundingClientRect().left)));
@@ -117,6 +136,7 @@ try {
     await page.goto(base + '/agents/' + agent.id);
     await page.locator('.switch-chip').click();
     await menu.getByRole('button', { name: /alice · Personal/ }).waitFor();
+    await assertHarnessAlignment(menu);
     const menuBounds = await menu.boundingBox();
     await page.screenshot({ path: `/tmp/dam-account-picker-${theme}-320.png` });
     assert.ok(menuBounds.x >= 0 && menuBounds.x + menuBounds.width <= 321, `colored switcher labels fit a 320px phone: ${JSON.stringify(menuBounds)}`);

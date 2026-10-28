@@ -617,6 +617,7 @@ a {
 .harness-option {
     display: inline-flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 8px;
 }
 
@@ -681,15 +682,7 @@ a {
     border: 1px solid transparent;
 }
 
-.status-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: currentColor;
-    flex-shrink: 0;
-}
-
-.status-busy .status-dot {
+.status-busy .status-dot, .status-dot.status-busy {
     animation: dam-pulse 1.6s ease-in-out infinite;
 }
 
@@ -699,6 +692,14 @@ a {
 .status-error { color: var(--dam-error); background: rgba(248, 113, 113, 0.1); border-color: rgba(248, 113, 113, 0.22); }
 .status-unclear { color: var(--dam-unclear); background: color-mix(in srgb, var(--dam-unclear) 10%, transparent); border-color: color-mix(in srgb, var(--dam-unclear) 22%, transparent); }
 .status-neutral { color: var(--dam-muted); background: rgba(142, 152, 173, 0.1); border-color: rgba(142, 152, 173, 0.18); }
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}
 
 @keyframes dam-pulse {
     0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
@@ -2239,8 +2240,21 @@ html:has(.terminal-layout) body {
 }
 
 .switch-option-label { min-width: 0; overflow-wrap: anywhere; }
-.pi-switch-row { display: flex; align-items: center; gap: .5rem; }
-.switch-menu .pi-switch-row .switch-option { flex: 1; min-width: 0; padding-left: .5rem; }
+.pi-switch-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.switch-harness-button {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    font-family: inherit;
+    line-height: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.switch-harness-button:disabled { cursor: default; }
 .pi-forwarded-logins { margin: .5rem 0 1rem; }
 .pi-forwarded-login { min-width: 0; overflow-wrap: anywhere; }
 .pi-forwarded-option { display: flex; align-items: center; gap: .25rem; }
@@ -2257,7 +2271,7 @@ html:has(.terminal-layout) body {
 .access-through-agents { margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--dam-border); }
 .access-agents { white-space: normal; }
 
-    .switch-option:hover:not(:disabled) {
+    .switch-option:hover:not(:disabled), .switch-harness-button:hover:not(:disabled) {
         background: var(--dam-surface-2);
     }
 
@@ -2702,23 +2716,9 @@ html:has(.terminal-layout) body {
     position: absolute;
     top: -2px;
     right: -2px;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--dam-info);
     border: 1px solid var(--dam-surface);
     box-sizing: content-box;
 }
-
-    .nav-agent-dot.live {
-        background: var(--dam-success);
-    }
-
-    /* Working: its harness is busy. */
-    .nav-agent-dot.working {
-        background: var(--dam-info);
-        animation: dam-pulse 1.6s ease-in-out infinite;
-    }
 
 .nav-agent-name, .nav-project-name {
     flex: 1 1 auto;
@@ -3253,8 +3253,6 @@ html:has(.terminal-layout) body {
 .status-evidence { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; }
 .attention-item { display: flex; flex-direction: column; gap: 4px; max-width: min(340px, 75vw); white-space: normal; }
 .attention-item span, .attention-item small { color: var(--mud-palette-text-secondary); }
-.nav-agent-dot.warning { background: var(--mud-palette-warning); }
-.nav-agent-dot.unclear { background: var(--dam-unclear); }
 @media (max-width: 600px) { .terminal-name-row .agent-status-extra { display: none; } }
 
 .usage-disk { background: linear-gradient(90deg, #f59e0b, #fcd34d); }

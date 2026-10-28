@@ -51,7 +51,7 @@
                 }
                 else
                 {
-                    <div class="switch-harness harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</div>
+                    <div class="switch-harness harness-option"><HarnessLogo HarnessId="@harness.Id" /><span class="switch-harness-label">@harness.DisplayName</span></div>
                 }
                 @if (!Agent.RunnerHarnessIds.Contains(harness.Id))
                 {
@@ -150,10 +150,10 @@
     {
         var current = Agent.State == AgentState.Running && harness.Id == Agent.HarnessId
             && (harness.Id == "pi" || account is null || account.Id == CurrentAccount?.Id);
-        <button type="button" class="switch-option @(current ? "switch-current" : "")" disabled="@(current || !Agent.RunnerHarnessIds.Contains(harness.Id) || account is { Access: < AccountAccess.Use })" @onclick="() => SwitchAsync(harness, account)">
+        <button type="button" class="@(harness.Id == "pi" ? "switch-harness harness-option switch-harness-button" : "switch-option") @(current ? "switch-current" : "")" disabled="@(current || !Agent.RunnerHarnessIds.Contains(harness.Id) || account is { Access: < AccountAccess.Use })" @onclick="() => SwitchAsync(harness, account)">
             @if (harness.Id == "pi") { <HarnessLogo HarnessId="pi" /> }
             else { <MudIcon Icon="@(current ? Icons.Material.Rounded.CheckCircle : Icons.Material.Rounded.ArrowForward)" Size="Size.Small" /> }
-            <span class="switch-option-label">
+            <span class="switch-option-label @(harness.Id == "pi" ? "switch-harness-label" : "")">
                 @if (account is null) { @harness.DisplayName }
                 else { <AccountIdentity Username="@account.CreatedByUsername" Name="@account.Name" /> }
                 @if (account is not null)

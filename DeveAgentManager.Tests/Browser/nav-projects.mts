@@ -7,8 +7,9 @@ const browser = await playwright.chromium.launch();
 const base = process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5099';
 const password = process.env.DAM_TEST_PASSWORD ?? 'test-only-password';
 try {
-    for (const width of [1400, 390]) {
-        const context = await browser.newContext({ viewport: { width, height: 900 } });
+    for (const theme of ['light', 'dark']) for (const width of [1400, 390]) {
+        const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme as 'light' | 'dark' });
+        await context.addInitScript(value => localStorage.setItem('dam-theme', value), theme);
         const page = await context.newPage();
         const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
         await page.goto(base + '/login');
@@ -68,10 +69,54 @@ try {
         const name = await box(last.locator('.nav-agent-name')), meta = await box(last.locator('.nav-agent-meta'));
         assert.ok(name.width >= meta.width, `the name keeps at least as much room as the Runner (${name.width} vs ${meta.width})`);
         assert.equal(await last.locator('.nav-agent-meta').getAttribute('title'), 'runner-with-a-long-name', 'a cut Runner name shows whole on hover');
+        const statuses = [
+            { state: 'Running', activity: 'UsageLimited', text: 'Usage limit', tone: 'warning', working: true, busy: false },
+            { state: 'Running', activity: 'Working', text: 'Working', tone: 'info', working: false, busy: true },
+            { state: 'Running', activity: 'NeedsInput', text: 'Needs input', tone: 'warning', working: true, busy: false },
+            { state: 'Running', activity: 'Ready', text: 'Ready', tone: 'success', working: true, busy: false },
+            { state: 'Running', activity: 'Unknown', text: 'Unclear', tone: 'unclear', working: true, busy: false },
+            { state: 'Running', activity: null, text: 'Working', tone: 'info', working: true, busy: true },
+            { state: 'Running', activity: null, text: 'Idle', tone: 'success', working: false, busy: false },
+            { state: 'Error', activity: 'Ready', text: 'Error', tone: 'error', working: false, busy: false },
+            { state: 'Moving', activity: 'UsageLimited', text: 'Moving', tone: 'info', working: false, busy: true },
+            { state: 'Starting', activity: 'Ready', text: 'Starting', tone: 'info', working: false, busy: true },
+            { state: 'Exited', activity: 'UsageLimited', text: 'Exited', tone: 'warning', working: false, busy: false },
+            { state: 'Stopped', activity: 'Ready', text: 'Stopped', tone: 'neutral', working: false, busy: false },
+        ];
+        for (const status of width < 900 ? statuses.slice(0, 2) : statuses) {
+            Object.assign(agents[0], { state: status.state, working: status.working, exitCode: status.state === 'Exited' ? 1 : null,
+                activity: status.activity === null ? null : {
+                    status: status.activity, reason: 'Test observation: ' + status.text, rule: 'test-status',
+                    observedAt: at(0), since: at(0), sequence: 1, questionWaiting: false, backgroundTaskCount: 3,
+                    // Keep the stopped agent visible as an unread completion; process state still takes priority.
+                    completedAt: status.state === 'Stopped' ? at(0) : null,
+                    completionSequence: status.state === 'Stopped' ? 1 : 0, seenCompletionSequence: 0, currentTurnCompleted: false,
+                } });
+            await page.reload();
+            if (width < 900) await page.locator('.mud-appbar button').first().click();
+            const entry = page.locator('.app-nav .nav-agent').filter({ has: page.locator('.nav-agent-name', { hasText: 'first-single-agent' }) });
+            const dot = entry.locator('.nav-agent-dot');
+            const row = page.locator('.agent-row').filter({ has: page.locator('.list-title', { hasText: 'first-single-agent' }) });
+            const pill = row.locator('.status-pill');
+            await pill.getByText(status.text, { exact: true }).waitFor();
+            await dot.waitFor();
+            assert.ok((await dot.getAttribute('class')).split(/\s+/).includes('status-' + status.tone), `${status.text} has the shared tone`);
+            const appearance = async locator => locator.evaluate(node => {
+                const style = getComputedStyle(node);
+                return { color: style.backgroundColor, animation: style.animationName };
+            });
+            assert.deepEqual(await appearance(dot), await appearance(pill.locator('.status-dot')),
+                `${status.text} color and animation agree in the sidebar and list (${theme}/${width})`);
+            assert.equal((await appearance(dot)).animation !== 'none', status.busy,
+                `${status.text} animation follows observed activity, including when the legacy Working flag disagrees`);
+            if (status.activity === 'UsageLimited' && status.state === 'Running') {
+                await page.screenshot({ path: `/tmp/dam-status-colors-${theme}-${width}.png` });
+            }
+        }
         assert.deepEqual(errors, []);
         await context.close();
     }
-    console.log('Passed: in the menu a project\'s workspaces sit further in, an agent after a project is outside it, and long names fit, at 1400 and 390px.');
+    console.log('Passed: project navigation layout and shared sidebar/list status colors and animations, including usage limits, legacy flags and process states, in both themes at 1400 and 390px.');
 } finally {
     await browser.close();
 }
