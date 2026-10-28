@@ -36,6 +36,16 @@ function silkieChoreography(frame, frames, stage) {
   const show = new Set();
   let swish = null;
   switch (m) {
+    case 'drag':
+      cell = SILKIE_CELL.shocked; blink = false;
+      wings = .12; tilt = live * Math.sin(e * 24) * .018; head = -tilt; break;
+    case 'slide': {
+      const vx = frame.velocity?.x ?? 450, speed = Math.hypot(vx, frame.velocity?.y ?? 0);
+      cell = e < .35 ? SILKIE_CELL.shocked : SILKIE_CELL.idle;
+      tilt = live * Math.max(-.13, Math.min(.13, vx / 4500)); head -= tilt * .7;
+      wings = live * Math.min(.22, speed / 3000); crest -= live * Math.max(-4, Math.min(4, vx / 200));
+      break;
+    }
     case 'wobble': {
       const envelope = live * Math.max(0, 1 - e / 1.2) ** 2, sway = Math.sin(e * 18) * envelope;
       cell = e < .45 ? SILKIE_CELL.shocked : SILKIE_CELL.idle;

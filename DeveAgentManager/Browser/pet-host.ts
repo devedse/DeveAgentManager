@@ -1,5 +1,5 @@
 import type { PetRenderer, PetArtModule } from "./pets/types.js";
-import { PointerVelocity, beginThrow, advanceThrow, type PetFlight, type ThrowBounds, type Velocity } from "./pets/throw-motion.js";
+import { PointerVelocity, beginThrow, advanceThrow, beginSlide, advanceSlide, type PetFlight, type PetSlide, type ThrowBounds, type Velocity } from "./pets/throw-motion.js";
 
 interface PetSnapshot {
     userId: string; name: string; species: string; stage: number; stageProgress: number;
@@ -15,7 +15,7 @@ interface Host {
     gaze: { x: number; y: number }; x: number; y: number;
     threatened: boolean; nextIdleAt: number; retiringAt?: number; retiringReduced?: boolean; requestedRenderer?: string; adopting?: boolean;
     departure?: { at: number; expected: string; resolve: () => void };
-    flight?: PetFlight; velocity?: Velocity;
+    flight?: PetFlight; slide?: PetSlide; velocity?: Velocity; dragging: boolean; dragAt: number;
 }
 const hosts = new WeakMap<HTMLElement, Host>();
 const artModules = new Map<string, Promise<PetArtModule>>();
@@ -24,7 +24,7 @@ const durations: Record<string, number> = { happy: 3.3, wave: 3.2, hop: 3.15, pe
 export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNetPet): void {
     const h: Host = { root, mount, dotnet, abort: new AbortController(), visible: false, frame: 0, time: 0, last: 0,
         motion: "idle", motionAt: 0, stage: -1, stageAt: 0, key: "", loadVersion: 0, gaze: { x: 0, y: 0 }, x: 0, y: 0,
-        threatened: false, nextIdleAt: 8 + Math.random() * 10 };
+        threatened: false, nextIdleAt: 8 + Math.random() * 10, dragging: false, dragAt: 0 };
     hosts.set(root, h);
     const body = root.querySelector<HTMLElement>(".dam-pet-body")!;
     const signal = h.abort.signal;
@@ -34,12 +34,12 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
     const cancel = () => {
         clearTimeout(longPress);
         if (drag) { suppressClick ||= drag.moved; if (drag.moved) savePosition(h); if (body.hasPointerCapture(drag.id)) body.releasePointerCapture(drag.id); }
-        drag = null; root.classList.remove("dragging");
+        drag = null; h.dragging = false; root.classList.remove("dragging"); start(h);
     };
     body.addEventListener("pointerdown", e => {
         if (e.button !== 0) return;
         if (drag || h.departure || h.retiringAt !== undefined) return;
-        stopThrow(h);
+        stopMovement(h);
         drag = { id: e.pointerId, startX: e.clientX, startY: e.clientY, x: h.x, y: h.y, moved: false, velocity: new PointerVelocity() };
         drag.velocity.add(h.x, h.y, e.timeStamp);
         suppressClick = false; body.setPointerCapture(e.pointerId);
@@ -48,9 +48,13 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
     body.addEventListener("pointermove", e => {
         if (!drag || e.pointerId !== drag.id) return;
         const dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
-        if (Math.hypot(dx, dy) > 7) { drag.moved = true; clearTimeout(longPress); root.classList.add("dragging"); }
+        if (!drag.moved && Math.hypot(dx, dy) > 7) {
+            drag.moved = true; h.dragging = true; h.dragAt = h.time;
+            clearTimeout(longPress); root.classList.add("dragging");
+        }
         if (drag.moved) { h.x = drag.x + dx; h.y = drag.y + dy; clamp(h); }
         drag.velocity.add(h.x, h.y, e.timeStamp);
+        if (drag.moved) start(h);
     }, { signal });
     body.addEventListener("pointerup", e => {
         if (!drag || e.pointerId !== drag.id) return;
@@ -63,7 +67,8 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
         else if (moved && !reducedMotion(h) && !h.snapshot?.needsAdoption && h.targetStage === undefined) {
             h.velocity = velocity;
             h.flight = beginThrow(h.x, h.y, velocity, h.snapshot?.size ?? 140, throwBounds(h)) ?? undefined;
-            h.motion = h.flight ? h.flight.vy < -80 ? "flap" : "toss" : "wobble";
+            h.slide = h.flight ? undefined : beginSlide(h.x, h.y, velocity) ?? undefined;
+            h.motion = h.flight ? "flap" : h.slide ? "slide" : "wobble";
             h.motionAt = h.time; h.nextIdleAt = h.time + 12;
             start(h);
         }
@@ -71,12 +76,12 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
     body.addEventListener("pointercancel", cancel, { signal });
     body.addEventListener("lostpointercapture", cancel, { signal });
     body.addEventListener("click", e => { if (h.retiringAt !== undefined) return; if (suppressClick) { e.preventDefault(); suppressClick = false; } else call("Pet"); }, { signal });
-    body.addEventListener("contextmenu", e => { e.preventDefault(); cancel(); stopThrow(h); call("OpenMenu"); }, { signal });
+    body.addEventListener("contextmenu", e => { e.preventDefault(); cancel(); stopMovement(h); call("OpenMenu"); }, { signal });
     body.addEventListener("keydown", e => {
-        if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); stopThrow(h); call("OpenMenu"); }
+        if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); stopMovement(h); call("OpenMenu"); }
         else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); call("Pet"); }
-        else if (e.key === "Escape") { cancel(); stopThrow(h); }
-        else if (e.key.startsWith("Arrow")) { e.preventDefault(); stopThrow(h); h.x += e.key === "ArrowRight" ? 12 : e.key === "ArrowLeft" ? -12 : 0; h.y += e.key === "ArrowDown" ? 12 : e.key === "ArrowUp" ? -12 : 0; clamp(h); savePosition(h); }
+        else if (e.key === "Escape") { cancel(); stopMovement(h); }
+        else if (e.key.startsWith("Arrow")) { e.preventDefault(); stopMovement(h); h.x += e.key === "ArrowRight" ? 12 : e.key === "ArrowLeft" ? -12 : 0; h.y += e.key === "ArrowDown" ? 12 : e.key === "ArrowUp" ? -12 : 0; clamp(h); savePosition(h); }
     }, { signal });
     document.addEventListener("pointerdown", e => { if (!root.contains(e.target as Node) && root.querySelector(".dam-pet-menu")) call("CloseMenu"); }, { signal });
     root.addEventListener("keydown", e => { if (e.key === "Escape") { call("CloseMenu"); body.focus(); } }, { signal });
@@ -85,17 +90,17 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
     }, { passive: true, signal });
     window.addEventListener("resize", () => clamp(h), { signal });
     window.visualViewport?.addEventListener("resize", () => clamp(h), { signal });
-    document.addEventListener("visibilitychange", () => { h.last = 0; if (document.hidden) { cancel(); stopThrow(h); finishDeparture(h, true); cancelAnimationFrame(h.frame); h.frame = 0; } else start(h); }, { signal });
-    matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => { if (reducedMotion(h)) stopThrow(h); start(h); }, { signal });
+    document.addEventListener("visibilitychange", () => { h.last = 0; if (document.hidden) { cancel(); stopMovement(h); finishDeparture(h, true); cancelAnimationFrame(h.frame); h.frame = 0; } else start(h); }, { signal });
+    matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => { if (reducedMotion(h)) stopMovement(h); start(h); }, { signal });
 }
 function savePosition(h: Host): void {
     try { localStorage.setItem(h.key, JSON.stringify({ x: h.x / innerWidth, y: h.y / innerHeight })); } catch { /* Storage may be unavailable. */ }
 }
 function reducedMotion(h: Host): boolean { return !!h.snapshot?.reducedMotion || matchMedia("(prefers-reduced-motion: reduce)").matches; }
-function stopThrow(h: Host): void {
-    if (h.flight) savePosition(h);
-    h.flight = undefined; h.velocity = undefined;
-    if (["flap", "toss", "land", "wobble"].includes(h.motion)) { h.motion = "idle"; h.motionAt = h.time; }
+function stopMovement(h: Host): void {
+    if (h.flight || h.slide) savePosition(h);
+    h.flight = undefined; h.slide = undefined; h.velocity = undefined;
+    if (["flap", "toss", "slide", "land", "wobble"].includes(h.motion)) { h.motion = "idle"; h.motionAt = h.time; }
 }
 function departureKey(snapshot: PetSnapshot): string {
     return JSON.stringify([snapshot.generation, snapshot.species, snapshot.enabled, snapshot.snoozedUntil]);
@@ -112,7 +117,7 @@ export function depart(root: HTMLElement, expected: PetSnapshot): Promise<void> 
     const h = hosts.get(root);
     if (!h || root.hidden || !h.renderer || document.hidden || !h.snapshot || departureKey(h.snapshot) !== departureKey(expected)) return Promise.resolve();
     finishDeparture(h);
-    stopThrow(h);
+    stopMovement(h);
     return new Promise(resolve => {
         h.departure = { at: h.time, expected: departureKey(expected), resolve };
         h.targetStage = undefined; root.dataset.departing = "true";
@@ -146,7 +151,7 @@ export async function update(root: HTMLElement, snapshot: PetSnapshot, rendererI
         if (previous.needsAdoption && !snapshot.needsAdoption) h.adopting = true;
     }
     h.visible = visible; h.snapshot = snapshot; root.style.width = snapshot.size + "px";
-    if (!visible || reducedMotion(h) || threatened || previous?.generation !== snapshot.generation || previous?.species !== snapshot.species) stopThrow(h);
+    if (!visible || reducedMotion(h) || threatened || previous?.generation !== snapshot.generation || previous?.species !== snapshot.species) stopMovement(h);
     const key = "dam-pet-position:" + snapshot.userId;
     if (h.key !== key) {
         h.key = key; h.x = innerWidth - snapshot.size - 24; h.y = innerHeight - snapshot.size - 36;
@@ -209,7 +214,13 @@ function start(h: Host): void {
         const reduced = reducedMotion(h);
         const dt = h.last ? Math.min(.05, (timestamp - h.last) / 1000) : 0;
         h.time += dt; h.last = timestamp;
-        if (reduced) stopThrow(h);
+        if (reduced) stopMovement(h);
+        if (h.slide) {
+            const stopped = advanceSlide(h.slide, dt, throwBounds(h));
+            h.x = h.slide.x; h.y = h.slide.y; h.velocity = { x: h.slide.vx, y: h.slide.vy }; clamp(h);
+            h.motion = "slide";
+            if (stopped) { h.slide = undefined; h.motion = "wobble"; h.motionAt = h.time; savePosition(h); }
+        }
         if (h.flight) {
             const landed = advanceThrow(h.flight, dt, throwBounds(h));
             h.x = h.flight.x; h.y = h.flight.y; h.velocity = { x: h.flight.vx, y: h.flight.vy }; clamp(h);
@@ -245,14 +256,14 @@ function start(h: Host): void {
         if (h.targetStage !== undefined && (reduced || h.time - h.stageAt > 1.1)) {
             h.stage = h.targetStage; h.targetStage = undefined; h.renderer!.setStage(h.stage); h.motion = "happy"; h.motionAt = h.time;
         }
-        if (!h.flight && h.time - h.motionAt > (durations[h.motion] ?? 3.3) && h.motion !== "sleep") { h.motion = "idle"; h.velocity = undefined; }
-        if (!reduced && !h.threatened && !h.snapshot!.needsAdoption && h.targetStage === undefined && h.motion === "idle" && h.time >= h.nextIdleAt) {
+        if (!h.flight && !h.slide && h.time - h.motionAt > (durations[h.motion] ?? 3.3) && h.motion !== "sleep") { h.motion = "idle"; h.velocity = undefined; }
+        if (!reduced && !h.dragging && !h.threatened && !h.snapshot!.needsAdoption && h.targetStage === undefined && h.motion === "idle" && h.time >= h.nextIdleAt) {
             const actions = ["peck", "peck", "walk", "wave", "hop"];
             h.motion = actions[Math.floor(Math.random() * actions.length)]; h.motionAt = h.time; h.nextIdleAt = h.time + 12 + Math.random() * 14;
         }
-        const motion = h.threatened && !h.snapshot!.needsAdoption ? "sad" : h.motion === "working" ? "idle" : h.motion === "idle" && h.snapshot!.happiness < 25 ? "sad" : h.motion;
+        const motion = h.dragging && !h.snapshot!.needsAdoption ? "drag" : h.threatened && !h.snapshot!.needsAdoption ? "sad" : h.motion === "working" ? "idle" : h.motion === "idle" && h.snapshot!.happiness < 25 ? "sad" : h.motion;
         h.root.dataset.motion = motion;
-        h.renderer!.pose({ time: reduced ? 0 : h.time, motion, elapsed: reduced ? .8 : h.time - h.motionAt, gaze: reduced ? { x: 0, y: 0 } : h.gaze,
+        h.renderer!.pose({ time: reduced ? 0 : h.time, motion, elapsed: reduced ? .8 : h.time - (h.dragging ? h.dragAt : h.motionAt), gaze: reduced ? { x: 0, y: 0 } : h.gaze,
             animate: !reduced, showRig: false, progress: h.snapshot!.stageProgress, transitioning: h.targetStage !== undefined, velocity: h.velocity });
         if (!reduced) h.frame = requestAnimationFrame(draw);
     };
@@ -261,6 +272,6 @@ function start(h: Host): void {
 export function dispose(root: HTMLElement): void {
     const h = hosts.get(root); if (!h) return;
     finishDeparture(h);
-    stopThrow(h);
+    stopMovement(h);
     h.abort.abort(); ++h.loadVersion; cancelAnimationFrame(h.frame); h.renderer?.dispose?.(); hosts.delete(root);
 }

@@ -1,7 +1,7 @@
 import { createRenderer as createSilkieRenderer, stageIcon as silkieStageIcon } from "./silkie-art.js";
 import { createRenderer as createSnekRenderer, stageIcon as snekStageIcon } from "./snake-art.js";
 import type { PetRenderer, PetFrame } from "./types.js";
-import { PointerVelocity, beginThrow, advanceThrow, type PetFlight, type Velocity, type ThrowBounds } from "./throw-motion.js";
+import { PointerVelocity, beginThrow, advanceThrow, beginSlide, advanceSlide, type PetFlight, type PetSlide, type Velocity, type ThrowBounds } from "./throw-motion.js";
 const SNEK_DEPART_SECONDS = 2.2, SNEK_WALK_SECONDS = 4.6;
 
 // Illustrated character atlases, animated with a mesh rig, eyelids and ink effects.
@@ -57,7 +57,9 @@ const PETS={
       {id:'hatch',label:'Wiggle',duration:2,text:'Something good is on the way.',mood:['A little anticipation','Good things take a little time.']},
       {id:'wobble',label:'Lose balance',icon:'surprised',duration:1.2,text:'Whoops, those fluffy feet!',mood:['Finding my feet','A little wobble, then steady again.']},
       {id:'flap',label:'Throw up',icon:'hop',duration:1.4,text:'Flap flap flap!',mood:['Trying to fly','Both wings working very hard.']},
-      {id:'toss',label:'Throw sideways',icon:'walk',duration:1.4,text:'A little flying fluff!',mood:['Along for the ride','A small arc, then back to those feet.']},
+      {id:'toss',label:'Falling',icon:'walk',duration:1.4,text:'A little flying fluff!',mood:['Along for the ride','A small arc, then back to those feet.']},
+      {id:'slide',label:'Shove',icon:'walk',duration:2.5,text:'Slippery little feet!',mood:['Sliding on ice','Coasting along until the shove runs out.']},
+      {id:'drag',label:'Scared drag',icon:'surprised',duration:2,text:'Whoa, where are we going?',mood:['Hold on tight','A startled face while being dragged.']},
       {id:'land',label:'Landing',icon:'hop',duration:1,text:'Soft landing!',mood:['Feet first','A little squash and a fluff shake.']}
     ]
   },
@@ -83,7 +85,9 @@ const PETS={
       {id:'hatch',label:'Wiggle',duration:2,text:'Just shaking out the coils.',mood:['A little wiggle','Just shaking out the coils.']},
       {id:'wobble',label:'Lose balance',icon:'surprised',duration:1.2,text:'A wobbly little noodle!',mood:['Finding my balance','The wiggle travels down to the rattle.']},
       {id:'flap',label:'Throw up',icon:'hop',duration:1.4,text:'An airborne noodle!',mood:['Uncoiling in midair','The rattle is still catching up.']},
-      {id:'toss',label:'Throw sideways',icon:'slither',duration:1.4,text:'Ssssswoosh!',mood:['A flying S-curve','Head first, with a trailing rainbow tail.']},
+      {id:'toss',label:'Falling',icon:'slither',duration:1.4,text:'Ssssswoosh!',mood:['A flying S-curve','Head first, with a trailing rainbow tail.']},
+      {id:'slide',label:'Shove',icon:'slither',duration:2.5,text:'A slippery noodle!',mood:['Sliding on ice','The coils coast along with a trailing rattle.']},
+      {id:'drag',label:'Scared drag',icon:'surprised',duration:2,text:'Ssssomebody hold on!',mood:['Hold on tight','Wide eyes while being dragged.']},
       {id:'land',label:'Coil landing',icon:'sleep',duration:1,text:'Boing! Back in a coil.',mood:['Springy landing','Curl, recoil, then a little rattle.']}
     ]
   }
@@ -95,7 +99,7 @@ class PetSession{
   motion: string; motionAt: number; clock: number; previousFrame: number | null;
   gaze: Velocity; targetGaze: Velocity; renderers: PetRenderer[];
   transitioning: boolean; departing: boolean; autoAt: number;
-  flight?: PetFlight; velocity?: Velocity; buddyMotion?: string; buddyMotionAt = 0;
+  flight?: PetFlight; slide?: PetSlide; velocity?: Velocity; buddyMotion?: string; buddyMotionAt = 0; dragging = false;
 
   constructor(definition: typeof PETS.silkie | typeof PETS.snek,save: { tokens?: number; away?: boolean }){
     this.definition=definition;this.tokens=Math.max(0,Math.min(1e9,Number(save.tokens)||20000));
@@ -115,9 +119,9 @@ class PetSession{
   action(id,announce=true){
     if(this.away||this.departing)return;
     const action=this.definition.motions.find(a=>a.id===id);if(!action)return;
-    this.flight=undefined;this.buddyMotion=undefined;
+    this.flight=undefined;this.slide=undefined;this.buddyMotion=undefined;
     this.motion=id;this.motionAt=this.clock;this.autoAt=this.clock+action.duration+6;
-    if(id==='flap'||id==='toss') launchBuddy(id==='flap'?{x:260,y:-800}:{x:650,y:-180},true);
+    if(id==='flap'||id==='slide') launchBuddy(id==='flap'?{x:260,y:-800}:{x:450,y:120},true);
     const name=this.definition.petName;
     if(announce){say(this.stage===0?'A little wiggle from inside.':action.text);$('pet-status').textContent=this.stage===0?name+' wiggles inside the egg.':name+': '+action.label}
     updateMotionUI();
@@ -125,7 +129,12 @@ class PetSession{
   draw(now){
     const delta=this.previousFrame===null?0:Math.min(.05,(now-this.previousFrame)/1000);this.previousFrame=now;
     if(this.animate&&!document.hidden)this.clock+=delta;
-    if(!this.animate||this.away||!this.showBuddy||this.departing||this.stage===0)this.flight=undefined;
+    if(!this.animate||this.away||!this.showBuddy||this.departing||this.stage===0){this.flight=undefined;this.slide=undefined}
+    if(this.slide){
+      const stopped=advanceSlide(this.slide,delta,buddyBounds());
+      placeBuddy(this.slide.x,this.slide.y);this.velocity={x:this.slide.vx,y:this.slide.vy};
+      if(stopped){this.slide=undefined;this.buddyMotion='wobble';this.buddyMotionAt=this.clock}
+    }
     if(this.flight){
       const landed=advanceThrow(this.flight,delta,buddyBounds());
       placeBuddy(this.flight.x,this.flight.y);this.velocity={x:this.flight.vx,y:this.flight.vy};
@@ -133,13 +142,13 @@ class PetSession{
       if(this.buddyMotion!==motion){this.buddyMotion=motion;this.buddyMotionAt=this.clock}
       if(landed)this.flight=undefined;
     }
-    if(this.buddyMotion&&!this.flight&&this.clock-this.buddyMotionAt>(this.buddyMotion==='land'?1:1.2))this.buddyMotion=undefined;
+    if(this.buddyMotion&&!this.flight&&!this.slide&&!this.dragging&&this.clock-this.buddyMotionAt>(this.buddyMotion==='land'?1:1.2))this.buddyMotion=undefined;
     const follow=this.animate?Math.min(1,delta*7):1;
     this.gaze.x+=(this.targetGaze.x-this.gaze.x)*follow;this.gaze.y+=(this.targetGaze.y-this.gaze.y)*follow;
     const elapsed=this.clock-this.motionAt;
     const action=this.definition.motions.find(a=>a.id===this.motion);
     if(!this.departing&&action&&elapsed>action.duration){this.motion='idle';this.motionAt=this.clock;updateMotionUI()}
-    if(this.animate&&!this.away&&!this.departing&&this.motion==='idle'&&this.clock>this.autoAt){this.autoAt=this.clock+9+Math.random()*5;this.action(this.stage===0?'hatch':(Math.random()>.5?'peck':'hop'),false)}
+    if(this.animate&&!this.away&&!this.departing&&!this.flight&&!this.slide&&!this.dragging&&this.motion==='idle'&&this.clock>this.autoAt){this.autoAt=this.clock+9+Math.random()*5;this.action(this.stage===0?'hatch':(Math.random()>.5?'peck':'hop'),false)}
     const frame: PetFrame={time:this.clock,motion:this.motion,elapsed:this.clock-this.motionAt,gaze:this.gaze,showRig:this.showRig,animate:this.animate,progress:this.progress,transitioning:this.transitioning};
     const placed=this.renderers.map((renderer,index)=>renderer.pose(index===1&&this.buddyMotion?{...frame,motion:this.buddyMotion,elapsed:this.clock-this.buddyMotionAt,velocity:this.velocity}:frame))[0];
     // The shadow follows the main pet across the meadow and shrinks as it leaves the ground.
@@ -293,22 +302,24 @@ function launchBuddy(velocity: Velocity,preview=false): void {
   if(preview)placeBuddy(innerWidth*.45,innerHeight*.5);
   const rect=$('buddy').getBoundingClientRect();
   session.flight=beginThrow(rect.left,rect.top,velocity,$('buddy').offsetWidth,buddyBounds())??undefined;
-  session.velocity=velocity;session.buddyMotion=session.flight?(velocity.y < -80?'flap':'toss'):'wobble';session.buddyMotionAt=session.clock;
+  session.slide=session.flight?undefined:beginSlide(rect.left,rect.top,velocity)??undefined;
+  session.velocity=velocity;session.buddyMotion=session.flight?'flap':session.slide?'slide':'wobble';session.buddyMotionAt=session.clock;
 }
 function cancelDrag(): void {
   if(drag&&$('buddy-pet').hasPointerCapture(drag.id))$('buddy-pet').releasePointerCapture(drag.id);
-  drag=null;$('buddy').classList.remove('dragging');
+  drag=null;session.dragging=false;if(session.buddyMotion==='drag')session.buddyMotion=undefined;$('buddy').classList.remove('dragging');
 }
 $('buddy-pet').addEventListener('pointerdown',event=>{
   if(event.button!==0||drag||session.away||session.departing)return;
-  session.flight=undefined;session.buddyMotion=undefined;
+  session.flight=undefined;session.slide=undefined;session.buddyMotion=undefined;
   const rect=$('buddy').getBoundingClientRect();
   drag={id:event.pointerId,x:event.clientX,y:event.clientY,left:rect.left,top:rect.top,moved:false,velocity:new PointerVelocity()};
   drag.velocity.add(rect.left,rect.top,event.timeStamp);$('buddy-pet').setPointerCapture(event.pointerId);
 });
 $('buddy-pet').addEventListener('pointermove',event=>{
   if(!drag||drag.id!==event.pointerId)return;
-  const dx=event.clientX-drag.x,dy=event.clientY-drag.y;if(Math.hypot(dx,dy)>5)drag.moved=true;
+  const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
+  if(!drag.moved&&Math.hypot(dx,dy)>5){drag.moved=true;session.dragging=true;session.buddyMotion='drag';session.buddyMotionAt=session.clock}
   if(drag.moved){$('buddy').classList.add('dragging');placeBuddy(drag.left+dx,drag.top+dy)}
   const rect=$('buddy').getBoundingClientRect();drag.velocity.add(rect.left,rect.top,event.timeStamp);
 });
@@ -319,9 +330,9 @@ $('buddy-pet').addEventListener('pointerup',event=>{
 });
 $('buddy-pet').addEventListener('pointercancel',cancelDrag);
 $('buddy-pet').addEventListener('lostpointercapture',cancelDrag);
-$('buddy-pet').addEventListener('keydown',event=>{if(event.key==='Escape'){cancelDrag();session.flight=undefined;session.buddyMotion=undefined}});
+$('buddy-pet').addEventListener('keydown',event=>{if(event.key==='Escape'){cancelDrag();session.flight=undefined;session.slide=undefined;session.buddyMotion=undefined}});
 addEventListener('resize',()=>{const rect=$('buddy').getBoundingClientRect();placeBuddy(rect.left,rect.top)});
-document.addEventListener('visibilitychange',()=>{session.previousFrame=null;if(document.hidden){cancelDrag();session.flight=undefined;session.buddyMotion=undefined}});
+document.addEventListener('visibilitychange',()=>{session.previousFrame=null;if(document.hidden){cancelDrag();session.flight=undefined;session.slide=undefined;session.buddyMotion=undefined}});
 requestAnimationFrame(function frame(t){session.draw(t);requestAnimationFrame(frame)});
 // Read-only hooks for inspecting the sample in browser developer tools.
-(window as any).silkieDemo=(window as any).damagochiDemo={get session(){return session},definitions:PETS,choosePet,version:'5.0'};
+(window as any).silkieDemo=(window as any).damagochiDemo={get session(){return session},definitions:PETS,choosePet,version:'5.1'};

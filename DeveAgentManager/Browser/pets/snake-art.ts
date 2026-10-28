@@ -583,6 +583,15 @@ class SnekRig {
     p.tailX += live * Math.sin(t * 1.5 + 1) * 5; p.tailY += live * Math.sin(t * 1.9) * 4; p.curl += live * Math.sin(t * 1.7) * 8;
     plan.tilt = live * Math.sin(t * .8) * .04;
     switch (m) {
+      case 'drag':
+        p.height = B.height * .95; plan.tilt = live * Math.sin(e * 24) * .025;
+        Object.assign(face, { eyes: 'shocked', open: .35, tongue: 'none', blink: false }); break;
+      case 'slide': {
+        const vx = frame.velocity?.x ?? 450, lean = live * Math.max(-1, Math.min(1, vx / 900));
+        p.height = B.height * .8; p.headDX += lean * 20; p.bend -= lean * 18;
+        p.tailY = B.tailY * .6; p.curl -= lean * 24; plan.tilt = lean * .1;
+        Object.assign(face, { eyes: e < .35 ? 'shocked' : 'open', tongue: 'none' }); break;
+      }
       case 'wobble': {
         const envelope = live * Math.max(0, 1 - e / 1.2) ** 2, sway = Math.sin(e * 17) * envelope;
         p.headDX += sway * 34; p.bend += Math.sin(e * 17 - .7) * envelope * 28;

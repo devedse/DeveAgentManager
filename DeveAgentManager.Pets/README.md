@@ -137,10 +137,14 @@ and indefinite hiding. Reduced motion uses still poses. These are animation stat
 motions can reuse an expression with different movement. The host translates `working` into `idle` and `level` into
 `happy`. Affection uses `happy`, play uses `hop`, image uploads use `surprised`, and other uploads use `peck`.
 
-Dragging and releasing slowly requests `wobble`. Faster releases request `flap` while rising, `toss` while falling,
-then `land`. Byte flaps both wings; Snek unfurls into a trailing S-curve and coils on landing. The shared host supplies
-the trajectory, screen bounds and final position persistence. A virtual floor sits slightly below the release
-point, so a throw settles near the chosen position. Grabbing, opening the menu, hiding and reduced motion stop flight.
+Active dragging requests `drag`, holding a scared expression for both species. Releases in the upward semicircle
+(negative screen y velocity) only throw at 700 pixels per second or faster; the full release speed determines this
+threshold. Throws request `flap` while rising, `toss` while falling, then `land`. Byte flaps both wings; Snek unfurls
+into a trailing S-curve and coils on landing. Every downward or sideways release, and slower upward releases, instead
+request `slide`: an ice-like glide along both axes with friction and no gravity. Almost stationary releases request
+`wobble`; holding still before release clears old momentum. The shared host supplies the trajectory, screen bounds
+and final position persistence. A virtual floor sits slightly below a throw's release point. Grabbing, opening the
+menu, hiding and reduced motion stop both sliding and flight. Reduced motion still shows a scared face during dragging.
 
 Use `frame.animate` to stop breathing, blinks, wobble, and similar movement. Respect the supplied frame instead of
 starting your own `requestAnimationFrame`, interval, token counter, API polling, or navigation listener. The host owns
@@ -215,9 +219,9 @@ node .typescript/tools/pet-playground/build.mjs .validation/pet-playground.html
 npm run test:pets
 ```
 
-Open the resulting file, choose a species and stage, and try Lose balance, Throw up, Throw sideways and Landing.
+Open the resulting file, choose a species and stage, and try Shove, Throw up, Scared drag and Landing.
 Drag and release the screen buddy to try the real trajectory. The browser checks need Playwright Chromium installed
-and exercise both species, all growth stages, gesture speed, gravity, persistence and reduced motion.
+and exercise both species, all growth stages, gesture speed and direction, ice glides, gravity, scared dragging, persistence and reduced motion.
 
 ### Byte: generated drawings, then a rig
 

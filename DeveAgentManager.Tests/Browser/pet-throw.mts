@@ -39,25 +39,55 @@ async function reset(page: Page, species = 'snek', stage = 3, reducedMotion = fa
     await page.evaluate(async args => (window as any).petTest.reset(...args), [species, stage, reducedMotion]);
     await page.waitForFunction(() => document.querySelector('.dam-pet-art .illustrated-pet')?.getAttribute('data-current-motion') === 'idle');
 }
-async function drag(page: Page, dx: number, dy: number, pause = 0, stepDelay = 18) {
-    const body = await page.locator('.dam-pet-body').boundingBox();
+async function drag(page: Page, dx: number, dy: number, pause = 0, stepDelay = 18, selector = '.dam-pet-body') {
+    const body = await page.locator(selector).boundingBox();
     const x = body!.x + body!.width / 2, y = body!.y + 60;
     await page.mouse.move(x, y); await page.mouse.down();
-    for (let i = 1; i <= 4; i++) { await page.mouse.move(x + dx * i / 4, y + dy * i / 4); await page.waitForTimeout(stepDelay); }
+    for (let i = 1; i <= 4; i++) { await page.waitForTimeout(stepDelay); await page.mouse.move(x + dx * i / 4, y + dy * i / 4); }
     if (pause) await page.waitForTimeout(pause);
     await page.mouse.up();
+}
+async function scaredDrag(page: Page, species: string) {
+    const body = await page.locator('.dam-pet-body').boundingBox();
+    await page.mouse.move(body!.x + 60, body!.y + 60); await page.mouse.down();
+    await page.mouse.move(body!.x + 80, body!.y + 60);
+    await page.locator('.dam-pet-host[data-motion="drag"]').waitFor();
+    const face = species === 'snek' ? '[data-eyes="shocked"]' : '[data-cell="5"]';
+    await page.locator('.dam-pet-art ' + face).waitFor();
+    await page.waitForTimeout(180);
+    assert.equal(await page.locator('.dam-pet-host').getAttribute('data-motion'), 'drag', 'the scared pose stays while held');
+    await page.mouse.up();
+    await page.waitForFunction(() => document.querySelector<HTMLElement>('.dam-pet-host')?.dataset.motion !== 'drag');
 }
 try {
     const page = await browser.newPage({ viewport: { width: 1360, height: 1000 } });
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(base); await page.waitForFunction(() => document.querySelector('.dam-pet-host')?.getAttribute('data-motion') === 'idle');
     for (const species of ['snek', 'silkie']) {
+        await reset(page, species); await scaredDrag(page, species);
         await reset(page, species);
         await drag(page, 30, 0, 0, 60);
-        await page.locator('.dam-pet-host[data-motion="wobble"]').waitFor();
+        await page.locator('.dam-pet-host[data-motion="slide"]').waitFor();
         const gentle = await position(page); await page.waitForTimeout(180);
-        assert.equal((await position(page))!.x, gentle!.x, species + ' gentle release only wobbles');
+        assert.ok((await position(page))!.x > gentle!.x + 5, species + ' gentle shove coasts');
+        assert.equal((await position(page))!.y, gentle!.y, 'a sideways shove has no gravity');
         assert.deepEqual(await page.evaluate(() => (window as any).petTest.calls), [], 'drag never awards affection');
+
+        await reset(page, species); await drag(page, 0, -64, 0, 60);
+        await page.locator('.dam-pet-host[data-motion="slide"]').waitFor();
+        const slowUp = await position(page); await page.waitForTimeout(180);
+        const coastingUp = await position(page);
+        assert.ok(coastingUp!.y < slowUp!.y - 10, 'a slower upward drag slides upward');
+        await page.locator('.dam-pet-host[data-motion="wobble"]').waitFor();
+        const slideEnd = await position(page);
+        assert.ok(slideEnd!.y < coastingUp!.y, 'the upward slide settles without curving down');
+        const slideSaved = await page.evaluate(() => JSON.parse(localStorage.getItem('dam-pet-position:throw-preview')!));
+        assert.ok(Math.abs(slideSaved.y * 1000 - slideEnd!.y) < 1, 'slide resting position is persisted');
+
+        await reset(page, species); await drag(page, 0, 80);
+        await page.locator('.dam-pet-host[data-motion="slide"]').waitFor();
+        const downward = await position(page); await page.waitForTimeout(100);
+        assert.ok((await position(page))!.y > downward!.y + 10, 'a fast downward flick slides down');
 
         await reset(page, species); await drag(page, 100, -100, 180);
         await page.locator('.dam-pet-host[data-motion="wobble"]').waitFor();
@@ -82,16 +112,20 @@ try {
         await reset(page, species); await drag(page, -100, 0);
         const sideways = await position(page); await page.waitForTimeout(120);
         const continuing = await position(page);
-        assert.ok(continuing!.x < sideways!.x - 20 && continuing!.y > sideways!.y, 'left throw travels left and curves downward');
+        assert.ok(continuing!.x < sideways!.x - 20 && continuing!.y === sideways!.y, 'left shove travels left without curving downward');
         await page.locator('.dam-pet-body').click({ button: 'right', force: true });
         const stopped = await position(page); await page.waitForTimeout(120);
         assert.equal((await position(page))!.x, stopped!.x, 'opening the menu catches the pet');
         assert.deepEqual(await page.evaluate(() => (window as any).petTest.calls), ['OpenMenu']);
-        console.log('PASS ' + species + ': gentle drop, paused gesture, arc, reaction, landing, persistence and menu catch');
+        console.log('PASS ' + species + ': scared drag, gentle/upward/downward/sideways shoves, fast upward throw, persistence and menu catch');
     }
+    for (const species of ['silkie', 'snek']) { await reset(page, species, 1, true); await scaredDrag(page, species); }
     await reset(page, 'silkie', 1, true); await drag(page, 100, -100);
     const reduced = await position(page); await page.waitForTimeout(250);
     assert.equal((await position(page))!.y, reduced!.y, 'reduced motion places the pet without a flight');
+    await reset(page, 'silkie', 1, true); await drag(page, 100, 0);
+    const reducedSlide = await position(page); await page.waitForTimeout(150);
+    assert.equal((await position(page))!.x, reducedSlide!.x, 'reduced motion also disables shove coasting');
     await page.emulateMedia({ reducedMotion: 'reduce' }); await reset(page, 'snek'); await drag(page, 100, -100);
     const systemReduced = await position(page); await page.waitForTimeout(150);
     assert.equal((await position(page))!.y, systemReduced!.y, 'system reduced motion also disables flight');
@@ -137,8 +171,8 @@ try {
         const x = body!.x + 70, y = body!.y + 60;
         await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
         for (let i = 1; i <= 4; i++) {
-            await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + i * 10, y: y - i * 18 }] });
             await phone.waitForTimeout(18);
+            await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + i * 10, y: y - i * 45 }] });
         }
         await touch.send('Input.dispatchTouchEvent', { type: cancel ? 'touchCancel' : 'touchEnd', touchPoints: [] });
     }
@@ -162,12 +196,36 @@ try {
         await page.evaluate(id => (window as any).damagochiDemo.choosePet(id), species);
         for (const stage of [1, 2, 3]) {
             await page.locator('[data-stage="' + stage + '"]').click();
-            for (const motion of ['wobble', 'flap', 'toss', 'land']) {
+            for (const motion of ['drag', 'slide', 'wobble', 'flap', 'toss', 'land']) {
                 await page.locator('[data-motion="' + motion + '"]').click();
                 await page.waitForTimeout(60);
                 assert.equal(await page.locator('#main-pet [data-current-motion]').getAttribute('data-current-motion'), motion);
             }
         }
+        async function resetBuddy() {
+            await page.evaluate(() => {
+                const s = (window as any).damagochiDemo.session;
+                s.action('idle', false); s.showBuddy = true;
+                const buddy = document.getElementById('buddy')!;
+                buddy.hidden = false; buddy.style.left = '400px'; buddy.style.top = '500px'; buddy.style.right = 'auto'; buddy.style.bottom = 'auto';
+            });
+        }
+        await resetBuddy();
+        const buddy = await page.locator('#buddy-pet').boundingBox();
+        await page.mouse.move(buddy!.x + 50, buddy!.y + 50); await page.mouse.down();
+        await page.mouse.move(buddy!.x + 65, buddy!.y + 50);
+        await page.locator('#buddy-pet [data-current-motion="drag"]').waitFor();
+        await page.locator('#buddy-pet ' + (species === 'snek' ? '[data-eyes="shocked"]' : '[data-cell="5"]')).waitFor();
+        await page.waitForTimeout(150); await page.mouse.up();
+        await resetBuddy(); await drag(page, 0, -64, 0, 60, '#buddy-pet');
+        await page.waitForFunction(() => (window as any).damagochiDemo.session.buddyMotion === 'slide');
+        assert.equal(await page.evaluate(() => !!(window as any).damagochiDemo.session.flight), false, 'playground slow upward gesture slides');
+        await resetBuddy(); await drag(page, 0, 100, 0, 18, '#buddy-pet');
+        await page.waitForFunction(() => (window as any).damagochiDemo.session.buddyMotion === 'slide');
+        assert.equal(await page.evaluate(() => !!(window as any).damagochiDemo.session.flight), false, 'playground downward flick slides');
+        await resetBuddy(); await drag(page, 100, -100, 0, 18, '#buddy-pet');
+        await page.waitForFunction(() => !!(window as any).damagochiDemo.session.flight);
+        await page.getByRole('button', { name: 'Coil landing', exact: true }).or(page.getByRole('button', { name: 'Landing', exact: true })).click();
     }
     await page.evaluate(() => { (window as any).damagochiDemo.session.showBuddy = false; document.getElementById('buddy')!.hidden = true; });
     await page.screenshot({ path: '.validation/damagochi-throw-playground.png', fullPage: true });
