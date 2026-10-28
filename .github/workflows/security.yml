@@ -58,6 +58,9 @@ jobs:
       - run: npm audit --prefix tools/security-browser --audit-level=high
       - run: npx --prefix tools/security-browser playwright install --with-deps chromium
       - run: dotnet publish DeveAgentManager/DeveAgentManager.csproj -c Release -o .validation/publish
+      - name: Check Damagochi throws and offline playground
+        if: matrix.suite == 'interop'
+        run: npm run test:pets
       - run: node .typescript/tools/security-browser/check.mjs
         if: matrix.suite == 'portal'
       - name: Check browser suite

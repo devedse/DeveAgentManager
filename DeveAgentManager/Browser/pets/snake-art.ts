@@ -1,7 +1,7 @@
 import { StagedRenderer, RIG_STAGE, RIG_GROUND, RIG_INK, rigSmooth, rigBlink, rigEffects } from "./illustrated-rig.js";
 import type { PetFrame } from "./types.js";
 interface SnekFace { eyes: string; mouth: string; open: number; tongue: string | number; blink: boolean; gaze: { x: number; y: number }; lids?: number; wag?: number; }
-interface SnekPlan { kind: string; p: any; face: SnekFace; lift: number; tilt: number; turn: number; breathe: number; shake: number; effects: Set<string>; coil?: any; track?: SnekTrack; }
+interface SnekPlan { kind: string; p: any; face: SnekFace; lift: number; tilt: number; turn: number; breathe: number; shake: number; effects: Set<string>; coil?: any; coilAmount?: number; track?: SnekTrack; }
 import { InkEgg, inkEggIcon } from "./ink-egg.js";
 /* Snek: a galaxy snake, drawn and animated entirely in code (Canvas 2D).
  * The body is a tube along a spine of evenly spaced points, so it can coil,
@@ -583,6 +583,23 @@ class SnekRig {
     p.tailX += live * Math.sin(t * 1.5 + 1) * 5; p.tailY += live * Math.sin(t * 1.9) * 4; p.curl += live * Math.sin(t * 1.7) * 8;
     plan.tilt = live * Math.sin(t * .8) * .04;
     switch (m) {
+      case 'wobble': {
+        const envelope = live * Math.max(0, 1 - e / 1.2) ** 2, sway = Math.sin(e * 17) * envelope;
+        p.headDX += sway * 34; p.bend += Math.sin(e * 17 - .7) * envelope * 28;
+        p.tailX -= sway * 20; p.curl += Math.sin(e * 17 - 1.6) * envelope * 38;
+        p.height -= Math.abs(sway) * B.height * .12; plan.tilt = -sway * .15; plan.shake = envelope * .7;
+        Object.assign(face, { eyes: e < .35 ? 'shocked' : 'open', tongue: 'none' }); break;
+      }
+      case 'flap': case 'toss':
+        plan.kind = 'air'; plan.tilt = live * Math.sin(e * 12) * .08; plan.shake = live * .8;
+        Object.assign(face, { eyes: 'shocked', open: .35, tongue: 'none', blink: false }); break;
+      case 'land': {
+        plan.kind = 'land'; plan.coilAmount = live * (1 - rigSmooth(.12, .95, e));
+        const recoil = live * Math.exp(-e * 5) * Math.sin(e * 22);
+        plan.coil = { x: -8, start: Math.PI * .32, headX: recoil * 12, headUp: 8, breath: 1 + recoil * .09 };
+        plan.tilt = recoil * .14; plan.shake = live * Math.max(0, 1 - e * 2);
+        Object.assign(face, { eyes: e < .25 ? 'happy' : 'open', tongue: 'none' }); break;
+      }
       case 'happy': {
         const cheer = e >= 1.55, bounce = Math.abs(Math.sin(e * 6.5));
         p.height = B.height * (cheer ? 1.12 : 1) + bounce * (cheer ? 10 : 16); p.bend = B.bend + Math.sin(e * 6.5) * 14;
@@ -641,7 +658,18 @@ class SnekRig {
   build(plan, frame) {
     const st = this.st, n = SNEK.samples;
     let sp;
-    if (plan.kind === 'walk' || plan.kind === 'depart') {
+    if (plan.kind === 'air') {
+      // Unfurl into an S in the direction of travel; the rattle lags behind the head.
+      const velocity = frame.velocity ?? { x: 480, y: frame.motion === 'flap' ? -600 : 300 };
+      const direction = velocity.x < 0 ? -1 : 1, rising = velocity.y < -80;
+      const reach = Math.min(260, st.length * .6), points = [];
+      for (let i = 0; i <= 60; i++) {
+        const s = i / 60, wave = frame.animate ? Math.sin(s * Math.PI * 3 - frame.elapsed * 15) : 0;
+        points.push([240 + direction * reach * (.45 - s),
+          260 + s * (rising ? 120 : 65) + wave * Math.sin(s * Math.PI) * st.width * .65, RIG_GROUND]);
+      }
+      const track = new SnekTrack(points); sp = snekSample(track, 0, track.length, n);
+    } else if (plan.kind === 'walk' || plan.kind === 'depart') {
       const { track, from, body, to } = this.track(plan.kind), dur = plan.kind === 'walk' ? SNEK_WALK_SECONDS : SNEK_DEPART_SECONDS;
       const k = Math.min(1, frame.elapsed / dur), progress = plan.kind === 'walk' ? k * k * (3 - 2 * k) : k * k;
       const head = from + (to - from) * progress;
@@ -654,6 +682,11 @@ class SnekRig {
       const points = plan.kind === 'coil' ? snekCoil(st, plan.coil) : snekStanding(st, plan.p).points;
       const track = new SnekTrack(points);
       sp = snekSample(track, 0, track.length, n);
+      if (plan.kind === 'land' && plan.coilAmount) {
+        const coilTrack = new SnekTrack(snekCoil(st, plan.coil));
+        const coil = snekSample(coilTrack, 0, coilTrack.length, n), k = plan.coilAmount;
+        for (let i = 0; i < n; i++) { sp.x[i] += (coil.x[i] - sp.x[i]) * k; sp.y[i] += (coil.y[i] - sp.y[i]) * k; sp.g[i] += (coil.g[i] - sp.g[i]) * k; }
+      }
     }
     if (plan.lift) for (let i = 0; i < n; i++) sp.y[i] -= plan.lift;
     return sp;
@@ -671,8 +704,9 @@ class SnekRig {
     const plan = this.choreograph(frame);
     let sp = this.build(plan, frame);
     // Changing moves eases from the last drawn body into the new one.
-    if (this.from && time - this.blendAt < .45) {
-      const k = rigSmooth(0, .45, time - this.blendAt), from = this.from;
+    const blendSeconds = ['flap', 'toss', 'land'].includes(frame.motion) ? .14 : .45;
+    if (this.from && time - this.blendAt < blendSeconds) {
+      const k = rigSmooth(0, blendSeconds, time - this.blendAt), from = this.from;
       for (let i = 0; i < sp.n; i++) { sp.x[i] = from.x[i] + (sp.x[i] - from.x[i]) * k; sp.y[i] = from.y[i] + (sp.y[i] - from.y[i]) * k; sp.g[i] = from.g[i] + (sp.g[i] - from.g[i]) * k; }
     } else this.from = null;
     snekPrepare(sp, st, plan.breathe);
@@ -769,4 +803,4 @@ function snekStageIcon(stage) {
   return canvas;
 }
 
-export { createSnekRenderer as createRenderer };
+export { createSnekRenderer as createRenderer, snekStageIcon as stageIcon };

@@ -1,4 +1,5 @@
 import type { PetRenderer, PetArtModule } from "./pets/types.js";
+import { PointerVelocity, beginThrow, advanceThrow, type PetFlight, type ThrowBounds, type Velocity } from "./pets/throw-motion.js";
 
 interface PetSnapshot {
     userId: string; name: string; species: string; stage: number; stageProgress: number;
@@ -14,10 +15,11 @@ interface Host {
     gaze: { x: number; y: number }; x: number; y: number;
     threatened: boolean; nextIdleAt: number; retiringAt?: number; retiringReduced?: boolean; requestedRenderer?: string; adopting?: boolean;
     departure?: { at: number; expected: string; resolve: () => void };
+    flight?: PetFlight; velocity?: Velocity;
 }
 const hosts = new WeakMap<HTMLElement, Host>();
 const artModules = new Map<string, Promise<PetArtModule>>();
-const durations: Record<string, number> = { happy: 3.3, wave: 3.2, hop: 3.15, peck: 2.6, walk: 4.5, surprised: 2.4, hatch: 2 };
+const durations: Record<string, number> = { happy: 3.3, wave: 3.2, hop: 3.15, peck: 2.6, walk: 4.5, surprised: 2.4, hatch: 2, wobble: 1.2, land: 1 };
 
 export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNetPet): void {
     const h: Host = { root, mount, dotnet, abort: new AbortController(), visible: false, frame: 0, time: 0, last: 0,
@@ -26,14 +28,20 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
     hosts.set(root, h);
     const body = root.querySelector<HTMLElement>(".dam-pet-body")!;
     const signal = h.abort.signal;
-    let drag: { id: number; startX: number; startY: number; x: number; y: number; moved: boolean } | null = null;
+    let drag: { id: number; startX: number; startY: number; x: number; y: number; moved: boolean; velocity: PointerVelocity } | null = null;
     let longPress = 0, suppressClick = false;
     const call = (method: "Pet" | "OpenMenu" | "CloseMenu" | "Dismiss") => { void dotnet.invokeMethodAsync(method).catch(() => {}); };
-    const save = () => { try { localStorage.setItem(h.key, JSON.stringify({ x: h.x / innerWidth, y: h.y / innerHeight })); } catch { /* Storage may be unavailable. */ } };
-    const cancel = () => { clearTimeout(longPress); drag = null; root.classList.remove("dragging"); };
+    const cancel = () => {
+        clearTimeout(longPress);
+        if (drag) { suppressClick ||= drag.moved; if (drag.moved) savePosition(h); if (body.hasPointerCapture(drag.id)) body.releasePointerCapture(drag.id); }
+        drag = null; root.classList.remove("dragging");
+    };
     body.addEventListener("pointerdown", e => {
         if (e.button !== 0) return;
-        drag = { id: e.pointerId, startX: e.clientX, startY: e.clientY, x: h.x, y: h.y, moved: false };
+        if (drag || h.departure || h.retiringAt !== undefined) return;
+        stopThrow(h);
+        drag = { id: e.pointerId, startX: e.clientX, startY: e.clientY, x: h.x, y: h.y, moved: false, velocity: new PointerVelocity() };
+        drag.velocity.add(h.x, h.y, e.timeStamp);
         suppressClick = false; body.setPointerCapture(e.pointerId);
         if (e.pointerType === "touch") longPress = window.setTimeout(() => { suppressClick = true; cancel(); call("OpenMenu"); }, 650);
     }, { signal });
@@ -42,22 +50,33 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
         const dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
         if (Math.hypot(dx, dy) > 7) { drag.moved = true; clearTimeout(longPress); root.classList.add("dragging"); }
         if (drag.moved) { h.x = drag.x + dx; h.y = drag.y + dy; clamp(h); }
+        drag.velocity.add(h.x, h.y, e.timeStamp);
     }, { signal });
     body.addEventListener("pointerup", e => {
         if (!drag || e.pointerId !== drag.id) return;
         const moved = drag.moved;
+        const velocity = drag.velocity.release(h.x, h.y, e.timeStamp);
         const target = root.querySelector<HTMLElement>(".dam-pet-hide-target")!.getBoundingClientRect();
         const dismiss = moved && e.clientX >= target.left && e.clientX <= target.right && e.clientY >= target.top && e.clientY <= target.bottom;
-        suppressClick = moved; cancel(); if (moved) save(); if (dismiss) call("Dismiss");
+        suppressClick = moved; cancel();
+        if (dismiss) call("Dismiss");
+        else if (moved && !reducedMotion(h) && !h.snapshot?.needsAdoption && h.targetStage === undefined) {
+            h.velocity = velocity;
+            h.flight = beginThrow(h.x, h.y, velocity, h.snapshot?.size ?? 140, throwBounds(h)) ?? undefined;
+            h.motion = h.flight ? h.flight.vy < -80 ? "flap" : "toss" : "wobble";
+            h.motionAt = h.time; h.nextIdleAt = h.time + 12;
+            start(h);
+        }
     }, { signal });
     body.addEventListener("pointercancel", cancel, { signal });
+    body.addEventListener("lostpointercapture", cancel, { signal });
     body.addEventListener("click", e => { if (h.retiringAt !== undefined) return; if (suppressClick) { e.preventDefault(); suppressClick = false; } else call("Pet"); }, { signal });
-    body.addEventListener("contextmenu", e => { e.preventDefault(); cancel(); call("OpenMenu"); }, { signal });
+    body.addEventListener("contextmenu", e => { e.preventDefault(); cancel(); stopThrow(h); call("OpenMenu"); }, { signal });
     body.addEventListener("keydown", e => {
-        if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); call("OpenMenu"); }
+        if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); stopThrow(h); call("OpenMenu"); }
         else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); call("Pet"); }
-        else if (e.key === "Escape") cancel();
-        else if (e.key.startsWith("Arrow")) { e.preventDefault(); h.x += e.key === "ArrowRight" ? 12 : e.key === "ArrowLeft" ? -12 : 0; h.y += e.key === "ArrowDown" ? 12 : e.key === "ArrowUp" ? -12 : 0; clamp(h); save(); }
+        else if (e.key === "Escape") { cancel(); stopThrow(h); }
+        else if (e.key.startsWith("Arrow")) { e.preventDefault(); stopThrow(h); h.x += e.key === "ArrowRight" ? 12 : e.key === "ArrowLeft" ? -12 : 0; h.y += e.key === "ArrowDown" ? 12 : e.key === "ArrowUp" ? -12 : 0; clamp(h); savePosition(h); }
     }, { signal });
     document.addEventListener("pointerdown", e => { if (!root.contains(e.target as Node) && root.querySelector(".dam-pet-menu")) call("CloseMenu"); }, { signal });
     root.addEventListener("keydown", e => { if (e.key === "Escape") { call("CloseMenu"); body.focus(); } }, { signal });
@@ -66,7 +85,17 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
     }, { passive: true, signal });
     window.addEventListener("resize", () => clamp(h), { signal });
     window.visualViewport?.addEventListener("resize", () => clamp(h), { signal });
-    document.addEventListener("visibilitychange", () => { h.last = 0; if (document.hidden) { finishDeparture(h, true); cancelAnimationFrame(h.frame); h.frame = 0; } else start(h); }, { signal });
+    document.addEventListener("visibilitychange", () => { h.last = 0; if (document.hidden) { cancel(); stopThrow(h); finishDeparture(h, true); cancelAnimationFrame(h.frame); h.frame = 0; } else start(h); }, { signal });
+    matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => { if (reducedMotion(h)) stopThrow(h); start(h); }, { signal });
+}
+function savePosition(h: Host): void {
+    try { localStorage.setItem(h.key, JSON.stringify({ x: h.x / innerWidth, y: h.y / innerHeight })); } catch { /* Storage may be unavailable. */ }
+}
+function reducedMotion(h: Host): boolean { return !!h.snapshot?.reducedMotion || matchMedia("(prefers-reduced-motion: reduce)").matches; }
+function stopThrow(h: Host): void {
+    if (h.flight) savePosition(h);
+    h.flight = undefined; h.velocity = undefined;
+    if (["flap", "toss", "land", "wobble"].includes(h.motion)) { h.motion = "idle"; h.motionAt = h.time; }
 }
 function departureKey(snapshot: PetSnapshot): string {
     return JSON.stringify([snapshot.generation, snapshot.species, snapshot.enabled, snapshot.snoozedUntil]);
@@ -83,17 +112,23 @@ export function depart(root: HTMLElement, expected: PetSnapshot): Promise<void> 
     const h = hosts.get(root);
     if (!h || root.hidden || !h.renderer || document.hidden || !h.snapshot || departureKey(h.snapshot) !== departureKey(expected)) return Promise.resolve();
     finishDeparture(h);
+    stopThrow(h);
     return new Promise(resolve => {
         h.departure = { at: h.time, expected: departureKey(expected), resolve };
         h.targetStage = undefined; root.dataset.departing = "true";
         start(h);
     });
 }
-function clamp(h: Host): void {
+function throwBounds(h: Host): ThrowBounds {
     const viewport = window.visualViewport;
     const width = viewport?.width ?? innerWidth, height = viewport?.height ?? innerHeight;
     const size = h.snapshot?.size ?? 140;
-    h.x = Math.max(0, Math.min(width - size, h.x)); h.y = Math.max(viewport?.offsetTop ?? 0, Math.min(height + (viewport?.offsetTop ?? 0) - size - 24, h.y));
+    const left = viewport?.offsetLeft ?? 0, top = viewport?.offsetTop ?? 0;
+    return { left, top, right: Math.max(left, left + width - size), bottom: Math.max(top, top + height - size - 24) };
+}
+function clamp(h: Host): void {
+    const bounds = throwBounds(h);
+    h.x = Math.max(bounds.left, Math.min(bounds.right, h.x)); h.y = Math.max(bounds.top, Math.min(bounds.bottom, h.y));
     h.root.style.left = h.x + "px"; h.root.style.top = h.y + "px";
 }
 export async function update(root: HTMLElement, snapshot: PetSnapshot, rendererId: string, visible: boolean, threatened = false): Promise<void> {
@@ -111,6 +146,7 @@ export async function update(root: HTMLElement, snapshot: PetSnapshot, rendererI
         if (previous.needsAdoption && !snapshot.needsAdoption) h.adopting = true;
     }
     h.visible = visible; h.snapshot = snapshot; root.style.width = snapshot.size + "px";
+    if (!visible || reducedMotion(h) || threatened || previous?.generation !== snapshot.generation || previous?.species !== snapshot.species) stopThrow(h);
     const key = "dam-pet-position:" + snapshot.userId;
     if (h.key !== key) {
         h.key = key; h.x = innerWidth - snapshot.size - 24; h.y = innerHeight - snapshot.size - 36;
@@ -170,8 +206,17 @@ function start(h: Host): void {
     if (h.frame || !h.visible || document.hidden || !h.renderer) return;
     const draw = (timestamp: number) => {
         h.frame = 0; if (!h.visible || document.hidden || h.abort.signal.aborted) return;
-        const reduced = h.snapshot!.reducedMotion || matchMedia("(prefers-reduced-motion: reduce)").matches;
-        if (h.last) h.time += Math.min(.05, (timestamp - h.last) / 1000); h.last = timestamp;
+        const reduced = reducedMotion(h);
+        const dt = h.last ? Math.min(.05, (timestamp - h.last) / 1000) : 0;
+        h.time += dt; h.last = timestamp;
+        if (reduced) stopThrow(h);
+        if (h.flight) {
+            const landed = advanceThrow(h.flight, dt, throwBounds(h));
+            h.x = h.flight.x; h.y = h.flight.y; h.velocity = { x: h.flight.vx, y: h.flight.vy }; clamp(h);
+            const motion = landed ? "land" : h.flight.vy < -80 ? "flap" : "toss";
+            if (h.motion !== motion) { h.motion = motion; h.motionAt = h.time; }
+            if (landed) { h.flight = undefined; savePosition(h); }
+        }
         if (h.departure) {
             const elapsed = h.time - h.departure.at;
             const cry = h.snapshot!.needsAdoption ? 0 : reduced ? .3 : 1;
@@ -200,7 +245,7 @@ function start(h: Host): void {
         if (h.targetStage !== undefined && (reduced || h.time - h.stageAt > 1.1)) {
             h.stage = h.targetStage; h.targetStage = undefined; h.renderer!.setStage(h.stage); h.motion = "happy"; h.motionAt = h.time;
         }
-        if (h.time - h.motionAt > (durations[h.motion] ?? 3.3) && h.motion !== "sleep") h.motion = "idle";
+        if (!h.flight && h.time - h.motionAt > (durations[h.motion] ?? 3.3) && h.motion !== "sleep") { h.motion = "idle"; h.velocity = undefined; }
         if (!reduced && !h.threatened && !h.snapshot!.needsAdoption && h.targetStage === undefined && h.motion === "idle" && h.time >= h.nextIdleAt) {
             const actions = ["peck", "peck", "walk", "wave", "hop"];
             h.motion = actions[Math.floor(Math.random() * actions.length)]; h.motionAt = h.time; h.nextIdleAt = h.time + 12 + Math.random() * 14;
@@ -208,7 +253,7 @@ function start(h: Host): void {
         const motion = h.threatened && !h.snapshot!.needsAdoption ? "sad" : h.motion === "working" ? "idle" : h.motion === "idle" && h.snapshot!.happiness < 25 ? "sad" : h.motion;
         h.root.dataset.motion = motion;
         h.renderer!.pose({ time: reduced ? 0 : h.time, motion, elapsed: reduced ? .8 : h.time - h.motionAt, gaze: reduced ? { x: 0, y: 0 } : h.gaze,
-            animate: !reduced, showRig: false, progress: h.snapshot!.stageProgress, transitioning: h.targetStage !== undefined });
+            animate: !reduced, showRig: false, progress: h.snapshot!.stageProgress, transitioning: h.targetStage !== undefined, velocity: h.velocity });
         if (!reduced) h.frame = requestAnimationFrame(draw);
     };
     h.frame = requestAnimationFrame(draw);
@@ -216,5 +261,6 @@ function start(h: Host): void {
 export function dispose(root: HTMLElement): void {
     const h = hosts.get(root); if (!h) return;
     finishDeparture(h);
+    stopThrow(h);
     h.abort.abort(); ++h.loadVersion; cancelAnimationFrame(h.frame); h.renderer?.dispose?.(); hosts.delete(root);
 }

@@ -16,6 +16,7 @@
     "tools/security-browser/*.mts",
     "tools/browser-dependencies/*.mts",
     "tools/pi-login-smoke.mts",
+    "tools/pet-playground/*.mts",
     "DeveAgentManager.Tests/Browser/*.d.ts"
   ]
 }

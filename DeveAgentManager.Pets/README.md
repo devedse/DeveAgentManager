@@ -128,6 +128,7 @@ mode may draw only one frame. Loading images after that frame can leave an other
 | `progress` | Progress through the current growth stage, 0…1. Used for egg cracks. |
 | `transitioning` | Whether the host is playing the egg-to-Damagochi transition. |
 | `showRig` | Debug drawing flag; the Portal currently supplies false. |
+| `velocity` | Optional throw velocity in screen pixels per second; negative y means upward. |
 
 Support `idle`, `happy`, `wave`, `hop`, `peck`, `sleep`, `sad`, `surprised`, and `hatch`. The host occasionally chooses
 `peck`, `walk`, `wave` or `hop` during idle. `sad` also previews crying while hovering/focusing Kill Damagochi; `sleep`
@@ -135,6 +136,11 @@ precedes the retirement fade. Go away actions use `sad`, then `sleep`, then a sh
 and indefinite hiding. Reduced motion uses still poses. These are animation states, not a required number of image files: several
 motions can reuse an expression with different movement. The host translates `working` into `idle` and `level` into
 `happy`. Affection uses `happy`, play uses `hop`, image uploads use `surprised`, and other uploads use `peck`.
+
+Dragging and releasing slowly requests `wobble`. Faster releases request `flap` while rising, `toss` while falling,
+then `land`. Byte flaps both wings; Snek unfurls into a trailing S-curve and coils on landing. The shared host supplies
+the trajectory, screen bounds and final position persistence. A virtual floor sits slightly below the release
+point, so a throw settles near the chosen position. Grabbing, opening the menu, hiding and reduced motion stop flight.
 
 Use `frame.animate` to stop breathing, blinks, wobble, and similar movement. Respect the supplied frame instead of
 starting your own `requestAnimationFrame`, interval, token counter, API polling, or navigation listener. The host owns
@@ -197,6 +203,21 @@ Measure those anchors against the new artwork. Keep transparent margins around e
 We developed the Damagochi in a standalone HTML playground before integrating the approved renderers into the Manager.
 AI assisted both artwork iteration and implementation, with the supplied character references and user feedback
 deciding the result.
+
+The current playground uses the production renderers and throw physics, with its page template in
+`DeveAgentManager.Pets/Playground/page.html` and browser controls in `DeveAgentManager/Browser/pets/playground.ts`.
+Build a single offline HTML file with embedded artwork, or run its interaction checks:
+
+```sh
+npm ci --ignore-scripts
+npm run build
+node .typescript/tools/pet-playground/build.mjs .validation/pet-playground.html
+npm run test:pets
+```
+
+Open the resulting file, choose a species and stage, and try Lose balance, Throw up, Throw sideways and Landing.
+Drag and release the screen buddy to try the real trajectory. The browser checks need Playwright Chromium installed
+and exercise both species, all growth stages, gesture speed, gravity, persistence and reduced motion.
 
 ### Byte: generated drawings, then a rig
 

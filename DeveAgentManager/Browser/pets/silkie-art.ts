@@ -36,6 +36,30 @@ function silkieChoreography(frame, frames, stage) {
   const show = new Set();
   let swish = null;
   switch (m) {
+    case 'wobble': {
+      const envelope = live * Math.max(0, 1 - e / 1.2) ** 2, sway = Math.sin(e * 18) * envelope;
+      cell = e < .45 ? SILKIE_CELL.shocked : SILKIE_CELL.idle;
+      tilt = sway * .18; head -= sway * .15; crest += sway * 8;
+      wings = Math.abs(sway) * .3; feet = sway; squash = 1 - Math.abs(sway) * .04;
+      break;
+    }
+    case 'flap': case 'toss': {
+      const vx = frame.velocity?.x ?? 480, vy = frame.velocity?.y ?? (m === 'flap' ? -600 : 300);
+      cell = m === 'flap' ? SILKIE_CELL.hop : SILKIE_CELL.cheer;
+      // Both wings beat about their measured shoulders while the host supplies the arc.
+      wings = live * (.22 + Math.sin(e * (m === 'flap' ? 34 : 22)) * .48);
+      tilt = live * Math.max(-.22, Math.min(.22, vx / 3600));
+      head -= tilt * .6; crest += live * Math.sin(e * 28) * 4;
+      squash = 1 + live * Math.min(.04, Math.abs(vy) / 24000); blink = false;
+      break;
+    }
+    case 'land': {
+      const impact = live * Math.sin(Math.min(1, e / .24) * Math.PI) * .15;
+      const settle = live * Math.exp(-e * 5) * Math.sin(e * 24);
+      cell = e < .16 ? SILKIE_CELL.hop : SILKIE_CELL.idle;
+      squash = 1 - impact; tilt = settle * .08; wings = impact * 2; crest -= settle * 7;
+      break;
+    }
     case 'happy':
       cell = e < 1.55 ? SILKIE_CELL.happy : SILKIE_CELL.cheer;
       lift = Math.abs(Math.sin(e * 6.5)) * 10; tilt = Math.sin(e * 4.4) * .03; wings = .1 + Math.sin(e * 14) * .16;
@@ -174,4 +198,4 @@ function silkieStageIcon(stage) {
   return canvas;
 }
 
-export { createSilkieRenderer as createRenderer };
+export { createSilkieRenderer as createRenderer, silkieStageIcon as stageIcon };

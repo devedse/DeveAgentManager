@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.browser.json && tsc -p tsconfig.tools.json",
-    "check": "tsc -p tsconfig.browser.json --noEmit && tsc -p tsconfig.tools.json --noEmit"
+    "check": "tsc -p tsconfig.browser.json --noEmit && tsc -p tsconfig.tools.json --noEmit",
+    "test:pets": "npm run build && node .typescript/DeveAgentManager.Tests/Js/pet-throw.test.cjs DeveAgentManager/wwwroot/js/pets/throw-motion.js && node .typescript/tools/pet-playground/build.mjs && node .typescript/DeveAgentManager.Tests/Browser/pet-throw.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
