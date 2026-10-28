@@ -1,3 +1,4 @@
+@implements IDisposable
 @inject ManagerApi Api
 
 <MudDialog>
@@ -5,6 +6,7 @@
         <HelpTip Label="Removing a workspace">
             <p>The workspace's agent stops and the workspace leaves the project. Its conversations stay in the project's history and can be resumed in another workspace.</p>
             <p>Remove everything deletes the folder, including uncommitted files and commits that were never pushed; that cannot be undone. Keep files leaves the folder on the Runner and lists it under Manage workspaces, where you can delete it or use it for a new workspace. Only a folder the Manager created is ever deleted.</p>
+            <p>The space estimate includes working files and ignored files such as dependencies and build output. Shared disk blocks can reduce the space actually freed. Keep files frees no space.</p>
         </HelpTip></div></TitleContent>
     <DialogContent>
         <LoadingSection Loaded="@(_changes is not null)" Error="@_loadError" Retry="LoadAsync" Label="Checking the workspace for unsaved work">
@@ -21,6 +23,12 @@
                     {
                         <MudText Typo="Typo.body2">The agent stops and its folder is deleted:</MudText>
                         <MudText Typo="Typo.body2" Class="mono workspace-remove-path">@changes.Path</MudText>
+                        <LoadingSection Loaded="@(_estimate is not null)" Error="@_estimateError" Retry="EstimateAsync" Label="Calculating space freed" Class="mt-2">
+                            <Placeholder><Skeleton Width="15rem" /></Placeholder>
+                            <ChildContent>
+                                <MudText Typo="Typo.body2" Class="mt-2">Estimated space freed: @ByteCount.Text(_estimate!.Bytes)</MudText>
+                            </ChildContent>
+                        </LoadingSection>
                         @if (Clean)
                         { <MudText Typo="Typo.body2" Class="mt-2">Nothing is uncommitted or unpushed.</MudText> }
                         else
@@ -56,6 +64,9 @@
     [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
     [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
     private WorkspaceChangesDto? _changes;
+    private readonly CancellationTokenSource _closed = new();
+    private WorkspaceEstimateDto? _estimate;
+    private string? _estimateError;
     private string? _loadError, _error;
     private bool _busy;
 
@@ -79,9 +90,23 @@
     private async Task LoadAsync()
     {
         _loadError = null;
-        try { _changes = await Api.GetWorkspaceChangesAsync(Agent.Id); }
+        try
+        {
+            _changes = await Api.GetWorkspaceChangesAsync(Agent.Id);
+            if (_changes.Exists && !_closed.IsCancellationRequested) _ = EstimateAsync();
+        }
         catch (ApiException ex) { _loadError = ex.Message; }
         catch (HttpRequestException) { _loadError = LoadingSection.Unreachable; }
+    }
+
+    private async Task EstimateAsync()
+    {
+        _estimateError = null;
+        try { _estimate = await Api.EstimateWorkspaceAsync(Agent.Id, WorkspaceStart.ExactCopy, _closed.Token); }
+        catch (OperationCanceledException) { return; }
+        catch (ApiException) { _estimateError = "Couldn't estimate the space freed."; }
+        catch (HttpRequestException) { _estimateError = LoadingSection.Unreachable; }
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task RemoveAsync(bool keepFiles)
@@ -91,5 +116,11 @@
         catch (ApiException ex) { _error = ex.Message; }
         catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
         finally { _busy = false; }
+    }
+
+    public void Dispose()
+    {
+        _closed.Cancel();
+        _closed.Dispose();
     }
 }
