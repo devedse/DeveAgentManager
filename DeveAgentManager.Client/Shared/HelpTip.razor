@@ -2,7 +2,7 @@
 <span class="help-tip" @onmouseenter="Hover" @onmouseleave="Leave" @onfocusin="Focus" @onfocusout="Blur"
       @onkeydown="OnKeyDown" @onclick:stopPropagation="true">
     <MudTooltip Visible="@Visible" ShowOnHover="false" ShowOnFocus="false" ShowOnClick="false"
-                Placement="Placement.Bottom" Arrow="true" Class="help-tooltip">
+                Placement="Placement.Bottom" Arrow="@(!ViewportCentered)" Class="@(ViewportCentered ? "help-tooltip help-tooltip-centered" : "help-tooltip")">
         <ChildContent>
             <MudIconButton Icon="@Icons.Material.Rounded.HelpOutline" Size="Size.Small" Class="help-tip-button"
                            OnClick="Toggle" aria-label="@($"Help about {Label}")" />
@@ -17,12 +17,14 @@
     [Parameter, EditorRequired] public string Label { get; set; } = "";
     [Parameter] public string? Text { get; set; }
     [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public bool ViewportCentered { get; set; }
     private bool _hovered, _focused, _pinned, _dismissed;
     private bool Visible => !_dismissed && (_hovered || _focused || _pinned);
 
-    private void Hover() { _hovered = true; _dismissed = false; }
+    // Centered help can cover its trigger on short screens. Open it after activation, not while reaching the button.
+    private void Hover() { if (ViewportCentered) return; _hovered = true; _dismissed = false; }
     private void Leave() => _hovered = false;
-    private void Focus() { _focused = true; _dismissed = false; }
+    private void Focus() { _focused = !ViewportCentered; _dismissed = false; }
     private void Blur() { _focused = false; Hide(); }
     private void Toggle() { _pinned = !_pinned; _dismissed = !_pinned; }
     private void Hide() { _pinned = false; _dismissed = true; }

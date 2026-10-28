@@ -8,7 +8,7 @@ declare global {
     }
 }
 try {
-    const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, hasTouch: true });
     await context.addInitScript(() => {
         const test = window.codexVoiceTest = { streams: [], peers: [], denied: false, hold: false, release: null, blocked: false };
         const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -98,12 +98,48 @@ try {
     await page.getByRole('button', { name: 'Play audio', exact: true }).waitFor({ state: 'hidden' });
     for (const theme of ['dark', 'light']) {
         await page.evaluate(value => window.damTheme.set(value), theme);
-        for (const width of [320, 390]) {
-            await page.setViewportSize({ width, height: 844 });
+        for (const { width, height } of [{ width: 320, height: 844 }, { width: 390, height: 844 }, { width: 740, height: 300 }, { width: 1400, height: 900 }]) {
+            await page.setViewportSize({ width, height });
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${width}: controls fit`);
+            await page.getByRole('button', { name: 'Help about Codex voice', exact: true }).click();
+            const help = page.locator('.help-tooltip-centered.mud-popover-open');
+            await help.waitFor();
+            await page.waitForTimeout(300);
+            const bounds = await help.boundingBox();
+            assert.ok(bounds && bounds.x >= 15 && bounds.x + bounds.width <= width - 15
+                && bounds.y >= 15 && bounds.y + bounds.height <= height - 15, `${theme} ${width}x${height}: help fits the viewport`);
+            assert.ok(bounds.width >= Math.min(360, width - 32) - 1, 'help keeps a readable width beside the right-edge icon');
+            const content = help.locator('.help-tip-content');
+            const beginning = await content.boundingBox();
+            assert.ok(beginning && beginning.y >= bounds.y, 'the beginning of long help is visible');
+            await help.evaluate(el => { el.scrollTop = el.scrollHeight; });
+            const end = await content.locator('p').last().boundingBox();
+            assert.ok(end && end.y + end.height <= bounds.y + bounds.height, 'the last help paragraph is reachable by scrolling');
             await page.screenshot({ path: `/tmp/dam-codex-voice-${theme}-${width}.png` });
+            await page.keyboard.press('Escape');
+            await help.waitFor({ state: 'hidden' });
         }
     }
+    // Safari's keyboard covers the layout viewport; reuse the terminal's measured visible area.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => {
+        document.documentElement.style.setProperty('--dam-vv-top', '120px');
+        document.documentElement.style.setProperty('--dam-vv-height', '300px');
+    });
+    await page.getByRole('button', { name: 'Help about Codex voice', exact: true }).click();
+    const coveredHelp = page.locator('.help-tooltip-centered.mud-popover-open');
+    await coveredHelp.waitFor();
+    await page.waitForTimeout(300);
+    const coveredBounds = await coveredHelp.boundingBox();
+    assert.ok(coveredBounds && coveredBounds.y >= 135 && coveredBounds.y + coveredBounds.height <= 405,
+        'help fits above a keyboard that covers the layout viewport');
+    await coveredHelp.locator('.help-tip-content').tap();
+    await coveredHelp.waitFor({ state: 'hidden' });
+    await page.evaluate(() => {
+        document.documentElement.style.removeProperty('--dam-vv-top');
+        document.documentElement.style.removeProperty('--dam-vv-height');
+    });
     await page.keyboard.press('F8');
     await page.getByRole('button', { name: 'Start voice', exact: true }).waitFor();
     assert.equal(await closedTracks(), true, 'ending voice immediately stops microphone tracks');
@@ -147,5 +183,5 @@ try {
     await page.locator('.terminal-frame').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Start voice', exact: true }).count(), 0, 'other harnesses have no Codex voice controls');
     assert.deepEqual(errors, []);
-    console.log('PASS: voice permission, F8, mute, playback recovery, competing tabs, pending permission cancellation, navigation, hidden tabs, read-only access and phone themes');
+    console.log('PASS: voice permission, F8, mute, playback recovery, competing tabs, pending permission cancellation, navigation, hidden tabs, read-only access, phone themes and help sizing/scrolling');
 } finally { await browser.close(); }

@@ -3381,6 +3381,16 @@ body:has(.terminal-layout) .agent-attention-popover {
 .help-tip .help-tip-button:focus-visible { outline: 2px solid var(--mud-palette-primary); outline-offset: 2px; }
 /* MudBlazor's popover positioning sets an inline max-width: none, which would stretch long help across the page. */
 .help-tooltip { max-width: min(360px, calc(100vw - 32px)) !important; max-height: calc(100dvh - 32px); overflow-y: auto; white-space: normal; }
+/* Long help beside an edge control needs room in both directions, including above a phone keyboard. */
+.help-tooltip-centered {
+    position: fixed !important;
+    left: 50% !important;
+    top: calc(var(--dam-vv-top, 0px) + var(--dam-vv-height, 100dvh) / 2) !important;
+    transform: translate(-50%, -50%) !important;
+    width: min(360px, calc(100vw - 32px));
+    max-height: calc(var(--dam-vv-height, 100dvh) - 32px);
+    align-items: flex-start !important;
+}
 .help-tip-content { font-size: .875rem; line-height: 1.5; text-align: left; overflow-wrap: anywhere; }
 .help-tip-content p + p { margin-top: 8px; }
 .help-heading .section-title { margin-bottom: 0; }

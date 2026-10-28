@@ -18,10 +18,10 @@
         { <MudButton Size="Size.Small" OnClick="PlayAsync">Play audio</MudButton> }
     }
     <span class="terminal-voice-status @(_error is not null ? "terminal-voice-error" : "")" role="status" aria-live="polite">@Status</span>
-    <HelpTip Label="Codex voice">
-        <p>Use your microphone and speakers to talk to Codex in this conversation. F8 starts or ends voice. Voice uses the agent's Codex login and requires a login with voice access.</p>
-        <p>Allow microphone access when your browser asks. Mute pauses your microphone; End voice ends the call while the agent's coding work continues. Leaving this page or hiding the tab also ends the call.</p>
-        <p>After updating the Manager, update Codex on the Runner and restart the agent once to enable browser voice. Only one tab can connect voice to an agent at a time.</p>
+    <HelpTip Label="Codex voice" ViewportCentered="true">
+        <p>Choose Start voice here to use this device's microphone and speakers. F8 starts or ends the call. The /voice command inside the terminal uses the Runner's audio devices instead.</p>
+        <p>Allow microphone access when your browser asks. Mute pauses your microphone; End voice leaves the agent's coding work running. Leaving this page or hiding the tab ends the call.</p>
+        <p>Voice requires an agent Codex login with voice access. After updating the Manager, update Codex on the Runner and restart the agent once. Only one tab can connect voice to an agent at a time.</p>
     </HelpTip>
 </div>
 
