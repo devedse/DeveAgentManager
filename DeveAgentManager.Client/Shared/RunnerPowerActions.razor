@@ -29,6 +29,10 @@
                 Help="@UpdateHelp"
                 OnConfirmed="() => RunAsync(() => Api.RerunSetupAsync(Runner.Id))">
         <Adornment><RunnerUpdateBadges Runner="Runner" /></Adornment>
+        <HelpContent>
+            <p>@UpdateActionHelp</p>
+            <RunnerUpdateDetails Updates="Runner.Updates" Active="@(Runner.State == RunnerState.Ready)" />
+        </HelpContent>
     </HoldButton>
 }
 
@@ -42,9 +46,10 @@
     /// <summary>After an operation was started, e.g. to show the setup log.</summary>
     [Parameter] public EventCallback Started { get; set; }
 
-    private string UpdateHelp => "Updates the system packages (apt-get dist-upgrade) and re-runs the setup script: the latest harnesses and tools, the shared Setup Profile, and each person's git identity, GitHub token, environment and SSH keys. Running agents keep running; restart them to use the updates. "
+    private const string UpdateActionHelp = "Updates tools and system packages, then reapplies setup. Agents keep running.";
+    private string UpdateHelp => UpdateActionHelp + " "
         + RunnerUpdateStatus.Summary(Runner.Updates, Runner.State == RunnerState.Ready)
-        + (Runner.Updates?.RebootRequired == true ? ". The operating system reports that a restart is needed." : "");
+        + (Runner.Updates?.RebootRequired == true ? ". Restart needed." : "");
 
     private bool Busy => Runner.Operation is not null;
     private bool Ready => Runner.State == RunnerState.Ready && !Busy;

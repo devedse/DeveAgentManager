@@ -1,0 +1,69 @@
+@* Cached observations only: opening a tooltip never starts a package check or an update. *@
+<div class="runner-upgrade-details">
+    @if (Updates is not { } updates)
+    {
+        <p>@(Active ? "Checking available updates…" : "Updates not checked yet.")</p>
+    }
+    else
+    {
+        var tools = updates.Software.Where(item => item.UpdateAvailable == true).ToList();
+        var observed = updates.SoftwareCheckedAt is not null || updates.SystemCheckedAt is not null;
+        @if (tools.Count > 0)
+        {
+            <p><b>Tools (@tools.Count@(updates.SoftwareKnown ? "" : "+"))</b></p>
+            <ul class="runner-upgrade-items">
+                @foreach (var tool in tools)
+                {
+                    <li><b>@tool.Name</b> <span>@(tool.InstalledVersion ?? "unknown") → @(tool.LatestVersion ?? "unknown")</span></li>
+                }
+            </ul>
+        }
+        else
+        {
+            <p>@(updates.SoftwareKnown ? "Tools up to date." : updates.SoftwareError is not null ? "Tool update check unavailable." : Active ? "Checking tool updates…" : "Tool updates not checked.")</p>
+        }
+        @if (updates.SystemPackageCount is > 0)
+        {
+            <p><b>System packages (@updates.SystemPackageCount)</b></p>
+            @if (updates.SystemPackages is { Count: > 0 } packages)
+            {
+                <ul class="runner-upgrade-items">
+                    @foreach (var package in packages.Take(VisiblePackages))
+                    {
+                        <li><b>@package.Name</b> <span>@(package.InstalledVersion is { } current ? $"{current} → {package.LatestVersion}" : $"install {package.LatestVersion}")</span></li>
+                    }
+                </ul>
+                @if (updates.SystemPackageCount > Math.Min(packages.Count, VisiblePackages))
+                {
+                    <p>And @(updates.SystemPackageCount - Math.Min(packages.Count, VisiblePackages)) more packages.</p>
+                }
+            }
+            else
+            {
+                <p>Package names not available.</p>
+            }
+        }
+        else
+        {
+            <p>@(updates.SystemError is not null ? "System update check unavailable." : updates.SystemPackageCount == 0 ? "System packages up to date." : Active ? "Checking system packages…" : "System updates not checked.")</p>
+        }
+        @if (observed && (updates.SoftwareError is not null || updates.SystemError is not null))
+        {
+            <p>Last check incomplete; showing saved results.</p>
+        }
+        else if (observed && updates.Checking)
+        {
+            <p>Refreshing; showing the last check.</p>
+        }
+        @if (updates.RebootRequired)
+        {
+            <p>Restart needed.</p>
+        }
+    }
+</div>
+
+@code {
+    private const int VisiblePackages = 6;
+    [Parameter] public RunnerUpdatesDto? Updates { get; set; }
+    [Parameter] public bool Active { get; set; } = true;
+}

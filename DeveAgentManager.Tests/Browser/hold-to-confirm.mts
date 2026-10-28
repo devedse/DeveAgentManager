@@ -89,7 +89,7 @@ async function run(theme) {
     await tip.waitFor();
     assert.match(await tip.innerText(), /Shuts the VM down, which stops its 2 running agents\.[\s\S]*Hold for 3 seconds to confirm\./);
     await action(card('runner-01'), 'Update all').locator('button').hover();
-    await page.waitForFunction(() => /Updates the system packages \(apt-get dist-upgrade\) and re-runs the setup script/.test((document.querySelector('.help-tooltip.mud-popover-open') as HTMLElement)?.innerText ?? ''));
+    await page.waitForFunction(() => /Updates tools and system packages, then reapplies setup/.test((document.querySelector('.help-tooltip.mud-popover-open') as HTMLElement)?.innerText ?? ''));
 
     // A click: the hint, which fades again, and nothing happens.
     await press(stop);

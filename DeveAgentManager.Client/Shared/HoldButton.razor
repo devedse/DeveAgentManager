@@ -9,14 +9,18 @@
       @onpointerdown="PressAsync" @onpointerup="ReleaseAsync" @onpointercancel="ReleaseAsync" @onpointerleave="LeaveAsync"
       @onpointerenter="Enter" @onkeydown="KeyDownAsync" @onkeyup="KeyUpAsync" @onfocusin="FocusIn" @onfocusout="FocusOut"
       @oncontextmenu:preventDefault="true" @onclick:preventDefault="true" @onclick:stopPropagation="true">
-    <MudTooltip Visible="TipVisible" ShowOnHover="false" ShowOnFocus="false" ShowOnClick="false" Placement="Placement.Bottom" Arrow="true" Class="help-tooltip">
+    <MudTooltip Visible="TipVisible" ShowOnHover="false" ShowOnFocus="false" ShowOnClick="false" Placement="Placement.Bottom" Arrow="@(HelpContent is null)" Class="@(HelpContent is null ? "help-tooltip" : "help-tooltip hold-help-details")">
         <ChildContent>
             <MudButton Variant="Variant" Color="Color" Size="Size" StartIcon="@Icon" Disabled="Disabled" Ripple="false"
                        Class="@($"hold-button-control {(_phase == Phase.Holding ? "hold-button-holding" : "")}")" aria-describedby="@_hintId"><span>@Text</span>@Adornment</MudButton>
         </ChildContent>
         <TooltipContent>
-            <div class="help-tip-content">
-                @if (Help is not null)
+            <div class="help-tip-content" data-hold-help="@_hintId">
+                @if (HelpContent is not null)
+                {
+                    @HelpContent
+                }
+                else if (Help is not null)
                 {
                     <p>@Help</p>
                 }
@@ -51,6 +55,8 @@
     [Parameter, EditorRequired] public string ActiveText { get; set; } = "";
     /// <summary>What it does, in the tooltip on hover and keyboard focus, and for screen readers.</summary>
     [Parameter] public string? Help { get; set; }
+    /// <summary>Optional structured hover/focus help. Help still supplies the button's screen reader description.</summary>
+    [Parameter] public RenderFragment? HelpContent { get; set; }
     [Parameter] public EventCallback OnConfirmed { get; set; }
     /// <summary>Compact status inside the button; its meaning also belongs in Help for screen readers.</summary>
     [Parameter] public RenderFragment? Adornment { get; set; }
@@ -184,6 +190,8 @@
         try
         {
             if (firstRender) _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/hold-button.js");
+            if (TipVisible && HelpContent is not null && _module is not null)
+                await _module.InvokeVoidAsync("placeHelp", _hintId);
             if (_place && _module is not null)
             {
                 _place = false;

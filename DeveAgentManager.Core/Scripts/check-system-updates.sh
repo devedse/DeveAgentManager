@@ -12,5 +12,16 @@ $SUDO env DEBIAN_FRONTEND=noninteractive apt-get -q update \
   -o APT::Update::Error-Mode=any -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
   -o DPkg::Lock::Timeout=60 >&2
 simulation="$($SUDO env LC_ALL=C apt-get -s dist-upgrade)"
-printf '%s\n' "$simulation" | awk '/^Inst / { count++ } END { printf "DAM_PACKAGES=%d\n", count }'
+# Keep the same bounded detail limit as RunnerUpdatesDto.MaxSystemPackageDetails.
+printf '%s\n' "$simulation" | awk '
+  /^Inst / {
+    count++
+    if (count <= 200) {
+      installed=""; latest=$3
+      if ($3 ~ /^\[/) { installed=$3; gsub(/^\[|\]$/, "", installed); latest=$4 }
+      gsub(/^\(|\)$/, "", latest)
+      printf "DAM_PACKAGE\t%s\t%s\t%s\n", $2, installed, latest
+    }
+  }
+  END { printf "DAM_PACKAGES=%d\nDAM_PACKAGE_DETAILS=1\n", count }'
 if [ -f /var/run/reboot-required ]; then echo DAM_REBOOT=1; else echo DAM_REBOOT=0; fi

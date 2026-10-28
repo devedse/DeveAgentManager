@@ -9,11 +9,15 @@ public sealed record RunnerUpdatesDto(
     DateTime? SystemCheckedAt = null,
     string? SystemError = null,
     bool RebootRequired = false,
-    bool Checking = false)
+    bool Checking = false,
+    IReadOnlyList<RunnerSystemPackageUpdateDto>? SystemPackages = null)
 {
+    public const int MaxSystemPackageDetails = 200;
     public int SoftwareCount => Software.Count(s => s.UpdateAvailable == true);
     public bool SoftwareKnown => SoftwareCheckedAt is not null && SoftwareError is null && Software.All(s => s.UpdateAvailable is not null && s.Error is null);
 }
 
 public sealed record RunnerSoftwareUpdateDto(string Id, string Name, string? InstalledVersion, string? LatestVersion,
     bool? UpdateAvailable, string? Error = null);
+
+public sealed record RunnerSystemPackageUpdateDto(string Name, string? InstalledVersion, string LatestVersion);

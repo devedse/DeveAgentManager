@@ -84,7 +84,8 @@ public sealed class RunnerUpdateMonitor(RunnerService runners, RunnerShell shell
                     var script = RunnerSetupService.ReadResource("check-system-updates.sh");
                     var result = (await shell.RunAsync(runner, script, TimeSpan.FromMinutes(4), ct)).EnsureSuccess("Checking system packages");
                     var (count, reboot) = ParseSystem(result.Output);
-                    value = value with { SystemPackageCount = count, RebootRequired = reboot,
+                    var packages = ParseSystemPackages(result.Output, count);
+                    value = value with { SystemPackageCount = count, SystemPackages = packages, RebootRequired = reboot,
                         SystemCheckedAt = clock.GetUtcNow().UtcDateTime, SystemError = null };
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -109,5 +110,30 @@ public sealed class RunnerUpdateMonitor(RunnerService runners, RunnerShell shell
         if (counts.Length != 1 || !int.TryParse(counts[0][13..], out var count) || count < 0 || reboots.Length != 1 || reboots[0] is not ("DAM_REBOOT=0" or "DAM_REBOOT=1"))
             throw new FormatException("Incomplete system update observation.");
         return (count, reboots[0] == "DAM_REBOOT=1");
+    }
+
+    internal static IReadOnlyList<RunnerSystemPackageUpdateDto>? ParseSystemPackages(string output, int count)
+    {
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var markers = lines.Where(line => line.StartsWith("DAM_PACKAGE_DETAILS=", StringComparison.Ordinal)).ToArray();
+        if (markers.Length == 0) return null; // Older count-only observations have no package names.
+        if (markers.Length != 1 || markers[0].TrimEnd('\r') != "DAM_PACKAGE_DETAILS=1")
+            throw new FormatException("Invalid system package details marker.");
+        var packages = new List<RunnerSystemPackageUpdateDto>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in lines.Where(line => line.StartsWith("DAM_PACKAGE\t", StringComparison.Ordinal)))
+        {
+            var fields = line.TrimEnd('\r').Split('\t');
+            if (fields.Length != 4 || !Valid(fields[1]) || !Valid(fields[3])
+                || fields[2].Length > 0 && !Valid(fields[2]) || !names.Add(fields[1])
+                || packages.Count >= RunnerUpdatesDto.MaxSystemPackageDetails)
+                throw new FormatException("Invalid system package update details.");
+            packages.Add(new(fields[1], fields[2].Length == 0 ? null : fields[2], fields[3]));
+        }
+        if (packages.Count != Math.Min(count, RunnerUpdatesDto.MaxSystemPackageDetails))
+            throw new FormatException("Incomplete system package update details.");
+        return packages;
+
+        static bool Valid(string value) => value.Length is > 0 and <= 200 && !value.Any(c => char.IsControl(c) || char.IsWhiteSpace(c));
     }
 }

@@ -58,7 +58,15 @@ try {
                 { id: 'codex', name: 'Codex', installedVersion: '0.163.0', latestVersion: '0.164.0', updateAvailable: true },
                 { id: 'grok', name: 'Grok', installedVersion: '1.0.67', latestVersion: '1.0.70', updateAvailable: true },
                 { id: 'vscode', name: 'VS Code', installedVersion: '4.100.0', latestVersion: '4.100.0', updateAvailable: false }
-            ], softwareCheckedAt: at, systemPackageCount: 6, systemCheckedAt: at, checking: false, rebootRequired: true
+            ], softwareCheckedAt: at, systemPackageCount: 6, systemCheckedAt: at, checking: false, rebootRequired: true,
+            systemPackages: [
+                { name: 'curl', installedVersion: '1.0', latestVersion: '1.1' },
+                { name: 'git', installedVersion: '2.0', latestVersion: '2.1' },
+                { name: 'libexample:amd64', installedVersion: '1.0', latestVersion: '1.2' },
+                { name: 'openssl', installedVersion: '3.0', latestVersion: '3.1' },
+                { name: 'example-data', installedVersion: '1.0', latestVersion: '1.1' },
+                { name: 'new-dependency', installedVersion: null, latestVersion: '1.0' }
+            ]
         };
         const runner = () => ({ id, name: 'build-runner', ownerId: me.id, ownerName: 'Admin', access: 'Owner', providerId: 'existing', kind: 'Headless', state,
             machineId: '30001', host: 'runner.test', username: 'runneruser', sshPort: 22, cores: 4, memoryMb: 8192, diskGb: 64,
@@ -100,6 +108,36 @@ try {
         assert.match(await headerUpdate.innerText(), /6 system/);
         await page.locator('.operation', { hasText: 'Update Codex' }).getByText('0.164.0', { exact: true }).waitFor();
         await status.getByText('Restart needed', { exact: true }).waitFor();
+        const tip = page.locator('.help-tooltip.mud-popover-open').filter({ has: page.locator('.runner-upgrade-details') });
+        assert.equal(await tip.count(), 0, 'Upgrade details stay out of view until hover or focus');
+        const assertUpgradeTooltip = async button => {
+            const before = requests;
+            await button.hover();
+            await tip.getByText('Tools (3)', { exact: true }).waitFor();
+            await tip.getByText('System packages (6)', { exact: true }).waitFor();
+            await tip.locator('li').filter({ hasText: 'Codex' }).getByText('0.163.0 → 0.164.0', { exact: true }).waitFor();
+            await tip.locator('li').filter({ hasText: 'git' }).getByText('2.0 → 2.1', { exact: true }).waitFor();
+            await tip.locator('li').filter({ hasText: 'new-dependency' }).getByText('install 1.0', { exact: true }).waitFor();
+            assert.equal(await tip.locator('li').filter({ hasText: 'VS Code' }).count(), 0, 'Up-to-date tools are omitted');
+            assert.equal(requests, before, 'Hover does not check or install anything');
+            assert.doesNotMatch(await tip.innerText(), /GitHub token|SSH keys|apt-get dist-upgrade/);
+            await page.waitForFunction(() => {
+                const tip = document.querySelector('.help-tooltip.hold-help-details.mud-popover-open');
+                const bounds = tip?.getBoundingClientRect();
+                return bounds && bounds.left >= 0 && bounds.right <= document.documentElement.clientWidth + 1;
+            });
+            const bounds = await tip.boundingBox(), viewport = page.viewportSize();
+            assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= viewport.width + 1, 'The upgrade tooltip fits the viewport');
+            await tip.screenshot({ path: `/tmp/dam-update-all-tooltip-${theme}-${viewport.width}.png` });
+            await page.mouse.move(0, 0);
+            await tip.waitFor({ state: 'hidden' });
+        };
+        await assertUpgradeTooltip(headerUpdate);
+        await headerUpdate.focus();
+        await tip.getByText('System packages (6)', { exact: true }).waitFor();
+        await headerUpdate.evaluate(button => button.blur());
+        await tip.waitFor({ state: 'hidden' });
+
         await page.screenshot({ path: `/tmp/dam-runner-updates-detail-${theme}.png`, fullPage: true });
         const staleStarted = new Promise<void>(resolve => { readStarted = resolve; });
         const staleFinished = new Promise<void>(resolve => { readFinished = resolve; });
@@ -146,11 +184,24 @@ try {
         await page.reload();
         await status.getByText(/3\+ tool updates/).waitFor({ timeout: 60000 });
         assert.doesNotMatch(await status.innerText(), /up to date/i);
+        await headerUpdate.hover();
+        await tip.getByText('Last check incomplete; showing saved results.', { exact: true }).waitFor();
+        await tip.locator('li').filter({ hasText: 'git' }).getByText('2.0 → 2.1', { exact: true }).waitFor();
+        await page.mouse.move(0, 0);
+        await tip.waitFor({ state: 'hidden' });
         updates = { software: [], softwareError: 'Release check unavailable', systemError: 'Repository unavailable', checking: false };
         await page.reload();
         await status.getByText('Tool check incomplete · System check failed', { exact: true }).waitFor({ timeout: 60000 });
         assert.doesNotMatch(await headerUpdate.innerText(), /0/);
-        updates = { ...structuredClone(observed), software: observed.software.map(s => ({ ...s, installedVersion: s.latestVersion, updateAvailable: false })), systemPackageCount: 0, rebootRequired: false };
+        updates = { ...structuredClone(observed), systemPackageCount: 0, systemPackages: [], systemError: 'Repository unavailable' };
+        await page.reload();
+        await status.getByText(/0 system updates \(last check\)/).waitFor();
+        await headerUpdate.hover();
+        await tip.getByText('System update check unavailable.', { exact: true }).waitFor();
+        assert.doesNotMatch(await tip.innerText(), /System packages up to date/);
+        await page.mouse.move(0, 0);
+        await tip.waitFor({ state: 'hidden' });
+        updates = { ...structuredClone(observed), software: observed.software.map(s => ({ ...s, installedVersion: s.latestVersion, updateAvailable: false })), systemPackageCount: 0, systemPackages: [], rebootRequired: false };
         await page.reload();
         await status.getByText('Tools up to date · System up to date', { exact: true }).waitFor({ timeout: 60000 });
         assert.equal(await headerUpdate.locator('.runner-update-count').count(), 0, 'No zero-count badge after a complete check');
@@ -165,6 +216,7 @@ try {
         const card = page.locator('.runner-card').first();
         await card.locator('.runner-update-count').first().waitFor({ timeout: 60000 });
         await page.screenshot({ path: `/tmp/dam-runner-updates-cards-${theme}.png`, fullPage: true });
+        await assertUpgradeTooltip(card.getByRole('button', { name: 'Update all', exact: true }));
         const buttons = card.locator('.runner-card-actions button');
         for (const width of [320, 360, 390, 768, 1400]) {
             await page.setViewportSize({ width, height: 844 });
@@ -183,6 +235,7 @@ try {
         await page.setViewportSize({ width: 390, height: 844 });
         await page.waitForTimeout(500);
         await page.screenshot({ path: `/tmp/dam-runner-updates-phone-${theme}.png`, fullPage: true });
+        await assertUpgradeTooltip(card.getByRole('button', { name: 'Update all', exact: true }));
         await page.goto(base + `/runners/${id}`);
         await status.getByText('3 tool updates · 6 system updates', { exact: true }).waitFor({ timeout: 60000 });
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Runner update details fit a phone');

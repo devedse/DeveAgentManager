@@ -80,6 +80,24 @@ public class RunnerUpdateTests
     }
 
     [Fact]
+    public void PackageDetailsAreBoundedAndIncompleteDetailsNeverReplaceSavedResults()
+    {
+        const string output = "DAM_PACKAGE\tlibexample:amd64\t1.0\t2.0\nDAM_PACKAGE\tnew-dependency\t\t1.2\nDAM_PACKAGES=2\nDAM_PACKAGE_DETAILS=1\nDAM_REBOOT=0\n";
+        var packages = RunnerUpdateMonitor.ParseSystemPackages(output, 2)!;
+        Assert.Equal(new("libexample:amd64", "1.0", "2.0"), packages[0]);
+        Assert.Equal(new("new-dependency", null, "1.2"), packages[1]);
+        Assert.Null(RunnerUpdateMonitor.ParseSystemPackages("DAM_PACKAGES=2\nDAM_REBOOT=0", 2));
+        Assert.Empty(RunnerUpdateMonitor.ParseSystemPackages("DAM_PACKAGE_DETAILS=1\n", 0)!);
+        Assert.Throws<FormatException>(() => RunnerUpdateMonitor.ParseSystemPackages(output, 3));
+        Assert.Throws<FormatException>(() => RunnerUpdateMonitor.ParseSystemPackages(output.Replace("\t2.0", "\t"), 2));
+        Assert.Throws<FormatException>(() => RunnerUpdateMonitor.ParseSystemPackages(output.Replace("new-dependency", "libexample:amd64"), 2));
+        Assert.Throws<FormatException>(() => RunnerUpdateMonitor.ParseSystemPackages(output + "DAM_PACKAGE_DETAILS=1\n", 2));
+        var bounded = string.Join('\n', Enumerable.Range(0, RunnerUpdatesDto.MaxSystemPackageDetails).Select(i => $"DAM_PACKAGE\tpackage-{i}\t1.0\t2.0")) + "\nDAM_PACKAGE_DETAILS=1\n";
+        Assert.Equal(RunnerUpdatesDto.MaxSystemPackageDetails, RunnerUpdateMonitor.ParseSystemPackages(bounded, 500)!.Count);
+        Assert.Throws<FormatException>(() => RunnerUpdateMonitor.ParseSystemPackages(bounded + "DAM_PACKAGE\textra\t1.0\t2.0\n", 500));
+    }
+
+    [Fact]
     public async Task ReleaseLookupsAreSharedAndAnOutageKeepsTheLastVersionButMarksItUnknown()
     {
         var clock = new Clock(); var handler = new Registry(); using var client = new HttpClient(handler);
@@ -138,6 +156,7 @@ public class RunnerUpdateTests
         var result = await fixture.Shell.RunAsync(fixture.Runner, command, cancellationToken: ct);
         Assert.True(result.Succeeded, result.Combined);
         Assert.Equal(2, RunnerUpdateMonitor.ParseSystem(result.Output).Count);
+        Assert.Equal([new("existing", "1.0", "2.0"), new("new-dependency", null, "1.0")], RunnerUpdateMonitor.ParseSystemPackages(result.Output, 2));
         var arguments = await File.ReadAllLinesAsync(calls, ct);
         Assert.Equal(2, arguments.Length);
         Assert.StartsWith("-q update ", arguments[0]);
