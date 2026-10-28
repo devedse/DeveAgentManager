@@ -170,6 +170,8 @@ await page.setViewportSize({width:1280,height:900});
 console.log('Checking manual schedule');
 // No limit is required for an explicit manual test.
 await page.getByRole('button',{name:'Schedule continue',exact:true}).click();
+await page.getByRole('dialog').locator('.mud-select').first().click();
+await page.getByRole('option',{name:'One-time schedule',exact:true}).click();
 await page.getByText('Manual continuation — no usage limit is required.',{exact:true}).waitFor();
 assert.equal(await page.getByRole('spinbutton',{name:'Continue in',exact:true}).inputValue(),'1');
 await page.locator('.mud-dialog').getByRole('button',{name:'Schedule continue',exact:true}).click();
@@ -236,6 +238,8 @@ await page.getByRole('button',{name:'Usage limit: schedule continue after reset'
 await page.getByText("You've hit your weekly limit · resets Oct 4, 3am (Europe/Amsterdam)",{exact:true}).waitFor();
 await page.screenshot({path:'/tmp/dam-claude-limit-phone.png'});
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,'horizontal overflow');
+await page.getByRole('dialog').locator('.mud-select').first().click();
+await page.getByRole('option',{name:'One-time schedule',exact:true}).click();
 await page.getByText('Your local timezone: Europe/Amsterdam',{exact:true}).waitFor();
 assert.equal(await page.getByRole('textbox',{name:'Reset time',exact:true}).inputValue(),'04:00');
 await page.getByRole('button',{name:'Use detected reset time (+1 min)',exact:true}).click();
@@ -248,6 +252,8 @@ await page.getByRole('button',{name:'Schedule continue',exact:true}).click();
 await page.waitForTimeout(300);
 assert.equal(Date.parse(schedules[0].resetAtUtc),Date.parse('2026-10-04T01:00:00Z'));
 await page.getByRole('button',{name:'Usage limit: schedule continue after reset',exact:true}).click();
+await page.getByRole('dialog').locator('.mud-select').first().click();
+await page.getByRole('option',{name:'One-time schedule',exact:true}).click();
 await page.getByRole('switch',{name:'Continue after a duration'}).check();
 await page.getByRole('spinbutton',{name:'Continue in',exact:true}).fill('5');
 await page.getByRole('button',{name:'Schedule continue',exact:true}).click();
@@ -257,6 +263,8 @@ for (const [status,hint] of [['Sent','Continue submitted; view result'],['Cancel
  limitStatus=status; limitDetail='Result of scheduled attempt: '+status+'.';
  await page.getByRole('button',{name:hint,exact:true}).waitFor({timeout:25000});
  await page.getByRole('button',{name:hint,exact:true}).click();
+ await page.getByRole('dialog').locator('.mud-select').first().click();
+ await page.getByRole('option',{name:'One-time schedule',exact:true}).click();
  await page.getByText(limitDetail,{exact:true}).waitFor();
  assert.equal(await page.getByRole('button',{name:'Schedule continue',exact:true}).count(),status==='Cancelled'?1:0);
  await page.getByRole('button',{name:'Close',exact:true}).last().click();
@@ -265,6 +273,8 @@ for (const [status,hint] of [['Sent','Continue submitted; view result'],['Cancel
 limitStatus='Scheduled';limitDetail=null;
 await page.getByRole('button',{name:'Continue scheduled for 2026-10-04 03:01 (Europe/Amsterdam)',exact:true}).waitFor({timeout:25000});
 await page.getByRole('button',{name:'Continue scheduled for 2026-10-04 03:01 (Europe/Amsterdam)',exact:true}).click();
+await page.getByRole('dialog').locator('.mud-select').first().click();
+await page.getByRole('option',{name:'One-time schedule',exact:true}).click();
 await page.getByText('2026-10-04 03:01 (Europe/Amsterdam)',{exact:true}).waitFor();
 await page.getByRole('button',{name:'Close',exact:true}).last().click();
 
@@ -272,6 +282,8 @@ limitVisible=false;
 await page.getByRole('button',{name:'Schedule continue',exact:true}).waitFor({timeout:25000});
 assert.equal(await page.getByRole('button',{name:'Schedule continue',exact:true}).evaluate(e=>e.classList.contains('mud-warning-text')),false);
 await page.getByRole('button',{name:'Schedule continue',exact:true}).click();
+await page.getByRole('dialog').locator('.mud-select').first().click();
+await page.getByRole('option',{name:'One-time schedule',exact:true}).click();
 await page.getByText('Manual continuation — no usage limit is required.',{exact:true}).waitFor();
 assert.equal(await page.getByText("You've hit your weekly limit",{exact:false}).count(),0);
 await page.getByRole('button',{name:'Close',exact:true}).last().click();

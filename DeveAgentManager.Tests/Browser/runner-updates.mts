@@ -1,5 +1,7 @@
 // Cached update status is independent of the Runner load and never turns failed/unknown checks into zero updates.
 import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 const base = process.env.DAM_TEST_URL ?? 'http://127.0.0.1:19081';
 const id = '00000000-0000-0000-0000-000000000001';
@@ -10,8 +12,16 @@ try {
         const context = await browser.newContext({ viewport: { width: 1400, height: 1100 }, colorScheme: theme });
         await context.addInitScript(theme => localStorage.setItem('dam-theme', theme), theme);
         const page = await context.newPage();
+        if (process.env.DAM_TEST_CPU_RATE) {
+            const cdp = await context.newCDPSession(page);
+            await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.DAM_TEST_CPU_RATE) });
+        }
         const errors = [];
+        const responses = [];
+        await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
         page.on('pageerror', e => errors.push(e.message));
+        page.on('response', r => { if (new URL(r.url()).pathname.startsWith('/api/')) responses.push({ url: new URL(r.url()).pathname, status: r.status() }); });
+        try {
         await page.goto(base + '/login');
         await page.locator('input[name="username"]').fill('admin');
         await page.locator('input[name="password"]').fill(process.env.DAM_TEST_PASSWORD ?? 'preview-test-only');
@@ -22,6 +32,26 @@ try {
         let updates: any = null;
         let state = 'Ready';
         let requests = 0;
+        let holdRead = false;
+        let readStarted: () => void;
+        let releaseRead: () => void;
+        let readFinished: () => void;
+        let emitChange: () => void;
+        // HTTP fixtures and live events describe the same Runner; no real server event races a mocked response.
+        await context.routeWebSocket('**/hubs/live**', socket => {
+            const send = value => socket.send(JSON.stringify(value) + '\u001e');
+            socket.onMessage(message => {
+                for (const frame of String(message).split('\u001e').filter(Boolean)) {
+                    const value = JSON.parse(frame);
+                    if (value.protocol) send({});
+                    else if (value.type === 6) send({ type: 6 });
+                    else if (value.invocationId) send({ type: 3, invocationId: value.invocationId, result: [] });
+                }
+            });
+            const ping = setInterval(() => send({ type: 6 }), 5000);
+            socket.onClose(() => clearInterval(ping));
+            emitChange = () => send({ type: 1, target: 'changed', arguments: [{ kind: 'RunnerChanged', runnerId: id }] });
+        });
         const observed = {
             software: [
                 { id: 'claude', name: 'Claude Code', installedVersion: '2.1.0', latestVersion: '2.2.0', updateAvailable: true },
@@ -34,7 +64,7 @@ try {
             machineId: '30001', host: 'runner.test', username: 'runneruser', sshPort: 22, cores: 4, memoryMb: 8192, diskGb: 64,
             agents: [], harnessIds: ['claude', 'codex', 'grok'], toolIds: ['vscode'], setupVersion: info.setupVersion,
             createdAt: at, updatedAt: at, installedVersions: 'Claude Code 2.1.0 · Codex 0.163.0 · Grok 1.0.67', updates });
-        await context.route('**/api/**', route => {
+        await context.route('**/api/**', async route => {
             const path = new URL(route.request().url()).pathname;
             if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/build' || path === '/api/diagnostics/cpu') return route.continue();
             if (route.request().method() === 'POST') {
@@ -46,6 +76,16 @@ try {
             }
             const body = path === '/api/info' ? info : path === '/api/runners' ? [runner()] : path === `/api/runners/${id}` ? runner()
                 : path.endsWith('/timezone') ? { defaultTimeZoneId: 'UTC', overrideTimeZoneId: null } : [];
+            if (holdRead && path === `/api/runners/${id}`) {
+                holdRead = false;
+                // Snapshot before the POST, then deliberately deliver this stale GET after the POST completes.
+                const snapshot = structuredClone(body);
+                readStarted();
+                await new Promise<void>(resolve => { releaseRead = resolve; });
+                await route.fulfill({ json: snapshot });
+                readFinished();
+                return;
+            }
             return route.fulfill({ json: body });
         });
         await page.goto(base + `/runners/${id}`);
@@ -61,12 +101,41 @@ try {
         await page.locator('.operation', { hasText: 'Update Codex' }).getByText('0.164.0', { exact: true }).waitFor();
         await status.getByText('Restart needed', { exact: true }).waitFor();
         await page.screenshot({ path: `/tmp/dam-runner-updates-detail-${theme}.png`, fullPage: true });
+        const staleStarted = new Promise<void>(resolve => { readStarted = resolve; });
+        const staleFinished = new Promise<void>(resolve => { readFinished = resolve; });
+        holdRead = true;
+        emitChange();
+        let timeout: ReturnType<typeof setTimeout>;
+        try {
+            await Promise.race([staleStarted, new Promise((_, reject) => {
+                timeout = setTimeout(() => reject(new Error('Controlled live refresh did not request the Runner')), 10000);
+            })]);
+        } finally { clearTimeout(timeout); }
         await Promise.all([
             page.waitForResponse(r => new URL(r.url()).pathname === `/api/runners/${id}/updates/check`),
             page.getByRole('button', { name: 'Check now', exact: true }).click()
         ]);
         assert.equal(requests, 1);
         await page.locator('button:disabled', { hasText: 'Check now' }).waitFor();
+        await page.evaluate(() => {
+            (window as any).__checkReenabled = false;
+            const observer = new MutationObserver(() => {
+                const button = [...document.querySelectorAll('button')].find(button => button.textContent.includes('Check now'));
+                if (button && !button.disabled) (window as any).__checkReenabled = true;
+            });
+            observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['disabled'] });
+            (window as any).__stopCheckObserver = () => observer.disconnect();
+        });
+        releaseRead();
+        await staleFinished;
+        // Follow with a real live refresh, observing the entire interval for a stale response re-enabling the button.
+        await Promise.all([
+            page.waitForResponse(r => new URL(r.url()).pathname === `/api/runners/${id}` && r.request().method() === 'GET'),
+            Promise.resolve().then(() => emitChange())
+        ]);
+        await status.getByText(/Checking…/).waitFor();
+        assert.equal(await page.evaluate(() => (window as any).__checkReenabled), false, 'An obsolete GET cannot undo an accepted update check');
+        await page.evaluate(() => (window as any).__stopCheckObserver());
         // A background refresh can replace the local optimistic status with the cached server status.
         // Exercise that deterministically instead of relying on the live connection's timing.
         await page.reload();
@@ -118,7 +187,17 @@ try {
         await status.getByText('3 tool updates · 6 system updates', { exact: true }).waitFor({ timeout: 60000 });
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Runner update details fit a phone');
         assert.deepEqual(errors, []);
+        await context.tracing.stop();
+        } catch (error) {
+            const directory = resolve('.validation/browser', `runner-updates-${theme}`);
+            mkdirSync(directory, { recursive: true });
+            await page.screenshot({ path: `${directory}/failure.png`, fullPage: true }).catch(() => {});
+            writeFileSync(`${directory}/responses.json`, JSON.stringify({ errors, responses: responses.slice(-100) }, null, 2));
+            await context.tracing.stop({ path: `${directory}/trace.zip` });
+            throw error;
+        } finally {
         await context.close();
+        }
     }
     console.log('Passed: Runner update counts, versions, unknown and failed checks, refresh, offline observations and phone layouts in both themes.');
 } finally { await browser.close(); }

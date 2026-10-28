@@ -1,18 +1,24 @@
 name: Security checks
 on:
   workflow_call:
+    inputs:
+      skip-image-checks:
+        description: 'The release workflow runs image checks against its already-built production image'
+        type: boolean
+        default: false
   pull_request:
   schedule:
     - cron: '17 4 * * 1'
 permissions:
   contents: read
+  packages: read
 jobs:
   dependencies:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Check verified symbol download retries
-        run: python3 tools/cpu-profiler/test_download_symbols.py
+      - name: Check verified diagnostic downloads
+        run: python3 -m unittest discover -s tools/cpu-profiler -p 'test_download*.py'
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
@@ -29,19 +35,9 @@ jobs:
           npm ci --prefix tools/browser-dependencies --ignore-scripts
           node .typescript/tools/browser-dependencies/verify.mjs
           npm audit --prefix tools/browser-dependencies --audit-level=high
-  container:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Build local image for scanning
-        run: docker build -t dam-security-test .
-      - uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: dam-security-test
-          severity: HIGH,CRITICAL
-          exit-code: '1'
-          ignore-unfixed: false
-          scanners: vuln
+  image:
+    if: ${{ !inputs.skip-image-checks }}
+    uses: ./.github/workflows/image-security.yml
   browser:
     name: browser (${{ matrix.suite }})
     runs-on: ubuntu-latest
@@ -68,13 +64,9 @@ jobs:
         env:
           BROWSER_SUITE: ${{ matrix.suite }}
         run: node .typescript/tools/security-browser/continuations.mjs "$BROWSER_SUITE"
-  passive-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - run: tools/security-browser/zap.sh
       - uses: actions/upload-artifact@v7
-        if: always()
+        if: failure()
         with:
-          name: isolated-zap-reports
-          path: .validation/zap
+          name: browser-failures-${{ matrix.suite }}
+          path: .validation/browser
+          if-no-files-found: ignore

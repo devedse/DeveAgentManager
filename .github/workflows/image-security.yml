@@ -1,0 +1,58 @@
+name: Image security checks
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: 'Production AMD64 image from this run; empty builds once for standalone PR/scheduled checks'
+        type: string
+        default: ''
+permissions:
+  contents: read
+  packages: read
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SCAN_IMAGE: ${{ inputs.image || 'dam-security-test:local' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+        if: inputs.image == ''
+      - name: Build one image for both scanners
+        if: inputs.image == ''
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: dam-security-test:local
+          cache-from: type=gha,scope=security-amd64
+          cache-to: type=gha,mode=max,scope=security-amd64,ignore-error=true
+      - uses: docker/login-action@v4
+        if: inputs.image != ''
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull this run's production image
+        if: inputs.image != ''
+        run: docker pull "$SCAN_IMAGE"
+      - name: Scan image vulnerabilities
+        id: trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.SCAN_IMAGE }}
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: false
+          scanners: vuln
+      - name: Run passive browser security checks on the same image
+        if: ${{ !cancelled() && (steps.trivy.outcome == 'success' || steps.trivy.outcome == 'failure') }}
+        env:
+          DAM_SCAN_IMAGE: ${{ env.SCAN_IMAGE }}
+        run: tools/security-browser/zap.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: isolated-zap-reports
+          path: .validation/zap

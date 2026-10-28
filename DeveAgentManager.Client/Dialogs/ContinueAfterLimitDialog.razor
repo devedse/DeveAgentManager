@@ -165,7 +165,8 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _autoMode = _enabled = Automatic.Enabled;
+        _autoMode = Automatic.Available || Automatic.Enabled;
+        _enabled = Automatic.Enabled;
         _limited = Automatic.Remaining is not null;
         _remaining = Math.Max(1, Automatic.Remaining ?? 1);
         _relative = Limit.Manual;
@@ -206,7 +207,8 @@
             Automatic = await Api.GetAutoContinueAsync(AgentId);
             AutomaticLoaded = true;
             AutomaticLoadError = null;
-            _autoMode = _enabled = Automatic.Enabled;
+            _autoMode = Automatic.Available || Automatic.Enabled;
+            _enabled = Automatic.Enabled;
             _limited = Automatic.Remaining is not null;
             _remaining = Math.Max(1, Automatic.Remaining ?? 1);
         }

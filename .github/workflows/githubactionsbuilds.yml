@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: build-${{ github.ref }}
@@ -133,14 +134,25 @@ jobs:
           BUILD_VERSION=${{ needs.prepare.outputs.version }}
         provenance: false
         sbom: false
+        cache-from: type=gha,scope=production-${{ matrix.arch }}
+        cache-to: type=gha,mode=max,scope=production-${{ matrix.arch }},ignore-error=true
 
   security:
     name: Security and browser checks
     uses: ./.github/workflows/security.yml
+    with:
+      skip-image-checks: true
+
+  image_security:
+    name: Production image security checks
+    needs: build_images
+    uses: ./.github/workflows/image-security.yml
+    with:
+      image: ghcr.io/devedse/deveagentmanager:build-${{ github.run_id }}-amd64
 
   publish_image:
     name: Publish multi-architecture image
-    needs: [prepare, build_and_test, build_images, security]
+    needs: [prepare, build_and_test, build_images, security, image_security]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

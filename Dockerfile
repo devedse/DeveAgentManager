@@ -59,9 +59,9 @@ RUN set -eu; \
       if [ "$attempt" = 3 ]; then exit 1; fi; \
       sleep "$((attempt * 5))"; \
     done
-COPY tools/cpu-profiler/download-profiler.py tools/cpu-profiler/download-symbols.py /cpu-tools/
-RUN python3 /cpu-tools/download-profiler.py
-RUN python3 /cpu-tools/download-symbols.py
+COPY tools/cpu-profiler/download-profiler.py tools/cpu-profiler/download-symbols.py tools/cpu-profiler/verified_download.py /cpu-tools/
+RUN --mount=type=cache,target=/cpu-downloads,sharing=locked CPU_DOWNLOAD_CACHE=/cpu-downloads python3 /cpu-tools/download-profiler.py
+RUN --mount=type=cache,target=/cpu-downloads,sharing=locked CPU_DOWNLOAD_CACHE=/cpu-downloads python3 /cpu-tools/download-symbols.py
 COPY --from=build /app/publish /publish
 COPY tools/cpu-profiler/package-symbols.py /cpu-tools/
 RUN python3 /cpu-tools/package-symbols.py

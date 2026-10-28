@@ -57,12 +57,12 @@ try {
         errors.length = 0;
         await page.locator('[data-toolbar="limit"] button').click();
         await page.getByRole('dialog').waitFor();
-        await page.getByRole('dialog').locator('.mud-select').first().click();
-        await page.getByRole('option', { name: /^Automatic after usage limits/ }).click();
+        await page.getByRole('dialog').getByRole('button', { name: 'Save automatic settings', exact: true }).waitFor();
     };
 
     // A limit with a reset time: shown before switching on, and the next continue right after.
     await openDialog();
+    assert.equal(automaticRequests.length, 0, 'Opening automatic mode does not enable or save the policy');
     const dialog = page.getByRole('dialog');
     await dialog.getByText("You've hit your limit · resets 2pm (Europe/Amsterdam)").waitFor();
     await dialog.getByText('Detected reset: 2030-01-02 14:00').waitFor();
@@ -180,7 +180,7 @@ try {
     const offer = page.getByRole('status', { name: 'Turn on auto-continue' });
     const showAgent = async () => {
         await page.goto(base + `/agents/${id}`);
-        await page.locator('.terminal-toolbar [aria-label="More actions"]').waitFor({ timeout: 60000 });
+        await page.locator('.terminal-toolbar').waitFor({ timeout: 60000 });
         errors.length = 0;
     };
     const offered = async () => {

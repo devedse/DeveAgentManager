@@ -350,9 +350,12 @@
 
     protected override async Task LoadAsync()
     {
+        var version = ++_runnerLoadVersion;
         _info ??= await Api.InfoAsync();
         _user = await Me.GetAsync();
-        _runner = await Api.GetRunnerAsync(RunnerId);
+        var runner = await Api.GetRunnerAsync(RunnerId);
+        if (version != _runnerLoadVersion) return;
+        _runner = runner;
         if (_runner?.Kind == RunnerKind.Desktop && DateTime.UtcNow - _desktopReadAt >= TimeSpan.FromSeconds(15))
             await RefreshDesktopAsync();
         if (_runner is not null && !_tabChosen)
@@ -402,6 +405,7 @@
         }
     }
 
+    private long _runnerLoadVersion;
     private bool _checkingUpdates;
     private async Task CheckUpdatesAsync()
     {
@@ -409,6 +413,8 @@
         try
         {
             await Api.CheckRunnerUpdatesAsync(RunnerId);
+            // A refresh started before the accepted check may still return the old cached status.
+            ++_runnerLoadVersion;
             if (_runner is not null) _runner = _runner with { Updates = (_runner.Updates ?? new RunnerUpdatesDto([])) with { Checking = true } };
         }
         catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
