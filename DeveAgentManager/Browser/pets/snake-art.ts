@@ -585,7 +585,7 @@ class SnekRig {
     switch (m) {
       case 'drag':
         p.height = B.height * .95; plan.tilt = live * Math.sin(e * 24) * .025;
-        Object.assign(face, { eyes: 'shocked', open: .35, tongue: 'none', blink: false }); break;
+        Object.assign(face, { eyes: 'shocked', open: 1, tongue: 'none', blink: false }); break;
       case 'slide': {
         const vx = frame.velocity?.x ?? 450, lean = live * Math.max(-1, Math.min(1, vx / 900));
         p.height = B.height * .8; p.headDX += lean * 20; p.bend -= lean * 18;
@@ -601,7 +601,7 @@ class SnekRig {
       }
       case 'flap': case 'toss':
         plan.kind = 'air'; plan.tilt = live * Math.sin(e * 12) * .08; plan.shake = live * .8;
-        Object.assign(face, { eyes: 'shocked', open: .35, tongue: 'none', blink: false }); break;
+        Object.assign(face, { eyes: 'shocked', open: 1, tongue: 'none', blink: false }); break;
       case 'land': {
         plan.kind = 'land'; plan.coilAmount = live * (1 - rigSmooth(.12, .95, e));
         const recoil = live * Math.exp(-e * 5) * Math.sin(e * 22);

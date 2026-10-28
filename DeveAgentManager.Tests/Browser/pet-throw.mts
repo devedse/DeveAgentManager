@@ -97,7 +97,7 @@ try {
         await reset(page, species); await drag(page, 100, -100);
         await page.locator('.dam-pet-host[data-motion="flap"]').waitFor();
         if (species === 'snek') await page.locator('.dam-pet-art [data-pose="air"]').waitFor();
-        else await page.locator('.dam-pet-host[data-motion="flap"] .dam-pet-art [data-cell="10"]').waitFor();
+        else await page.locator('.dam-pet-host[data-motion="flap"] .dam-pet-art [data-cell="5"]').waitFor();
         const release = await position(page);
         await page.waitForTimeout(150);
         const rising = await position(page);
@@ -169,12 +169,14 @@ try {
     async function swipe(cancel: boolean) {
         const body = await phone.locator('.dam-pet-body').boundingBox();
         const x = body!.x + 70, y = body!.y + 60;
-        await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        // Gesture speed comes from device samples, independently of browser/transport scheduling.
+        const timestamp = Date.now() / 1000;
+        await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', timestamp, touchPoints: [{ x, y }] });
         for (let i = 1; i <= 4; i++) {
             await phone.waitForTimeout(18);
-            await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + i * 10, y: y - i * 45 }] });
+            await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', timestamp: timestamp + i * .02, touchPoints: [{ x: x + i * 10, y: y - i * 45 }] });
         }
-        await touch.send('Input.dispatchTouchEvent', { type: cancel ? 'touchCancel' : 'touchEnd', touchPoints: [] });
+        await touch.send('Input.dispatchTouchEvent', { type: cancel ? 'touchCancel' : 'touchEnd', timestamp: timestamp + .085, touchPoints: [] });
     }
     await swipe(false);
     await phone.locator('.dam-pet-host[data-motion="flap"]').waitFor();
