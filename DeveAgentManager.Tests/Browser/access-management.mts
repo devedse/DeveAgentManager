@@ -104,7 +104,9 @@ try {
     assert.equal(await menu.getByRole('button', { name: /carol · Disabled/ }).count(), 0, 'disabled logins do not appear in the switcher');
     assert.ok(accountRequests.length > 0 && accountRequests.every(path => path === '/api/accounts'), 'switcher requests personal visibility, not the administrator catalog');
     await menu.getByRole('link', { name: 'Install Grok on test-runner' }).waitFor();
-    const lefts = await menu.locator('.switch-option-label').evaluateAll(nodes => nodes.map(n => Math.round(n.getBoundingClientRect().left)));
+    // pi is a top-level harness choice; only saved-login rows carry account identities and share this indent.
+    const lefts = await menu.locator('.switch-option-label').filter({ has: page.locator('.account-identity') })
+        .evaluateAll(nodes => nodes.map(n => Math.round(n.getBoundingClientRect().left)));
     assert.equal(new Set(lefts).size, 1, 'all account labels share an aligned left edge');
     await assertIdentityColors(menu.getByRole('button', { name: /alice · Personal/ }).locator('.account-identity'));
     await assertIdentityColors(menu.getByRole('button', { name: /bob · Shared/ }).locator('.account-identity'));

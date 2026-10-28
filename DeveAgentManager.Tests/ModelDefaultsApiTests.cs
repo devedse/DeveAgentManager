@@ -25,8 +25,11 @@ public sealed class ModelDefaultsApiTests(ApiSecurityTests.Manager manager) : IC
     private const string Password = "test-only-models-1";
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    [Fact]
-    public async Task PiForwardsSeveralAccountsWithPersonalGrantsAndRejectsUnavailableSelections()
+    [Theory]
+    [InlineData(AgentState.Running)]
+    [InlineData(AgentState.Stopped)]
+    [InlineData(AgentState.Error)]
+    public async Task PiForwardsSeveralAccountsWithPersonalGrantsAndRejectsUnavailableSelections(AgentState state)
     {
         var (client, userId) = await SignedInAsNewUserAsync();
         var accounts = manager.Services.GetRequiredService<AccountService>();
@@ -54,12 +57,12 @@ public sealed class ModelDefaultsApiTests(ApiSecurityTests.Manager manager) : IC
         var factory = manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>();
         await using var db = await factory.CreateDbContextAsync(Ct);
         var agent = new Agent { Id = Guid.NewGuid(), OwnerId = userId, HarnessId = "pi", Name = "Test pi",
-            Runner = new Runner { Name = "test-" + Guid.NewGuid().ToString("N"), OwnerId = userId, State = RunnerState.Stopped }, State = AgentState.Running };
+            Runner = new Runner { Name = "test-" + Guid.NewGuid().ToString("N"), OwnerId = userId, State = RunnerState.Stopped }, State = state };
         db.Agents.Add(agent);
         db.AgentPiLogins.AddRange(ids.Append(other.Id).Select(id => new AgentPiLogin { AgentId = agent.Id, AccountId = id }));
         await db.SaveChangesAsync(Ct);
         Assert.Equal(HttpStatusCode.OK, (await Save(ids)).StatusCode);
-        Assert.Contains((await accounts.ImpactAsync(TestUsers.Admin, other.Id, userId, Ct)).Agents, a => a.Running);
+        Assert.Equal(state == AgentState.Running, Assert.Single((await accounts.ImpactAsync(TestUsers.Admin, other.Id, userId, Ct)).Agents).Running);
         await accounts.SetGrantAsync(TestUsers.Admin, other.Id, userId, null, Ct);
         db.ChangeTracker.Clear();
         var blocked = await db.Agents.SingleAsync(a => a.Id == agent.Id, Ct);

@@ -258,7 +258,8 @@ public sealed partial class AccountService
         foreach (var a in agents)
         {
             a.LoginBlocked = true;
-            a.LoginStopPending |= a.State is AgentState.Running or AgentState.Starting || a.HarnessId == "pi" && a.State == AgentState.Error;
+            // An uncertain pi launch may still be recorded as Stopped or Error while its process is alive.
+            a.LoginStopPending |= a.State is AgentState.Running or AgentState.Starting || a.HarnessId == "pi";
             a.StateMessage = "Harness login access ended. Choose a permitted login.";
         }
     }
