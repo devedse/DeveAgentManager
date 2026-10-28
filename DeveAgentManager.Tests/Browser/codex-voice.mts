@@ -4,19 +4,30 @@ const base = process.env.DAM_TEST_URL ?? 'http://127.0.0.1:5109';
 const browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
 declare global {
     interface Window {
-        codexVoiceTest: { streams: MediaStream[]; peers: any[]; denied: boolean; hold: boolean; release: (() => void) | null; blocked: boolean };
+        codexVoiceTest: { streams: MediaStream[]; peers: any[]; denied: boolean; hold: boolean; release: (() => void) | null; blocked: boolean; rejectReplacement: boolean };
     }
 }
 try {
     const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, hasTouch: true });
     await context.addInitScript(() => {
-        const test = window.codexVoiceTest = { streams: [], peers: [], denied: false, hold: false, release: null, blocked: false };
+        const test = window.codexVoiceTest = { streams: [], peers: [], denied: false, hold: false, release: null, blocked: false, rejectReplacement: false };
         const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
         navigator.mediaDevices.getUserMedia = async constraints => {
             if (test.denied) throw new DOMException('Test-only denial', 'NotAllowedError');
             if (test.hold) { test.hold = false; await new Promise<void>(resolve => { test.release = resolve; }); }
-            const stream = await original(constraints); test.streams.push(stream); return stream;
+            const audio = constraints.audio as MediaTrackConstraints;
+            const id = (audio?.deviceId as ConstrainDOMStringParameters)?.exact || 'test-mic-one';
+            if (id === 'test-missing') throw new DOMException('Test-only missing device', 'NotFoundError');
+            const stream = await original({ audio: true });
+            const track = stream.getAudioTracks()[0];
+            const settings = track.getSettings.bind(track);
+            track.getSettings = () => ({ ...settings(), deviceId: String(id) });
+            test.streams.push(stream); return stream;
         };
+        navigator.mediaDevices.enumerateDevices = async () => [
+            { deviceId: 'test-mic-one', kind: 'audioinput', label: 'Microphone one', groupId: 'test-one' },
+            { deviceId: 'test-mic-two', kind: 'audioinput', label: 'Microphone two', groupId: 'test-two' },
+        ] as MediaDeviceInfo[];
         // Real browser microphone tracks with deterministic signaling: lifecycle failures need no upstream account.
         window.RTCPeerConnection = class {
             localDescription = { type: 'offer', sdp: 'test-only offer' };
@@ -24,8 +35,12 @@ try {
             onconnectionstatechange = null;
             ontrack = null;
             channel = { onopen: null, onmessage: null };
+            sender = { track: null, async replaceTrack(track) {
+                if (test.rejectReplacement) throw new Error('Test-only replacement failure');
+                this.track = track;
+            } };
             constructor() { test.peers.push(this); }
-            addTrack() { }
+            addTrack(track) { this.sender.track = track; return this.sender; }
             createDataChannel() { return this.channel; }
             async createOffer() { return this.localDescription; }
             async setLocalDescription() { }
@@ -75,7 +90,10 @@ try {
     const closedTracks = () => page.evaluate(() => window.codexVoiceTest.streams.every(s => s.getTracks().every(t => t.readyState === 'ended')));
     await navigate();
     assert.equal(messages.length, 0, 'viewing an agent does not start voice');
-    await page.evaluate(() => { window.codexVoiceTest.denied = true; });
+    await page.evaluate(() => {
+        window.codexVoiceTest.denied = true;
+        localStorage.setItem('dam-voice-microphone', 'test-missing');
+    });
     await page.getByRole('button', { name: 'Start voice', exact: true }).click();
     await page.getByText('Microphone access was denied. Allow it in your browser and retry.', { exact: true }).waitFor();
     assert.equal(messages.length, 0, 'denied permission does not create a session');
@@ -83,9 +101,27 @@ try {
     await page.keyboard.press('F8');
     await page.getByText('Voice connected', { exact: true }).waitFor();
     assert.equal(messages.filter(m => m.type === 'start').length, 1, 'F8 starts exactly one call');
+    const microphone = page.getByRole('combobox', { name: 'Microphone', exact: true });
+    await microphone.waitFor();
+    assert.equal(await microphone.inputValue(), 'test-mic-one', 'a missing preferred device falls back to the available microphone');
+    await page.waitForFunction(() => Number(document.querySelector('[aria-label="Microphone input level"]')?.getAttribute('aria-valuenow')) > 0);
     await page.getByRole('button', { name: 'Mute microphone', exact: true }).click();
     await page.getByText('Microphone muted', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.codexVoiceTest.streams.at(-1).getAudioTracks()[0].enabled), false);
+    await page.waitForFunction(() => document.querySelector('[aria-label="Microphone input level"]')?.getAttribute('aria-valuenow') === '0');
+    await microphone.selectOption('test-mic-two');
+    await page.waitForFunction(() => window.codexVoiceTest.peers.at(-1).sender.track === window.codexVoiceTest.streams.at(-1).getAudioTracks()[0]);
+    assert.equal(await page.evaluate(() => window.codexVoiceTest.streams[0].getAudioTracks()[0].readyState), 'ended', 'changing microphones releases the previous input');
+    assert.equal(await page.evaluate(() => window.codexVoiceTest.peers.at(-1).sender.track.enabled), false, 'a microphone switch preserves mute');
+    assert.equal(messages.filter(m => m.type === 'start').length, 1, 'changing microphones keeps the existing call');
+    assert.equal(await page.evaluate(() => localStorage.getItem('dam-voice-microphone')), 'test-mic-two', 'the chosen microphone is remembered');
+    await page.evaluate(() => { window.codexVoiceTest.rejectReplacement = true; });
+    await microphone.selectOption('test-mic-one');
+    await page.getByText('That microphone could not open. Your previous microphone is still selected.', { exact: true }).waitFor();
+    assert.equal(await microphone.inputValue(), 'test-mic-two', 'failed replacement retains the selected microphone');
+    assert.equal(await page.evaluate(() => window.codexVoiceTest.peers.at(-1).sender.track.readyState), 'live', 'failed replacement leaves the active input live');
+    assert.equal(await page.evaluate(() => window.codexVoiceTest.streams.at(-1).getAudioTracks()[0].readyState), 'ended', 'failed replacement releases its unused capture');
+    await page.evaluate(() => { window.codexVoiceTest.rejectReplacement = false; });
     await page.getByRole('button', { name: 'Unmute microphone', exact: true }).click();
     await page.getByText('Voice connected', { exact: true }).waitFor();
     await page.evaluate(() => {
@@ -162,6 +198,18 @@ try {
 
     await page.getByRole('button', { name: 'Start voice', exact: true }).click();
     await page.getByText('Voice connected', { exact: true }).waitFor();
+    assert.equal(await microphone.inputValue(), 'test-mic-two', 'the next call uses the chosen microphone');
+    await page.evaluate(() => { window.codexVoiceTest.hold = true; window.codexVoiceTest.release = null; });
+    await microphone.selectOption('test-mic-one');
+    await page.waitForFunction(() => window.codexVoiceTest.release !== null);
+    await page.getByRole('button', { name: 'End voice', exact: true }).click();
+    await page.getByRole('button', { name: 'Start voice', exact: true }).waitFor();
+    await page.evaluate(() => window.codexVoiceTest.release());
+    await page.waitForTimeout(300);
+    assert.equal(await closedTracks(), true, 'ending voice during an input switch also releases the late replacement');
+
+    await page.getByRole('button', { name: 'Start voice', exact: true }).click();
+    await page.getByText('Voice connected', { exact: true }).waitFor();
     await page.evaluate(() => {
         Object.defineProperty(document, 'hidden', { configurable: true, value: true });
         document.dispatchEvent(new Event('visibilitychange'));
@@ -183,5 +231,5 @@ try {
     await page.locator('.terminal-frame').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Start voice', exact: true }).count(), 0, 'other harnesses have no Codex voice controls');
     assert.deepEqual(errors, []);
-    console.log('PASS: voice permission, F8, mute, playback recovery, competing tabs, pending permission cancellation, navigation, hidden tabs, read-only access, phone themes and help sizing/scrolling');
+    console.log('PASS: voice permission, microphone level, input choice/preference, muted replacement, failed and cancelled switches, F8, playback recovery, competing tabs, pending permission cancellation, navigation, hidden tabs, read-only access, phone themes and help sizing/scrolling');
 } finally { await browser.close(); }

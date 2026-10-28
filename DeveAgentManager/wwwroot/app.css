@@ -1783,6 +1783,20 @@ html:has(.terminal-layout) body {
 .terminal-voice-status { flex: 1; min-width: 0; font-size: .8rem; color: var(--dam-muted); overflow-wrap: anywhere; }
 .terminal-voice-error { color: var(--dam-error); }
 .terminal-voice audio { display: none; }
+.terminal-voice-microphone {
+    flex: 0 1 180px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 4px;
+    border: 1px solid var(--dam-border);
+    border-radius: 6px;
+    color: var(--dam-text);
+    background: var(--dam-surface);
+    font-size: .8rem;
+}
+.terminal-voice-input { display: inline-flex; align-items: center; gap: 4px; font-size: .75rem; color: var(--dam-muted); }
+.terminal-voice-input-level { display: inline-block; width: 44px; height: 8px; overflow: hidden; border-radius: 4px; background: var(--dam-border); }
+.terminal-voice-input-level > span { display: block; height: 100%; width: var(--dam-microphone-level, 0%); background: var(--dam-primary); }
 .terminal-frame {
     position: relative;
     flex: 1;

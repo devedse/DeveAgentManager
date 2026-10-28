@@ -16,11 +16,26 @@
         <MudButton Size="Size.Small" StartIcon="@Icons.Material.Rounded.CallEnd" OnClick="EndAsync">End voice</MudButton>
         @if (_playbackBlocked)
         { <MudButton Size="Size.Small" OnClick="PlayAsync">Play audio</MudButton> }
+        @if (_phase == "connected")
+        {
+            @if (_microphones.Length > 0)
+            {
+                <select class="terminal-voice-microphone" aria-label="Microphone" title="Microphone" value="@_microphone" @onchange="ChangeMicrophoneAsync" disabled="@_changingInput">
+                    @foreach (var input in _microphones)
+                    { <option value="@input.Id">@input.Label</option> }
+                </select>
+            }
+            <span class="terminal-voice-input">
+                <span aria-hidden="true">Mic</span>
+                <span class="terminal-voice-input-level" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="Microphone input level"><span></span></span>
+            </span>
+        }
     }
     <span class="terminal-voice-status @(_error is not null ? "terminal-voice-error" : "")" role="status" aria-live="polite">@Status</span>
     <HelpTip Label="Codex voice" ViewportCentered="true">
         <p>Choose Start voice here to use this device's microphone and speakers. F8 starts or ends the call. The /voice command inside the terminal uses the Runner's audio devices instead.</p>
         <p>Allow microphone access when your browser asks. Mute pauses your microphone; End voice leaves the agent's coding work running. Leaving this page or hiding the tab ends the call.</p>
+        <p>The Mic meter moves when your browser receives sound. If it stays still while you speak, choose another microphone and check your device's microphone settings. Browser calls show their status here; Codex's terminal voice strip tracks terminal calls.</p>
         <p>Voice requires an agent Codex login with voice access. After updating the Manager, update Codex on the Runner and restart the agent once. Only one tab can connect voice to an agent at a time.</p>
     </HelpTip>
 </div>
@@ -33,6 +48,11 @@
     private string _phase = "idle";
     private string? _error;
     private bool _muted, _playbackBlocked, _disposed;
+    private bool _changingInput;
+    private int _inputRequest;
+    private MicrophoneInput[] _microphones = [];
+    private string _microphone = "";
+    public sealed record MicrophoneInput(string Id, string Label);
     private string? Status => _error ?? (_phase switch
     {
         "permission" => "Allow microphone access…",
@@ -60,7 +80,33 @@
     {
         if (_disposed) return Task.CompletedTask;
         (_phase, _muted, _playbackBlocked, _error) = (phase, muted, playbackBlocked, error);
+        if (phase == "idle") { _inputRequest++; _changingInput = false; }
         return InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task VoiceInputsChanged(MicrophoneInput[] inputs, string selected)
+    {
+        if (_disposed) return Task.CompletedTask;
+        (_microphones, _microphone) = (inputs, selected);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ChangeMicrophoneAsync(ChangeEventArgs args)
+    {
+        if (_changingInput || args.Value is not string selected) return;
+        var previous = _microphone;
+        _microphone = selected;
+        _changingInput = true;
+        var request = ++_inputRequest;
+        try
+        {
+            var error = await _module!.InvokeAsync<string?>("setMicrophone", _host, selected);
+            if (_disposed || request != _inputRequest) return;
+            _error = error;
+            if (_error is not null) _microphone = previous;
+        }
+        finally { if (request == _inputRequest) _changingInput = false; }
     }
 
     private Task StartAsync() => _module!.InvokeVoidAsync("start", _host).AsTask();

@@ -11,10 +11,17 @@ interface CodexVoiceState {
     peer: RTCPeerConnection | null;
     socket: WebSocket | null;
     audio: HTMLAudioElement | null;
+    sender: RTCRtpSender | null;
+    changingInput: boolean;
+    inputContext: AudioContext | null;
+    inputSource: MediaStreamAudioSourceNode | null;
+    inputAnalyser: AnalyserNode | null;
+    inputFrame: number;
     timer: ReturnType<typeof setTimeout> | null;
     key: (event: KeyboardEvent) => void;
     hidden: () => void;
     leaving: () => void;
+    devicesChanged: () => void;
 }
 
 const voices = new WeakMap<HTMLElement, CodexVoiceState>();
@@ -29,7 +36,8 @@ async function report(state: CodexVoiceState, error: string | null = null) {
 export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: string) {
     const state: CodexVoiceState = { host, dotnet, agent, generation: 0, phase: "idle", muted: false,
         playbackBlocked: false, disposed: false, stream: null, peer: null, socket: null, audio: null, timer: null,
-        key: null, hidden: null, leaving: null };
+        sender: null, changingInput: false, inputContext: null, inputSource: null, inputAnalyser: null, inputFrame: 0,
+        key: null, hidden: null, leaving: null, devicesChanged: null };
     state.key = event => {
         if (event.key !== "F8" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || !host.getClientRects().length) return;
         event.preventDefault();
@@ -39,10 +47,78 @@ export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: st
     };
     state.hidden = () => { if (document.hidden) stop(host); };
     state.leaving = () => stop(host);
+    state.devicesChanged = () => { if (state.stream) void reportInputs(state); };
     voices.set(host, state);
     document.addEventListener("keydown", state.key, true);
     document.addEventListener("visibilitychange", state.hidden);
     window.addEventListener("pagehide", state.leaving);
+    navigator.mediaDevices?.addEventListener("devicechange", state.devicesChanged);
+}
+
+const microphonePreference = "dam-voice-microphone";
+
+function preferredInput(): string | null {
+    try { return localStorage.getItem(microphonePreference); } catch { return null; }
+}
+
+function captureInput(deviceId: string | null) {
+    return navigator.mediaDevices.getUserMedia({ audio: {
+        echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+    } });
+}
+
+async function reportInputs(state: CodexVoiceState) {
+    const stream = state.stream;
+    if (!stream || state.disposed) return;
+    try {
+        const devices = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === "audioinput");
+        if (stream !== state.stream || state.disposed) return;
+        await state.dotnet.invokeMethodAsync("VoiceInputsChanged",
+            devices.map((device, index) => ({ id: device.deviceId, label: device.label || `Microphone ${index + 1}` })),
+            stream.getAudioTracks()[0]?.getSettings().deviceId ?? devices[0]?.deviceId ?? "");
+    } catch { /* Capture can continue when device enumeration is unavailable. */ }
+}
+
+function monitorInput(state: CodexVoiceState, stream: MediaStream) {
+    cancelAnimationFrame(state.inputFrame);
+    state.inputSource?.disconnect();
+    state.inputAnalyser?.disconnect();
+    const track = stream.getAudioTracks()[0];
+    track?.addEventListener("ended", () => {
+        if (state.stream === stream) stop(state.host, "Microphone disconnected. Connect it and start voice again.");
+    });
+    let samples: Float32Array<ArrayBuffer> | null = null;
+    try {
+        const context = state.inputContext;
+        if (context) {
+            state.inputSource = context.createMediaStreamSource(stream);
+            state.inputAnalyser = context.createAnalyser();
+            state.inputAnalyser.fftSize = 256;
+            state.inputSource.connect(state.inputAnalyser);
+            samples = new Float32Array(state.inputAnalyser.fftSize);
+            void context.resume().catch(() => {});
+        }
+    } catch { state.inputAnalyser = null; }
+    const update = () => {
+        if (state.stream !== stream || state.disposed) return;
+        let level = 0;
+        const available = state.inputContext?.state === "running" && state.inputAnalyser && samples;
+        if (available && !state.muted && !track?.muted) {
+            state.inputAnalyser.getFloatTimeDomainData(samples);
+            const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+            level = Math.min(100, Math.round(rms * 600));
+        }
+        state.host.style.setProperty("--dam-microphone-level", `${level}%`);
+        const meter = state.host.querySelector<HTMLElement>(".terminal-voice-input-level");
+        if (meter) {
+            meter.setAttribute("aria-valuenow", String(level));
+            meter.setAttribute("aria-valuetext", state.muted ? "Microphone muted" : track?.muted ? "Microphone is not delivering audio"
+                : !available ? "Microphone level unavailable" : `${level}% microphone input`);
+        }
+        state.inputFrame = requestAnimationFrame(update);
+    };
+    update();
 }
 
 export async function start(host: HTMLElement) {
@@ -61,12 +137,21 @@ export async function start(host: HTMLElement) {
     state.playbackBlocked = false;
     void report(state);
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        // Open during the button's user gesture; the meter must not depend on autoplay being unlocked later.
+        try { state.inputContext = new (window.AudioContext || window.webkitAudioContext)(); void state.inputContext.resume().catch(() => {}); }
+        catch { state.inputContext = null; }
+        const preferred = preferredInput();
+        let stream: MediaStream;
+        try { stream = await captureInput(preferred); }
+        catch (error) {
+            if (!current()) return;
+            if (!preferred || !(error instanceof DOMException) || !["NotFoundError", "OverconstrainedError"].includes(error.name)) throw error;
+            stream = await captureInput(null);
+        }
         if (!current()) { stream.getTracks().forEach(track => track.stop()); return; }
         state.stream = stream;
-        stream.getAudioTracks().forEach(track => track.addEventListener("ended", () => {
-            if (current()) stop(host, "Microphone disconnected. Connect it and start voice again.");
-        }));
+        monitorInput(state, stream);
+        void reportInputs(state);
         state.phase = "connecting";
         void report(state);
         const peer = state.peer = new RTCPeerConnection();
@@ -82,7 +167,7 @@ export async function start(host: HTMLElement) {
             if (current() && (peer.connectionState === "failed" || peer.connectionState === "disconnected"))
                 stop(host, "Voice disconnected. You can start it again.");
         };
-        for (const track of stream.getTracks()) peer.addTrack(track, stream);
+        for (const track of stream.getAudioTracks()) state.sender = peer.addTrack(track, stream);
         const channel = peer.createDataChannel("oai-events");
         channel.onopen = () => {
             if (!current()) return;
@@ -132,6 +217,33 @@ export async function start(host: HTMLElement) {
     }
 }
 
+export async function setMicrophone(host: HTMLElement, deviceId: string): Promise<string | null> {
+    const state = voices.get(host);
+    if (!state?.stream || !state.sender || state.changingInput) return null;
+    state.changingInput = true;
+    const generation = state.generation;
+    let stream: MediaStream | null = null;
+    try {
+        stream = await captureInput(deviceId);
+        if (state.disposed || state.generation !== generation) { stream.getTracks().forEach(track => track.stop()); return null; }
+        const track = stream.getAudioTracks()[0];
+        if (!track) throw new Error("No audio track");
+        track.enabled = !state.muted;
+        await state.sender.replaceTrack(track);
+        if (state.disposed || state.generation !== generation) { stream.getTracks().forEach(track => track.stop()); return null; }
+        const previous = state.stream;
+        state.stream = stream;
+        monitorInput(state, stream);
+        previous.getTracks().forEach(track => track.stop());
+        try { localStorage.setItem(microphonePreference, deviceId); } catch { }
+        await reportInputs(state);
+        return null;
+    } catch {
+        stream?.getTracks().forEach(track => track.stop());
+        return state.generation === generation ? "That microphone could not open. Your previous microphone is still selected." : null;
+    } finally { if (state.generation === generation) state.changingInput = false; }
+}
+
 export function setMuted(host: HTMLElement, muted: boolean) {
     const state = voices.get(host);
     if (!state?.stream) return;
@@ -155,6 +267,16 @@ export function stop(host: HTMLElement, error: string | null = null) {
     if (!state) return;
     ++state.generation;
     clearTimeout(state.timer);
+    cancelAnimationFrame(state.inputFrame);
+    state.inputSource?.disconnect();
+    state.inputSource = null;
+    state.inputAnalyser?.disconnect();
+    state.inputAnalyser = null;
+    void state.inputContext?.close().catch(() => {});
+    state.inputContext = null;
+    state.changingInput = false;
+    state.sender = null;
+    state.host.style.removeProperty("--dam-microphone-level");
     state.stream?.getTracks().forEach(track => track.stop());
     state.stream = null;
     state.peer?.close();
@@ -181,5 +303,6 @@ export function dispose(host: HTMLElement) {
     document.removeEventListener("keydown", state.key, true);
     document.removeEventListener("visibilitychange", state.hidden);
     window.removeEventListener("pagehide", state.leaving);
+    navigator.mediaDevices?.removeEventListener("devicechange", state.devicesChanged);
     voices.delete(host);
 }
