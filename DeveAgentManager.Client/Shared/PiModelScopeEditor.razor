@@ -1,0 +1,66 @@
+<div class="pi-model-scope" data-section="pi-model-scope">
+    <div class="help-heading">
+        <MudText Typo="Typo.subtitle2">Model cycling</MudText>
+        <HelpTip Label="pi model cycling">
+            <p>The same list as pi's <code>/scoped-models</code>: it controls Ctrl+P cycling and helps choose a model for a new conversation. It does not restrict access; <code>/model</code> can still select another available model.</p>
+            <p>Enter one pattern per line, in cycling order. Use a provider prefix to avoid ambiguity, for example <code>claude-code/*</code>, <code>dam-codex/*</code> for a saved Codex login, or <code>openai/*</code> for pi's separate OpenAI login. A suffix such as <code>:high</code> sets that pattern's thinking level.</p>
+            <p>DAM applies the list when pi next starts. Changes saved inside pi remain pi settings; an explicit DAM list takes precedence at the next start. Inheriting preserves the upstream settings, while All available explicitly overrides a narrower list.</p>
+        </HelpTip>
+    </div>
+    <MudSelect T="string" Value="_mode" ValueChanged="ChangeModeAsync" Label="Cycling list" Variant="Variant.Outlined" Margin="Margin.Dense">
+        <MudSelectItem Value="@("inherit")">@InheritLabel</MudSelectItem>
+        <MudSelectItem Value="@("all")">All available models</MudSelectItem>
+        <MudSelectItem Value="@("custom")">Choose model patterns</MudSelectItem>
+    </MudSelect>
+    @if (_mode == "custom")
+    {
+        <MudTextField T="string" Value="_text" ValueChanged="ChangeTextAsync" Label="Model patterns" Lines="4" MaxLines="12" Immediate="true"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono-input" Placeholder="claude-code/*:high"
+                      HelperText="One pattern per line, in cycling order."
+                      Error="@(PiModelScope.Problem(Models) is not null)" ErrorText="@PiModelScope.Problem(Models)" />
+    }
+    @if (_mode == "inherit" && InheritedSummary is not null)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">@InheritedSummary</MudText>
+    }
+</div>
+
+@code {
+    [Parameter] public List<string>? Models { get; set; }
+    [Parameter] public EventCallback<List<string>?> ModelsChanged { get; set; }
+    [Parameter] public string InheritLabel { get; set; } = "Use pi settings";
+    [Parameter] public string? InheritedSummary { get; set; }
+    private List<string>? _seen;
+    private bool _initialized;
+    private string _mode = "inherit";
+    private string _text = "";
+
+    protected override void OnParametersSet()
+    {
+        if (_initialized && ReferenceEquals(_seen, Models)) return;
+        _initialized = true;
+        _seen = Models;
+        _mode = Models is null ? "inherit" : Models.Count == 0 ? "all" : "custom";
+        _text = string.Join('\n', Models ?? []);
+    }
+
+    private Task ChangeModeAsync(string value)
+    {
+        _mode = value;
+        return PublishAsync(value == "inherit" ? null : value == "all" ? [] : Parse());
+    }
+
+    private Task ChangeTextAsync(string value)
+    {
+        _text = value;
+        return PublishAsync(Parse());
+    }
+
+    private List<string> Parse() => _text.Split('\n').Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+
+    private Task PublishAsync(List<string>? value)
+    {
+        Models = _seen = value;
+        return ModelsChanged.InvokeAsync(value);
+    }
+}

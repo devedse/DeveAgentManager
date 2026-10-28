@@ -117,11 +117,11 @@
                 </LoadingSection>
             </MudTabPanel>
 
-            <MudTabPanel Text="Harness logins" Icon="@Icons.Material.Rounded.ManageAccounts">
+            <MudTabPanel @ref="_accountsTab" Text="Harness logins" Icon="@Icons.Material.Rounded.ManageAccounts">
                 <AccountsPanel />
             </MudTabPanel>
 
-            <MudTabPanel Text="Models" Icon="@Icons.Material.Rounded.Psychology">
+            <MudTabPanel @ref="_modelsTab" Text="Models" Icon="@Icons.Material.Rounded.Psychology">
                 <ModelDefaultsPanel />
             </MudTabPanel>
 
@@ -147,10 +147,21 @@
     [SupplyParameterFromQuery(Name = "tab")] public string? Tab { get; set; }
     private MudTabs? _tabs;
     private MudTabPanel? _petTab;
+    private MudTabPanel? _accountsTab;
+    private MudTabPanel? _modelsTab;
     private bool _openPetTab;
-    protected override void OnParametersSet() => _openPetTab = Tab == "damagochi";
+    private bool _openAccountsTab;
+    private bool _openModelsTab;
+    protected override void OnParametersSet()
+    {
+        _openPetTab = Tab == "damagochi";
+        _openAccountsTab = Tab == "accounts";
+        _openModelsTab = Tab == "models";
+    }
     protected override async Task OnAfterRenderAsync(bool first) {
         if (_openPetTab && _tabs is not null && _petTab is not null) { _openPetTab = false; await _tabs.ActivatePanelAsync(_petTab); }
+        if (_openAccountsTab && _tabs is not null && _accountsTab is not null) { _openAccountsTab = false; await _tabs.ActivatePanelAsync(_accountsTab); }
+        if (_openModelsTab && _tabs is not null && _modelsTab is not null) { _openModelsTab = false; await _tabs.ActivatePanelAsync(_modelsTab); }
     }
     private CurrentUserDto? _user;
     private ManagerInfoDto? _info;

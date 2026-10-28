@@ -75,6 +75,10 @@
 
 @if (Support.HasExtraSettings)
 {
+@if (Harness.Id == "pi")
+{
+    <div class="settings-section"><PiModelScopeEditor @bind-Models="Config.ScopedModels" /></div>
+}
 <div class="settings-section">
     <div class="help-heading"><MudText Typo="Typo.subtitle1" Class="section-title">Extra settings</MudText>
         <HelpTip Label="Extra settings">JSON merged into <code>@Support.SettingsFile</code> on every Runner: objects are merged, other values replaced, settings you don't list are kept.

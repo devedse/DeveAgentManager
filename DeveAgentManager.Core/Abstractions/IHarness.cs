@@ -101,4 +101,4 @@ public sealed record HarnessAccountSetup(IReadOnlyList<(string Path, string Cont
 /// <param name="Transferred">The conversation was just converted from another harness: the model and effort it recorded are not a
 /// choice made here, so the defaults apply although the conversation exists.</param>
 public sealed record HarnessLaunch(string SessionId, string DisplayName, string WorkingDirectory, string? Model = null, string? Instructions = null,
-    string? Effort = null, string? Provider = null, bool Transferred = false);
+    string? Effort = null, string? Provider = null, bool Transferred = false, IReadOnlyList<string>? ScopedModels = null, string? ManagedLoginProvider = null, bool ManagedPiLogins = false);

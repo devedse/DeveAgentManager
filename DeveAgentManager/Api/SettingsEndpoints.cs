@@ -1,5 +1,6 @@
 using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Abstractions;
+using DeveAgentManager.Core.Accounts;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Core.Setup;
@@ -96,15 +97,19 @@ internal static class SettingsEndpoints
             ModelDefaultsAsync(user.Id, store, shared, harnesses, ct)).ForAnyUser();
 
         mine.MapPut("/models", async (Dictionary<string, ModelDefault> request, CurrentUser user, UserSettingsStore store, SettingsStore shared,
-            IEnumerable<IHarness> harnesses, CancellationToken ct) =>
+            IEnumerable<IHarness> harnesses, AccountService accounts, CancellationToken ct) =>
         {
             var known = harnesses.Where(h => h.ConfigSupport is not null).ToDictionary(h => h.Id);
             foreach (var (harnessId, value) in request)
             {
                 if (!known.TryGetValue(harnessId, out var harness)) throw new ArgumentException($"There is no harness '{harnessId}'.");
+                if (harnessId != "pi" && value.ScopedModels is not null) throw new ArgumentException("Model cycling patterns are only supported by pi.");
+                if (harnessId != "pi" && value.PiAccountIds is not null) throw new ArgumentException("Forwarded logins are only supported by pi.");
                 value.Validate(harness.DisplayName);
             }
 
+            using var lease = await AccountCoordination.LockAsync(ct);
+            await accounts.ResolvePiLoginsAsync(user.Id, request.GetValueOrDefault("pi")?.PiAccountIds ?? [], ct);
             await store.SaveModelDefaultsAsync(user.Id, request, ct);
             return await ModelDefaultsAsync(user.Id, store, shared, harnesses, ct);
         }).ForAnyUser();
@@ -137,7 +142,8 @@ internal static class SettingsEndpoints
         {
             var manager = profile.GetHarness(h.Id);
             var own = mine.GetValueOrDefault(h.Id);
-            return new ModelDefaultsDto(h.Id, Blank(manager.DefaultProvider), Blank(manager.DefaultModel), Blank(manager.DefaultThinkingLevel), own?.Model, own?.Effort);
+            return new ModelDefaultsDto(h.Id, Blank(manager.DefaultProvider), Blank(manager.DefaultModel), Blank(manager.DefaultThinkingLevel), own?.Model, own?.Effort,
+                h.Id == "pi" ? PiModelScope.Clean(manager.ScopedModels) : null, own?.ScopedModels, own?.PiAccountIds);
         }).ToList();
 
         static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

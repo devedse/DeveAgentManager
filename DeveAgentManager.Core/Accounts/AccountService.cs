@@ -102,17 +102,24 @@ public sealed partial class AccountService(
     /// <summary>Resolve an authorized login; never fall back to an ambient Runner credential.</summary>
     public async Task<Account?> ResolveAsync(Agent agent, CancellationToken cancellationToken = default)
     {
-        if (_harnesses.GetValueOrDefault(agent.HarnessId)?.AccountSupport is null) return null;
+        if (_harnesses.GetValueOrDefault(agent.HarnessId)?.AccountSupport is null
+            && !(agent.HarnessId == "pi" && agent.AccountId is not null)) return null;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         if (agent.LoginBlocked) throw new InvalidOperationException("Choose a permitted harness login before starting this agent.");
         var id = agent.AccountId ?? await db.UserHarnessDefaults.Where(p => p.UserId == agent.OwnerId && p.HarnessId == agent.HarnessId)
             .Select(p => (Guid?)p.AccountId).FirstOrDefaultAsync(cancellationToken);
         if (id is null) throw new InvalidOperationException("Choose a harness login or set your default in My settings.");
-        var account = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id && a.HarnessId == agent.HarnessId && a.Enabled, cancellationToken);
-        if (account is null || !await CanUseForAgentAsync(db, agent, account.Id, cancellationToken))
+        var account = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id && a.Enabled, cancellationToken);
+        if (account is null || !Compatible(agent.HarnessId, account.HarnessId, account.Kind)
+            || !await CanUseForAgentAsync(db, agent, account.Id, cancellationToken))
             throw new InvalidOperationException("This agent no longer has access to its harness login. Choose a permitted login.");
+        if (agent.HarnessId == "pi" && account.HarnessId == "codex" && !account.ManagedRenewal)
+            throw new InvalidOperationException("Reconnect this Codex login in Harness logins so the Manager can renew it before using the pi preview.");
         return account;
     }
+
+    internal static bool Compatible(string harnessId, string accountHarness, AccountKind kind) =>
+        harnessId == "pi" ? Contracts.PiManagedLogin.Supports(accountHarness, kind) : harnessId == accountHarness;
 
     /// <summary>
     /// Puts the account on the Runner, unless the Runner already has this version of it (one quick check). A login the

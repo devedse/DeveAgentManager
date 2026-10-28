@@ -535,6 +535,13 @@ public class SessionShare
     public DateTime GrantedAt { get; set; }
 }
 
+/// <summary>A saved login actually forwarded to a running pi process. Retained until its next launch or verified enforcement stop.</summary>
+public class AgentPiLogin
+{
+    public Guid AgentId { get; set; }
+    public Guid AccountId { get; set; }
+}
+
 /// <summary>Something security-related that happened: sign-ins, users and roles, access, shares and Runner passwords.</summary>
 public class AuditEvent
 {

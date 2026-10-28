@@ -19,6 +19,7 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
     public DbSet<UserHarnessDefault> UserHarnessDefaults => Set<UserHarnessDefault>();
     public DbSet<AgentLoginGrant> AgentLoginGrants => Set<AgentLoginGrant>();
     public DbSet<AccountCleanup> AccountCleanups => Set<AccountCleanup>();
+    public DbSet<AgentPiLogin> AgentPiLogins => Set<AgentPiLogin>();
 
     public DbSet<Account> Accounts => Set<Account>();
 
@@ -194,6 +195,12 @@ public class ManagerDbContext(DbContextOptions<ManagerDbContext> options) : DbCo
         {
             cleanup.HasKey(c => new { c.AccountId, c.RunnerId });
             cleanup.HasOne<Runner>().WithMany().HasForeignKey(c => c.RunnerId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<AgentPiLogin>(binding =>
+        {
+            binding.HasKey(b => new { b.AgentId, b.AccountId });
+            binding.HasOne<Agent>().WithMany().HasForeignKey(b => b.AgentId).OnDelete(DeleteBehavior.Cascade);
+            binding.HasOne<Account>().WithMany().HasForeignKey(b => b.AccountId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<StoredSession>(session =>

@@ -1,0 +1,81 @@
+@inject ManagerApi Api
+
+<div class="pi-forwarded-logins" data-section="pi-logins">
+    <div class="help-heading">
+        <MudText Typo="Typo.subtitle2">Runner logins</MudText>
+        <HelpTip Label="pi Runner logins">
+            <p>Select saved Claude Code and Codex subscriptions to forward to your pi agents. You can select several accounts for each harness. Each account becomes a separate provider in pi's model picker.</p>
+            <p>Save on this page, then start or restart pi to apply the selection. Running conversations keep their current connections until then. These are the agent owner's settings, independent of its Git identity. Anyone switching a shared agent must also have Use access to the forwarded logins.</p>
+            <p>Claude uses the Claude Code executable and the pi-claude-code package on the Runner. Codex uses pi's native connection. The Manager keeps the saved credentials renewed; pi does not receive refresh credentials. Removing Use access stops affected running agents.</p>
+            <p>Logins you configure with pi's own /login remain available too. This selection controls extra DAM providers, not permission to use other pi models.</p>
+        </HelpTip>
+    </div>
+    @if (AccountIds is { Count: > 16 })
+    {
+        <MudText Typo="Typo.body2" Color="Color.Error">Choose at most 16 logins.</MudText>
+    }
+    <LoadingSection Loaded="_loaded" Error="@_error" Retry="LoadAsync" Label="Loading available pi logins">
+        <Placeholder><SkeletonList Rows="3" /></Placeholder>
+        <ChildContent>
+            @foreach (var harness in new[] { "claude", "codex" })
+            {
+                var accounts = _accounts.Where(a => a.HarnessId == harness).OrderBy(a => a.CreatedByUsername).ThenBy(a => a.Name).ToList();
+                @if (accounts.Count > 0)
+                {
+                    <div class="harness-option mt-3"><HarnessLogo HarnessId="@harness" />@(harness == "claude" ? "Claude Code" : "Codex")</div>
+                    @foreach (var account in accounts)
+                    {
+                        <div class="pi-forwarded-login" data-login-id="@account.Id">
+                            <div class="pi-forwarded-option">
+                                <MudCheckBox T="bool" Value="Selected(account.Id)" ValueChanged="value => ToggleAsync(account.Id, value)" Color="Color.Primary"
+                                             Label="@($"{AccountLabel.Name(account)} · {account.Id.ToString("N")[..6]}")" />
+                                <HelpTip Label="@($"pi provider for {AccountLabel.Name(account)}")">
+                                    <p>This login uses provider <code>@PiManagedLogin.AccountProvider(harness, account.Id)</code>.</p>
+                                    <p>Use <b>Add selected logins to model cycling</b> to add its models. For a specific default, use this provider identifier followed by <code>/model-id</code>.</p>
+                                </HelpTip>
+                            </div>
+                            @if (account.RenewalNote is { } note)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Warning">@note</MudText>
+                            }
+                        </div>
+                    }
+                }
+            }
+            @foreach (var id in (AccountIds ?? []).Where(id => !_accounts.Any(a => a.Id == id)))
+            {
+                <div class="pi-forwarded-login">
+                    <MudCheckBox T="bool" Value="true" ValueChanged="value => ToggleAsync(id, value)" Color="Color.Warning" Label="@($"Unavailable login · {id.ToString("N")[..6]}")" />
+                </div>
+            }
+            @if (_accounts.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mt-2">No saved subscriptions available.</MudText>
+            }
+            <MudButton Href="settings?tab=accounts" Size="Size.Small" StartIcon="@Icons.Material.Rounded.ManageAccounts">Manage harness logins</MudButton>
+        </ChildContent>
+    </LoadingSection>
+</div>
+
+@code {
+    [Parameter] public List<Guid>? AccountIds { get; set; }
+    [Parameter] public EventCallback<List<Guid>?> AccountIdsChanged { get; set; }
+    private List<AccountDto> _accounts = [];
+    private bool _loaded;
+    private string? _error;
+    protected override Task OnInitializedAsync() => LoadAsync();
+    private async Task LoadAsync()
+    {
+        _error = null;
+        try
+        {
+            _accounts = (await Api.ListAccountsAsync()).Where(a => a.Enabled && a.Access >= AccountAccess.Use && PiManagedLogin.Supports(a.HarnessId, a.Kind)).ToList();
+            _loaded = true;
+        }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
+    }
+    private bool Selected(Guid id) => AccountIds?.Contains(id) == true;
+    private Task ToggleAsync(Guid id, bool selected) => AccountIdsChanged.InvokeAsync(selected
+        ? (AccountIds ?? []).Append(id).Distinct().ToList() : (AccountIds ?? []).Where(value => value != id).ToList());
+}

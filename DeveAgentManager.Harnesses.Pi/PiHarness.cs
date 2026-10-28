@@ -1,5 +1,6 @@
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Setup;
+using DeveAgentManager.Contracts;
 using System.Text.Json.Nodes;
 using DeveAgentManager.Core.Ssh;
 using Microsoft.Extensions.DependencyInjection;
@@ -53,8 +54,18 @@ public sealed class PiHarness : IHarness
         var id = ShellQuote.Quote(launch.SessionId);
         var command = $"pi --session-id {id} --name {ShellQuote.Quote(launch.DisplayName)}"
             + (string.IsNullOrWhiteSpace(launch.Instructions) ? "" : " --append-system-prompt " + ShellQuote.Quote(launch.Instructions));
-        var model = string.IsNullOrWhiteSpace(launch.Model) ? ""
-            : (string.IsNullOrWhiteSpace(launch.Provider) ? "" : " --provider " + ShellQuote.Quote(launch.Provider.Trim())) + " --model " + ShellQuote.Quote(launch.Model.Trim());
+        if (launch.ScopedModels is not null)
+        {
+            var scope = PiModelScope.Clean(launch.ScopedModels)!;
+            command += " --models " + ShellQuote.Quote(scope.Count == 0 ? "*" : string.Join(',', scope));
+        }
+        if (launch.ManagedLoginProvider is not null || launch.ManagedPiLogins)
+            command += " --extension \"$DAM_PI_LOGIN_EXTENSION\"";
+        var compatibleModel = launch.ManagedLoginProvider is null || launch.Provider == launch.ManagedLoginProvider
+            || launch.Model?.StartsWith(launch.ManagedLoginProvider + "/", StringComparison.Ordinal) == true;
+        var provider = launch.ManagedLoginProvider ?? launch.Provider;
+        var model = !compatibleModel || string.IsNullOrWhiteSpace(launch.Model) ? ""
+            : (string.IsNullOrWhiteSpace(provider) ? "" : " --provider " + ShellQuote.Quote(provider.Trim())) + " --model " + ShellQuote.Quote(launch.Model.Trim());
         var defaults = model + (string.IsNullOrWhiteSpace(launch.Effort) ? "" : " --thinking " + ShellQuote.Quote(launch.Effort.Trim()));
         if (defaults.Length == 0) return command;
         if (launch.Transferred) return command + defaults;

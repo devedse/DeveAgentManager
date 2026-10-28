@@ -42,7 +42,17 @@
             }
             @foreach (var harness in _harnesses)
             {
-                <div class="switch-harness harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</div>
+                @if (harness.Id == "pi")
+                {
+                    <div class="pi-switch-row">
+                        @Option(harness, null)
+                        <MudIconButton Icon="@Icons.Material.Rounded.Settings" Size="Size.Small" Href="settings?tab=models" aria-label="pi settings" title="pi settings" />
+                    </div>
+                }
+                else
+                {
+                    <div class="switch-harness harness-option"><HarnessLogo HarnessId="@harness.Id" />@harness.DisplayName</div>
+                }
                 @if (!Agent.RunnerHarnessIds.Contains(harness.Id))
                 {
                     @if (Agent.CanUseRunner)
@@ -54,11 +64,11 @@
                         <span class="switch-unavailable">Not installed on @Agent.RunnerName</span>
                     }
                 }
-                @if (harness.AccountSupport is null)
+                @if (harness.Id != "pi" && harness.AccountSupport is null)
                 {
                     @Option(harness, null)
                 }
-                else
+                else if (harness.AccountSupport is not null)
                 {
                     var accounts = _accounts.Where(a => a.HarnessId == harness.Id && a.Enabled && a.Access >= AccountAccess.Use).OrderBy(a => a.CreatedByUsername).ThenBy(a => a.Name).ToList();
                     @foreach (var account in accounts)
@@ -138,11 +148,14 @@
 
     private RenderFragment Option(HarnessDto harness, AccountDto? account) => __builder =>
     {
-        var current = Agent.State == AgentState.Running && harness.Id == Agent.HarnessId && (account is null || account.Id == CurrentAccount?.Id);
+        var current = Agent.State == AgentState.Running && harness.Id == Agent.HarnessId
+            && (harness.Id == "pi" || account is null || account.Id == CurrentAccount?.Id);
         <button type="button" class="switch-option @(current ? "switch-current" : "")" disabled="@(current || !Agent.RunnerHarnessIds.Contains(harness.Id) || account is { Access: < AccountAccess.Use })" @onclick="() => SwitchAsync(harness, account)">
-            <MudIcon Icon="@(current ? Icons.Material.Rounded.CheckCircle : Icons.Material.Rounded.ArrowForward)" Size="Size.Small" />
+            @if (harness.Id == "pi") { <HarnessLogo HarnessId="pi" /> }
+            else { <MudIcon Icon="@(current ? Icons.Material.Rounded.CheckCircle : Icons.Material.Rounded.ArrowForward)" Size="Size.Small" /> }
             <span class="switch-option-label">
-                <AccountIdentity Username="@(account is null ? _me?.Username : account.CreatedByUsername)" Name="@(account?.Name ?? harness.DisplayName)" />
+                @if (account is null) { @harness.DisplayName }
+                else { <AccountIdentity Username="@account.CreatedByUsername" Name="@account.Name" /> }
                 @if (account is not null)
                 {
                     <span class="account-identity-meta"> · @account.Id.ToString("N")[..6]@(account.IsDefault ? " (your default)" : "")</span>
