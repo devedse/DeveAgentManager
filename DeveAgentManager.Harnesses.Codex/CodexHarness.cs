@@ -122,8 +122,17 @@ public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHar
         // So until Codex has run a turn of it, or right after a switch from another harness, they are given explicitly.
         var defaults = (string.IsNullOrWhiteSpace(launch.Model) ? "" : " -m " + ShellQuote.Quote(launch.Model.Trim()))
             + (string.IsNullOrWhiteSpace(launch.Effort) ? "" : " -c " + ShellQuote.Quote("model_reasoning_effort=" + TomlString(launch.Effort.Trim())));
+        var serverDefaults = (string.IsNullOrWhiteSpace(launch.Model) ? "" : " -c " + ShellQuote.Quote("model=" + TomlString(launch.Model.Trim())))
+            + (string.IsNullOrWhiteSpace(launch.Effort) ? "" : " -c " + ShellQuote.Quote("model_reasoning_effort=" + TomlString(launch.Effort.Trim())));
         var starts = launch.Transferred ? "true"
             : $"! grep -qs '\"type\":\"turn_context\"' \"${{CODEX_HOME:-$HOME/.codex}}\"/sessions/*/*/*/rollout-*-{id}.jsonl";
+        var voice = launch.AgentId is { } agentId ? $$"""
+            if codex app-server proxy --help >/dev/null 2>&1; then
+              server_defaults=()
+              if {{starts}}; then server_defaults=({{serverDefaults.TrimStart()}}); fi
+              exec python3 -c {{ShellQuote.Quote(VoiceLauncher)}} {{ShellQuote.Quote(agentId.ToString("N"))}} {{id}}{{instructions}} "${server_defaults[@]}"
+            fi
+            """ : "";
         // Without its background server: that listens on a socket in CODEX_HOME, and an account's folder is too long a
         // path for a socket (108 characters), so Codex would refuse to start. Older Codex versions don't have the flag.
         var script = $$"""
@@ -132,9 +141,35 @@ public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHar
             if codex --help 2>/dev/null | grep -q -- '--no-daemon'; then flags="--no-daemon"; fi
             start=()
             if {{starts}}; then start=({{defaults.TrimStart()}}); fi
+            {{voice}}
             exec codex $flags --dangerously-bypass-approvals-and-sandbox{{instructions}} "${start[@]}" resume {{id}}
             """;
         return "bash -c " + ShellQuote.Quote(script);
+    }
+
+    private static readonly string VoiceLauncher = ReadVoiceLauncher();
+
+    private static string ReadVoiceLauncher()
+    {
+        using var stream = typeof(CodexHarness).Assembly.GetManifestResourceStream("DeveAgentManager.Harnesses.Codex.CodexVoiceLauncher.py")!;
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    public string VoiceConnectCommand(Guid agentId, string sessionId)
+    {
+        var read = """
+            import json, os, pathlib, sys
+            try:
+                state=json.loads((pathlib.Path.home()/'.deveagentmanager'/'codex-voice'/sys.argv[1]/'connection.json').read_text())
+                if state['sessionId'] != sys.argv[2]: raise ValueError()
+                os.kill(state['supervisor'], 0)
+                print(state['socket'])
+            except (OSError, ValueError, KeyError):
+                sys.exit(3)
+            """;
+        return "socket=$(python3 -c " + ShellQuote.Quote(read) + " " + ShellQuote.Quote(agentId.ToString("N")) + " " + ShellQuote.Quote(sessionId)
+            + ") || exit 3; exec codex app-server proxy --sock \"$socket\"";
     }
 
     internal static string TomlString(string text)

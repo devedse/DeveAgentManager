@@ -139,12 +139,8 @@ public class RunnerShellIntegrationTests
 
     private static async Task KillTmuxServerAsync(string root)
     {
-        if (!Directory.Exists(root + "/tmux") || !File.Exists("/usr/bin/tmux")) return;
-        var start = new ProcessStartInfo("/usr/bin/tmux", ["kill-server"]) { RedirectStandardOutput = true, RedirectStandardError = true };
-        start.Environment["TMUX_TMPDIR"] = root + "/tmux";
-        start.Environment.Remove("TMUX");
-        using var process = Process.Start(start)!;
-        await process.WaitForExitAsync(CancellationToken.None);
+        if (!File.Exists("/usr/bin/tmux")) return;
+        await new IsolatedTmux(root).StopAsync();
     }
 
     private static async Task SignalAsync(string signal, int[] pids)
@@ -183,8 +179,7 @@ public class RunnerShellIntegrationTests
             try
             {
                 Directory.CreateDirectory(root + "/home");
-                // Its own tmux server, started with the fixture's HOME, never the machine's (which may run real agents).
-                Directory.CreateDirectory(root + "/tmux");
+                var tmux = new IsolatedTmux(root);
                 key = ManagerSshKey.LoadOrCreate(root + "/key");
                 await File.WriteAllTextAsync(root + "/authorized_keys", key.PublicKey + "\n", Ct);
                 await RunAsync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", root + "/host_key"]);
@@ -205,7 +200,7 @@ public class RunnerShellIntegrationTests
                     PasswordAuthentication no
                     KbdInteractiveAuthentication no
                     MaxSessions 10
-                    SetEnv HOME={root}/home TMUX_TMPDIR={root}/tmux
+                    SetEnv HOME={root}/home PATH={tmux.Bin}:{Environment.GetEnvironmentVariable("PATH")} TMUX= TMUX_PANE=
                     Subsystem sftp internal-sftp -d {root}/home
                     LogLevel VERBOSE
 

@@ -14,4 +14,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="CodexVoiceLauncher.py" />
+  </ItemGroup>
+
 </Project>

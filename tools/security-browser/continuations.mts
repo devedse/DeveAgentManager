@@ -59,7 +59,7 @@ if (suite === 'all' || suite === 'portal') {
         'loading-states.mjs', 'agent-order.mjs', 'grok.mjs', 'access-management.mjs', 'model-defaults.mjs', 'pi-setup.mjs', 'tab-bars.mjs', 'nav-projects.mjs']);
 }
 if (suite === 'all' || suite === 'interop') {
-    await runSuite(['app-update.mjs', 'hold-to-confirm.mjs', 'runner-updates.mjs', 'touch-input.mjs', 'terminal-toolbar.mjs', 'file-paste.mjs',
+    await runSuite(['app-update.mjs', 'hold-to-confirm.mjs', 'runner-updates.mjs', 'touch-input.mjs', 'terminal-toolbar.mjs', 'codex-voice.mjs', 'file-paste.mjs',
         'terminal-copy.mjs', 'screen-awake.mjs', 'hidden-tabs.mjs', 'live-reconnect.mjs', 'shared-images.mjs']);
     // Pet controls change global settings; keep their database separate from the other regressions.
     await runSuite(['pets.mjs']);

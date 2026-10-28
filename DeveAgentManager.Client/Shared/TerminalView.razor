@@ -57,6 +57,11 @@
     }
 </div>
 
+@if (!ReadOnly && AgentId is { } voiceAgent && HarnessId == "codex")
+{
+    <CodexVoice @key="voiceAgent" AgentId="voiceAgent" />
+}
+
 @* Font controls are available to everyone. Input keys are only shown on writable phone/tablet terminals. *@
 <div class="terminal-keys">
     <button type="button" class="terminal-key" aria-label="Select terminal text" title="Select text" @onclick="SelectTextAsync"><MudIcon Icon="@Icons.Material.Rounded.ContentCopy" Size="Size.Small" /></button>

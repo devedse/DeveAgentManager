@@ -1122,7 +1122,7 @@ public sealed partial class AgentService(
 
         var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model.Model, instructions,
             model.Effort, model.Provider, transferred, agent.HarnessId == "pi" ? ownModel?.ScopedModels ?? managerConfig.ScopedModels : null,
-            agent.HarnessId == "pi" && account is not null ? PiManagedLogin.Provider(account.HarnessId) : null, piSelection is not null));
+            agent.HarnessId == "pi" && account is not null ? PiManagedLogin.Provider(account.HarnessId) : null, piSelection is not null, AgentId: agent.Id));
 
         // Retain previous bindings until the remote launch is confirmed. A transport failure may leave the old process alive.
         var priorPiLogins = await loginDb.AgentPiLogins.Where(b => b.AgentId == agent.Id).ToListAsync(cancellationToken);

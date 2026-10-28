@@ -22,7 +22,7 @@ public static class SecurityHeaders
         context.Response.Headers["Cross-Origin-Opener-Policy"] = "same-origin";
         context.Response.Headers["Cross-Origin-Resource-Policy"] = "same-origin";
         context.Response.Headers["Referrer-Policy"] = "same-origin";
-        context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+        context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=()";
         if (context.Request.IsHttps) context.Response.Headers.StrictTransportSecurity = "max-age=31536000";
         if (context.Request.Path.StartsWithSegments("/account") || context.Request.Path.StartsWithSegments("/login"))
             context.Response.Headers.CacheControl = "no-store";

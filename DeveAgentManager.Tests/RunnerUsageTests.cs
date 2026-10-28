@@ -52,7 +52,7 @@ public sealed class RunnerUsageTests
         {
             var script = GuestUsage.Script(disk: true) + $"echo '{AgentService.StateStartMarker}'\n" + AgentService.BuildStateScript([]);
             var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true };
-            start.Environment["TMUX_TMPDIR"] = tmux;
+            new IsolatedTmux(tmux).Configure(start);
             using var bash = Process.Start(start)!;
             var output = bash.StandardOutput.ReadToEnd();
             bash.WaitForExit();

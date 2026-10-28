@@ -141,6 +141,7 @@ app.MapSecurityForms();
 app.MapManagerApi();
 SharedFilePreviews.Map(app);
 app.MapTerminalSocket();
+app.MapAgentVoiceSocket();
 app.MapEditorLinks();
 app.MapHub<LiveUpdatesHub>(LiveHub.Path);
 

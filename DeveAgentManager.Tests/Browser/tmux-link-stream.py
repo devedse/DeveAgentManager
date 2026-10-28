@@ -22,6 +22,14 @@ args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix='dam-tmux-links-') as root:
     env = {**os.environ, 'TMUX_TMPDIR': root, 'TERM': 'xterm-256color'}
     env.pop('TMUX', None)
+    env.pop('TMUX_PANE', None)
+    binary = pathlib.Path(root, 'bin')
+    binary.mkdir()
+    wrapper = binary / 'tmux'
+    wrapper.write_text('#!/bin/sh\nunset TMUX TMUX_PANE\nexec /usr/bin/tmux -S '
+                       + shlex.quote(str(pathlib.Path(root, 'tmux.sock'))) + ' -f /dev/null "$@"\n')
+    wrapper.chmod(0o700)
+    env['PATH'] = str(binary) + os.pathsep + env['PATH']
     for name in ('TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'VTE_VERSION', 'WT_SESSION', 'KITTY_WINDOW_ID'):
         env.pop(name, None)
     writer = pathlib.Path(root, 'writer.py')

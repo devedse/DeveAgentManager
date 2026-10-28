@@ -71,8 +71,7 @@ public sealed class LaunchScriptTests : IDisposable
     private string Run(string script)
     {
         var start = new ProcessStartInfo("bash", ["-c", script]) { RedirectStandardOutput = true, RedirectStandardError = true };
-        start.Environment["TMUX_TMPDIR"] = _tmuxDir;
-        start.Environment.Remove("TMUX");
+        new IsolatedTmux(_tmuxDir).Configure(start);
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
@@ -99,7 +98,7 @@ public sealed class LaunchScriptTests : IDisposable
     {
         try
         {
-            Run($"tmux kill-server 2>/dev/null || true");
+            new IsolatedTmux(_tmuxDir).StopAsync().GetAwaiter().GetResult();
         }
         catch
         {

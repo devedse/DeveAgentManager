@@ -96,8 +96,9 @@ try:
     print('Official CLI restored the Manager-written history and tool protocol.', flush=True)
 
     if os.environ.get('DAM_GROK_TUI') == '1':
-        socket = 'dam-grok-test-' + str(os.getpid())
-        tmux = ['tmux', '-L', socket]
+        env.pop('TMUX', None)
+        env.pop('TMUX_PANE', None)
+        tmux = ['tmux', '-S', str(root / 'tmux.sock'), '-f', '/dev/null']
         try:
             subprocess.run(tmux + ['new-session', '-d', '-x', '120', '-y', '40',
                                   shlex.join(flags + ['--fullscreen', '--resume', session_id])], env=env, cwd=workspace, check=True)

@@ -6,6 +6,7 @@ using DeveAgentManager.Harnesses.Pi;
 using DeveAgentManager.Harnesses.Grok;
 using DeveAgentManager.Core.Abstractions;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json.Nodes;
 using Xunit;
 
@@ -330,6 +331,87 @@ public sealed class HarnessScriptTests : IDisposable
         var model = Assert.Single(new CodexHarness().ParseModels(output));
         Assert.Equal(("gpt-6-sol", "GPT-6-Sol", "medium"), (model.Id, model.Name, model.DefaultEffort));
         Assert.Equal(["low", "medium", "ultra"], model.Efforts);
+    }
+
+    [Theory(Timeout = 30000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Codex_VoiceServerAndTerminalShareOneOwnedLifetime(bool forceKill)
+    {
+        if (!OperatingSystem.IsLinux() || !HasTools() || !Which("python3")) return;
+        var harness = new CodexHarness();
+        Run(harness.InstallScript);
+        var stub = Path.Combine(_bin, "codex");
+        File.WriteAllText(stub, """
+            #!/usr/bin/env python3
+            import json, os, pathlib, signal, socket, sys, time
+            args=sys.argv[1:]
+            if '--help' in args:
+                print('--no-daemon'); sys.exit(0)
+            home=pathlib.Path.home()
+            kind='server' if args[0]=='app-server' else 'terminal'
+            (home/(kind+'-args')).write_text(json.dumps(args))
+            with (home/(kind+'-starts')).open('a') as f: f.write('start\n')
+            def stop(sig, frame):
+                (home/(kind+'-stopped')).write_text('stopped')
+                sys.exit(0)
+            signal.signal(signal.SIGTERM,stop)
+            if kind=='server':
+                sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+                sock.bind(args[args.index('--listen')+1].removeprefix('unix://'))
+                sock.listen()
+            while True: time.sleep(.05)
+            """);
+        File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var agentId = Guid.NewGuid();
+        const string sessionId = "11111111-2222-3333-4444-555555555555";
+        const string instructions = "Keep `literal` and $(touch injected) unchanged.\nSecond line.";
+        var start = new ProcessStartInfo("bash", ["-c", "cd " + _work + " && exec " + harness.BuildLaunchCommand(
+            new(sessionId, "voice-test", _work, Model: "gpt-6-sol", Instructions: instructions, AgentId: agentId))])
+        { RedirectStandardOutput = true, RedirectStandardError = true };
+        start.Environment["HOME"] = _home;
+        start.Environment["PATH"] = _bin + ":" + Environment.GetEnvironmentVariable("PATH");
+        start.Environment.Remove("CODEX_HOME");
+        using var process = Process.Start(start)!;
+        string? socketDirectory = null;
+        try
+        {
+            var marker = Path.Combine(_home, ".deveagentmanager", "codex-voice", agentId.ToString("N"), "connection.json");
+            for (var i = 0; i < 100 && (!File.Exists(marker) || !File.Exists(Path.Combine(_home, "terminal-args"))); i++)
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+            if (process.HasExited) Assert.Fail(await process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken));
+            var state = JsonNode.Parse(await File.ReadAllTextAsync(marker, TestContext.Current.CancellationToken))!;
+            Assert.Equal(sessionId, (string?)state["sessionId"]);
+            var socket = (string)state["socket"]!;
+            socketDirectory = Path.GetDirectoryName(socket);
+            Assert.True(Encoding.UTF8.GetByteCount(socket) < 108);
+            var server = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(_home, "server-args"), TestContext.Current.CancellationToken))!.AsArray().Select(n => (string)n!).ToArray();
+            Assert.Contains("approval_policy=\"never\"", server);
+            Assert.Contains("sandbox_mode=\"danger-full-access\"", server);
+            Assert.Contains("model=\"gpt-6-sol\"", server);
+            var passed = server.Single(s => s.StartsWith("developer_instructions=", StringComparison.Ordinal));
+            Assert.Equal(instructions, Python("import sys,tomllib; sys.stdout.write(tomllib.loads(sys.argv[1])['developer_instructions'])", passed));
+            var terminal = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(_home, "terminal-args"), TestContext.Current.CancellationToken))!.AsArray().Select(n => (string)n!).ToArray();
+            Assert.Equal(new[] { "--remote", "unix://" + socket, "resume", sessionId }, terminal);
+            Assert.False(File.Exists(Path.Combine(_work, "injected")));
+            if (forceKill) process.Kill();
+            else
+            {
+                using var kill = Process.Start("kill", ["-TERM", process.Id.ToString()])!;
+                await kill.WaitForExitAsync(TestContext.Current.CancellationToken);
+            }
+            await process.WaitForExitAsync(TestContext.Current.CancellationToken);
+            for (var i = 0; i < 100 && (!File.Exists(Path.Combine(_home, "server-stopped")) || !File.Exists(Path.Combine(_home, "terminal-stopped"))); i++)
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+            Assert.True(File.Exists(Path.Combine(_home, "server-stopped")), "Server survived its owning pane.");
+            Assert.True(File.Exists(Path.Combine(_home, "terminal-stopped")), "Terminal survived its owning pane.");
+            Assert.Single(File.ReadAllLines(Path.Combine(_home, "server-starts")));
+        }
+        finally
+        {
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(CancellationToken.None); }
+            if (socketDirectory is not null && Directory.Exists(socketDirectory)) Directory.Delete(socketDirectory, true);
+        }
     }
 
     private void Run(string script)

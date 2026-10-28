@@ -150,10 +150,9 @@ public sealed class LimitTerminalTests
     {
         if (OperatingSystem.IsWindows() || !File.Exists("/usr/bin/tmux")) return;
         var temp = Directory.CreateTempSubdirectory("dam-limit-terminal-").FullName;
-        var socket = "dam-limit-test-" + Guid.NewGuid().ToString("N");
         var received = Path.Combine(temp, "received.txt");
         var harness = Path.Combine(temp, "harness.py");
-        await File.WriteAllTextAsync(Path.Combine(temp, "tmux"), $"#!/bin/sh\nexec /usr/bin/tmux -L {socket} \"$@\"\n", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(Path.Combine(temp, "tmux"), $"#!/bin/sh\nunset TMUX TMUX_PANE\nexec /usr/bin/tmux -S {ShellQuote.Quote(Path.Combine(temp, "tmux.sock"))} -f /dev/null \"$@\"\n", TestContext.Current.CancellationToken);
         File.SetUnixFileMode(Path.Combine(temp, "tmux"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         await File.WriteAllTextAsync(harness, """
             import pathlib,sys,time
@@ -223,9 +222,8 @@ public sealed class LimitTerminalTests
     {
         if (OperatingSystem.IsWindows() || !File.Exists("/usr/bin/tmux")) return;
         var temp = Directory.CreateTempSubdirectory("dam-hint-terminal-").FullName;
-        var socket = "dam-hint-test-" + Guid.NewGuid().ToString("N");
         var harness = Path.Combine(temp, "harness.py");
-        await File.WriteAllTextAsync(Path.Combine(temp, "tmux"), $"#!/bin/sh\nexec /usr/bin/tmux -L {socket} \"$@\"\n", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(Path.Combine(temp, "tmux"), $"#!/bin/sh\nunset TMUX TMUX_PANE\nexec /usr/bin/tmux -S {ShellQuote.Quote(Path.Combine(temp, "tmux.sock"))} -f /dev/null \"$@\"\n", TestContext.Current.CancellationToken);
         File.SetUnixFileMode(Path.Combine(temp, "tmux"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         // Claude's composer: the prompt marker, the rendered text, and the cursor back right after the marker.
         await File.WriteAllTextAsync(harness, $"""

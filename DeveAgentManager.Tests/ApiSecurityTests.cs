@@ -211,6 +211,18 @@ public sealed class ApiSecurityTests : IClassFixture<ApiSecurityTests.Manager>
             request.Headers.Origin = "https://evil.example";
         };
         await Assert.ThrowsAnyAsync<Exception>(() => sockets.ConnectAsync(new Uri($"ws://localhost{TerminalSocket.Path}?kind=shell&id={Guid.NewGuid()}"), CancellationToken.None));
+        await Assert.ThrowsAnyAsync<Exception>(() => sockets.ConnectAsync(new Uri($"ws://localhost/ws/agents/{Guid.NewGuid()}/voice"), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task VoiceSocketRequiresLoginAndDoesNotDiscloseUnknownAgents()
+    {
+        var sockets = _manager.Server.CreateWebSocketClient();
+        sockets.ConfigureRequest = request => request.Headers.Origin = "http://localhost";
+        await Assert.ThrowsAnyAsync<Exception>(() => sockets.ConnectAsync(new Uri($"ws://localhost/ws/agents/{Guid.NewGuid()}/voice"), CancellationToken.None));
+        var cookie = await LoginCookieAsync();
+        sockets.ConfigureRequest = request => { request.Headers.Cookie = cookie; request.Headers.Origin = "http://localhost"; };
+        await Assert.ThrowsAnyAsync<Exception>(() => sockets.ConnectAsync(new Uri($"ws://localhost/ws/agents/{Guid.NewGuid()}/voice"), CancellationToken.None));
     }
 
     [Fact]

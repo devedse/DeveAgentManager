@@ -1768,6 +1768,20 @@ html:has(.terminal-layout) body {
         }
 }
 
+.terminal-voice {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    color: var(--dam-text);
+    background: var(--dam-surface);
+    border-top: 1px solid var(--dam-border);
+}
+.terminal-voice-status { flex: 1; min-width: 0; font-size: .8rem; color: var(--dam-muted); overflow-wrap: anywhere; }
+.terminal-voice-error { color: var(--dam-error); }
+.terminal-voice audio { display: none; }
 .terminal-frame {
     position: relative;
     flex: 1;

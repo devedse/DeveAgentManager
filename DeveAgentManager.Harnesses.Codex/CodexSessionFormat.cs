@@ -90,6 +90,12 @@ public sealed class CodexSessionFormat : ISessionFormat
                     entry.SummaryKind = "compaction";
                     entry.Text = Str(payload, "message");
                     break;
+                case "realtime_item" when payload is not null && Str(payload, "type") == "transcript_segment"
+                    && Str(payload, "role") is "user" or "assistant" && !string.IsNullOrWhiteSpace(Str(payload, "text")):
+                    entry.Kind = DeveEntryKind.Message;
+                    entry.Role = Str(payload, "role") == "user" ? DeveRole.User : DeveRole.Assistant;
+                    entry.Content = [DeveBlock.OfText(Str(payload, "text")!)];
+                    break;
                 // event_msg (UI events: the user's and agent's messages again, token counts), turn_context and others
                 // are the harness's own bookkeeping.
             }
