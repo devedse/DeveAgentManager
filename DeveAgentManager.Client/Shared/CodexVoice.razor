@@ -1,7 +1,20 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 
-<div class="terminal-voice" @ref="_host">
+<div class="terminal-voice-container" @ref="_host">
+    <section class="terminal-voice-transcript" aria-label="Voice transcript" hidden="@(_transcript.Lines.Count == 0)">
+        <div class="terminal-voice-transcript-heading">Voice transcript</div>
+        <div class="terminal-voice-transcript-lines" role="log" aria-label="Spoken conversation" aria-live="polite" aria-relevant="additions text" tabindex="0">
+            @foreach (var line in _transcript.Lines)
+            {
+                <div class="terminal-voice-transcript-line @(line.Role == "user" ? "voice-transcript-user" : "voice-transcript-assistant")" @key="line.Id">
+                    <span class="terminal-voice-transcript-role">@(line.Role == "user" ? "You" : "Codex")</span>
+                    <span class="terminal-voice-transcript-text">@line.Text</span>
+                </div>
+            }
+        </div>
+    </section>
+<div class="terminal-voice">
     @if (_phase == "idle")
     {
         <MudButton StartIcon="@Icons.Material.Rounded.Mic" Size="Size.Small" Disabled="@(_module is null)" OnClick="StartAsync" title="Start voice (F8)">Start voice</MudButton>
@@ -36,8 +49,10 @@
         <p>Choose Start voice here to use this device's microphone and speakers. F8 starts or ends the call. The /voice command inside the terminal uses the Runner's audio devices instead.</p>
         <p>Allow microphone access when your browser asks. Mute pauses your microphone; End voice leaves the agent's coding work running. Leaving this page or hiding the tab ends the call.</p>
         <p>The Mic meter moves when your browser receives sound. If it stays still while you speak, choose another microphone and check your device's microphone settings. Browser calls show their status here; Codex's terminal voice strip tracks terminal calls.</p>
+        <p>Voice transcript shows both sides as you speak, including conversation that does not become a coding request. Recent captions stay on this page after the call ends. Scroll up to read earlier words; scroll to the bottom to follow new speech.</p>
         <p>Voice requires an agent Codex login with voice access. After updating the Manager, update Codex on the Runner and restart the agent once. Only one tab can connect voice to an agent at a time.</p>
     </HelpTip>
+</div>
 </div>
 
 @code {
@@ -50,6 +65,7 @@
     private bool _muted, _playbackBlocked, _disposed;
     private bool _changingInput;
     private int _inputRequest;
+    private readonly VoiceTranscriptLog _transcript = new();
     private MicrophoneInput[] _microphones = [];
     private string _microphone = "";
     public sealed record MicrophoneInput(string Id, string Label);
@@ -80,7 +96,14 @@
     {
         if (_disposed) return Task.CompletedTask;
         (_phase, _muted, _playbackBlocked, _error) = (phase, muted, playbackBlocked, error);
-        if (phase == "idle") { _inputRequest++; _changingInput = false; }
+        if (phase == "idle") { _inputRequest++; _changingInput = false; _transcript.Finish(); }
+        return InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task VoiceTranscriptChanged(VoiceTranscriptUpdate update)
+    {
+        if (_disposed || !_transcript.Update(update)) return Task.CompletedTask;
         return InvokeAsync(StateHasChanged);
     }
 

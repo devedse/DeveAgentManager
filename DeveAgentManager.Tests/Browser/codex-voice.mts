@@ -74,7 +74,11 @@ try {
             : path.endsWith('/session') ? null : path.endsWith('/timezone') ? { defaultTimeZoneId: 'UTC', overrideTimeZoneId: null } : [];
         return route.fulfill({ json: body });
     });
-    await context.routeWebSocket('**/ws/terminal?**', ws => ws.send(JSON.stringify({ type: 'ready', tty: '/dev/pts/99' })));
+    const terminalInput: unknown[] = [];
+    await context.routeWebSocket('**/ws/terminal?**', ws => {
+        ws.send(JSON.stringify({ type: 'ready', tty: '/dev/pts/99' }));
+        ws.onMessage(raw => { if (typeof raw !== 'string') terminalInput.push(raw); });
+    });
     let reject = false;
     const messages: { type: string; sdp?: string }[] = [];
     await context.routeWebSocket('**/ws/agents/*/voice', ws => ws.onMessage(raw => {
@@ -101,6 +105,46 @@ try {
     await page.keyboard.press('F8');
     await page.getByText('Voice connected', { exact: true }).waitFor();
     assert.equal(messages.filter(m => m.type === 'start').length, 1, 'F8 starts exactly one call');
+    const transcript = page.getByRole('log', { name: 'Spoken conversation' });
+    const emitCaptions = (events: unknown[]) => page.evaluate(items => {
+        const channel = window.codexVoiceTest.peers.at(-1).channel;
+        for (const event of items) channel.onmessage({ data: JSON.stringify(event) });
+    }, events);
+    await emitCaptions([
+        { type: 'turn.created', turn: { id: 'ordinary-user', role: 'user', transcript: 'Hello,' } },
+        { type: 'turn.created', turn: { id: 'ordinary-assistant', role: 'assistant', transcript: 'I hear' } },
+        { type: 'turn.delta', turn_id: 'ordinary-user', delta: ' how are you?' },
+        { type: 'turn.delta', turn_id: 'ordinary-assistant', delta: ' you clearly.' },
+        { type: 'input_transcript.added', item: { id: 'same-audio', text: ' how are you?' } },
+    ]);
+    await transcript.getByText('Hello, how are you?', { exact: true }).waitFor();
+    await transcript.getByText('I hear you clearly.', { exact: true }).waitFor();
+    assert.equal(await transcript.locator('.terminal-voice-transcript-line').count(), 2, 'duplex fragments form two captions without duplicate audio items');
+    await emitCaptions([
+        { type: 'turn.done', turn: { id: 'ordinary-user', role: 'user', transcript: 'Hello, how are you doing?' } },
+        { type: 'turn.done', turn: { id: 'ordinary-assistant', role: 'assistant', transcript: 'I hear you clearly.' } },
+        { type: 'turn.delta', turn_id: 'ordinary-user', delta: ' unwanted late text' },
+        { type: 'turn.created', turn: { id: 'escaped-text', role: 'user', transcript: '<img src=x onerror=alert(1)>' } },
+    ]);
+    await transcript.getByText('Hello, how are you doing?', { exact: true }).waitFor();
+    await transcript.getByText('<img src=x onerror=alert(1)>', { exact: true }).waitFor();
+    assert.equal(await transcript.locator('img').count(), 0, 'spoken content is text, never HTML');
+    assert.equal(await transcript.getByText(/unwanted late text/).count(), 0);
+    assert.deepEqual(terminalInput, [], 'captions never become terminal input');
+    assert.equal(messages.filter(m => m.type === 'start').length, 1, 'ordinary conversation does not start another coding or voice request');
+    await emitCaptions(Array.from({ length: 30 }, (_, i) => ({ type: 'turn.done', turn: {
+        id: `scroll-${i}`, role: i % 2 ? 'assistant' : 'user', transcript: `Spoken sentence ${i} with enough words to fill a transcript line.`,
+    } })));
+    await transcript.getByText('Spoken sentence 29 with enough words to fill a transcript line.', { exact: true }).waitFor();
+    await page.waitForFunction(() => {
+        const log = document.querySelector('.terminal-voice-transcript-lines');
+        return log.scrollHeight - log.scrollTop - log.clientHeight <= 24;
+    });
+    await transcript.evaluate(el => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    await emitCaptions([{ type: 'turn.done', turn: { id: 'read-earlier', role: 'user', transcript: 'New words while reading earlier speech.' } }]);
+    await transcript.getByText('New words while reading earlier speech.', { exact: true }).waitFor({ state: 'attached' });
+    assert.equal(await transcript.evaluate(el => el.scrollTop), 0, 'new speech does not move a user reading earlier captions');
+    await transcript.evaluate(el => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
     const microphone = page.getByRole('combobox', { name: 'Microphone', exact: true });
     await microphone.waitFor();
     assert.equal(await microphone.inputValue(), 'test-mic-one', 'a missing preferred device falls back to the available microphone');
@@ -178,6 +222,10 @@ try {
     });
     await page.keyboard.press('F8');
     await page.getByRole('button', { name: 'Start voice', exact: true }).waitFor();
+    assert.ok(await transcript.locator('.terminal-voice-transcript-line').count() > 0, 'captions remain readable after ending voice');
+    await page.evaluate(() => window.codexVoiceTest.peers[0].channel.onmessage({ data: JSON.stringify({ type: 'turn.created',
+        turn: { id: 'stale', role: 'user', transcript: 'Stale callback after ending the call' } }) }));
+    assert.equal(await transcript.getByText('Stale callback after ending the call', { exact: true }).count(), 0);
     assert.equal(await closedTracks(), true, 'ending voice immediately stops microphone tracks');
     assert.equal(messages.filter(m => m.type === 'stop').length, 1);
 
@@ -231,5 +279,5 @@ try {
     await page.locator('.terminal-frame').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Start voice', exact: true }).count(), 0, 'other harnesses have no Codex voice controls');
     assert.deepEqual(errors, []);
-    console.log('PASS: voice permission, microphone level, input choice/preference, muted replacement, failed and cancelled switches, F8, playback recovery, competing tabs, pending permission cancellation, navigation, hidden tabs, read-only access, phone themes and help sizing/scrolling');
+    console.log('PASS: live duplex captions, final corrections, scrolling, escaped content, no transcript-to-terminal input, voice permission, microphone levels and switching, F8, playback recovery, ownership, cancellation, navigation, visibility and phone layouts');
 } finally { await browser.close(); }

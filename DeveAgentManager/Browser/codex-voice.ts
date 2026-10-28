@@ -17,6 +17,10 @@ interface CodexVoiceState {
     inputSource: MediaStreamAudioSourceNode | null;
     inputAnalyser: AnalyserNode | null;
     inputFrame: number;
+    transcriptObserver: MutationObserver | null;
+    transcriptScroll: () => void;
+    transcriptFrame: number;
+    followTranscript: boolean;
     timer: ReturnType<typeof setTimeout> | null;
     key: (event: KeyboardEvent) => void;
     hidden: () => void;
@@ -37,6 +41,7 @@ export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: st
     const state: CodexVoiceState = { host, dotnet, agent, generation: 0, phase: "idle", muted: false,
         playbackBlocked: false, disposed: false, stream: null, peer: null, socket: null, audio: null, timer: null,
         sender: null, changingInput: false, inputContext: null, inputSource: null, inputAnalyser: null, inputFrame: 0,
+        transcriptObserver: null, transcriptScroll: null, transcriptFrame: 0, followTranscript: true,
         key: null, hidden: null, leaving: null, devicesChanged: null };
     state.key = event => {
         if (event.key !== "F8" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || !host.getClientRects().length) return;
@@ -53,6 +58,17 @@ export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: st
     document.addEventListener("visibilitychange", state.hidden);
     window.addEventListener("pagehide", state.leaving);
     navigator.mediaDevices?.addEventListener("devicechange", state.devicesChanged);
+    const transcript = host.querySelector<HTMLElement>(".terminal-voice-transcript-lines");
+    if (transcript) {
+        state.transcriptScroll = () => { state.followTranscript = transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop <= 24; };
+        transcript.addEventListener("scroll", state.transcriptScroll);
+        state.transcriptObserver = new MutationObserver(() => {
+            if (!state.followTranscript) return;
+            cancelAnimationFrame(state.transcriptFrame);
+            state.transcriptFrame = requestAnimationFrame(() => { if (!state.disposed && state.followTranscript) transcript.scrollTop = transcript.scrollHeight; });
+        });
+        state.transcriptObserver.observe(transcript, { childList: true, characterData: true, subtree: true });
+    }
 }
 
 const microphonePreference = "dam-voice-microphone";
@@ -178,9 +194,20 @@ export async function start(host: HTMLElement) {
         channel.onmessage = event => {
             if (!current()) return;
             try {
-                const message: { type?: string } = JSON.parse(event.data);
+                const message: { type?: string; turn_id?: string; delta?: string; turn?: { id?: string; role?: string; transcript?: string } } = JSON.parse(event.data);
                 if (message.type === "session.closed") stop(host);
                 else if (message.type === "error" || message.type === "session.error") stop(host, "Codex voice failed. You can start it again.");
+                else if ((message.type === "turn.created" || message.type === "turn.done")
+                    && typeof message.turn?.id === "string" && message.turn.id.length <= 128
+                    && (message.turn.role === "user" || message.turn.role === "assistant") && typeof message.turn.transcript === "string"
+                    && message.turn.transcript.length <= 65536) {
+                    void state.dotnet.invokeMethodAsync("VoiceTranscriptChanged", { id: `${generation}:${message.turn.id}`, role: message.turn.role,
+                        text: message.turn.transcript, append: false, complete: message.type === "turn.done" }).catch(() => {});
+                } else if (message.type === "turn.delta" && typeof message.turn_id === "string" && message.turn_id.length <= 128
+                    && typeof message.delta === "string" && message.delta.length <= 65536) {
+                    void state.dotnet.invokeMethodAsync("VoiceTranscriptChanged", { id: `${generation}:${message.turn_id}`, role: null,
+                        text: message.delta, append: true, complete: false }).catch(() => {});
+                }
             } catch { /* Media and delegation stay owned by Codex; no provider payloads enter the UI. */ }
         };
         await peer.setLocalDescription(await peer.createOffer());
@@ -304,5 +331,8 @@ export function dispose(host: HTMLElement) {
     document.removeEventListener("visibilitychange", state.hidden);
     window.removeEventListener("pagehide", state.leaving);
     navigator.mediaDevices?.removeEventListener("devicechange", state.devicesChanged);
+    state.transcriptObserver?.disconnect();
+    cancelAnimationFrame(state.transcriptFrame);
+    if (state.transcriptScroll) host.querySelector(".terminal-voice-transcript-lines")?.removeEventListener("scroll", state.transcriptScroll);
     voices.delete(host);
 }
