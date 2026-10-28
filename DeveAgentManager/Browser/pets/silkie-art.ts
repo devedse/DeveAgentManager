@@ -56,10 +56,10 @@ function silkieChoreography(frame, frames, stage) {
     }
     case 'flap': case 'toss': {
       const vx = frame.velocity?.x ?? 480, vy = frame.velocity?.y ?? (m === 'flap' ? -600 : 300);
-      cell = SILKIE_CELL.shocked;
-      // The scared drawing has tucked wings. Flutter at the shoulders without pulling the body mesh apart.
+      cell = SILKIE_CELL.hop;
+      // Use the drawing with both feathered wings spread for the entire flight.
       const beat = Math.sin(e * (m === 'flap' ? 44 : 40));
-      wings = live * (.025 + beat * .16);
+      wings = live * (.02 + beat * .14);
       feet = live * Math.sin(e * 34) * 1.5;
       tilt = live * (Math.max(-.22, Math.min(.22, vx / 3600)) + Math.sin(e * 29) * .035);
       head = -tilt * .6 + live * Math.sin(e * 37) * .045; crest += live * Math.sin(e * 33) * 7;
@@ -160,7 +160,7 @@ function silkieChoreography(frame, frames, stage) {
     { type: 'shock', at: near(1.2, -.95), size: face.size * .42, angle: -.74, age: e, phase: 2 });
   if (show.has('snooze')) effects.push({ type: 'snooze', at: near(.75, -1.05), size: face.size * .32 });
   if (swish) effects.push({ type: 'swish', at: [swish[0], swish[1]], angle: swish[2], size: W * .07, speed: 9.5, phase: 0 });
-  return { cell, rootX, lift, tilt, squash, ops, effects, blink };
+  return { cell, rootX, lift, tilt, squash, ops, effects, blink, panicEyes: m === 'flap' || m === 'toss' };
 }
 
 const SILKIE_ART = {

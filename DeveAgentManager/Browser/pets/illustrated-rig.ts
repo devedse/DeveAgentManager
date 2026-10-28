@@ -308,11 +308,25 @@ class IllustratedRig {
     const ctx = this.overlay, k = this.overlayCanvas.width / RIG_STAGE;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
     if (closure > .01) for (const eye of cell.eyes) this.drawEyelid(ctx, k, pose, eye, closure);
+    if (pose.panicEyes) for (const eye of cell.eyes) this.drawPanicEye(ctx, k, pose, eye, frame.gaze);
     ctx.setTransform(k, 0, 0, k, 0, 0);
     for (const fx of pose.effects || []) {
       const [x, y] = this.toStage(pose, fx.at[0], fx.at[1]);
       rigEffects[fx.type](ctx, { ...fx, x, y, size: fx.size * pose.global.units }, frame.time);
     }
+  }
+  // A wide-eyed expression on the flight drawing preserves its spread wings and feather outlines.
+  drawPanicEye(ctx, k, pose, eye, gaze) {
+    const [cx, cy] = this.toStage(pose, eye.x, eye.y);
+    const [ax, ay] = this.toStage(pose, eye.x + eye.rx, eye.y), [bx, by] = this.toStage(pose, eye.x, eye.y + eye.ry);
+    ctx.save(); ctx.setTransform((ax - cx) * k, (ay - cy) * k, (bx - cx) * k, (by - cy) * k, cx * k, cy * k);
+    ctx.beginPath(); ctx.ellipse(0, 0, 1.02, 1.02, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#fffdf4'; ctx.fill(); ctx.strokeStyle = RIG_INK; ctx.lineWidth = .09; ctx.stroke();
+    const x = gaze.x * .12, y = gaze.y * .1;
+    ctx.beginPath(); ctx.ellipse(x, y, .43, .53, 0, 0, Math.PI * 2); ctx.fillStyle = '#66401e'; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x, y, .29, .4, 0, 0, Math.PI * 2); ctx.fillStyle = RIG_INK; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x - .13, y - .2, .12, .15, 0, 0, Math.PI * 2); ctx.fillStyle = '#fffdf4'; ctx.fill();
+    ctx.restore();
   }
   // Eyelids in the fur's own colour: the upper lid comes down and the lower lid
   // rises until they meet in a curved ink lash line, like the drawings' closed

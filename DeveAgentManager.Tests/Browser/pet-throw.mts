@@ -107,12 +107,13 @@ try {
         await reset(page, species); await drag(page, 100, -100);
         await page.locator('.dam-pet-host[data-motion="flap"]').waitFor();
         if (species === 'snek') await page.locator('.dam-pet-art [data-pose="air"]').waitFor();
-        else await page.locator('.dam-pet-host[data-motion="flap"] .dam-pet-art [data-cell="5"]').waitFor();
+        else await page.locator('.dam-pet-host[data-motion="flap"] .dam-pet-art [data-cell="10"]').waitFor();
         const release = await position(page);
         await page.waitForTimeout(150);
         const rising = await position(page);
         assert.ok(rising!.x > release!.x + 20 && rising!.y < release!.y - 20, species + ' carries upward diagonal momentum');
         await page.locator('.dam-pet-host[data-motion="toss"]').waitFor();
+        if (species === 'silkie') assert.equal(await page.locator('.dam-pet-art [data-cell]').getAttribute('data-cell'), '10', 'both wings stay spread during descent');
         await page.locator('.dam-pet-host[data-motion="land"]').waitFor();
         const landed = await position(page);
         assert.ok(landed!.y > release!.y + 50, 'gravity lands a little below release');
