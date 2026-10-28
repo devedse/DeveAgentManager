@@ -5,6 +5,7 @@ namespace DeveAgentManager.Contracts;
 /// <summary>The explicit, single-login pi preview; ordinary pi logins remain an independent choice.</summary>
 public static class PiManagedLogin
 {
+    public static string AccountProvider(string harnessId, Guid accountId) => $"dam-{(harnessId == "claude" ? "claude" : "codex")}-{accountId:N}";
     public static bool Supports(string harnessId, AccountKind kind) =>
         kind == AccountKind.Subscription && harnessId is "claude" or "codex";
 

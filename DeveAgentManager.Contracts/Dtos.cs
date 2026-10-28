@@ -71,7 +71,7 @@ public sealed record ScreenAwakeSettings(bool Enabled);
 /// user's own choice (null follows the Manager's).
 /// </summary>
 public sealed record ModelDefaultsDto(string HarnessId, string? ManagerProvider, string? ManagerModel, string? ManagerEffort, string? Model, string? Effort,
-    List<string>? ManagerScopedModels = null, List<string>? ScopedModels = null);
+    List<string>? ManagerScopedModels = null, List<string>? ScopedModels = null, List<Guid>? PiAccountIds = null);
 
 /// <summary>Someone with access to a Runner besides its owner.</summary>
 public sealed record RunnerMemberDto(Guid UserId, string Username, string DisplayName, RunnerAccess Access, DateTime GrantedAt);

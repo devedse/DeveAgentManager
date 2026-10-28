@@ -14,7 +14,10 @@ public sealed class ModelDefault
 
     public List<string>? ScopedModels { get; set; }
 
-    public bool IsEmpty => string.IsNullOrWhiteSpace(Model) && string.IsNullOrWhiteSpace(Effort) && ScopedModels is null;
+    /// <summary>Saved subscription logins forwarded to pi at its next start. Null preserves an older explicit agent selection.</summary>
+    public List<Guid>? PiAccountIds { get; set; }
+
+    public bool IsEmpty => string.IsNullOrWhiteSpace(Model) && string.IsNullOrWhiteSpace(Effort) && ScopedModels is null && PiAccountIds is null;
 
     /// <summary>Why this model name can't be passed to the harness, or null. Empty is fine: the Manager's default.</summary>
     public static string? ModelProblem(string? model) =>
@@ -35,9 +38,11 @@ public sealed class ModelDefault
         {
             throw new ArgumentException($"{harnessName}: {problem}");
         }
+        if (PiAccountIds is { Count: > 16 } || PiAccountIds?.Contains(Guid.Empty) == true)
+            throw new ArgumentException("Choose at most 16 saved pi logins.");
     }
 
-    public ModelDefault Cleaned() => new() { Model = Clean(Model), Effort = Clean(Effort), ScopedModels = Contracts.PiModelScope.Clean(ScopedModels) };
+    public ModelDefault Cleaned() => new() { Model = Clean(Model), Effort = Clean(Effort), ScopedModels = Contracts.PiModelScope.Clean(ScopedModels), PiAccountIds = PiAccountIds?.Distinct().ToList() };
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

@@ -59,7 +59,7 @@ public sealed class PiHarness : IHarness
             var scope = PiModelScope.Clean(launch.ScopedModels)!;
             command += " --models " + ShellQuote.Quote(scope.Count == 0 ? "*" : string.Join(',', scope));
         }
-        if (launch.ManagedLoginProvider is not null)
+        if (launch.ManagedLoginProvider is not null || launch.ManagedPiLogins)
             command += " --extension \"$DAM_PI_LOGIN_EXTENSION\"";
         var compatibleModel = launch.ManagedLoginProvider is null || launch.Provider == launch.ManagedLoginProvider
             || launch.Model?.StartsWith(launch.ManagedLoginProvider + "/", StringComparison.Ordinal) == true;

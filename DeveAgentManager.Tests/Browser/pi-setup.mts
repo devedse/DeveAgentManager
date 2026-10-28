@@ -45,12 +45,31 @@ try{
     console.log('Passed: scoped-model order, save/reload, validation, all/inherit and phone themes.');
     const me=await(await context.request.get(base+'/api/me')).json(),now=new Date().toISOString();
     const agent:any={id:id(61),ownerId:me.id,ownerName:'Test owner',access:'Owner',name:'pi-preview',harnessId:'pi',runnerId:id(62),runnerName:'Test runner',runnerState:'Ready',runnerHarnessIds:['pi','claude','codex'],runnerToolIds:[],state:'Running',workingDirectory:'/workspace/example',accountId:null,runningAccountId:null,canUseRunner:true,createdAt:now,updatedAt:now};
-    const accounts=[{id:id(63),harnessId:'claude',name:'Claude test',kind:'Subscription'},{id:id(64),harnessId:'codex',name:'Codex test',kind:'Subscription'},{id:id(65),harnessId:'claude',name:'API key must stay out',kind:'ApiKey'}].map(a=>({...a,createdByUsername:'testuser',access:'Use',enabled:true,createdAt:now,updatedAt:now}));
-    const posts:any[]=[];
+    const accounts=[
+        {id:id(63),harnessId:'claude',name:'Claude first',kind:'Subscription'},
+        {id:id(64),harnessId:'codex',name:'Codex first',kind:'Subscription'},
+        {id:id(65),harnessId:'claude',name:'API key must stay out',kind:'ApiKey'},
+        {id:id(66),harnessId:'claude',name:'Claude second',kind:'Subscription'},
+        {id:id(67),harnessId:'codex',name:'Codex second',kind:'Subscription'},
+    ].map(a=>({...a,createdByUsername:'testuser',access:'Use',enabled:true,createdAt:now,updatedAt:now}));
+    const posts:any[]=[],saves:any[]=[];
+    let rows=await(await context.request.get(base+endpoint)).json();
+    let accountFailure=false,slowAccounts=false;
     await context.route('**/api/**',async route=>{
         const request=route.request(),path=new URL(request.url()).pathname;
-        if(path==='/api/accounts')return route.fulfill({json:accounts});
-        if(path===`/api/agents/${agent.id}/switch`){posts.push(request.postDataJSON());agent.accountId=posts.at(-1).accountId;agent.runningAccountId=agent.accountId;return route.fulfill({status:204});}
+        if(path==='/api/accounts'){
+            if(accountFailure){return route.fulfill({status:503,json:{error:'Test login list unavailable'}});}
+            if(slowAccounts)await new Promise(done=>setTimeout(done,1100));
+            return route.fulfill({json:accounts});
+        }
+        if(path===endpoint){
+            if(request.method()==='PUT'){
+                const data=request.postDataJSON();saves.push(data);
+                rows=rows.map(row=>({...row,...(data[row.harnessId]??{model:null,effort:null,scopedModels:null,piAccountIds:null})}));
+            }
+            return route.fulfill({json:rows});
+        }
+        if(path===`/api/agents/${agent.id}/switch`){posts.push(request.postDataJSON());return route.fulfill({status:204});}
         if(path===`/api/agents/${agent.id}`)return route.fulfill({json:agent});
         if(path==='/api/agents')return route.fulfill({json:[agent]});
         if(path.startsWith(`/api/agents/${agent.id}/`))return route.fulfill({json:path.endsWith('/limit/automatic')?{enabled:false,sent:0}:null});
@@ -58,26 +77,51 @@ try{
     });
     await context.routeWebSocket('**/ws/terminal?**',ws=>ws.send(JSON.stringify({type:'ready',tty:'/dev/pts/99'})));
     await page.setViewportSize({width:390,height:900});await page.goto(base+`/agents/${agent.id}`);
-    const open=async()=>{await page.locator('.switch-chip').click();await page.locator('.switch-menu:visible').getByRole('button',{name:'Saved login (preview)',exact:true}).click();await page.getByRole('dialog').getByText('pi login preview',{exact:true}).first().waitFor();};
-    await open();let dialog=page.getByRole('dialog');
-    await dialog.locator('.mud-select').first().click();
-    assert.equal(await page.getByRole('option',{name:/API key must stay out/}).count(),0);
-    await page.getByRole('option',{name:/Claude test/}).click();
-    await dialog.getByText(/Model provider:.*claude-code/).waitFor();
-    assert.equal(posts.length,0,'choosing a login does not restart or send');
-    await dialog.getByRole('button',{name:'Use selection',exact:true}).click();
-    await page.getByRole('dialog').getByRole('button',{name:'Cancel',exact:true}).click();
-    assert.equal(posts.length,0,'cancelling restart confirmation sends nothing');
-    await open();dialog=page.getByRole('dialog');await dialog.locator('.mud-select').first().click();
-    await page.getByRole('option',{name:/Codex test/}).click();
-    await dialog.getByText(/Model provider:.*dam-codex/).waitFor();
-    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'login selector fits a phone');
-    await page.screenshot({path:'/tmp/dam-pi-login-preview-phone.png',fullPage:true});
-    await dialog.getByRole('button',{name:'Use selection',exact:true}).click();
-    const switched=page.waitForResponse(r=>new URL(r.url()).pathname===`/api/agents/${agent.id}/switch`);
-    await page.getByRole('dialog').getByRole('button',{name:'Continue',exact:true}).click();await switched;
-    assert.deepEqual(posts,[{harnessId:'pi',accountId:id(64)}]);assert.deepEqual(errors,[]);
+    await page.locator('.switch-chip').click();
+    const menu=page.locator('.switch-menu:visible');
+    await menu.locator('.pi-switch-row .switch-option').waitFor();
+    assert.equal((await menu.locator('.pi-switch-row .switch-option-label').innerText()).trim(),'pi');
+    assert.equal(await menu.getByText('Saved login (preview)',{exact:true}).count(),0);
+    assert.equal(await menu.getByText('Runner logins (/login)',{exact:true}).count(),0);
+    accountFailure=true;
+    await menu.getByRole('link',{name:'pi settings',exact:true}).click();
+    await page.waitForURL(base+'/settings?tab=models');
+    const logins=page.locator('[data-section=pi-logins]');
+    await logins.getByRole('button',{name:'Retry',exact:true}).waitFor();
+    assert.equal(await logins.getByText('No saved subscriptions available.',{exact:true}).count(),0);
+    accountFailure=false;slowAccounts=true;
+    await logins.getByRole('button',{name:'Retry',exact:true}).click();
+    await logins.getByRole('status').waitFor();
+    assert.equal(await logins.getByText('No saved subscriptions available.',{exact:true}).count(),0);
+    await logins.getByRole('checkbox',{name:/Claude first/}).waitFor();
+    slowAccounts=false;
+    assert.equal(await logins.getByRole('checkbox',{name:/API key must stay out/}).count(),0);
+    for(const name of ['Claude first','Claude second','Codex first','Codex second'])await logins.getByRole('checkbox',{name:new RegExp(name)}).check();
+    assert.equal(posts.length,0,'settings and selections never switch or restart an agent');
+    assert.equal(saves.length,0,'checkbox drafts wait for Save');
+    await save();
+    assert.deepEqual(new Set(saves.at(-1).pi.piAccountIds),new Set([id(63),id(64),id(66),id(67)]));
+    await page.reload();
+    for(const name of ['Claude first','Claude second','Codex first','Codex second'])assert.equal(await logins.getByRole('checkbox',{name:new RegExp(name)}).isChecked(),true);
+    await pi.getByRole('button',{name:'Add selected logins to model cycling',exact:true}).click();
+    assert.match(await patterns.inputValue(),/dam-claude-00000000000000000000000000000063\/\*/);
+    assert.match(await patterns.inputValue(),/dam-codex-00000000000000000000000000000067\/\*/);
+    await save();
+    await pi.getByRole('button',{name:'Use Manager default',exact:true}).click();
+    assert.equal(await logins.getByRole('checkbox',{name:/Claude first/}).isChecked(),true,'reset model defaults retains forwarded logins');
+    for(const theme of ['light','dark'])for(const width of [390,320]){
+        await page.evaluate(t=>localStorage.setItem('dam-theme',t),theme);
+        await page.setViewportSize({width,height:1100});await page.reload();
+        await logins.getByRole('checkbox',{name:/Codex second/}).waitFor();
+        await logins.scrollIntoViewIfNeeded();
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${theme}/${width} forwarded logins fit`);
+        await page.screenshot({path:`/tmp/dam-pi-logins-${theme}-${width}.png`,fullPage:true});
+    }
+    await logins.getByRole('checkbox',{name:/Codex second/}).uncheck();await save();
+    assert.equal(saves.at(-1).pi.piAccountIds.includes(id(67)),false);
+    assert.equal(posts.length,0,'saving does not execute a harness operation');
+    assert.deepEqual(errors,[]);
     assert.equal((await context.request.put(base+'/api/settings/profile',{data:original,headers})).status(),200);
     assert.equal((await context.request.put(base+endpoint,{data:{},headers})).status(),200);
-    console.log('Passed: explicit login selection, compatible providers, cancellation and confirmed binding.');
+    console.log('Passed: simple pi menu, settings cogwheel, login loading/retry, four accounts, cycle patterns and phone themes.');
 }finally{await browser.close();}

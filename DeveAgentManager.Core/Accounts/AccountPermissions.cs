@@ -100,7 +100,8 @@ public sealed partial class AccountService
     }
 
     internal static IQueryable<Agent> RelevantAgents(ManagerDbContext db, Guid id) => db.Agents.Where(a =>
-        a.AccountId == id || a.RunningAccountId == id && (a.State == AgentState.Running || a.State == AgentState.Starting || a.LoginStopPending) || a.AccountId == null
+        a.AccountId == id || db.AgentPiLogins.Any(b => b.AgentId == a.Id && b.AccountId == id)
+        || a.RunningAccountId == id && (a.State == AgentState.Running || a.State == AgentState.Starting || a.LoginStopPending) || a.AccountId == null
         && db.UserHarnessDefaults.Any(p => p.UserId == a.OwnerId && p.HarnessId == a.HarnessId && p.AccountId == id));
 
     public async Task<List<AccountGrantDto>> GrantsAsync(CurrentUser actor, Guid id, CancellationToken ct)
@@ -257,7 +258,7 @@ public sealed partial class AccountService
         foreach (var a in agents)
         {
             a.LoginBlocked = true;
-            a.LoginStopPending |= a.State is AgentState.Running or AgentState.Starting;
+            a.LoginStopPending |= a.State is AgentState.Running or AgentState.Starting || a.HarnessId == "pi" && a.State == AgentState.Error;
             a.StateMessage = "Harness login access ended. Choose a permitted login.";
         }
     }
@@ -287,6 +288,7 @@ public sealed partial class AccountService
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var agents = await db.Agents.Include(a => a.Runner).Where(a => a.LoginStopPending
+            || db.AgentPiLogins.Any(b => b.AgentId == a.Id)
             || (a.State == AgentState.Running || a.State == AgentState.Starting) && a.RunningAccountId != null).ToListAsync(ct);
         foreach (var a in agents)
         {
@@ -296,6 +298,15 @@ public sealed partial class AccountService
                 Block([a]);
                 await db.SaveChangesAsync(ct); // durable before remote work
             }
+            foreach (var loginId in await db.AgentPiLogins.Where(b => b.AgentId == a.Id).Select(b => b.AccountId).ToListAsync(ct))
+            {
+                if (!a.LoginStopPending && (!await db.Accounts.AnyAsync(x => x.Id == loginId && x.Enabled, ct)
+                    || !await CanUseForAgentAsync(db, a, loginId, ct)))
+                {
+                    Block([a]);
+                    await db.SaveChangesAsync(ct);
+                }
+            }
             if (!a.LoginStopPending || a.Runner?.State != RunnerState.Ready) continue;
             try
             {
@@ -303,6 +314,7 @@ public sealed partial class AccountService
                 (await shell.RunAsync(a.Runner, stop, TimeSpan.FromSeconds(30), ct))
                     .EnsureSuccess("Stopping agent after login access ended");
                 a.State = AgentState.Stopped; a.LoginStopPending = false; a.RunningAccountId = null; a.Working = false;
+                db.AgentPiLogins.RemoveRange(await db.AgentPiLogins.Where(b => b.AgentId == a.Id).ToListAsync(ct));
                 await db.SaveChangesAsync(ct);
                 events.AgentChanged(a.RunnerId, a.Id);
             }

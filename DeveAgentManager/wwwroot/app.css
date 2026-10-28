@@ -2225,6 +2225,14 @@ html:has(.terminal-layout) body {
 }
 
 .switch-option-label { min-width: 0; overflow-wrap: anywhere; }
+.pi-switch-row { display: flex; align-items: center; gap: .5rem; }
+.switch-menu .pi-switch-row .switch-option { flex: 1; min-width: 0; padding-left: .5rem; }
+.pi-forwarded-logins { margin: .5rem 0 1rem; }
+.pi-forwarded-login { min-width: 0; overflow-wrap: anywhere; }
+.pi-forwarded-option { display: flex; align-items: center; gap: .25rem; }
+.pi-forwarded-option .mud-checkbox { flex: 1; min-width: 0; }
+.pi-forwarded-login .mud-checkbox { max-width: 100%; }
+.pi-forwarded-login .mud-typography { overflow-wrap: anywhere; }
 .switch-menu .switch-connect { display: block; padding-left: 52px; white-space: normal; }
 .switch-option-detail, .switch-unavailable { display: block; color: var(--dam-muted); font-size: .75rem; }
 .switch-unavailable { margin: 4px 8px 4px 24px; }

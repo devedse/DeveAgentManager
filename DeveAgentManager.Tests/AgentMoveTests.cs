@@ -127,7 +127,8 @@ public sealed class AgentMoveTests
             for (var attempt = 0; attempt < 150; attempt++)
             {
                 observed = await db.Agents.AsNoTracking().SingleAsync(Ct);
-                if (AgentService.MoveDetails(observed)?.Progress?.BytesCompleted == 10_000) break;
+                // SaveMoveAsync commits before publishing its notifications; observing the row is not the event barrier.
+                if (AgentService.MoveDetails(observed)?.Progress?.BytesCompleted == 10_000 && Volatile.Read(ref changes) >= 2) break;
                 await Task.Delay(20, Ct);
             }
             Assert.Equal(10_000, AgentService.MoveDetails(observed)!.Progress!.BytesCompleted);
@@ -136,7 +137,7 @@ public sealed class AgentMoveTests
             Assert.Equal("/work/project/image.png", checkpoint.Progress!.CurrentFile);
             var step = Assert.Single(checkpoint.Steps!, s => s.Id == "pack");
             Assert.Equal(10_000, Assert.Single(step.Stages!).BytesCompleted);
-            Assert.InRange(changes, 2, 4); // Two runner notifications per coalesced update, never per file/chunk.
+            Assert.InRange(Volatile.Read(ref changes), 2, 4); // Two runner notifications per coalesced update, never per file/chunk.
         }
         finally { finish.TrySetResult(); await reporting; }
         // Rollback clears active intent but retains a result, including after a fresh entity read.

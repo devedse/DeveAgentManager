@@ -76,6 +76,12 @@ public sealed class PiManagedLoginTests(ApiSecurityTests.Manager manager) : ICla
         await Assert.ThrowsAsync<ArgumentException>(() => service.SwitchAsync(other, agent.Id, "pi", login.Id, Ct));
         var key = await accounts.AddAsync(actor.Id, "claude", "Test-only key", AccountKind.ApiKey, "test-only-key", Ct);
         await Assert.ThrowsAsync<ArgumentException>(() => service.SwitchAsync(actor, agent.Id, "pi", key.Id, Ct));
+        var privateLogin = await accounts.AddAsync(owner.Id, "claude", "Owner-only test login", AccountKind.Subscription, "test-only-token", Ct);
+        await manager.Services.GetRequiredService<UserSettingsStore>().SaveModelDefaultsAsync(owner.Id,
+            new Dictionary<string, ModelDefault> { ["pi"] = new() { PiAccountIds = [login.Id, privateLogin.Id] } }, Ct);
+        // Both null and legacy explicit selections must authorize every account that will actually be forwarded.
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SwitchAsync(actor, agent.Id, "pi", null, Ct));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SwitchAsync(actor, agent.Id, "pi", login.Id, Ct));
         db.ChangeTracker.Clear();
         var unchanged = await db.Agents.SingleAsync(a => a.Id == agent.Id, Ct);
         Assert.Equal(AgentState.Running, unchanged.State);
@@ -122,6 +128,26 @@ public sealed class PiManagedLoginTests(ApiSecurityTests.Manager manager) : ICla
         Assert.False(restored.RootElement.GetProperty("token_present").GetBoolean());
         Assert.Equal(runtime, restored.RootElement.GetProperty("pi").GetString());
         Assert.False(File.Exists(runtime + "/claude-code/.credentials.json"));
+        var second = await accountService.AddAsync(User.BootstrapId, "claude", "Second test-only pi login", AccountKind.Subscription, "test-only-second-oauth", Ct);
+        await helper.EnsureOnRunnerAsync(ssh.Runner, second, Ct);
+        await File.WriteAllTextAsync(claude, "#!/bin/sh\nprintf '%s|%s' \"$CLAUDE_CODE_OAUTH_TOKEN\" \"$CLAUDE_CONFIG_DIR\"\n", Ct);
+        var multiple = await helper.PreparePiManagedRuntimeAsync(ssh.Runner, agent, new[] { account, second }, Ct);
+        var noAmbient = await ssh.Shell.RunAsync(ssh.Runner, $"export PATH=\"{home}/bin:$PATH\"; " + multiple + check, cancellationToken: Ct);
+        using var piState = System.Text.Json.JsonDocument.Parse(noAmbient.Output);
+        Assert.False(piState.RootElement.GetProperty("token_present").GetBoolean());
+        foreach (var login in new[] { account, second })
+        {
+            var wrapper = runtime + "/claude-" + login.Id.ToString("N") + ".sh";
+            var selected = await ssh.Shell.RunAsync(ssh.Runner, $"export PATH=\"{home}/bin:$PATH\"; export CLAUDE_CODE_OAUTH_TOKEN=wrong-account; \"{wrapper}\"", cancellationToken: Ct);
+            selected.EnsureSuccess("Checking a forwarded Claude wrapper");
+            Assert.Equal((login.Id == account.Id ? "test-only-oauth-token" : "test-only-second-oauth") + "|" + runtime + "/claude-" + login.Id.ToString("N"), selected.Output);
+            Assert.False(File.Exists(runtime + "/claude-" + login.Id.ToString("N") + "/.credentials.json"));
+        }
+        var manifest = await File.ReadAllTextAsync(runtime + "/dam-logins.json", Ct);
+        Assert.DoesNotContain("test-only-oauth", manifest);
+        Assert.Contains(PiManagedLogin.AccountProvider("claude", account.Id), manifest);
+        Assert.Contains(PiManagedLogin.AccountProvider("claude", second.Id), manifest);
+
     }
 
     [Fact]
@@ -155,7 +181,10 @@ public sealed class PiManagedLoginTests(ApiSecurityTests.Manager manager) : ICla
             var source = Path.Combine(temp.FullName, "pi-managed-login.ts");
             await File.WriteAllTextAsync(source, AccountService.PiManagedExtension, Ct);
             var fixture = Path.Combine(AppContext.BaseDirectory, "Js", "pi-managed-login.cjs");
-            using var process = Process.Start(new ProcessStartInfo("node", [fixture, source]) { RedirectStandardOutput = true, RedirectStandardError = true })!;
+            var start = new ProcessStartInfo("node", [fixture, source]) { RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var key in start.Environment.Keys.Where(key => key is not ("PATH" or "HOME" or "LANG" or "TMPDIR" or "SystemRoot")).ToList())
+                start.Environment.Remove(key);
+            using var process = Process.Start(start)!;
             var output = process.StandardOutput.ReadToEndAsync(Ct);
             var error = process.StandardError.ReadToEndAsync(Ct);
             await process.WaitForExitAsync(Ct);

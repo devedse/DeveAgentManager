@@ -362,6 +362,21 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.ToTable("AgentLoginGrants");
                 });
 
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentPiLogin", b =>
+                {
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("AgentId", "AccountId");
+
+                    b.HasIndex("AccountId");
+
+                    b.ToTable("AgentPiLogins");
+                });
+
             modelBuilder.Entity("DeveAgentManager.Core.Data.AgentShare", b =>
                 {
                     b.Property<Guid>("AgentId")
@@ -1176,6 +1191,21 @@ namespace DeveAgentManager.Core.Data.Migrations
                 });
 
             modelBuilder.Entity("DeveAgentManager.Core.Data.AgentLoginGrant", b =>
+                {
+                    b.HasOne("DeveAgentManager.Core.Data.Account", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("DeveAgentManager.Core.Data.Agent", null)
+                        .WithMany()
+                        .HasForeignKey("AgentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DeveAgentManager.Core.Data.AgentPiLogin", b =>
                 {
                     b.HasOne("DeveAgentManager.Core.Data.Account", null)
                         .WithMany()

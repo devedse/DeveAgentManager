@@ -49,7 +49,7 @@
                 </div>
                 @if (_harnessId == "pi")
                 {
-                    <PiLoginSelector Accounts="_allAccounts" RunnerHarnessIds="@(_runners.First(r => r.Id == _runnerId).HarnessIds)" @bind-AccountId="_accountId" />
+                    <MudButton Href="settings?tab=models" StartIcon="@Icons.Material.Rounded.Settings" Size="Size.Small">pi settings</MudButton>
                 }
                 else if (SelectedHarness?.AccountSupport is not null)
                 {

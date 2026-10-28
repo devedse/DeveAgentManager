@@ -1,28 +1,30 @@
-# pi saved-login preview and model cycling
+# pi saved logins and model cycling
 
-This preview connects one saved Claude or Codex subscription login to a pi agent. It is opt-in per agent. Existing pi `/login` credentials remain a separate choice.
+pi remains one choice in the harness switch menu. Its cogwheel opens **My settings → Models**. A personal selection forwards multiple saved Claude Code and Codex subscriptions to pi at its next start; selecting or saving never starts, stops or switches a running agent.
 
-## Test in a separate workspace
+## Configure and try it
 
-1. Install pi on a test Runner. For Claude, install Claude Code too and apply the pi package configuration containing `git:github.com/earendil-works/pi-claude-code`.
-2. Connect the subscription under **My settings → Harness logins**. Reconnect an older Codex login if DAM says it needs Manager renewal. Both the person selecting the login and the agent owner need Use access.
-3. Under **My settings → Models → pi → Model cycling**, choose **Choose model patterns**. Enter an ordered list such as `claude-code/default:high` for Claude or `dam-codex/<model-id>:high` for a Codex model available in the installed pi catalog. Use the actual model ID instead of the placeholder.
-4. Create a new pi agent in an empty folder, for example `~/work/pi-login-preview`, using **pi login preview → Login source** to select the saved subscription. This keeps the test conversation independent from other agents. If testing in a project workspace instead, open that workspace's harness menu and choose **pi → Saved login (preview)**.
-5. Confirm that the footer uses `claude-code` or `dam-codex` before sending a small test prompt. A real prompt uses the selected subscription's normal quota and billing rules. `/claude-code-status` checks the Claude CLI connection; `/scoped-models` displays the cycling list.
-6. For an existing pi agent, its harness menu opens the same selector. Choosing a login in the dialog does nothing until the separate restart confirmation is accepted. The restart resumes that workspace's conversation.
-7. Choose **Runner logins (/login)** to return to pi's own authentication. A private runtime already created for this agent remains the history location, preserving the conversation.
+1. Install pi on a test Runner. For Claude, also install Claude Code and the package `git:github.com/earendil-works/pi-claude-code`.
+2. Connect accounts under **My settings → Harness logins**, or ask their owner for Use access. Reconnect an older Codex account if it needs Manager renewal.
+3. Open the pi cogwheel, or **My settings → Models → pi → Runner logins**. Select accounts independently, including several Claude accounts and several Codex accounts. Save the page. A management role alone does not grant permission to forward a login.
+4. Each selected account shows a stable provider identifier, `dam-claude-<account-id>` or `dam-codex-<account-id>`. Use **Add selected logins to model cycling** to add their model patterns without typing identifiers. An explicit default can use `provider/model`, such as `dam-claude-<account-id>/default` with the actual identifier.
+5. Start a new pi test agent in an empty folder, or restart an existing pi agent explicitly. These are the agent owner's preferences, independent of its Git identity. A person switching a shared agent also needs Use access to every forwarded account.
+6. Open `/model` to check that all selected accounts are available. `/scoped-models` shows the cycling list. A real prompt uses the chosen account's quota and billing rules; the automated compatibility check below sends no prompt.
+7. Untick accounts and save to remove them at the next start. Logins configured through pi's own `/login` remain available. Removing a saved login's Use grant instead triggers enforcement against affected running processes.
 
-## What the choices mean
+## Connections and credentials
 
-| Choice | Provider | Credential handling |
+| Connection | How requests run | Credential handling |
 | --- | --- | --- |
-| Runner logins | pi's configured providers | Existing pi authentication; no saved DAM account is selected automatically. |
-| Saved Claude subscription | `claude-code` | DAM supplies the selected subscription token to the official CLI bridge. Its Claude configuration/history directory is private to this pi agent. |
-| Saved Codex subscription | `dam-codex` | DAM's adapter uses pi's native legacy Codex protocol and reads the Manager-maintained access-token file for each request. No refresh token or OAuth writer is installed in pi. |
+| Native pi logins | pi's configured providers | Existing pi authentication remains available alongside forwarded accounts. |
+| Each saved Claude subscription | Official Claude Code executable through the bridge package | A separate wrapper and Claude configuration directory per account and pi agent. Every child reads that account's current Manager-maintained environment file. pi receives neither the token in its global environment nor refresh credentials. |
+| Each saved Codex subscription | pi's native legacy Codex protocol | A separate provider reads that account's Manager-maintained access-token file for each request. No OAuth refresh or auth-file writer is installed in pi. |
 
-The Codex preview is distinct from pi's newer **OpenAI** sign-in, which requests a different OAuth grant. Selecting a saved Codex login does not convert that grant or authenticate the newer provider. The existing account renewal, sharing, usage-impact and revocation paths track the pi binding through its selected/running account. Revocation stops the affected pi process using the same durable enforcement as other harnesses.
+The Claude bridge's built-in model catalog is used separately for each account; shared, ambient CLI model discovery is not used. Each stream supplies its own wrapper and configuration environment without changing the pi process environment. DAM never automatically substitutes another saved account when an explicit selection fails authorization. The Codex connection is distinct from pi's newer **OpenAI** sign-in, which uses a different OAuth grant.
 
-At startup the preview preserves a resumed model already on the connected provider. Otherwise it chooses a model on that provider, preferring its cycling scope. An explicit default model should include the managed provider prefix, such as `claude-code/default` or `dam-codex/<model-id>`. Defaults for another provider do not override the selected login. Afterwards `/model` can still change providers; the selected DAM login is a credential binding, not a model-access restriction.
+Preferences are stored in the user's encrypted model settings and contain account IDs only. Launch validates all grants and distributes only authorized copies. Durable `AgentPiLogins` bindings record every account actually forwarded to a process, independently of later preference edits. Removing access, disabling or deleting any forwarded account stops the affected process through normal login enforcement. Bindings from an uncertain launch remain until a confirmed replacement or verified enforcement stop. SSH, uploads and launch work during a harness switch run outside the global session lock.
+
+Older preview agents with a single explicit account keep that behavior until personal forwarding settings are saved. Their private pi runtime and native history remain in place. When the old account is also selected in the new list, the adapter maps its legacy provider to that same account; it never maps it to a different account. Update legacy cycling patterns to the new identifiers using the settings button.
 
 ## Model cycling settings
 
@@ -34,15 +36,15 @@ Saving `/scoped-models` inside pi changes pi settings. An explicit DAM scope tak
 
 ## Verification
 
-The unit/API tests cover grant checks, incompatible account rejection, revocation, native cache sharing, private history, token replacement without refresh/write, model selection and scope inheritance. `DeveAgentManager.Tests/Browser/pi-setup.mts` covers real settings persistence, validation, light/dark phone layouts, explicit login selection and cancellation; Runner metadata and control requests are mocked there.
+Unit/API tests cover multiple accounts, personal grants, incompatible and unavailable selections, revocation after preference changes, private history, separate Claude wrappers, token replacement without refresh or write, concurrent stream isolation, and scope inheritance. Browser tests cover the single pi menu, navigation without execution, loading and retry, four selected accounts, persistence, generated cycling patterns, and phone layouts in both themes.
 
-With pi installed, run this compatibility check from the repository root:
+With pi and the Claude bridge installed, run:
 
 ```sh
 npm run build
 node .typescript/tools/pi-login-smoke.mjs
 ```
 
-It starts an isolated pi RPC process with a dummy token, loads the actual adapter, checks its provider/model scope and sends no model prompt. The preview was checked against pi 1.4.0. Record a real Runner deployment, credential renewal and provider response separately from these host tests; a passing smoke check does not verify a live account or billing.
+This starts an isolated pi RPC process with dummy credentials, loads two Claude and two Codex providers, checks that their models are available and sends no prompt. It was checked against pi 1.4.0. Record real Runner deployment, credential renewal, provider responses and billing separately from host tests.
 
-Upstream: [pi models](https://pi.dev/docs/latest/models), [pi settings](https://pi.dev/docs/latest/settings), [Claude Code bridge](https://github.com/earendil-works/pi-claude-code), [OpenAI authentication](https://learn.chatgpt.com/docs/auth).
+Upstream: [pi models](https://pi.dev/docs/latest/models), [pi settings](https://pi.dev/docs/latest/settings), [Claude Code bridge](https://github.com/earendil-works/pi-claude-code).
