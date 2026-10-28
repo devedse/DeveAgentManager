@@ -22,6 +22,9 @@ public class AccountRuntimeTests
             var home = temp.FullName;
             var shared = Path.Combine(home, ".pi", "agent");
             Directory.CreateDirectory(Path.Combine(shared, "sessions", "test"));
+            Directory.CreateDirectory(Path.Combine(shared, "git", "test-package"));
+            Directory.CreateDirectory(Path.Combine(shared, "npm"));
+            await File.WriteAllTextAsync(Path.Combine(shared, "git", "test-package", "index.ts"), "// test-only extension", TestContext.Current.CancellationToken);
             await File.WriteAllTextAsync(Path.Combine(shared, "settings.json"), "{\"model\":\"initial\"}", TestContext.Current.CancellationToken);
             var agents = Enumerable.Range(0, 2).Select(_ => new Agent { Id = Guid.NewGuid(), OwnerId = Guid.NewGuid(), HarnessId = "pi", HarnessSessionId = Guid.NewGuid().ToString("N") }).ToArray();
             foreach (var agent in agents)
@@ -31,6 +34,9 @@ public class AccountRuntimeTests
                 var runtime = AccountService.RuntimeFolder(agent).Replace("$HOME", home);
                 Assert.Single(Directory.EnumerateFiles(Path.Combine(runtime, "sessions"), "*.jsonl", SearchOption.AllDirectories));
                 Assert.Null(new FileInfo(Path.Combine(runtime, "settings.json")).LinkTarget);
+                Assert.NotNull(new DirectoryInfo(Path.Combine(runtime, "git")).LinkTarget);
+                Assert.NotNull(new DirectoryInfo(Path.Combine(runtime, "npm")).LinkTarget);
+                Assert.Equal("// test-only extension", await File.ReadAllTextAsync(Path.Combine(runtime, "git", "test-package", "index.ts"), TestContext.Current.CancellationToken));
                 var privateHistory = Path.Combine(runtime, "sessions", "test", "time_" + agent.HarnessSessionId + ".jsonl");
                 await File.WriteAllTextAsync(privateHistory, "private updated history", TestContext.Current.CancellationToken);
                 File.SetLastWriteTimeUtc(privateHistory, DateTime.UtcNow.AddMinutes(1));

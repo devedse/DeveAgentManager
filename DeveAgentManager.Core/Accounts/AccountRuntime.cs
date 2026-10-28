@@ -26,7 +26,7 @@ public sealed partial class AccountService
             src=shared/name; dst=root/name
             if src.is_file() and not dst.exists():
                 shutil.copy2(src,dst); os.chmod(dst,0o600)
-        for name in ('auth.json','extensions','skills','prompts','AGENTS.md','packages'):
+        for name in ('auth.json','extensions','skills','prompts','AGENTS.md','packages','git','npm'):
             src=shared/name; dst=root/name
             if src.exists() and not dst.exists() and not dst.is_symlink(): dst.symlink_to(src)
         # Only this selected conversation may be bootstrapped from the legacy upload location.

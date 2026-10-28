@@ -1,0 +1,83 @@
+// Real scope persistence and mocked login/Runner metadata; no model request or live credential is used.
+import assert from 'node:assert/strict';
+const {chromium}=await import(process.env.PLAYWRIGHT_MODULE??'playwright');
+const browser=await chromium.launch();
+const base=process.env.DAM_TEST_URL??'http://127.0.0.1:19081';
+const id=(n:number)=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
+try{
+    const context=await browser.newContext({viewport:{width:1280,height:960}});
+    const page=await context.newPage();
+    const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+    await page.goto(base+'/login');
+    await page.locator('[name=username]').fill('admin');
+    await page.locator('[name=password]').fill(process.env.DAM_TEST_PASSWORD??'test-only-password');
+    await Promise.all([page.waitForURL(base+'/'),page.locator('button[type=submit]').click()]);
+    const endpoint='/api/me/settings/models',headers={'X-DAM-Request':'1',Origin:base};
+    const profile=await(await context.request.get(base+'/api/settings/profile')).json();
+    const original=structuredClone(profile);
+    profile.harnesses.pi={...(profile.harnesses.pi??{}),scopedModels:['claude-code/*:high']};
+    assert.equal((await context.request.put(base+'/api/settings/profile',{data:profile,headers})).status(),200);
+    await page.goto(base+'/settings?tab=models');
+    const section=page.locator('[data-section=model-defaults]'),pi=section.locator('[data-harness=pi]');
+    const scope=pi.locator('[data-section=pi-model-scope]');
+    const choose=async(label:string)=>{await scope.locator('.mud-select').first().click();await page.getByRole('option',{name:label,exact:true}).click();};
+    const save=async()=>{const response=page.waitForResponse(r=>new URL(r.url()).pathname===endpoint&&r.request().method()==='PUT');await section.getByRole('button',{name:'Save',exact:true}).click();assert.equal((await response).status(),200);};
+    const current=async()=>(await(await context.request.get(base+endpoint)).json()).find(x=>x.harnessId==='pi');
+    await scope.getByText('Manager default: 1 pattern.',{exact:true}).waitFor();
+    await choose('Choose model patterns');
+    const patterns=scope.getByLabel('Model patterns',{exact:true});
+    await patterns.fill('dam-codex/*:high\nclaude-code/default');await save();
+    assert.deepEqual((await current()).scopedModels,['dam-codex/*:high','claude-code/default']);
+    await page.reload();await patterns.waitFor();
+    assert.equal(await patterns.inputValue(),'dam-codex/*:high\nclaude-code/default');
+    await patterns.fill('bad pattern');
+    assert.equal(await section.getByRole('button',{name:'Save',exact:true}).isDisabled(),true);
+    await patterns.fill('dam-codex/*:high\nclaude-code/default');
+    for(const theme of ['light','dark'])for(const width of [390,320]){
+        await page.evaluate(t=>localStorage.setItem('dam-theme',t),theme);
+        await page.setViewportSize({width,height:900});await page.reload();await patterns.waitFor();
+        await scope.scrollIntoViewIfNeeded();
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${theme}/${width} scope fits`);
+        await page.screenshot({path:`/tmp/dam-pi-model-scope-${theme}-${width}.png`,fullPage:true});
+    }
+    await choose('All available models');await save();assert.deepEqual((await current()).scopedModels,[]);
+    await choose('Use Manager default');await save();assert.equal((await current()).scopedModels,null);
+    console.log('Passed: scoped-model order, save/reload, validation, all/inherit and phone themes.');
+    const me=await(await context.request.get(base+'/api/me')).json(),now=new Date().toISOString();
+    const agent:any={id:id(61),ownerId:me.id,ownerName:'Test owner',access:'Owner',name:'pi-preview',harnessId:'pi',runnerId:id(62),runnerName:'Test runner',runnerState:'Ready',runnerHarnessIds:['pi','claude','codex'],runnerToolIds:[],state:'Running',workingDirectory:'/workspace/example',accountId:null,runningAccountId:null,canUseRunner:true,createdAt:now,updatedAt:now};
+    const accounts=[{id:id(63),harnessId:'claude',name:'Claude test',kind:'Subscription'},{id:id(64),harnessId:'codex',name:'Codex test',kind:'Subscription'},{id:id(65),harnessId:'claude',name:'API key must stay out',kind:'ApiKey'}].map(a=>({...a,createdByUsername:'testuser',access:'Use',enabled:true,createdAt:now,updatedAt:now}));
+    const posts:any[]=[];
+    await context.route('**/api/**',async route=>{
+        const request=route.request(),path=new URL(request.url()).pathname;
+        if(path==='/api/accounts')return route.fulfill({json:accounts});
+        if(path===`/api/agents/${agent.id}/switch`){posts.push(request.postDataJSON());agent.accountId=posts.at(-1).accountId;agent.runningAccountId=agent.accountId;return route.fulfill({status:204});}
+        if(path===`/api/agents/${agent.id}`)return route.fulfill({json:agent});
+        if(path==='/api/agents')return route.fulfill({json:[agent]});
+        if(path.startsWith(`/api/agents/${agent.id}/`))return route.fulfill({json:path.endsWith('/limit/automatic')?{enabled:false,sent:0}:null});
+        return route.continue();
+    });
+    await context.routeWebSocket('**/ws/terminal?**',ws=>ws.send(JSON.stringify({type:'ready',tty:'/dev/pts/99'})));
+    await page.setViewportSize({width:390,height:900});await page.goto(base+`/agents/${agent.id}`);
+    const open=async()=>{await page.locator('.switch-chip').click();await page.locator('.switch-menu:visible').getByRole('button',{name:'Saved login (preview)',exact:true}).click();await page.getByRole('dialog').getByText('pi login preview',{exact:true}).first().waitFor();};
+    await open();let dialog=page.getByRole('dialog');
+    await dialog.locator('.mud-select').first().click();
+    assert.equal(await page.getByRole('option',{name:/API key must stay out/}).count(),0);
+    await page.getByRole('option',{name:/Claude test/}).click();
+    await dialog.getByText(/Model provider:.*claude-code/).waitFor();
+    assert.equal(posts.length,0,'choosing a login does not restart or send');
+    await dialog.getByRole('button',{name:'Use selection',exact:true}).click();
+    await page.getByRole('dialog').getByRole('button',{name:'Cancel',exact:true}).click();
+    assert.equal(posts.length,0,'cancelling restart confirmation sends nothing');
+    await open();dialog=page.getByRole('dialog');await dialog.locator('.mud-select').first().click();
+    await page.getByRole('option',{name:/Codex test/}).click();
+    await dialog.getByText(/Model provider:.*dam-codex/).waitFor();
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'login selector fits a phone');
+    await page.screenshot({path:'/tmp/dam-pi-login-preview-phone.png',fullPage:true});
+    await dialog.getByRole('button',{name:'Use selection',exact:true}).click();
+    const switched=page.waitForResponse(r=>new URL(r.url()).pathname===`/api/agents/${agent.id}/switch`);
+    await page.getByRole('dialog').getByRole('button',{name:'Continue',exact:true}).click();await switched;
+    assert.deepEqual(posts,[{harnessId:'pi',accountId:id(64)}]);assert.deepEqual(errors,[]);
+    assert.equal((await context.request.put(base+'/api/settings/profile',{data:original,headers})).status(),200);
+    assert.equal((await context.request.put(base+endpoint,{data:{},headers})).status(),200);
+    console.log('Passed: explicit login selection, compatible providers, cancellation and confirmed binding.');
+}finally{await browser.close();}

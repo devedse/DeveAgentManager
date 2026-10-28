@@ -1,0 +1,46 @@
+<div data-section="pi-login-preview">
+    <div class="help-heading">
+        <MudText Typo="Typo.subtitle2">Login source</MudText>
+        <HelpTip Label="pi managed login preview">
+            <p>Choose one saved subscription login for this pi agent. Runner logins keeps pi's existing <code>/login</code> setup. A saved login is an explicit choice and needs Use access for you and the agent's owner.</p>
+            <p>Claude uses the installed Claude Code executable and the pi-claude-code package. Its credentials stay separate from pi's built-in Anthropic login. Install Claude Code and apply the pi package configuration on this Runner first.</p>
+            <p>Codex uses the preview <code>dam-codex</code> provider and the saved Codex login. The Manager renews it; pi reads the current access token for every request. This is the legacy Codex interface, separate from pi's newer OpenAI sign-in.</p>
+            <p>The agent starts on the selected login's provider. You can still use <code>/model</code> afterwards. Changing a running agent's login restarts that agent and resumes its conversation.</p>
+        </HelpTip>
+    </div>
+    <MudSelect T="Guid" Value="@(AccountId ?? Guid.Empty)" ValueChanged="SelectAsync" Label="Account" Variant="Variant.Outlined" Margin="Margin.Dense">
+        <MudSelectItem Value="Guid.Empty">Runner logins (/login)</MudSelectItem>
+        @foreach (var account in Choices)
+        {
+            <MudSelectItem Value="account.Id" Disabled="@(account.HarnessId == "claude" && !RunnerHarnessIds.Contains("claude"))">@PiManagedLogin.Label(account.HarnessId) · @AccountLabel.Name(account)</MudSelectItem>
+        }
+        @if (AccountId is { } id && !Choices.Any(a => a.Id == id))
+        {
+            <MudSelectItem Value="id" Disabled="true">Selected login unavailable</MudSelectItem>
+        }
+    </MudSelect>
+    @if (Choices.Count == 0)
+    {
+        <MudLink Href="settings?tab=accounts" Class="d-inline-block mt-2">Connect a subscription in Harness logins</MudLink>
+    }
+    @if (AccountId is { } selected && Choices.FirstOrDefault(a => a.Id == selected) is { } login)
+    {
+        <MudText Typo="Typo.caption" Class="pi-login-account d-block">@AccountLabel.Name(login)</MudText>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">Model provider: <code>@PiManagedLogin.Provider(login.HarnessId)</code></MudText>
+        @if (login.RenewalNote is not null)
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">@login.RenewalNote</MudAlert>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<AccountDto> Accounts { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> RunnerHarnessIds { get; set; } = [];
+    [Parameter] public Guid? AccountId { get; set; }
+    [Parameter] public EventCallback<Guid?> AccountIdChanged { get; set; }
+
+    private List<AccountDto> Choices => Accounts.Where(a => a.Enabled && a.Access >= AccountAccess.Use && PiManagedLogin.Supports(a.HarnessId, a.Kind))
+        .OrderBy(a => a.HarnessId).ThenBy(a => a.Name).ToList();
+    private Task SelectAsync(Guid value) => AccountIdChanged.InvokeAsync(value == Guid.Empty ? null : value);
+}

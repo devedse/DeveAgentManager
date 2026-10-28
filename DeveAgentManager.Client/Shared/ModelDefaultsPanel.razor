@@ -10,6 +10,7 @@
         Clear a field or use <b>Use Manager default</b> to go back to it.</p>
         <p>An agent uses them for the next conversation it starts, and when it continues a conversation in another harness. A conversation that is already running
         keeps the model it has; Claude Code and Grok take the effort at every start. In a conversation you can still switch with <code>/model</code>.</p>
+        <p>For pi, use a provider/model name to choose the connection explicitly. Saved logins use <code>claude-code/default</code> or <code>dam-codex/model-id</code>. Model cycling is configured separately below and applies at the next pi start.</p>
     </HelpTip>
 </div>
 
@@ -29,7 +30,7 @@
             }
         </div>
         <div class="form-row">
-            <MudAutocomplete T="string" @bind-Value="own.Model" Label="Model" Placeholder="Manager default" ShrinkLabel="true"
+            <MudAutocomplete T="string" @bind-Value="own.Model" Label="@(harness.Id == "pi" ? "Model (provider/model)" : "Model")" Placeholder="Manager default" ShrinkLabel="true"
                              SearchFunc="(text, token) => SearchModelsAsync(harness, text)" CoerceValue="true" CoerceText="false" Clearable="true" ResetValueOnEmptyText="true"
                              MaxItems="50" Strict="false" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1"
                              Error="@(ModelDefault.ModelProblem(own.Model) is not null)" ErrorText="@ModelDefault.ModelProblem(own.Model)" HelperText="@($"Manager default: {ManagerDefault(harness, row)}.")">
@@ -49,6 +50,11 @@
                 }
             </MudSelect>
         </div>
+        @if (harness.Id == "pi")
+        {
+            <PiModelScopeEditor @bind-Models="own.ScopedModels" InheritLabel="Use Manager default"
+                                InheritedSummary="@(row.ManagerScopedModels is null ? "Manager default: use pi settings." : row.ManagerScopedModels.Count == 0 ? "Manager default: all available models." : $"Manager default: {row.ManagerScopedModels.Count} {(row.ManagerScopedModels.Count == 1 ? "pattern" : "patterns")}.")" />
+        }
     </div>
 }
 <div class="settings-actions">
@@ -93,7 +99,7 @@
     {
         _rows = rows.ToDictionary(r => r.HarnessId);
         _harnesses = harnesses.Where(h => _rows.ContainsKey(h.Id)).ToList();
-        _own = _rows.Values.ToDictionary(r => r.HarnessId, r => new ModelDefault { Model = r.Model, Effort = r.Effort });
+        _own = _rows.Values.ToDictionary(r => r.HarnessId, r => new ModelDefault { Model = r.Model, Effort = r.Effort, ScopedModels = r.ScopedModels });
     }
 
     /// <summary>The harness's catalog on one of the user's Runners, for the model field. In the background: any name works without it.</summary>
@@ -114,8 +120,11 @@
         _saving = true;
         try
         {
+            var piScopeChanged = _own.TryGetValue("pi", out var pi) && _rows.TryGetValue("pi", out var previous)
+                && ((pi.ScopedModels is null) != (previous.ScopedModels is null)
+                    || !(pi.ScopedModels ?? []).SequenceEqual(previous.ScopedModels ?? []));
             Show(await Api.SaveMyModelDefaultsAsync(_own.Where(o => !o.Value.IsEmpty).ToDictionary(o => o.Key, o => o.Value)), _harnesses);
-            Snackbar.Add("Saved. Your agents use it from the next conversation they start.", Severity.Success);
+            Snackbar.Add(piScopeChanged ? "Saved. pi model cycling applies at its next start." : "Saved. Your agents use it from the next conversation they start.", Severity.Success);
         }
         catch (ApiException ex)
         {
@@ -131,7 +140,7 @@
         }
     }
 
-    private bool HasProblems => _own.Values.Any(o => ModelDefault.ModelProblem(o.Model) is not null || ModelDefault.EffortProblem(o.Effort) is not null);
+    private bool HasProblems => _own.Values.Any(o => ModelDefault.ModelProblem(o.Model) is not null || ModelDefault.EffortProblem(o.Effort) is not null || PiModelScope.Problem(o.ScopedModels) is not null);
 
     /// <summary>What the empty fields mean, e.g. "gpt-6.1-sol · xhigh" or "Claude Code chooses".</summary>
     private static string ManagerDefault(HarnessDto harness, ModelDefaultsDto row)

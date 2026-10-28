@@ -102,6 +102,7 @@ internal static class SettingsEndpoints
             foreach (var (harnessId, value) in request)
             {
                 if (!known.TryGetValue(harnessId, out var harness)) throw new ArgumentException($"There is no harness '{harnessId}'.");
+                if (harnessId != "pi" && value.ScopedModels is not null) throw new ArgumentException("Model cycling patterns are only supported by pi.");
                 value.Validate(harness.DisplayName);
             }
 
@@ -137,7 +138,8 @@ internal static class SettingsEndpoints
         {
             var manager = profile.GetHarness(h.Id);
             var own = mine.GetValueOrDefault(h.Id);
-            return new ModelDefaultsDto(h.Id, Blank(manager.DefaultProvider), Blank(manager.DefaultModel), Blank(manager.DefaultThinkingLevel), own?.Model, own?.Effort);
+            return new ModelDefaultsDto(h.Id, Blank(manager.DefaultProvider), Blank(manager.DefaultModel), Blank(manager.DefaultThinkingLevel), own?.Model, own?.Effort,
+                h.Id == "pi" ? PiModelScope.Clean(manager.ScopedModels) : null, own?.ScopedModels);
         }).ToList();
 
         static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

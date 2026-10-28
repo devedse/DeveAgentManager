@@ -15,6 +15,7 @@
     "DeveAgentManager.Tests/Js/*.cts",
     "tools/security-browser/*.mts",
     "tools/browser-dependencies/*.mts",
+    "tools/pi-login-smoke.mts",
     "DeveAgentManager.Tests/Browser/*.d.ts"
   ]
 }

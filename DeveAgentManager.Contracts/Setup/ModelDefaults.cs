@@ -12,7 +12,9 @@ public sealed class ModelDefault
 
     public string? Effort { get; set; }
 
-    public bool IsEmpty => string.IsNullOrWhiteSpace(Model) && string.IsNullOrWhiteSpace(Effort);
+    public List<string>? ScopedModels { get; set; }
+
+    public bool IsEmpty => string.IsNullOrWhiteSpace(Model) && string.IsNullOrWhiteSpace(Effort) && ScopedModels is null;
 
     /// <summary>Why this model name can't be passed to the harness, or null. Empty is fine: the Manager's default.</summary>
     public static string? ModelProblem(string? model) =>
@@ -29,13 +31,13 @@ public sealed class ModelDefault
     /// <summary>Throws with a readable message when something can't be used.</summary>
     public void Validate(string harnessName)
     {
-        if ((ModelProblem(Model) ?? EffortProblem(Effort)) is { } problem)
+        if ((ModelProblem(Model) ?? EffortProblem(Effort) ?? Contracts.PiModelScope.Problem(ScopedModels)) is { } problem)
         {
             throw new ArgumentException($"{harnessName}: {problem}");
         }
     }
 
-    public ModelDefault Cleaned() => new() { Model = Clean(Model), Effort = Clean(Effort) };
+    public ModelDefault Cleaned() => new() { Model = Clean(Model), Effort = Clean(Effort), ScopedModels = Contracts.PiModelScope.Clean(ScopedModels) };
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

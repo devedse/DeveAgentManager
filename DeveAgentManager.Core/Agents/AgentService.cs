@@ -334,7 +334,7 @@ public sealed partial class AgentService(
 
     private async Task RequireOwnLoginAsync(CurrentUser actor, Guid agentId, IHarness harness, Guid? accountId, CancellationToken cancellationToken)
     {
-        if (harness.AccountSupport is null) return;
+        if (harness.AccountSupport is null && !(harness.Id == "pi" && accountId is not null)) return;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var owner = await db.Agents.Where(a => a.Id == agentId).Select(a => a.OwnerId).SingleAsync(cancellationToken);
         var id = accountId ?? await db.UserHarnessDefaults.Where(p => p.UserId == owner && p.HarnessId == harness.Id)
@@ -348,8 +348,10 @@ public sealed partial class AgentService(
     private async Task RequireOwnLoginAsync(CurrentUser actor, IHarness harness, Guid accountId, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        if (!await db.AccountGrants.AnyAsync(g => g.AccountId == accountId && g.UserId == actor.Id && !g.User.Disabled
-            && g.Access >= AccountAccess.Use && g.Account.Enabled && g.Account.HarnessId == harness.Id, cancellationToken))
+        var login = await db.AccountGrants.Where(g => g.AccountId == accountId && g.UserId == actor.Id && !g.User.Disabled
+            && g.Access >= AccountAccess.Use && g.Account.Enabled)
+            .Select(g => new { g.Account.HarnessId, g.Account.Kind }).FirstOrDefaultAsync(cancellationToken);
+        if (login is null || !Accounts.AccountService.Compatible(harness.Id, login.HarnessId, login.Kind))
             throw new ArgumentException($"Choose a {harness.DisplayName} login you have Use access to.");
     }
 
@@ -1062,12 +1064,10 @@ public sealed partial class AgentService(
         }
         // The owner's default model and effort (My settings → Models), else the Manager's. The harness decides when they
         // apply: when a conversation starts in it, after a transfer, and for what it doesn't keep per conversation.
-        var model = harness.ConfigSupport is null ? new Setup.EffectiveModel(null, null, null) : Setup.EffectiveModel.Resolve(
-            (await settings.GetSetupProfileAsync(cancellationToken)).GetHarness(agent.HarnessId),
-            userSettings is null ? null : (await userSettings.GetModelDefaultsAsync(agent.OwnerId, cancellationToken)).GetValueOrDefault(agent.HarnessId));
+        var managerConfig = (await settings.GetSetupProfileAsync(cancellationToken)).GetHarness(agent.HarnessId);
+        var ownModel = userSettings is null ? null : (await userSettings.GetModelDefaultsAsync(agent.OwnerId, cancellationToken)).GetValueOrDefault(agent.HarnessId);
+        var model = harness.ConfigSupport is null ? new Setup.EffectiveModel(null, null, null) : Setup.EffectiveModel.Resolve(managerConfig, ownModel);
         var instructions = runner.SetupVersion >= Runners.RunnerSetupService.AgentToolsSetupVersion ? LaunchInstructions : null;
-        var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model.Model, instructions,
-            model.Effort, model.Provider, transferred));
 
         // The git identity's environment (the owner's unless switched: git config, GitHub token and variables), then the
         // harness login's, so e.g. a subscription wins over an API key meant for pi. A restart keeps the identity.
@@ -1080,12 +1080,23 @@ public sealed partial class AgentService(
         var accountEnvironment = "";
         if (agent.IsClone && agent.HarnessId == "pi")
             accountEnvironment = await accounts.PreparePiWorkspaceAsync(runner, agent, cancellationToken);
+        else if (agent.HarnessId == "pi")
+            // A managed-login preview may already have moved this agent's history into its private pi runtime.
+            // Keep opening that same history when switching back to pi's own logins.
+            accountEnvironment = Accounts.AccountService.ExistingPiRuntimeEnvironment(agent);
         if (account is not null)
         {
             if (loginActor is not null) await RequireOwnLoginAsync(loginActor, harness, account.Id, cancellationToken);
             await accounts.EnsureOnRunnerAsync(runner, account, cancellationToken);
-            accountEnvironment = $". \"{Accounts.AccountService.EnvironmentFile(account.Id)}\"; " + await accounts.PrepareRuntimeAsync(runner, agent, account, cancellationToken);
+            accountEnvironment = $". \"{Accounts.AccountService.EnvironmentFile(account.Id)}\"; "
+                + (agent.HarnessId == "pi"
+                    ? await accounts.PreparePiManagedRuntimeAsync(runner, agent, account, cancellationToken)
+                    : await accounts.PrepareRuntimeAsync(runner, agent, account, cancellationToken));
         }
+
+        var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model.Model, instructions,
+            model.Effort, model.Provider, transferred, agent.HarnessId == "pi" ? ownModel?.ScopedModels ?? managerConfig.ScopedModels : null,
+            agent.HarnessId == "pi" && account is not null ? PiManagedLogin.Provider(account.HarnessId) : null));
 
         agent.RunningAccountId = account?.Id;
         agent.RunningGitIdentityUserId = identity;

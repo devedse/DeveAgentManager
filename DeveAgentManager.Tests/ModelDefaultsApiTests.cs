@@ -54,6 +54,33 @@ public sealed class ModelDefaultsApiTests(ApiSecurityTests.Manager manager) : IC
         Assert.Equal(HttpStatusCode.Unauthorized, (await Anonymous().GetAsync(Path, Ct)).StatusCode);
     }
 
+    [Fact]
+    public async Task PiScopeRoundTripsInheritanceAllAndOrderedPatterns()
+    {
+        var settings = manager.Services.GetRequiredService<SettingsStore>();
+        var shared = await settings.GetSetupProfileAsync(Ct);
+        shared.GetHarness("pi").ScopedModels = ["claude-code/*:high", "dam-codex/*"];
+        await settings.SaveSetupProfileAsync(shared, Ct);
+        var (client, userId) = await SignedInAsNewUserAsync();
+        async Task<ModelDefaultsDto> Pi() => (await client.GetFromJsonAsync<List<ModelDefaultsDto>>(Path, ApiJson.Options, Ct))!.Single(m => m.HarnessId == "pi");
+        Assert.Equal(["claude-code/*:high", "dam-codex/*"], (await Pi()).ManagerScopedModels);
+        Assert.Null((await Pi()).ScopedModels);
+        var save = await client.PutAsJsonAsync(Path, new Dictionary<string, ModelDefault> { ["pi"] = new() { ScopedModels = [] } }, ApiJson.Options, Ct);
+        save.EnsureSuccessStatusCode();
+        Assert.Empty((await Pi()).ScopedModels!);
+        var store = manager.Services.GetRequiredService<UserSettingsStore>();
+        Assert.Empty((await store.GetModelDefaultsAsync(userId, Ct))["pi"].ScopedModels!);
+        save = await client.PutAsJsonAsync(Path, new Dictionary<string, ModelDefault> { ["pi"] = new() { ScopedModels = ["dam-codex/*", "claude-code/default:high"] } }, ApiJson.Options, Ct);
+        save.EnsureSuccessStatusCode();
+        Assert.Equal(["dam-codex/*", "claude-code/default:high"], (await Pi()).ScopedModels);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(Path, new Dictionary<string, ModelDefault> { ["pi"] = new() { ScopedModels = ["bad pattern"] } }, ApiJson.Options, Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(Path, new Dictionary<string, ModelDefault> { ["codex"] = new() { ScopedModels = [] } }, ApiJson.Options, Ct)).StatusCode);
+        save = await client.PutAsJsonAsync(Path, new Dictionary<string, ModelDefault>(), ApiJson.Options, Ct);
+        save.EnsureSuccessStatusCode();
+        Assert.Null((await Pi()).ScopedModels);
+        Assert.Equal(["claude-code/*:high", "dam-codex/*"], (await Pi()).ManagerScopedModels);
+    }
+
     /// <summary>A new user, signed in, past choosing their own password, as the Portal (its header and origin).</summary>
     private async Task<(HttpClient Client, Guid Id)> SignedInAsNewUserAsync()
     {

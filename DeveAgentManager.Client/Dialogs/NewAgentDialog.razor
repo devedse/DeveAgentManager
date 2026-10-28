@@ -47,7 +47,11 @@
                         }
                     </MudSelect>
                 </div>
-                @if (SelectedHarness?.AccountSupport is not null)
+                @if (_harnessId == "pi")
+                {
+                    <PiLoginSelector Accounts="_allAccounts" RunnerHarnessIds="@(_runners.First(r => r.Id == _runnerId).HarnessIds)" @bind-AccountId="_accountId" />
+                }
+                else if (SelectedHarness?.AccountSupport is not null)
                 {
                     @if (_harnessAccounts.Count > 0)
                     {
@@ -214,7 +218,7 @@
     {
         _harnessId = harnessId;
         _harnessAccounts = _allAccounts.Where(a => a.HarnessId == harnessId && a.Enabled && a.Access >= AccountAccess.Use).ToList();
-        _accountId = (_harnessAccounts.FirstOrDefault(a => a.IsDefault) ?? _harnessAccounts.FirstOrDefault())?.Id;
+        _accountId = harnessId == "pi" ? null : (_harnessAccounts.FirstOrDefault(a => a.IsDefault) ?? _harnessAccounts.FirstOrDefault())?.Id;
     }
 
     private void RepositoryChanged(string value)

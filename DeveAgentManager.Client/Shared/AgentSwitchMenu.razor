@@ -14,7 +14,7 @@
                 else
                 {
                     @CurrentHarnessName
-                    @if (CurrentHarness?.AccountSupport is not null)
+                    @if (CurrentHarness?.AccountSupport is not null || Agent.HarnessId == "pi" && Agent.AccountId is not null)
                     {
                         <span class="account-separator"> · </span><AccountIdentity Username="@CurrentUsername" Name="@CurrentAccountName" />
                     }
@@ -57,6 +57,13 @@
                 @if (harness.AccountSupport is null)
                 {
                     @Option(harness, null)
+                    @if (harness.Id == "pi")
+                    {
+                        <button type="button" class="switch-option" disabled="@(!Agent.RunnerHarnessIds.Contains("pi") || !_loaded)" @onclick="ConfigurePiAsync">
+                            <MudIcon Icon="@Icons.Material.Rounded.Tune" Size="Size.Small" />
+                            <span class="switch-option-label">Saved login (preview)</span>
+                        </button>
+                    }
                 }
                 else
                 {
@@ -138,11 +145,12 @@
 
     private RenderFragment Option(HarnessDto harness, AccountDto? account) => __builder =>
     {
-        var current = Agent.State == AgentState.Running && harness.Id == Agent.HarnessId && (account is null || account.Id == CurrentAccount?.Id);
+        var current = Agent.State == AgentState.Running && harness.Id == Agent.HarnessId
+            && (harness.Id == "pi" ? account?.Id == Agent.AccountId : account is null || account.Id == CurrentAccount?.Id);
         <button type="button" class="switch-option @(current ? "switch-current" : "")" disabled="@(current || !Agent.RunnerHarnessIds.Contains(harness.Id) || account is { Access: < AccountAccess.Use })" @onclick="() => SwitchAsync(harness, account)">
             <MudIcon Icon="@(current ? Icons.Material.Rounded.CheckCircle : Icons.Material.Rounded.ArrowForward)" Size="Size.Small" />
             <span class="switch-option-label">
-                <AccountIdentity Username="@(account is null ? _me?.Username : account.CreatedByUsername)" Name="@(account?.Name ?? harness.DisplayName)" />
+                <AccountIdentity Username="@(account is null ? _me?.Username : account.CreatedByUsername)" Name="@(account?.Name ?? (harness.Id == "pi" ? "Runner logins (/login)" : harness.DisplayName))" />
                 @if (account is not null)
                 {
                     <span class="account-identity-meta"> · @account.Id.ToString("N")[..6]@(account.IsDefault ? " (your default)" : "")</span>
@@ -154,6 +162,25 @@
             }
         </button>
     };
+
+    private async Task ConfigurePiAsync()
+    {
+        _open = false;
+        var dialog = await Dialogs.ShowAsync<PiLoginDialog>("pi login preview", new DialogParameters<PiLoginDialog>
+        {
+            { d => d.Agent, Agent }, { d => d.Accounts, _accounts },
+        }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        if ((await dialog.Result) is { Canceled: false, Data: SwitchAgentRequest selection })
+        {
+            var account = _accounts.FirstOrDefault(a => a.Id == selection.AccountId);
+            if (selection.AccountId is not null && account is null)
+            {
+                Snackbar.Add("The selected login is no longer available. Open the selector again.", Severity.Error);
+                return;
+            }
+            await SwitchAsync(_harnesses.Single(h => h.Id == "pi"), account);
+        }
+    }
 
     private async Task SwitchAsync(HarnessDto harness, AccountDto? account)
     {

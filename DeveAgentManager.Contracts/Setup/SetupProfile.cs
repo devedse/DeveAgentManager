@@ -57,8 +57,9 @@ public sealed class SetupProfile
             }
         }
 
-        foreach (var config in Harnesses.Values)
+        foreach (var (harnessId, config) in Harnesses)
         {
+            if (harnessId != "pi" && config.ScopedModels is not null) throw new ArgumentException("Model cycling patterns are only supported by pi.");
             config.Validate();
         }
     }
@@ -79,6 +80,9 @@ public sealed class HarnessConfig
 
     public string? DefaultThinkingLevel { get; set; }
 
+    /// <summary>pi model cycling patterns; null preserves pi settings, empty explicitly selects all available models.</summary>
+    public List<string>? ScopedModels { get; set; }
+
     /// <summary>A JSON object merged into the harness's settings file (objects merge, other values replace).</summary>
     public string? Settings { get; set; }
 
@@ -96,6 +100,7 @@ public sealed class HarnessConfig
     /// <summary>Throws with a readable message when something can't be applied.</summary>
     public void Validate()
     {
+        if (Contracts.PiModelScope.Problem(ScopedModels) is { } scopeProblem) throw new ArgumentException(scopeProblem);
         foreach (var package in CleanPackages())
         {
             if (PackageProblem(package) is { } problem)
@@ -143,6 +148,8 @@ public sealed class HarnessConfig
         Set("defaultProvider", DefaultProvider);
         Set("defaultModel", DefaultModel);
         Set("defaultThinkingLevel", DefaultThinkingLevel);
+        if (ScopedModels is not null)
+            settings["enabledModels"] = System.Text.Json.JsonSerializer.SerializeToNode(Contracts.PiModelScope.Clean(ScopedModels));
         return settings;
 
         void Set(string name, string? value)
