@@ -22,7 +22,7 @@ const SILKIE_WINGS = {
   [SILKIE_CELL.idle]: { pivot: [.25, .62], centre: [.14, .68], radius: [.10, .14] },
   [SILKIE_CELL.happy]: { pivot: [.26, .63], centre: [.12, .60], radius: [.13, .16] },
   [SILKIE_CELL.wave]: { pivot: [.23, .63], centre: [.11, .46], radius: [.13, .21] },
-  [SILKIE_CELL.shocked]: { pivot: [.30, .69], centre: [.22, .67], radius: [.18, .17] },
+  [SILKIE_CELL.shocked]: { pivot: [.31, .67], centre: [.22, .67], radius: [.13, .13] },
   [SILKIE_CELL.hop]: { pivot: [.22, .56], centre: [.10, .42], radius: [.12, .19] },
   [SILKIE_CELL.cheer]: { pivot: [.22, .57], centre: [.10, .39], radius: [.12, .21] }
 };
@@ -35,7 +35,7 @@ function silkieChoreography(frame, frames, stage) {
   let head = live * Math.sin(t * 1.3) * .012 + gaze.x * .05, wings = live * Math.sin(t * 2.6) * .02, wave = 0;
   let breathe = live * Math.sin(t * 2.1) * .009, crest = live * Math.sin(t * 2.3 + .6) * 1.6;
   const show = new Set();
-  let swish = null, wingReach = 0;
+  let swish = null;
   switch (m) {
     case 'drag':
       cell = SILKIE_CELL.shocked; blink = false;
@@ -57,9 +57,9 @@ function silkieChoreography(frame, frames, stage) {
     case 'flap': case 'toss': {
       const vx = frame.velocity?.x ?? 480, vy = frame.velocity?.y ?? (m === 'flap' ? -600 : 300);
       cell = SILKIE_CELL.shocked;
-      // Keep the open beak and startled eyes for the entire flight, with frantic wingbeats.
+      // The scared drawing has tucked wings. Flutter at the shoulders without pulling the body mesh apart.
       const beat = Math.sin(e * (m === 'flap' ? 44 : 40));
-      wings = live * (.16 + beat * .68); wingReach = live * (.7 + beat * .3);
+      wings = live * (.025 + beat * .16);
       feet = live * Math.sin(e * 34) * 1.5;
       tilt = live * (Math.max(-.22, Math.min(.22, vx / 3600)) + Math.sin(e * 29) * .035);
       head = -tilt * .6 + live * Math.sin(e * 37) * .045; crest += live * Math.sin(e * 33) * 7;
@@ -141,8 +141,6 @@ function silkieChoreography(frame, frames, stage) {
     const u = side === 'left' ? x => x * W : x => 2 * mid - x * W, sign = side === 'left' ? 1 : -1;
     ops.push({ type: 'rotate', pivot: [u(a.pivot[0]), a.pivot[1] * H], angle: sign * (raised ? wave : wings),
       region: { ellipse: [u(a.centre[0]), a.centre[1] * H, a.radius[0] * W, a.radius[1] * H] }, label: 'wing' });
-    if (wingReach) ops.push({ type: 'shift', dx: -sign * W * .11 * wingReach, dy: -H * .065 * wingReach,
-      region: { ellipse: [u(a.centre[0]), a.centre[1] * H, a.radius[0] * W, a.radius[1] * H] }, label: 'wing reach' });
     if (raised && show.has('swish')) swish = [u(a.centre[0] - .05), (a.centre[1] - .16) * H, side === 'left' ? -2.3 : -.84];
   }
   if (feet) for (const [x0, x1, s] of [[f.minX - 10, f.anchorX - 4, 1], [f.anchorX + 4, f.maxX + 10, -1]])

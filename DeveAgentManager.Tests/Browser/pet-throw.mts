@@ -42,10 +42,20 @@ async function reset(page: Page, species = 'snek', stage = 3, reducedMotion = fa
 async function drag(page: Page, dx: number, dy: number, pause = 0, stepDelay = 18, selector = '.dam-pet-body') {
     const body = await page.locator(selector).boundingBox();
     const x = body!.x + body!.width / 2, y = body!.y + 60;
-    await page.mouse.move(x, y); await page.mouse.down();
-    for (let i = 1; i <= 4; i++) { await page.waitForTimeout(stepDelay); await page.mouse.move(x + dx * i / 4, y + dy * i / 4); }
-    if (pause) await page.waitForTimeout(pause);
-    await page.mouse.up();
+    // Replay device sample times so browser/transport delays cannot change the tested gesture speed.
+    const input = await page.context().newCDPSession(page), timestamp = Date.now() / 1000;
+    try {
+        await input.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, timestamp });
+        await input.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1, timestamp });
+        for (let i = 1; i <= 4; i++) {
+            await page.waitForTimeout(stepDelay);
+            await input.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x + dx * i / 4, y: y + dy * i / 4,
+                button: 'left', buttons: 1, timestamp: timestamp + i * stepDelay / 1000 });
+        }
+        if (pause) await page.waitForTimeout(pause);
+        await input.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x + dx, y: y + dy, button: 'left', buttons: 0,
+            clickCount: 1, timestamp: timestamp + (4 * stepDelay + pause + 2) / 1000 });
+    } finally { await input.detach(); }
 }
 async function scaredDrag(page: Page, species: string) {
     const body = await page.locator('.dam-pet-body').boundingBox();
