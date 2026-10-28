@@ -3,6 +3,7 @@
 @inject PetClient Pets
 @inject ManagerApi Api
 @inject ISnackbar Snackbar
+@inject PageVisibility Visibility
 
 <LoadingSection Loaded="@(Pets.State is not null)" Error="@Pets.Error" Retry="Pets.ReloadAsync" Label="Loading your Damagochi">
     <Placeholder><SkeletonForm Fields="4" /></Placeholder>
@@ -38,10 +39,9 @@
                 }
                 <MudNumericField T="int" @bind-Value="_size" Min="90" Max="240" Label="Damagochi size" Variant="Variant.Outlined" Margin="Margin.Dense" />
                 <MudSwitch T="bool" @bind-Value="_reduced" Label="Reduce Damagochi movement" Color="Color.Primary" />
-                @if (state.Pet.SnoozedUntil > DateTime.UtcNow)
+                @if (HiddenLabel is { } hiddenLabel)
                 {
-                    <MudText Typo="Typo.body2">Your Damagochi is snoozing.</MudText>
-                    <MudButton OnClick="Wake" Disabled="_saving">Bring back now</MudButton>
+                    <div class="settings-actions"><MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="Unhide" Disabled="@(_saving || !state.Options.Enabled)">@hiddenLabel · Unhide</MudButton></div>
                 }
                 <div class="settings-actions"><MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving">Save Damagochi settings</MudButton></div>
                 @if (!state.Pet.NeedsAdoption) { <div class="settings-actions"><PetRetireButton /></div> }
@@ -59,7 +59,27 @@
     private int _size = 140;
     private long _generation;
     private PetPreferences? _shown;
-    protected override async Task OnInitializedAsync() { Pets.Changed += Changed; await Pets.StartAsync(); Load(); }
+    private readonly CancellationTokenSource _stop = new();
+    private string? HiddenLabel {
+        get {
+            if (Pets.State?.Pet is not { } pet) return null;
+            if (!pet.Enabled) return "Hidden";
+            if (pet.SnoozedUntil is not { } until || until <= DateTime.UtcNow) return null;
+            var minutes = Math.Max(1, (int)Math.Ceiling((until - DateTime.UtcNow).TotalMinutes));
+            return $"Hidden for {minutes} {(minutes == 1 ? "minute" : "minutes")}";
+        }
+    }
+    protected override async Task OnInitializedAsync() {
+        Pets.Changed += Changed; Visibility.Shown += RefreshHidden;
+        await Pets.StartAsync(); Load(); _ = RefreshHiddenAsync();
+    }
+    private void RefreshHidden() { if (!_stop.IsCancellationRequested) _ = InvokeAsync(StateHasChanged); }
+    private async Task RefreshHiddenAsync() {
+        try {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+            while (await timer.WaitForNextTickAsync(_stop.Token)) if (Visibility.Visible) await InvokeAsync(StateHasChanged);
+        } catch (OperationCanceledException) { }
+    }
     private void Changed() { Load(); _ = InvokeAsync(StateHasChanged); }
     private void Load() {
         if (Pets.State is not { } s) return;
@@ -82,6 +102,11 @@
         await Api.SavePetAsync(new(_enabled, pending ? "" : _name, pending ? "" : _species, _reduced, _size, _generation));
     }, "Damagochi settings saved.");
     private Task Adopt() => Run(async () => { await Api.AdoptPetAsync(new(_name, _species, _generation)); }, "Your Damagochi has hatched.");
-    private Task Wake() => Run(() => Api.PetActionAsync("wake"), "Damagochi brought back.");
-    public void Dispose() => Pets.Changed -= Changed;
+    private Task Unhide() => Run(async () => {
+        var pet = Pets.State!.Pet;
+        if (pet.Enabled) await Api.PetActionAsync("wake");
+        else await Api.SavePetAsync(new(true, pet.Name, pet.Species, pet.ReducedMotion, pet.Size, pet.Generation));
+        _enabled = true;
+    }, "Damagochi is visible.");
+    public void Dispose() { Pets.Changed -= Changed; Visibility.Shown -= RefreshHidden; _stop.Cancel(); }
 }
