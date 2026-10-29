@@ -68,7 +68,7 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
             h.velocity = velocity;
             h.flight = beginThrow(h.x, h.y, velocity, h.snapshot?.size ?? 140, throwBounds(h)) ?? undefined;
             h.slide = h.flight ? undefined : beginSlide(h.x, h.y, velocity) ?? undefined;
-            h.motion = h.flight ? "flap" : h.slide ? "slide" : "wobble";
+            h.motion = h.flight ? "flap" : h.slide ? "slide" : "idle";
             h.motionAt = h.time; h.nextIdleAt = h.time + 12;
             start(h);
         }
@@ -219,7 +219,7 @@ function start(h: Host): void {
             const stopped = advanceSlide(h.slide, dt, throwBounds(h));
             h.x = h.slide.x; h.y = h.slide.y; h.velocity = { x: h.slide.vx, y: h.slide.vy }; clamp(h);
             h.motion = "slide";
-            if (stopped) { h.slide = undefined; h.motion = "wobble"; h.motionAt = h.time; savePosition(h); }
+            if (stopped) { h.slide = undefined; h.velocity = undefined; h.motion = "idle"; h.motionAt = h.time; savePosition(h); }
         }
         if (h.flight) {
             const landed = advanceThrow(h.flight, dt, throwBounds(h));

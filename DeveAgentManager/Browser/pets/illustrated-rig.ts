@@ -145,6 +145,7 @@ class IllustratedRig {
   lastTime: any;
   loading: any;
   mount: any;
+  motion?: string;
   nextBlink: any;
   opacityUniform: any;
   overlay: any;
@@ -248,7 +249,13 @@ class IllustratedRig {
     if (document.hidden) return this.info;
     const time = frame.time; this.lastTime = time;
     const pose = this.art.choreograph(frame, this.frames, this.stage);
-    if (pose.cell !== this.cell) { if (this.cell >= 0) this.popAt = time; this.cell = pose.cell; }
+    if (pose.cell !== this.cell) {
+      // Releasing a drag or finishing a glide returns quietly to the idle drawing.
+      const resting = frame.motion === 'idle' && (this.motion === 'drag' || this.motion === 'slide');
+      if (this.cell >= 0) this.popAt = resting ? -Infinity : time;
+      this.cell = pose.cell;
+    }
+    this.motion = frame.motion;
     const cell = this.frames[pose.cell];
     // A quick squash-and-settle hides the swap between two drawings.
     const since = time - this.popAt, pop = frame.animate && since >= 0 && since < .45 ? Math.exp(-since / .09) * Math.cos(since * 26) : 0;

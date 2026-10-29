@@ -586,18 +586,16 @@ class SnekRig {
       case 'drag':
         p.height = B.height * .95; plan.tilt = live * Math.sin(e * 24) * .025;
         Object.assign(face, { eyes: 'shocked', open: 1, tongue: 'none', blink: false }); break;
-      case 'slide': {
-        const vx = frame.velocity?.x ?? 450, lean = live * Math.max(-1, Math.min(1, vx / 900));
-        p.height = B.height * .8; p.headDX += lean * 20; p.bend -= lean * 18;
-        p.tailY = B.tailY * .6; p.curl -= lean * 24; plan.tilt = lean * .1;
-        Object.assign(face, { eyes: e < .35 ? 'shocked' : 'open', tongue: 'none' }); break;
-      }
-      case 'wobble': {
-        const envelope = live * Math.max(0, 1 - e / 1.2) ** 2, sway = Math.sin(e * 17) * envelope;
+      case 'slide': case 'wobble': {
+        const sliding = m === 'slide';
+        const envelope = live * (sliding ? Math.min(1, Math.hypot(frame.velocity?.x ?? 450, frame.velocity?.y ?? 0) / 300) : Math.max(0, 1 - e / 1.2) ** 2);
+        const sway = Math.sin(e * 17) * envelope;
         p.headDX += sway * 34; p.bend += Math.sin(e * 17 - .7) * envelope * 28;
         p.tailX -= sway * 20; p.curl += Math.sin(e * 17 - 1.6) * envelope * 38;
         p.height -= Math.abs(sway) * B.height * .12; plan.tilt = -sway * .15; plan.shake = envelope * .7;
-        Object.assign(face, { eyes: e < .35 ? 'shocked' : 'open', tongue: 'none' }); break;
+        Object.assign(face, { eyes: sliding || e < .35 ? 'shocked' : 'open', tongue: 'none' });
+        if (sliding) Object.assign(face, { open: 1, blink: false });
+        break;
       }
       case 'flap': case 'toss':
         plan.kind = 'air'; plan.tilt = live * Math.sin(e * 12) * .08; plan.shake = live * .8;

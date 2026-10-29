@@ -58,7 +58,7 @@ const PETS={
       {id:'wobble',label:'Lose balance',icon:'surprised',duration:1.2,text:'Whoops, those fluffy feet!',mood:['Finding my feet','A little wobble, then steady again.']},
       {id:'flap',label:'Throw up',icon:'hop',duration:1.4,text:'Flap flap flap!',mood:['Trying to fly','Both wings working very hard.']},
       {id:'toss',label:'Falling',icon:'walk',duration:1.4,text:'A little flying fluff!',mood:['Along for the ride','A small arc, then back to those feet.']},
-      {id:'slide',label:'Shove',icon:'walk',duration:2.5,text:'Slippery little feet!',mood:['Sliding on ice','Coasting along until the shove runs out.']},
+      {id:'slide',label:'Shove',icon:'walk',duration:2.5,text:'Slippery little feet!',mood:['Sliding on ice','Wobbling along until the glide comes to a stop.']},
       {id:'drag',label:'Scared drag',icon:'surprised',duration:2,text:'Whoa, where are we going?',mood:['Hold on tight','A startled face while being dragged.']},
       {id:'land',label:'Landing',icon:'hop',duration:1,text:'Soft landing!',mood:['Feet first','A little squash and a fluff shake.']}
     ]
@@ -86,7 +86,7 @@ const PETS={
       {id:'wobble',label:'Lose balance',icon:'surprised',duration:1.2,text:'A wobbly little noodle!',mood:['Finding my balance','The wiggle travels down to the rattle.']},
       {id:'flap',label:'Throw up',icon:'hop',duration:1.4,text:'An airborne noodle!',mood:['Uncoiling in midair','The rattle is still catching up.']},
       {id:'toss',label:'Falling',icon:'slither',duration:1.4,text:'Ssssswoosh!',mood:['A flying S-curve','Head first, with a trailing rainbow tail.']},
-      {id:'slide',label:'Shove',icon:'slither',duration:2.5,text:'A slippery noodle!',mood:['Sliding on ice','The coils coast along with a trailing rattle.']},
+      {id:'slide',label:'Shove',icon:'slither',duration:2.5,text:'A slippery noodle!',mood:['Sliding on ice','Wobbling along until the glide comes to a stop.']},
       {id:'drag',label:'Scared drag',icon:'surprised',duration:2,text:'Ssssomebody hold on!',mood:['Hold on tight','Wide eyes while being dragged.']},
       {id:'land',label:'Coil landing',icon:'sleep',duration:1,text:'Boing! Back in a coil.',mood:['Springy landing','Curl, recoil, then a little rattle.']}
     ]
@@ -133,7 +133,7 @@ class PetSession{
     if(this.slide){
       const stopped=advanceSlide(this.slide,delta,buddyBounds());
       placeBuddy(this.slide.x,this.slide.y);this.velocity={x:this.slide.vx,y:this.slide.vy};
-      if(stopped){this.slide=undefined;this.buddyMotion='wobble';this.buddyMotionAt=this.clock}
+      if(stopped){this.slide=undefined;this.velocity=undefined;this.buddyMotion='idle';this.buddyMotionAt=this.clock;this.autoAt=this.clock+6}
     }
     if(this.flight){
       const landed=advanceThrow(this.flight,delta,buddyBounds());
@@ -303,7 +303,7 @@ function launchBuddy(velocity: Velocity,preview=false): void {
   const rect=$('buddy').getBoundingClientRect();
   session.flight=beginThrow(rect.left,rect.top,velocity,$('buddy').offsetWidth,buddyBounds())??undefined;
   session.slide=session.flight?undefined:beginSlide(rect.left,rect.top,velocity)??undefined;
-  session.velocity=velocity;session.buddyMotion=session.flight?'flap':session.slide?'slide':'wobble';session.buddyMotionAt=session.clock;
+  session.velocity=velocity;session.buddyMotion=session.flight?'flap':session.slide?'slide':'idle';session.buddyMotionAt=session.clock;
 }
 function cancelDrag(): void {
   if(drag&&$('buddy-pet').hasPointerCapture(drag.id))$('buddy-pet').releasePointerCapture(drag.id);
