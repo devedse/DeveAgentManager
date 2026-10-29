@@ -4,8 +4,8 @@ namespace DeveAgentManager.Client.Services;
 
 /// <summary>
 /// For which usage limit of each agent this browser answered the offer to turn on auto-continue (Not now, or the full
-/// options were opened), so the same limit isn't offered again; the next limit is. Kept in this browser only; without
-/// storage, an answer lasts for the current visit.
+/// options were opened), so the same reset time isn't offered again even after a fresh observation. Kept in this
+/// browser only; without storage, an answer lasts for the current visit.
 /// </summary>
 public sealed class ContinueOffers(IJSRuntime js)
 {
@@ -13,8 +13,8 @@ public sealed class ContinueOffers(IJSRuntime js)
 
     public event Action? Changed;
 
-    /// <param name="detectedAt">When the limit was first seen, which identifies it.</param>
-    public async Task<bool> AnsweredAsync(Guid agentId, DateTime detectedAt)
+    /// <param name="resetAt">The detected reset instant, independent of when or how the rejection was observed.</param>
+    public async Task<bool> AnsweredAsync(Guid agentId, DateTime resetAt)
     {
         if (!_answered.TryGetValue(agentId, out var answered))
         {
@@ -22,17 +22,18 @@ public sealed class ContinueOffers(IJSRuntime js)
             catch (JSException) { answered = 0; }
             _answered[agentId] = answered;
         }
-        return answered == detectedAt.Ticks;
+        return answered == resetAt.Ticks;
     }
 
-    public async Task AnswerAsync(Guid agentId, DateTime detectedAt)
+    public async Task AnswerAsync(Guid agentId, DateTime resetAt)
     {
-        if (_answered.TryGetValue(agentId, out var answered) && answered == detectedAt.Ticks) return;
-        _answered[agentId] = detectedAt.Ticks;
-        try { await js.InvokeVoidAsync("localStorage.setItem", Key(agentId), detectedAt.Ticks.ToString()); }
+        if (_answered.TryGetValue(agentId, out var answered) && answered == resetAt.Ticks) return;
+        _answered[agentId] = resetAt.Ticks;
+        try { await js.InvokeVoidAsync("localStorage.setItem", Key(agentId), resetAt.Ticks.ToString()); }
         catch (JSException) { } // Private browsing may disallow storage.
         Changed?.Invoke();
     }
 
-    private static string Key(Guid agentId) => $"dam-continue-offer-{agentId:N}";
+    // Separate from the old observation-time key: an observation timestamp is not a dismissed reset.
+    private static string Key(Guid agentId) => $"dam-continue-offer-reset-{agentId:N}";
 }

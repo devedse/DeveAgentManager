@@ -171,7 +171,7 @@ try {
     await page.keyboard.press('Escape');
 
     // A new limit that automatic mode can handle, while it is off, offers to turn it on with one click: the offer drops
-    // down from the button. Each limit is a new observation (detectedAt), as the Manager records it.
+    // down from the button. A fresh observation alone must not override a dismissed reset time.
     let observed = Date.UTC(2029, 11, 31, 9, 0);
     const newLimit = (changes = {}) => {
         observed += 60000;
@@ -183,10 +183,10 @@ try {
         await page.locator('.terminal-toolbar').waitFor({ timeout: 60000 });
         errors.length = 0;
     };
-    const offered = async () => {
+    const offered = async (time = '14:00') => {
         await showAgent();
         await offer.waitFor({ timeout: 10000 });
-        await offer.getByRole('heading', { name: 'Usage limit until 2030-01-02 14:00', exact: true }).waitFor();
+        await offer.getByRole('heading', { name: `Usage limit until 2030-01-02 ${time}`, exact: true }).waitFor();
     };
     const notOffered = async (why) => {
         await showAgent();
@@ -219,7 +219,7 @@ try {
     assert.deepEqual(automaticRequests.slice(requests), [{ enabled: true, remaining: null }], 'one click switches on unlimited auto-continue');
     await page.getByRole('button', { name: 'Auto-continue scheduled for 2030-01-02 14:01 (Europe/Amsterdam)', exact: true }).waitFor({ timeout: 10000 });
 
-    // Not now hides it for this limit, also after reloading; the next limit is offered again.
+    // Not now survives a full refresh, fresh observations and wording changes for the same reset.
     newLimit();
     automatic = { enabled: false, remaining: null, sent: 0, detail: null, available: true };
     await offered();
@@ -227,9 +227,18 @@ try {
     await offer.getByRole('button', { name: 'Not now' }).click();
     await offer.waitFor({ state: 'hidden' });
     await notOffered('Not now hides the offer for the same limit');
+    await page.reload();
+    await page.locator('[data-toolbar="limit"] button').waitFor({ timeout: 60000 });
+    await page.waitForTimeout(1500);
+    assert.equal(await offer.count(), 0, 'a full refresh remembers the dismissed reset time');
+    newLimit({ message: "You've hit your usage limit. Try again at 2:00 PM." });
+    await notOffered('a fresh observation with different wording and the same reset stays dismissed');
     assert.equal(automaticRequests.length, requests, 'Not now changes nothing');
-    newLimit();
-    await offered();
+    const changedReset = new Date(reset.getTime() + 3600000).toISOString();
+    // A reset correction must be offered even if the original observation timestamp is retained.
+    limit = { ...limit, resetAt: changedReset, detectedResetAt: changedReset };
+    await offered('15:00');
+    await offer.getByText('Usage limit until 2030-01-02 15:00', { exact: true }).waitFor();
 
     // Opening the options answers it too.
     await page.locator('[data-toolbar="limit"] button').click();
@@ -237,6 +246,8 @@ try {
     assert.equal(await offer.count(), 0, 'the offer closes when the options open');
     await page.keyboard.press('Escape');
     await notOffered('the options were seen for this limit');
+    newLimit({ resetAt: changedReset, detectedResetAt: changedReset });
+    await notOffered('opening the options dismisses this reset despite a fresh observation');
 
     // A count of continuations left from before is kept, as the dialog's switch keeps it.
     newLimit();

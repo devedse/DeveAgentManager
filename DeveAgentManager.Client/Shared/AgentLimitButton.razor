@@ -104,8 +104,8 @@ else
     }
     private async Task OpenAsync()
     {
-        // Seeing all the options answers the offer for this limit.
-        if (_offer && _limit is not null) await Offers.AnswerAsync(AgentId, _limit.DetectedAt);
+        // Seeing all the options answers the offer for this reset time.
+        if (_offer && _limit?.DetectedResetAt is { } reset) await Offers.AnswerAsync(AgentId, reset);
         var dialog = await Dialogs.ShowAsync<ContinueAfterLimitDialog>(_limit is null || _limit.Manual ? "Schedule continue" : "Continue after usage limit", new DialogParameters
         { [nameof(ContinueAfterLimitDialog.LimitLoaded)] = _limitLoaded, [nameof(ContinueAfterLimitDialog.AutomaticLoaded)] = _automaticLoaded,
             [nameof(ContinueAfterLimitDialog.LimitLoadError)] = _limitError, [nameof(ContinueAfterLimitDialog.AutomaticLoadError)] = _automaticError,
@@ -116,7 +116,7 @@ else
     }
 
     // A usage limit that automatic mode can handle, while it is off: offer to turn it on with one click, the same as
-    // switching it on in the dialog. Once per limit; Not now or opening the dialog answers it.
+    // switching it on in the dialog. Once per reset time; Not now or opening the dialog answers it.
     private bool _offer, _offerBusy;
     private string? _offerReset, _offerQuestion, _offerError;
     private bool Offerable => _limitLoaded && _automaticLoaded && _limitError is null && _automaticError is null
@@ -127,7 +127,7 @@ else
 
     private async Task LoadOfferAsync()
     {
-        if (!Offerable || await Offers.AnsweredAsync(AgentId, _limit!.DetectedAt)) { _offer = false; return; }
+        if (!Offerable || await Offers.AnsweredAsync(AgentId, _limit!.DetectedResetAt!.Value)) { _offer = false; return; }
         var reset = _limit.DetectedResetAt!.Value;
         _offerReset = await ShortTimeAsync(reset);
         var at = reset.AddMinutes(1);
@@ -167,7 +167,7 @@ else
 
     private async Task NotNowAsync()
     {
-        if (_limit is not null) await Offers.AnswerAsync(AgentId, _limit.DetectedAt);
+        if (_limit?.DetectedResetAt is { } reset) await Offers.AnswerAsync(AgentId, reset);
         _offer = false;
     }
 
@@ -178,7 +178,7 @@ else
                 <HelpTip Label="turning on auto-continue">
                     <p>Turn on switches on auto-continue for this agent, as in the usage-limit options: the Manager types <b>continue</b> one minute after this reset, and again after each later usage limit@(OfferRemaining is { } count ? $", {count} more {(count == 1 ? "time" : "times")}" : ", until you switch it off").</p>
                     <p>It waits while you have a draft or the agent is busy, and stops when the conversation or harness changes. For a one-time continue, open the options with the button.</p>
-                    <p>Not now hides this until the next usage limit, in this browser.</p>
+                    <p>Not now hides this in this browser until the reset time changes, including after refreshing.</p>
                 </HelpTip>
             </div>
             <p>@_offerQuestion</p>
