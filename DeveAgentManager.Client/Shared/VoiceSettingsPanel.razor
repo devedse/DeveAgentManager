@@ -1,0 +1,41 @@
+@inject ManagerApi Api
+@inject ISnackbar Snackbar
+
+<LoadingSection Loaded="_loaded" Error="@_error" Retry="LoadAsync" Label="Loading voice settings">
+    <Placeholder><SkeletonForm Fields="1" /></Placeholder>
+    <ChildContent>
+        <div class="settings-section">
+            <div class="help-heading">
+                <MudText Typo="Typo.subtitle1" Class="section-title">Codex voice</MudText>
+                <HelpTip Label="Codex voice mode" ViewportCentered="true">
+                    <p>Browser mode connects your microphone and speakers directly to the voice service and shows a separate transcript.</p>
+                    <p>Terminal mode lets Codex own voice, captions and its native controls while your browser supplies the microphone and speakers. Restart an existing agent once after updating the Manager to enable its audio adapter.</p>
+                    <p>This is your own setting and applies to your next voice connection. It never starts or restarts an agent.</p>
+                    <p>The terminal adapter keeps one private cached Codex package per version in use on the Runner. Your installed Codex package stays unchanged.</p>
+                </HelpTip>
+            </div>
+            <MudSwitch T="bool" Value="_terminalMode" ValueChanged="SaveAsync" Disabled="_saving" Color="Color.Primary" Label="Use terminal voice" />
+        </div>
+    </ChildContent>
+</LoadingSection>
+
+@code {
+    private bool _loaded, _terminalMode, _saving;
+    private string? _error;
+    protected override Task OnInitializedAsync() => LoadAsync();
+    private async Task LoadAsync()
+    {
+        _error = null;
+        try { _terminalMode = (await Api.GetCodexVoiceSettingsAsync()).TerminalMode; _loaded = true; }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
+    }
+    private async Task SaveAsync(bool value)
+    {
+        _saving = true;
+        try { _terminalMode = (await Api.SaveCodexVoiceSettingsAsync(value)).TerminalMode; }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _saving = false; }
+    }
+}

@@ -64,10 +64,16 @@ try:
             sys.exit('Codex did not open its control socket in time.')
 
         pending = marker.with_suffix('.pending')
-        pending.write_text(json.dumps(dict(sessionId=session, socket=str(socket), supervisor=parent)))
+        native_audio = temporary / 'audio.sock'
+        terminal_executable, native_lease = native_terminal(NATIVE_HELPER)
+        pending.write_text(json.dumps(dict(sessionId=session, socket=str(socket), supervisor=parent,
+                                          nativeAdapter=native_lease is not None,
+                                          nativeAudioSocket=str(native_audio), tmuxSocket=os.environ.get('TMUX', '').split(',')[0],
+                                          tmuxPane=os.environ.get('TMUX_PANE', ''))))
         pending.replace(marker)
         # The server owns permissions and launch instructions. Remote resume rejects CLI permission overrides.
-        terminal = subprocess.Popen(['codex', '--remote', 'unix://' + str(socket), 'resume', session], preexec_fn=parent_death)
+        terminal_env = dict(os.environ, DAM_NATIVE_VOICE_SOCKET=str(native_audio))
+        terminal = subprocess.Popen([terminal_executable, '--remote', 'unix://' + str(socket), 'resume', session], env=terminal_env, preexec_fn=parent_death)
         children.append(terminal)
         while not stopping and terminal.poll() is None and server.poll() is None:
             time.sleep(0.1)

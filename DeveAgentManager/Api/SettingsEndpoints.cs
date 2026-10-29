@@ -82,6 +82,14 @@ internal static class SettingsEndpoints
 
         var mine = api.MapGroup("/me/settings");
 
+        mine.MapGet("/codex-voice", async (CurrentUser user, UserSettingsStore store, CancellationToken ct) =>
+            new CodexVoiceSettings(await store.GetCodexTerminalVoiceAsync(user.Id, ct))).ForAnyUser();
+        mine.MapPut("/codex-voice", async (CodexVoiceSettings request, CurrentUser user, UserSettingsStore store, CancellationToken ct) =>
+        {
+            await store.SaveCodexTerminalVoiceAsync(user.Id, request.TerminalMode, ct);
+            return request;
+        }).ForAnyUser();
+
         mine.MapGet("/screen-awake", async (CurrentUser user, UserSettingsStore store, CancellationToken ct) =>
             new ScreenAwakeSettings(await store.GetScreenAwakeAsync(user.Id, ct))).ForAnyUser();
 

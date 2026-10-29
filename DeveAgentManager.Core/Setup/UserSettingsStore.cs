@@ -19,6 +19,7 @@ public sealed class UserSettingsStore(
     private const string ProfileKey = "profile";
     private const string GitHubTokenKey = "github-token";
     private const string ScreenAwakeKey = "screen-awake";
+    private const string CodexVoiceKey = "codex-terminal-voice";
     private const string ModelsKey = "models";
 
     /// <summary>The user's own default model and effort per harness id; harnesses they didn't change aren't listed.</summary>
@@ -39,6 +40,12 @@ public sealed class UserSettingsStore(
 
     public Task SaveScreenAwakeAsync(Guid userId, bool enabled, CancellationToken cancellationToken = default) =>
         SetRawAsync(userId, ScreenAwakeKey, protector.Protect(enabled ? "true" : "false"), cancellationToken);
+
+    public async Task<bool> GetCodexTerminalVoiceAsync(Guid userId, CancellationToken ct = default) =>
+        protector.Unprotect(await GetRawAsync(userId, CodexVoiceKey, ct)) == "true";
+
+    public Task SaveCodexTerminalVoiceAsync(Guid userId, bool enabled, CancellationToken ct = default) =>
+        SetRawAsync(userId, CodexVoiceKey, protector.Protect(enabled ? "true" : "false"), ct);
 
     public async Task<UserProfile> GetProfileAsync(Guid userId, CancellationToken cancellationToken = default)
     {

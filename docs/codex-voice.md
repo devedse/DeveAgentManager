@@ -5,6 +5,15 @@ Use **Mute microphone** to pause input and **End voice** to finish the call. End
 Leaving the conversation page or hiding the tab ends the call and releases the microphone. A blocked audio player
 offers **Play audio**. Only one browser tab can own voice for an agent at a time.
 
+Browser transcripts show at most four visible text lines and scroll through earlier speech. **Close voice transcript**
+hides captions while audio continues; **Show transcript** restores them. New speech does not reopen a closed panel.
+
+Under **My settings → Voice**, choose **Use terminal voice**. The default is browser mode.
+The choice belongs to the signed-in user and is read again for each new voice connection. Changing it does not restart
+an agent or change a call already in progress. Start either mode with **Start voice** so the browser can obtain microphone
+permission. Terminal mode then displays Codex's own captions, voice status and controls inside the terminal; its mute
+control also mutes the browser microphone. It does not show a second browser transcript.
+
 Use HTTPS (localhost also works), a browser with microphone and WebRTC support, and a Codex login with voice access.
 Codex 0.165.0 was verified. After upgrading the Manager, update Codex on the Runner and restart an existing agent once
 to enable the connection. Running agents are not restarted automatically. Older CLIs retain the existing terminal
@@ -22,6 +31,21 @@ Codex's server log is alongside that record. Normal exit and termination stop bo
 Linux parent-death signals also terminate children when the supervisor is killed. Long account runtime paths therefore
 do not exceed the Unix socket path limit. Permissions and developer instructions are configured on the server because
 Codex rejects permission overrides on a remote terminal resume.
+
+For supported packaged Linux installations, the launcher prepares a private copy of the installed Codex package with
+a browser audio helper. It leaves the installed package unchanged and uses the same agent runtime and conversation.
+Copy-on-write is used where supported; otherwise the cache needs room for an additional Codex package. Running agents
+hold leases on their exact cached package. A later agent launch removes older copies whose leases have all been released.
+Existing agents need one explicit restart after updating the Manager; the Manager never restarts them automatically.
+
+In terminal mode the Manager attaches to the running thread with `excludeTurns=true`, without loading or replaying
+history. A private Unix socket connects the terminal's audio helper to authenticated browser signaling through SSH.
+The helper supplies the browser's SDP offer to Codex, waits for a real WebRTC connection and microphone readiness,
+and acknowledges mute and speaker controls only after the browser applies them. Measured microphone and speaker
+levels feed the native terminal meters. The terminal owns voice startup, transcription and delegation. Audio still
+travels directly between the browser and the voice service. The adapter implements Codex voice-helper protocol v1;
+Codex 0.165.0 was verified.
+Native startup uses Codex's default F8 voice shortcut; custom remappings of that shortcut are not supported by this adapter.
 
 The Portal opens an authenticated voice WebSocket. The Manager checks Write access, login enforcement and the active
 agent identity, then connects to its existing socket through a dedicated SSH channel. It forwards only initialization,
@@ -43,11 +67,20 @@ origin enforcement. `Browser/codex-voice.mts` checks real browser microphone-tra
 including denied permission, mute, blocked playback, competing tabs, cancellation while permission is pending,
 navigation, hidden tabs, read-only access and narrow light/dark layouts.
 
+`CodexNativeVoiceTests` verifies helper readiness, control acknowledgements, measured levels and private package leases
+without using a voice account. The browser fixture also checks transcript dismissal, four-line sizing, the mode setting,
+native device/control signaling and applying a changed preference to the next call without reloading the terminal.
+
 Live verification with Codex 0.165.0 used synthesized speech as a Chromium microphone input, the Portal's real
 authenticated endpoint, a disposable SSH Runner and a real WebRTC connection. A spoken request created a file in the
 existing conversation, replies returned audio, and a typed request executed in the same terminal after ending voice.
 The call stayed connected beyond its opening deadline; mute, microphone release and rejection of a competing tab were
 also checked. Physical microphone/speaker behavior and mobile audio remain separate checks.
+
+Terminal-mode live verification used a disposable Runner and a separate tmux sentinel. Codex displayed its native voice
+strip and spoken transcript, a spoken request executed in the existing conversation, native mute disabled the browser
+microphone, and reply audio reached the browser. Ending the call released capture, preserved typed coding work and left
+the sentinel server running. No installed Codex files or system audio configuration were changed.
 
 All tmux fixtures pin a unique socket with `-S`, including cleanup and application commands reached through their PATH
 wrapper. `TmuxIsolationTests` contaminates `TMUX` with a second disposable server and checks that it survives fixture

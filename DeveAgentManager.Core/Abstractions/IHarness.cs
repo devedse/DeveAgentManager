@@ -40,6 +40,8 @@ public interface IHarness
 
     /// <summary>A byte stream to the running agent's voice control socket; null when unsupported. Never starts another agent.</summary>
     string? VoiceConnectCommand(Guid agentId, string sessionId) => null;
+    /// <summary>Private native-terminal audio signaling over SSH; null when unsupported.</summary>
+    string? NativeVoiceConnectCommand(Guid agentId, string sessionId) => null;
 
     /// <summary>
     /// Files that hold the harness login and settings (plugins). A login done once in a Runner's terminal can be imported

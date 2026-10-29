@@ -65,6 +65,7 @@ public sealed record AuditEventDto(long Id, DateTime At, string? ActorName, stri
 public sealed record MySettingsDto(UserProfile Profile, bool HasGitHubToken);
 
 public sealed record ScreenAwakeSettings(bool Enabled);
+public sealed record CodexVoiceSettings(bool TerminalMode);
 
 /// <summary>
 /// My settings → Models, for one harness: the Manager's default (Manager settings; null lets the harness choose) and the

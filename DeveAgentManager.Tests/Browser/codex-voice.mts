@@ -34,7 +34,7 @@ try {
             connectionState = 'new';
             onconnectionstatechange = null;
             ontrack = null;
-            channel = { onopen: null, onmessage: null };
+            channel = { onopen: null, onmessage: null, readyState: 'connecting' };
             sender = { track: null, async replaceTrack(track) {
                 if (test.rejectReplacement) throw new Error('Test-only replacement failure');
                 this.track = track;
@@ -44,7 +44,7 @@ try {
             createDataChannel() { return this.channel; }
             async createOffer() { return this.localDescription; }
             async setLocalDescription() { }
-            async setRemoteDescription() { this.connectionState = 'connected'; this.channel.onopen?.(); }
+            async setRemoteDescription() { this.connectionState = 'connected'; this.channel.readyState = 'open'; this.channel.onopen?.(); }
             close() { this.connectionState = 'closed'; }
         } as unknown as typeof RTCPeerConnection;
         HTMLMediaElement.prototype.play = async function () {
@@ -80,12 +80,17 @@ try {
         ws.onMessage(raw => { if (typeof raw !== 'string') terminalInput.push(raw); });
     });
     let reject = false;
-    const messages: { type: string; sdp?: string }[] = [];
+    const messages: { type: string; sdp?: string; mode?: string }[] = [];
+    let nativeControls: ((value: object) => void) | null = null;
     await context.routeWebSocket('**/ws/agents/*/voice', ws => ws.onMessage(raw => {
         const message = JSON.parse(String(raw)); messages.push(message);
         if (message.type === 'start') ws.send(JSON.stringify(reject
             ? { type: 'error', message: 'Voice is already connected in another tab. End it there first.' }
             : { type: 'answer', sdp: 'test-only answer' }));
+        if (message.type === 'start' && message.mode === 'terminal') nativeControls = value => ws.send(JSON.stringify(value));
+        if (message.type === 'connected') ws.send(JSON.stringify({ type: 'devices' }));
+        if (message.type === 'devicesOpened' && message.available) ws.send(JSON.stringify({ type: 'controls', microphoneMuted: false, speakerSuppressed: false }));
+        if (message.type === 'controlsApplied') ws.send(JSON.stringify({ type: 'active' }));
     }));
     const navigate = async () => {
         await page.goto(base + `/agents/${id}`);
@@ -145,6 +150,15 @@ try {
     await transcript.getByText('New words while reading earlier speech.', { exact: true }).waitFor({ state: 'attached' });
     assert.equal(await transcript.evaluate(el => el.scrollTop), 0, 'new speech does not move a user reading earlier captions');
     await transcript.evaluate(el => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+    await page.getByRole('button', { name: 'Close voice transcript', exact: true }).click();
+    await transcript.waitFor({ state: 'hidden' });
+    await page.getByText('Voice connected', { exact: true }).waitFor();
+    await emitCaptions([{ type: 'turn.done', turn: { id: 'closed-caption', role: 'user', transcript: 'Speech continues while the transcript is closed.' } }]);
+    assert.equal(await transcript.isVisible(), false, 'new words do not reopen a dismissed transcript');
+    await page.getByRole('button', { name: 'Show transcript', exact: true }).click();
+    await transcript.waitFor();
+    await transcript.getByText('Speech continues while the transcript is closed.', { exact: true }).waitFor();
+    assert.equal(messages.filter(m => m.type === 'stop').length, 0, 'closing captions leaves voice connected');
     const microphone = page.getByRole('combobox', { name: 'Microphone', exact: true });
     await microphone.waitFor();
     assert.equal(await microphone.inputValue(), 'test-mic-one', 'a missing preferred device falls back to the available microphone');
@@ -181,6 +195,7 @@ try {
         for (const { width, height } of [{ width: 320, height: 844 }, { width: 390, height: 844 }, { width: 740, height: 300 }, { width: 1400, height: 900 }]) {
             await page.setViewportSize({ width, height });
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${width}: controls fit`);
+            assert.ok(await transcript.evaluate(el => el.clientHeight <= 4 * parseFloat(getComputedStyle(el).lineHeight) + 12), 'the transcript is at most four text lines tall');
             await page.getByRole('button', { name: 'Help about Codex voice', exact: true }).click();
             const help = page.locator('.help-tooltip-centered.mud-popover-open');
             await help.waitFor();
@@ -278,6 +293,34 @@ try {
     await page.goto(base + `/agents/${id}`);
     await page.locator('.terminal-frame').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Start voice', exact: true }).count(), 0, 'other harnesses have no Codex voice controls');
+    agent.harnessId = 'codex';
+    await page.goto(base + '/settings?tab=voice');
+    const terminalToggle = page.getByLabel('Use terminal voice', { exact: true });
+    await terminalToggle.waitFor();
+    assert.equal(await terminalToggle.isChecked(), false, 'browser mode is the initial preference');
+    await terminalToggle.check();
+    await page.waitForFunction(async () => (await (await fetch('/api/me/settings/codex-voice')).json()).terminalMode === true);
+    await navigate();
+    await page.getByRole('button', { name: 'Start voice', exact: true }).click();
+    await page.getByText('Terminal voice connected', { exact: true }).waitFor();
+    assert.equal(messages.filter(m => m.type === 'start').at(-1).mode, 'terminal', 'the saved preference selects native signaling');
+    assert.equal(await page.getByRole('button', { name: 'Mute microphone', exact: true }).count(), 0, 'native mode uses Codex terminal mute controls');
+    await emitCaptions([{ type: 'turn.created', turn: { id: 'native-turn', role: 'user', transcript: 'Native speech stays in the native terminal.' } }]);
+    assert.equal(await page.locator('.terminal-voice-transcript').isVisible(), false, 'native mode does not duplicate the terminal transcript');
+    nativeControls({ type: 'controls', microphoneMuted: true, speakerSuppressed: true });
+    await page.waitForFunction(() => window.codexVoiceTest.streams.at(-1).getAudioTracks()[0].enabled === false);
+    assert.equal(await page.locator('.terminal-voice-container audio').evaluate((el: HTMLAudioElement) => el.muted), true, 'native speaker suppression reaches browser playback');
+    nativeControls({ type: 'controls', microphoneMuted: false, speakerSuppressed: false });
+    await page.waitForFunction(() => window.codexVoiceTest.streams.at(-1).getAudioTracks()[0].enabled === true);
+    await page.getByRole('button', { name: 'End voice', exact: true }).click();
+    await page.getByRole('button', { name: 'Start voice', exact: true }).waitFor();
+    assert.equal(await closedTracks(), true, 'native mode releases its browser microphone');
+    const restored = await context.request.put(base + '/api/me/settings/codex-voice', { data: { terminalMode: false }, headers: { 'X-DAM-Request': '1', Origin: base } });
+    assert.equal(restored.ok(), true);
+    await page.getByRole('button', { name: 'Start voice', exact: true }).click();
+    await page.getByText('Voice connected', { exact: true }).waitFor();
+    assert.equal(messages.filter(m => m.type === 'start').at(-1).mode, undefined, 'the next call reads a changed preference without reloading');
+    await page.getByRole('button', { name: 'End voice', exact: true }).click();
     assert.deepEqual(errors, []);
-    console.log('PASS: live duplex captions, final corrections, scrolling, escaped content, no transcript-to-terminal input, voice permission, microphone levels and switching, F8, playback recovery, ownership, cancellation, navigation, visibility and phone layouts');
+    console.log('PASS: four-line captions, close/reopen, streaming, safe scrolling, native mode preference and controls, next-call mode changes, microphone lifecycle, ownership and phone layouts');
 } finally { await browser.close(); }

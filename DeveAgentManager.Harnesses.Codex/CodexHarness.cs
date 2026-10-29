@@ -148,12 +148,27 @@ public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHar
     }
 
     private static readonly string VoiceLauncher = ReadVoiceLauncher();
+    private static readonly string NativeVoiceBridge = ReadNativeVoiceBridge();
+
+    private static string ReadNativeVoiceBridge()
+    {
+        using var stream = typeof(CodexHarness).Assembly.GetManifestResourceStream("DeveAgentManager.Harnesses.Codex.CodexNativeVoice.py")!;
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    public string NativeVoiceConnectCommand(Guid agentId, string sessionId) => "exec python3 -c "
+        + ShellQuote.Quote(NativeVoiceBridge) + " " + ShellQuote.Quote(agentId.ToString("N")) + " " + ShellQuote.Quote(sessionId);
 
     private static string ReadVoiceLauncher()
     {
         using var stream = typeof(CodexHarness).Assembly.GetManifestResourceStream("DeveAgentManager.Harnesses.Codex.CodexVoiceLauncher.py")!;
         using var reader = new StreamReader(stream);
-        return reader.ReadToEnd();
+        using var package = typeof(CodexHarness).Assembly.GetManifestResourceStream("DeveAgentManager.Harnesses.Codex.CodexNativeVoicePackage.py")!;
+        using var packageReader = new StreamReader(package);
+        using var helper = typeof(CodexHarness).Assembly.GetManifestResourceStream("DeveAgentManager.Harnesses.Codex.CodexNativeVoiceHelper.py")!;
+        using var helperReader = new StreamReader(helper);
+        return packageReader.ReadToEnd() + "\nNATIVE_HELPER = " + System.Text.Json.JsonSerializer.Serialize(helperReader.ReadToEnd()) + "\n" + reader.ReadToEnd();
     }
 
     public string VoiceConnectCommand(Guid agentId, string sessionId)

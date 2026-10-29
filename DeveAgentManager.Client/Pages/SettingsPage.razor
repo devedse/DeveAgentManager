@@ -125,6 +125,7 @@
                 <ModelDefaultsPanel />
             </MudTabPanel>
 
+            <MudTabPanel @ref="_voiceTab" Text="Voice" Icon="@Icons.Material.Rounded.Mic"><VoiceSettingsPanel /></MudTabPanel>
             <MudTabPanel @ref="_petTab" Text="Damagochi" Icon="@Icons.Material.Rounded.Pets"><PetSettingsPanel /></MudTabPanel>
 
             <MudTabPanel Text="Appearance" Icon="@Icons.Material.Rounded.Contrast">
@@ -149,6 +150,7 @@
     private MudTabPanel? _petTab;
     private MudTabPanel? _accountsTab;
     private MudTabPanel? _modelsTab;
+    private MudTabPanel? _voiceTab;
     private bool _openPetTab;
     private bool _openAccountsTab;
     private bool _openModelsTab;
@@ -157,11 +159,13 @@
         _openPetTab = Tab == "damagochi";
         _openAccountsTab = Tab == "accounts";
         _openModelsTab = Tab == "models";
+        _openVoiceTab = Tab == "voice";
     }
     protected override async Task OnAfterRenderAsync(bool first) {
         if (_openPetTab && _tabs is not null && _petTab is not null) { _openPetTab = false; await _tabs.ActivatePanelAsync(_petTab); }
         if (_openAccountsTab && _tabs is not null && _accountsTab is not null) { _openAccountsTab = false; await _tabs.ActivatePanelAsync(_accountsTab); }
         if (_openModelsTab && _tabs is not null && _modelsTab is not null) { _openModelsTab = false; await _tabs.ActivatePanelAsync(_modelsTab); }
+        if (_openVoiceTab && _tabs is not null && _voiceTab is not null) { _openVoiceTab = false; await _tabs.ActivatePanelAsync(_voiceTab); }
     }
     private CurrentUserDto? _user;
     private ManagerInfoDto? _info;
@@ -169,6 +173,7 @@
     private UserProfile? _profile;
     private bool _showSecrets;
     private bool _saving;
+    private bool _openVoiceTab;
     private string? _token;
 
     private string? _loadError;

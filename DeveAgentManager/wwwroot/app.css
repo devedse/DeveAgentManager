@@ -1780,15 +1780,16 @@ html:has(.terminal-layout) body {
     background: var(--dam-surface);
     border-top: 1px solid var(--dam-border);
 }
-.terminal-voice-status { flex: 1; min-width: 0; font-size: .8rem; color: var(--dam-muted); overflow-wrap: anywhere; }
+.terminal-voice-status { flex: 1 1 140px; min-width: 0; font-size: .8rem; color: var(--dam-muted); overflow-wrap: anywhere; }
 .terminal-voice-error { color: var(--dam-error); }
 .terminal-voice-container { flex: 0 0 auto; min-width: 0; }
 .terminal-voice-container audio { display: none; }
 .terminal-voice-transcript { color: var(--dam-text); background: var(--dam-surface); border-top: 1px solid var(--dam-border); }
 .terminal-voice-transcript[hidden] { display: none; }
-.terminal-voice-transcript-heading { padding: 4px 10px 0; font-size: .75rem; color: var(--dam-muted); }
+.terminal-voice-transcript-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 0 10px; font-size: .75rem; color: var(--dam-muted); }
+.terminal-voice-transcript-heading .mud-icon-button { padding: 2px; }
 .terminal-voice-transcript-lines {
-    max-height: min(220px, calc(var(--dam-vv-height, 100dvh) * .28));
+    max-height: calc(4 * 1.5em + 12px);
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 4px 10px 8px;
@@ -1797,7 +1798,7 @@ html:has(.terminal-layout) body {
     line-height: 1.5;
 }
 .terminal-voice-transcript-line { display: grid; grid-template-columns: 3.5em minmax(0, 1fr); gap: 8px; }
-.terminal-voice-transcript-line + .terminal-voice-transcript-line { margin-top: 6px; }
+.terminal-voice-transcript-line + .terminal-voice-transcript-line { margin-top: 0; }
 .terminal-voice-transcript-role { color: var(--dam-muted); font-size: .8rem; }
 .voice-transcript-user .terminal-voice-transcript-role { color: var(--dam-primary-text); }
 .terminal-voice-transcript-text { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -7,6 +7,12 @@ interface CodexVoiceState {
     muted: boolean;
     playbackBlocked: boolean;
     disposed: boolean;
+    terminalMode: boolean;
+    speakerSource: MediaStreamAudioSourceNode | null;
+    speakerAnalyser: AnalyserNode | null;
+    speakerSamples: Float32Array<ArrayBuffer> | null;
+    lastLevelSent: number;
+    signalingStarted: boolean;
     stream: MediaStream | null;
     peer: RTCPeerConnection | null;
     socket: WebSocket | null;
@@ -18,6 +24,7 @@ interface CodexVoiceState {
     inputAnalyser: AnalyserNode | null;
     inputFrame: number;
     transcriptObserver: MutationObserver | null;
+    transcriptResizeObserver: ResizeObserver | null;
     transcriptScroll: () => void;
     transcriptFrame: number;
     followTranscript: boolean;
@@ -37,11 +44,12 @@ async function report(state: CodexVoiceState, error: string | null = null) {
     catch { dispose(state.host); }
 }
 
-export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: string) {
+export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: string, terminalMode = false) {
     const state: CodexVoiceState = { host, dotnet, agent, generation: 0, phase: "idle", muted: false,
         playbackBlocked: false, disposed: false, stream: null, peer: null, socket: null, audio: null, timer: null,
+        terminalMode, speakerSource: null, speakerAnalyser: null, speakerSamples: null, lastLevelSent: 0, signalingStarted: false,
         sender: null, changingInput: false, inputContext: null, inputSource: null, inputAnalyser: null, inputFrame: 0,
-        transcriptObserver: null, transcriptScroll: null, transcriptFrame: 0, followTranscript: true,
+        transcriptObserver: null, transcriptResizeObserver: null, transcriptScroll: null, transcriptFrame: 0, followTranscript: true,
         key: null, hidden: null, leaving: null, devicesChanged: null };
     state.key = event => {
         if (event.key !== "F8" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || !host.getClientRects().length) return;
@@ -62,12 +70,15 @@ export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: st
     if (transcript) {
         state.transcriptScroll = () => { state.followTranscript = transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop <= 24; };
         transcript.addEventListener("scroll", state.transcriptScroll);
-        state.transcriptObserver = new MutationObserver(() => {
+        const follow = () => {
             if (!state.followTranscript) return;
             cancelAnimationFrame(state.transcriptFrame);
             state.transcriptFrame = requestAnimationFrame(() => { if (!state.disposed && state.followTranscript) transcript.scrollTop = transcript.scrollHeight; });
-        });
+        };
+        state.transcriptObserver = new MutationObserver(follow);
         state.transcriptObserver.observe(transcript, { childList: true, characterData: true, subtree: true });
+        state.transcriptResizeObserver = new ResizeObserver(follow);
+        state.transcriptResizeObserver.observe(transcript);
     }
 }
 
@@ -126,6 +137,15 @@ function monitorInput(state: CodexVoiceState, stream: MediaStream) {
             level = Math.min(100, Math.round(rms * 600));
         }
         state.host.style.setProperty("--dam-microphone-level", `${level}%`);
+        if (state.terminalMode && state.signalingStarted && state.socket?.readyState === WebSocket.OPEN && performance.now() - state.lastLevelSent >= 100) {
+            let speakerPeak = 0;
+            if (state.speakerAnalyser && state.speakerSamples && !state.playbackBlocked && state.audio && !state.audio.paused && !state.audio.muted) {
+                state.speakerAnalyser.getFloatTimeDomainData(state.speakerSamples);
+                speakerPeak = Math.min(65535, Math.round(Math.sqrt(state.speakerSamples.reduce((sum, value) => sum + value * value, 0) / state.speakerSamples.length) * 65535));
+            }
+            if (state.socket.bufferedAmount < 8192) state.socket.send(JSON.stringify({ type: "levels", microphonePeak: Math.round(level * 655.35), speakerPeak }));
+            state.lastLevelSent = performance.now();
+        }
         const meter = state.host.querySelector<HTMLElement>(".terminal-voice-input-level");
         if (meter) {
             meter.setAttribute("aria-valuenow", String(level));
@@ -167,6 +187,10 @@ export async function start(host: HTMLElement) {
         if (!current()) { stream.getTracks().forEach(track => track.stop()); return; }
         state.stream = stream;
         monitorInput(state, stream);
+        const terminalMode = await state.dotnet.invokeMethodAsync("GetVoiceMode");
+        if (!current()) return;
+        if (typeof terminalMode !== "boolean") { stop(host, "Voice settings could not load. Check your connection and try again."); return; }
+        state.terminalMode = terminalMode;
         void reportInputs(state);
         state.phase = "connecting";
         void report(state);
@@ -177,6 +201,17 @@ export async function start(host: HTMLElement) {
         peer.ontrack = event => {
             if (!current()) return;
             audio.srcObject = new MediaStream([event.track]);
+            if (state.terminalMode && state.inputContext) {
+                try {
+                    state.speakerSource?.disconnect();
+                    state.speakerAnalyser?.disconnect();
+                    state.speakerSource = state.inputContext.createMediaStreamSource(audio.srcObject);
+                    state.speakerAnalyser = state.inputContext.createAnalyser();
+                    state.speakerAnalyser.fftSize = 256;
+                    state.speakerSource.connect(state.speakerAnalyser);
+                    state.speakerSamples = new Float32Array(256);
+                } catch { /* Speaker levels are optional; playback remains on the media element. */ }
+            }
             void play(host);
         };
         peer.onconnectionstatechange = () => {
@@ -187,6 +222,10 @@ export async function start(host: HTMLElement) {
         const channel = peer.createDataChannel("oai-events");
         channel.onopen = () => {
             if (!current()) return;
+            if (state.terminalMode) {
+                if (state.socket?.readyState === WebSocket.OPEN) state.socket.send(JSON.stringify({ type: "connected" }));
+                return;
+            }
             clearTimeout(state.timer);
             state.phase = "connected";
             void report(state);
@@ -197,13 +236,13 @@ export async function start(host: HTMLElement) {
                 const message: { type?: string; turn_id?: string; delta?: string; turn?: { id?: string; role?: string; transcript?: string } } = JSON.parse(event.data);
                 if (message.type === "session.closed") stop(host);
                 else if (message.type === "error" || message.type === "session.error") stop(host, "Codex voice failed. You can start it again.");
-                else if ((message.type === "turn.created" || message.type === "turn.done")
+                else if (!state.terminalMode && (message.type === "turn.created" || message.type === "turn.done")
                     && typeof message.turn?.id === "string" && message.turn.id.length <= 128
                     && (message.turn.role === "user" || message.turn.role === "assistant") && typeof message.turn.transcript === "string"
                     && message.turn.transcript.length <= 65536) {
                     void state.dotnet.invokeMethodAsync("VoiceTranscriptChanged", { id: `${generation}:${message.turn.id}`, role: message.turn.role,
                         text: message.turn.transcript, append: false, complete: message.type === "turn.done" }).catch(() => {});
-                } else if (message.type === "turn.delta" && typeof message.turn_id === "string" && message.turn_id.length <= 128
+                } else if (!state.terminalMode && message.type === "turn.delta" && typeof message.turn_id === "string" && message.turn_id.length <= 128
                     && typeof message.delta === "string" && message.delta.length <= 65536) {
                     void state.dotnet.invokeMethodAsync("VoiceTranscriptChanged", { id: `${generation}:${message.turn_id}`, role: null,
                         text: message.delta, append: true, complete: false }).catch(() => {});
@@ -217,16 +256,35 @@ export async function start(host: HTMLElement) {
         const socket = state.socket = new WebSocket(url);
         let answered = false;
         socket.onopen = () => {
-            if (current()) socket.send(JSON.stringify({ type: "start", sdp: peer.localDescription.sdp }));
+            if (current()) {
+                socket.send(JSON.stringify({ type: "start", sdp: peer.localDescription.sdp, ...(state.terminalMode ? { mode: "terminal" } : {}) }));
+                state.signalingStarted = true;
+            }
         };
         socket.onmessage = async event => {
             if (!current()) return;
             try {
-                const message: { type: string; sdp?: string; message?: string } = JSON.parse(event.data);
+                const message: { type: string; sdp?: string; message?: string; microphoneMuted?: boolean; speakerSuppressed?: boolean } = JSON.parse(event.data);
                 if (message.type === "error") { stop(host, message.message || "Voice could not connect."); return; }
                 if (message.type === "answer" && !answered && typeof message.sdp === "string") {
                     answered = true;
                     await peer.setRemoteDescription({ type: "answer", sdp: message.sdp });
+                }
+                else if (state.terminalMode && message.type === "devices") {
+                    socket.send(JSON.stringify({ type: "devicesOpened", available: channel.readyState === "open"
+                        && state.stream.getAudioTracks().some(track => track.readyState === "live") }));
+                }
+                else if (state.terminalMode && message.type === "controls" && typeof message.microphoneMuted === "boolean" && typeof message.speakerSuppressed === "boolean") {
+                    state.muted = message.microphoneMuted;
+                    state.stream.getAudioTracks().forEach(track => { track.enabled = !state.muted; });
+                    audio.muted = message.speakerSuppressed;
+                    socket.send(JSON.stringify({ type: "controlsApplied" }));
+                    void report(state);
+                }
+                else if (state.terminalMode && message.type === "active") {
+                    clearTimeout(state.timer);
+                    state.phase = "connected";
+                    void report(state);
                 }
             } catch { if (current()) stop(host, "Voice could not connect. You can start it again."); }
         };
@@ -293,8 +351,14 @@ export function stop(host: HTMLElement, error: string | null = null) {
     const state = voices.get(host);
     if (!state) return;
     ++state.generation;
+    state.signalingStarted = false;
     clearTimeout(state.timer);
     cancelAnimationFrame(state.inputFrame);
+    state.speakerSource?.disconnect();
+    state.speakerSource = null;
+    state.speakerAnalyser?.disconnect();
+    state.speakerAnalyser = null;
+    state.speakerSamples = null;
     state.inputSource?.disconnect();
     state.inputSource = null;
     state.inputAnalyser?.disconnect();
@@ -332,6 +396,7 @@ export function dispose(host: HTMLElement) {
     window.removeEventListener("pagehide", state.leaving);
     navigator.mediaDevices?.removeEventListener("devicechange", state.devicesChanged);
     state.transcriptObserver?.disconnect();
+    state.transcriptResizeObserver?.disconnect();
     cancelAnimationFrame(state.transcriptFrame);
     if (state.transcriptScroll) host.querySelector(".terminal-voice-transcript-lines")?.removeEventListener("scroll", state.transcriptScroll);
     voices.delete(host);

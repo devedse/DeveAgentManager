@@ -1,9 +1,13 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
+@inject ManagerApi Api
 
 <div class="terminal-voice-container" @ref="_host">
-    <section class="terminal-voice-transcript" aria-label="Voice transcript" hidden="@(_transcript.Lines.Count == 0)">
-        <div class="terminal-voice-transcript-heading">Voice transcript</div>
+    <section class="terminal-voice-transcript" aria-label="Voice transcript" hidden="@(_terminalMode || !_transcriptVisible || _transcript.Lines.Count == 0)">
+        <div class="terminal-voice-transcript-heading">
+            <span>Voice transcript</span>
+            <MudIconButton Icon="@Icons.Material.Rounded.Close" Size="Size.Small" OnClick="() => _transcriptVisible = false" aria-label="Close voice transcript" />
+        </div>
         <div class="terminal-voice-transcript-lines" role="log" aria-label="Spoken conversation" aria-live="polite" aria-relevant="additions text" tabindex="0">
             @foreach (var line in _transcript.Lines)
             {
@@ -18,10 +22,12 @@
     @if (_phase == "idle")
     {
         <MudButton StartIcon="@Icons.Material.Rounded.Mic" Size="Size.Small" Disabled="@(_module is null)" OnClick="StartAsync" title="Start voice (F8)">Start voice</MudButton>
+        @if (_module is null && _error is not null)
+        { <MudButton Size="Size.Small" OnClick="InitializeAsync">Retry</MudButton> }
     }
     else
     {
-        @if (_phase == "connected")
+        @if (_phase == "connected" && !_terminalMode)
         {
             <MudIconButton Icon="@(_muted ? Icons.Material.Rounded.MicOff : Icons.Material.Rounded.Mic)" Size="Size.Small" OnClick="MuteAsync"
                            Color="@(_muted ? Color.Warning : Color.Primary)" aria-label="@(_muted ? "Unmute microphone" : "Mute microphone")" aria-pressed="@(_muted ? "true" : "false")" />
@@ -38,15 +44,18 @@
                     { <option value="@input.Id">@input.Label</option> }
                 </select>
             }
-            <span class="terminal-voice-input">
+            @if (!_terminalMode) { <span class="terminal-voice-input">
                 <span aria-hidden="true">Mic</span>
                 <span class="terminal-voice-input-level" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="Microphone input level"><span></span></span>
-            </span>
+            </span> }
         }
     }
     <span class="terminal-voice-status @(_error is not null ? "terminal-voice-error" : "")" role="status" aria-live="polite">@Status</span>
+    @if (!_terminalMode && !_transcriptVisible && _transcript.Lines.Count > 0)
+    { <MudButton Size="Size.Small" OnClick="() => _transcriptVisible = true">Show transcript</MudButton> }
     <HelpTip Label="Codex voice" ViewportCentered="true">
-        <p>Choose Start voice here to use this device's microphone and speakers. F8 starts or ends the call. The /voice command inside the terminal uses the Runner's audio devices instead.</p>
+        <p>Choose Start voice here to use this device's microphone and speakers. F8 starts or ends the call. Choose browser or terminal mode under <MudLink Href="settings?tab=voice">My settings → Voice</MudLink>.</p>
+        <p>Terminal mode shows Codex's own voice controls and captions inside the terminal. After connecting audio here, use Codex's mute control inside the terminal. Restart an existing agent once after updating the Manager to enable its audio adapter.</p>
         <p>Allow microphone access when your browser asks. Mute pauses your microphone; End voice leaves the agent's coding work running. Leaving this page or hiding the tab ends the call.</p>
         <p>The Mic meter moves when your browser receives sound. If it stays still while you speak, choose another microphone and check your device's microphone settings. Browser calls show their status here; Codex's terminal voice strip tracks terminal calls.</p>
         <p>Voice transcript shows both sides as you speak, including conversation that does not become a coding request. Recent captions stay on this page after the call ends. Scroll up to read earlier words; scroll to the bottom to follow new speech.</p>
@@ -66,6 +75,9 @@
     private bool _changingInput;
     private int _inputRequest;
     private readonly VoiceTranscriptLog _transcript = new();
+    private bool _transcriptVisible = true;
+    private bool _terminalMode;
+    private int _modeRequest;
     private MicrophoneInput[] _microphones = [];
     private string _microphone = "";
     public sealed record MicrophoneInput(string Id, string Label);
@@ -73,7 +85,7 @@
     {
         "permission" => "Allow microphone access…",
         "connecting" => "Connecting voice…",
-        "connected" => _muted ? "Microphone muted" : "Voice connected",
+        "connected" => _terminalMode ? "Terminal voice connected" : _muted ? "Microphone muted" : "Voice connected",
         _ => null,
     });
 
@@ -81,12 +93,21 @@
     {
         if (!firstRender) return;
         _self = DotNetObjectReference.Create(this);
+        await InitializeAsync();
+    }
+
+    private async Task InitializeAsync()
+    {
+        _error = null;
         try
         {
+            _terminalMode = (await Api.GetCodexVoiceSettingsAsync()).TerminalMode;
             _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/codex-voice.js");
             if (_disposed) { await _module.DisposeAsync(); return; }
-            await _module.InvokeVoidAsync("initialize", _host, _self, AgentId);
+            await _module.InvokeVoidAsync("initialize", _host, _self, AgentId, _terminalMode);
         }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
         catch (JSException) { _error = "Voice controls could not load. Reload this page to retry."; }
         if (!_disposed) StateHasChanged();
     }
@@ -96,8 +117,24 @@
     {
         if (_disposed) return Task.CompletedTask;
         (_phase, _muted, _playbackBlocked, _error) = (phase, muted, playbackBlocked, error);
-        if (phase == "idle") { _inputRequest++; _changingInput = false; _transcript.Finish(); }
+        if (phase == "idle") { _inputRequest++; _modeRequest++; _changingInput = false; _transcript.Finish(); }
         return InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task<bool?> GetVoiceMode()
+    {
+        var request = ++_modeRequest;
+        try
+        {
+            var settings = await Api.GetCodexVoiceSettingsAsync();
+            if (_disposed || request != _modeRequest) return null;
+            _terminalMode = settings.TerminalMode;
+            await InvokeAsync(StateHasChanged);
+            return _terminalMode;
+        }
+        catch (ApiException) { return null; }
+        catch (HttpRequestException) { return null; }
     }
 
     [JSInvokable]

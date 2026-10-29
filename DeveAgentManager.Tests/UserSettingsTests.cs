@@ -37,6 +37,19 @@ public sealed class UserSettingsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CodexVoiceModeDefaultsToBrowserAndStaysPrivateToEachUser()
+    {
+        var other = Guid.NewGuid();
+        Assert.False(await _store.GetCodexTerminalVoiceAsync(User.BootstrapId, Ct));
+        Assert.False(await _store.GetCodexTerminalVoiceAsync(other, Ct));
+        await _store.SaveCodexTerminalVoiceAsync(User.BootstrapId, true, Ct);
+        Assert.True(await _store.GetCodexTerminalVoiceAsync(User.BootstrapId, Ct));
+        Assert.False(await _store.GetCodexTerminalVoiceAsync(other, Ct));
+        await _store.SaveCodexTerminalVoiceAsync(User.BootstrapId, false, Ct);
+        Assert.False(await _store.GetCodexTerminalVoiceAsync(User.BootstrapId, Ct));
+    }
+
+    [Fact]
     public async Task SettingsFromBeforeUsers_BecomeTheFirstUsers_Once()
     {
         await using (var db = _factory.CreateDbContext())

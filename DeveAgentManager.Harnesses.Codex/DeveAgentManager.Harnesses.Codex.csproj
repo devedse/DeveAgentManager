@@ -16,6 +16,9 @@
 
   <ItemGroup>
     <EmbeddedResource Include="CodexVoiceLauncher.py" />
+    <EmbeddedResource Include="CodexNativeVoice.py" />
+    <EmbeddedResource Include="CodexNativeVoiceHelper.py" />
+    <EmbeddedResource Include="CodexNativeVoicePackage.py" />
   </ItemGroup>
 
 </Project>

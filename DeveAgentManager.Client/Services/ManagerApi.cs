@@ -57,6 +57,9 @@ public sealed partial class ManagerApi(HttpClient http, NavigationManager naviga
     public Task<MySettingsDto> GetMySettingsAsync() => GetAsync<MySettingsDto>("api/me/settings");
 
     public Task<ScreenAwakeSettings> GetScreenAwakeAsync() => GetAsync<ScreenAwakeSettings>("api/me/settings/screen-awake");
+    public Task<CodexVoiceSettings> GetCodexVoiceSettingsAsync() => GetAsync<CodexVoiceSettings>("api/me/settings/codex-voice");
+    public Task<CodexVoiceSettings> SaveCodexVoiceSettingsAsync(bool terminalMode) =>
+        SendAsync<CodexVoiceSettings>(HttpMethod.Put, "api/me/settings/codex-voice", new CodexVoiceSettings(terminalMode));
 
     public Task<ScreenAwakeSettings> SaveScreenAwakeAsync(bool enabled) =>
         SendAsync<ScreenAwakeSettings>(HttpMethod.Put, "api/me/settings/screen-awake", new ScreenAwakeSettings(enabled));

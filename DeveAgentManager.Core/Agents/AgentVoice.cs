@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DeveAgentManager.Core.Agents;
 
-public sealed record AgentVoiceTarget(Guid AgentId, string HarnessId, string SessionId, Runner Runner, string ConnectCommand);
+public sealed record AgentVoiceTarget(Guid AgentId, string HarnessId, string SessionId, Runner Runner, string ConnectCommand, string? NativeConnectCommand);
 
 public sealed partial class AgentService
 {
@@ -21,7 +21,8 @@ public sealed partial class AgentService
             throw new InvalidOperationException("Start the agent with a permitted login before connecting voice.");
         var command = GetHarness(agent.HarnessId).VoiceConnectCommand(agent.Id, agent.HarnessSessionId)
             ?? throw new InvalidOperationException("This harness does not support browser voice.");
-        return new(agent.Id, agent.HarnessId, agent.HarnessSessionId, runner, command);
+        return new(agent.Id, agent.HarnessId, agent.HarnessSessionId, runner, command,
+            GetHarness(agent.HarnessId).NativeVoiceConnectCommand(agent.Id, agent.HarnessSessionId));
     }
 
     public async Task<bool> VoiceTargetIsCurrentAsync(AgentVoiceTarget target, CancellationToken ct)

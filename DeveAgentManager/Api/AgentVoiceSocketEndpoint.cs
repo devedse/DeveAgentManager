@@ -40,9 +40,11 @@ public static class AgentVoiceSocketEndpoint
                 using var opening = CancellationTokenSource.CreateLinkedTokenSource(revoked.Token);
                 opening.CancelAfter(TimeSpan.FromSeconds(20));
                 using var offer = await ReceiveAsync(browser, 70 * 1024, opening.Token);
-                if (offer is null || !offer.RootElement.TryGetProperty("type", out var type) || type.GetString() != "start"
-                    || !offer.RootElement.TryGetProperty("sdp", out var description) || description.ValueKind != JsonValueKind.String
-                    || description.GetString() is not { Length: > 0 and <= 65536 } sdp)
+                if (offer is null || !offer.RootElement.TryGetProperty("type", out var type) || type.GetString() != "start")
+                    throw new InvalidOperationException("The browser did not provide a valid voice connection.");
+                var native = offer.RootElement.TryGetProperty("mode", out var mode) && mode.GetString() == "terminal";
+                var sdp = offer.RootElement.TryGetProperty("sdp", out var description) && description.ValueKind == JsonValueKind.String ? description.GetString() : null;
+                if (sdp is not { Length: > 0 and <= 65536 })
                     throw new InvalidOperationException("The browser did not provide a valid voice connection.");
                 var target = await agents.GetVoiceTargetAsync(agentId, opening.Token);
                 RunnerSocketConnection remote;
@@ -53,7 +55,8 @@ public static class AgentVoiceSocketEndpoint
                 {
                     if (!await agents.VoiceTargetIsCurrentAsync(target, opening.Token))
                         throw new InvalidOperationException("The agent changed. Connect voice again from its current conversation.");
-                    await RunAsync(browser, remote.Socket, target, sdp, agents, revoked.Token);
+                    if (native) await AgentNativeVoiceSession.RunAsync(browser, remote.Socket, target, agents, shell, sdp!, revoked.Token);
+                    else await RunAsync(browser, remote.Socket, target, sdp!, agents, revoked.Token);
                 }
             }
             catch (OperationCanceledException) { }
