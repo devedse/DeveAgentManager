@@ -58,6 +58,7 @@ try {
     await page.locator('input[name="username"]').fill('admin');
     await page.locator('input[name="password"]').fill(process.env.DAM_TEST_PASSWORD ?? 'preview-test-only');
     await Promise.all([page.waitForURL(base + '/'), page.locator('button[type="submit"]').click()]);
+    assert.equal((await context.request.put(base + '/api/me/settings/codex-voice', { data: { terminalMode: false }, headers: { 'X-DAM-Request': '1', Origin: base } })).ok(), true);
     const me = await (await context.request.get(base + '/api/me')).json();
     const info = await (await context.request.get(base + '/api/info')).json();
     const id = '00000000-0000-0000-0000-000000000111';
@@ -81,9 +82,14 @@ try {
     });
     let reject = false;
     const messages: { type: string; sdp?: string; mode?: string }[] = [];
+    let requestTerminalVoice: (() => void) | null = null;
     let nativeControls: ((value: object) => void) | null = null;
     await context.routeWebSocket('**/ws/agents/*/voice', ws => ws.onMessage(raw => {
         const message = JSON.parse(String(raw)); messages.push(message);
+        if (message.type === 'listen') {
+            requestTerminalVoice = () => ws.send(JSON.stringify({ type: 'requested' }));
+            ws.send(JSON.stringify({ type: 'ready' }));
+        }
         if (message.type === 'start') ws.send(JSON.stringify(reject
             ? { type: 'error', message: 'Voice is already connected in another tab. End it there first.' }
             : { type: 'answer', sdp: 'test-only answer' }));
@@ -312,9 +318,43 @@ try {
     assert.equal(await page.locator('.terminal-voice-container audio').evaluate((el: HTMLAudioElement) => el.muted), true, 'native speaker suppression reaches browser playback');
     nativeControls({ type: 'controls', microphoneMuted: false, speakerSuppressed: false });
     await page.waitForFunction(() => window.codexVoiceTest.streams.at(-1).getAudioTracks()[0].enabled === true);
+    requestTerminalVoice = null;
+    const listenCount = messages.filter(m => m.type === 'listen').length;
     await page.getByRole('button', { name: 'End voice', exact: true }).click();
     await page.getByRole('button', { name: 'Start voice', exact: true }).waitFor();
     assert.equal(await closedTracks(), true, 'native mode releases its browser microphone');
+    await page.waitForFunction(() => window.codexVoiceTest.streams.every(s => s.getTracks().every(t => t.readyState === 'ended')));
+    await new Promise<void>((resolve, reject) => {
+        const started = Date.now();
+        const poll = setInterval(() => {
+            if (requestTerminalVoice && messages.filter(m => m.type === 'listen').length > listenCount) { clearInterval(poll); resolve(); }
+            else if (Date.now() - started > 10000) { clearInterval(poll); reject(new Error('Terminal listener did not rearm')); }
+        }, 25);
+    });
+    assert.equal(await closedTracks(), true, 'the idle terminal listener does not capture audio');
+    const startsBeforeRequest = messages.filter(m => m.type === 'start').length;
+    requestTerminalVoice!();
+    await page.getByText('Terminal voice connected', { exact: true }).waitFor();
+    assert.equal(messages.filter(m => m.type === 'start').length, startsBeforeRequest + 1, 'a terminal request starts exactly one call');
+    requestTerminalVoice = null;
+    await page.getByRole('button', { name: 'End voice', exact: true }).click();
+    assert.equal(await closedTracks(), true, 'terminal-requested voice releases the microphone on end');
+    await page.evaluate(() => { window.codexVoiceTest.denied = true; });
+    await new Promise<void>((resolve, reject) => {
+        const started = Date.now();
+        const poll = setInterval(() => {
+            if (requestTerminalVoice) { clearInterval(poll); resolve(); }
+            else if (Date.now() - started > 10000) { clearInterval(poll); reject(new Error('Terminal listener did not rearm')); }
+        }, 25);
+    });
+    const startsBeforeDenial = messages.filter(m => m.type === 'start').length;
+    requestTerminalVoice!();
+    await page.getByText('Microphone access was denied. Allow it in your browser and retry.', { exact: true }).waitFor();
+    assert.equal(await closedTracks(), true, 'denied terminal startup leaves no live microphone');
+    assert.equal(messages.filter(m => m.type === 'start').length, startsBeforeDenial, 'denial does not submit an audio offer');
+    await page.evaluate(() => { window.codexVoiceTest.denied = false; });
+
+
     const restored = await context.request.put(base + '/api/me/settings/codex-voice', { data: { terminalMode: false }, headers: { 'X-DAM-Request': '1', Origin: base } });
     assert.equal(restored.ok(), true);
     await page.getByRole('button', { name: 'Start voice', exact: true }).click();

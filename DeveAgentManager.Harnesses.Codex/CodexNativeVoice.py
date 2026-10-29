@@ -99,6 +99,7 @@ try:
     offer = None
     awaiting = None
     active = False
+    requested = False
     microphone_peak = speaker_peak = 0
     while not stopping:
         sources = [0, listener] + ([helper] if helper is not None else [])
@@ -122,8 +123,12 @@ try:
                 line, _, helper_buffer = helper_buffer.partition(b'\n')
                 message = json.loads(line)
                 kind = message.get('type')
-                if kind == 'offer' and offer is not None:
-                    native(dict(type='offer', sdp=offer))
+                if kind == 'offer':
+                    if offer is not None:
+                        native(dict(type='offer', sdp=offer))
+                    else:
+                        requested = True
+                        browser(dict(type='requested'))
                 elif kind == 'answer' and isinstance(message.get('sdp'), str) and 0 < len(message['sdp']) <= 65536:
                     browser(dict(type='answer', sdp=message['sdp']))
                     awaiting = 'transportReady'
@@ -180,8 +185,11 @@ try:
             kind = message.get('type')
             if kind == 'start' and offer is None and isinstance(message.get('sdp'), str) and 0 < len(message['sdp']) <= 65536:
                 offer = message['sdp']
-                subprocess.run(['tmux', '-S', state['tmuxSocket'], 'send-keys', '-t', state['tmuxPane'], 'F8'], check=True,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                if requested:
+                    native(dict(type='offer', sdp=offer))
+                elif helper is None:
+                    subprocess.run(['tmux', '-S', state['tmuxSocket'], 'send-keys', '-t', state['tmuxPane'], 'F8'], check=True,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
             elif kind == 'connected' and awaiting == 'transportReady':
                 native(dict(type='transportReady'))
                 awaiting = None

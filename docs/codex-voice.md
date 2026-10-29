@@ -11,7 +11,11 @@ hides captions while audio continues; **Show transcript** restores them. New spe
 Under **My settings → Voice**, choose **Use terminal voice**. The default is browser mode.
 The choice belongs to the signed-in user and is read again for each new voice connection. Changing it does not restart
 an agent or change a call already in progress. Start either mode with **Start voice** so the browser can obtain microphone
-permission. Terminal mode then displays Codex's own captions, voice status and controls inside the terminal; its mute
+permission. In terminal mode, typing `/voice` also starts the connection while the conversation page is open and visible.
+The page keeps a signaling-only listener ready; it does not capture audio until the button or terminal requests a call.
+Allow microphone permission when asked, and choose **Play audio** if the browser blocks playback. A denied permission or
+lost connection ends the attempt; use **Start voice** to retry. Only one tab can own the terminal listener or call.
+Terminal mode then displays Codex's own captions, voice status and controls inside the terminal; its mute
 control also mutes the browser microphone. It does not show a second browser transcript.
 
 Use HTTPS (localhost also works), a browser with microphone and WebRTC support, and a Codex login with voice access.
@@ -42,7 +46,9 @@ Existing agents need one explicit restart after updating the Manager; the Manage
 
 In terminal mode the Manager attaches to the running thread with `excludeTurns=true`, without loading or replaying
 history. A private Unix socket connects the terminal's audio helper to authenticated browser signaling through SSH.
-The helper supplies the browser's SDP offer to Codex, waits for a real WebRTC connection and microphone readiness,
+The helper requests audio from the open page when `/voice` starts in the terminal; the button uses the same listener
+and starts Codex with F8. Fulfilling a terminal request never sends another F8. The helper supplies the browser's SDP
+offer to Codex, waits for a real WebRTC connection and microphone readiness,
 and acknowledges mute and speaker controls only after the browser applies them. Measured microphone and speaker
 levels feed the native terminal meters. The terminal owns voice startup, transcription and delegation. Audio still
 travels directly between the browser and the voice service. The adapter implements Codex voice-helper protocol v1;

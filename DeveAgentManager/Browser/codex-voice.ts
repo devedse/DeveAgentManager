@@ -16,6 +16,9 @@ interface CodexVoiceState {
     stream: MediaStream | null;
     peer: RTCPeerConnection | null;
     socket: WebSocket | null;
+    listener: WebSocket | null;
+    listenerReady: boolean;
+    listenTimer: ReturnType<typeof setTimeout> | null;
     audio: HTMLAudioElement | null;
     sender: RTCRtpSender | null;
     changingInput: boolean;
@@ -46,7 +49,7 @@ async function report(state: CodexVoiceState, error: string | null = null) {
 
 export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: string, terminalMode = false) {
     const state: CodexVoiceState = { host, dotnet, agent, generation: 0, phase: "idle", muted: false,
-        playbackBlocked: false, disposed: false, stream: null, peer: null, socket: null, audio: null, timer: null,
+        playbackBlocked: false, disposed: false, stream: null, peer: null, socket: null, listener: null, listenerReady: false, listenTimer: null, audio: null, timer: null,
         terminalMode, speakerSource: null, speakerAnalyser: null, speakerSamples: null, lastLevelSent: 0, signalingStarted: false,
         sender: null, changingInput: false, inputContext: null, inputSource: null, inputAnalyser: null, inputFrame: 0,
         transcriptObserver: null, transcriptResizeObserver: null, transcriptScroll: null, transcriptFrame: 0, followTranscript: true,
@@ -58,7 +61,7 @@ export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: st
         if (state.phase === "idle") void start(host);
         else stop(host);
     };
-    state.hidden = () => { if (document.hidden) stop(host); };
+    state.hidden = () => { if (document.hidden) stop(host); else listen(state); };
     state.leaving = () => stop(host);
     state.devicesChanged = () => { if (state.stream) void reportInputs(state); };
     voices.set(host, state);
@@ -66,6 +69,7 @@ export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: st
     document.addEventListener("visibilitychange", state.hidden);
     window.addEventListener("pagehide", state.leaving);
     navigator.mediaDevices?.addEventListener("devicechange", state.devicesChanged);
+    listen(state);
     const transcript = host.querySelector<HTMLElement>(".terminal-voice-transcript-lines");
     if (transcript) {
         state.transcriptScroll = () => { state.followTranscript = transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop <= 24; };
@@ -80,6 +84,41 @@ export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: st
         state.transcriptResizeObserver = new ResizeObserver(follow);
         state.transcriptResizeObserver.observe(transcript);
     }
+}
+
+// Signaling only: viewing a terminal never opens the microphone or starts a call.
+function listen(state: CodexVoiceState) {
+    clearTimeout(state.listenTimer);
+    if (state.disposed || !state.terminalMode || document.hidden || state.phase !== "idle" || state.listener) return;
+    const url = new URL(`ws/agents/${state.agent}/voice`, document.baseURI);
+    url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = state.listener = new WebSocket(url);
+    state.listenerReady = false;
+    socket.onopen = () => {
+        if (state.listener === socket) socket.send(JSON.stringify({ type: "listen", mode: "terminal" }));
+    };
+    socket.onmessage = event => {
+        if (state.listener !== socket || state.disposed || document.hidden) return;
+        try {
+            const message: { type?: string } = JSON.parse(event.data);
+            if (message.type === "ready") state.listenerReady = true;
+            else if (message.type === "requested" && state.listenerReady) void start(state.host, true);
+        } catch { socket.close(); }
+    };
+    socket.onclose = () => {
+        if (state.listener === socket) { state.listener = null; state.listenerReady = false; }
+    };
+    // No automatic retry after transport loss, permission failure, or another tab owning voice.
+    socket.onerror = () => socket.close();
+}
+
+function releaseListener(socket: WebSocket): Promise<void> {
+    return new Promise(resolve => {
+        if (socket.readyState === WebSocket.CLOSED) { resolve(); return; }
+        const timer = setTimeout(resolve, 3000);
+        socket.addEventListener("close", () => { clearTimeout(timer); resolve(); }, { once: true });
+        socket.close();
+    });
 }
 
 const microphonePreference = "dam-voice-microphone";
@@ -157,7 +196,7 @@ function monitorInput(state: CodexVoiceState, stream: MediaStream) {
     update();
 }
 
-export async function start(host: HTMLElement) {
+export async function start(host: HTMLElement, terminalRequested = false) {
     const state = voices.get(host);
     if (!state || state.disposed || state.phase !== "idle") return;
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
@@ -166,8 +205,19 @@ export async function start(host: HTMLElement) {
     }
     if (active && active !== state) stop(active.host);
     active = state;
+    clearTimeout(state.listenTimer);
+    // Adopt the ready listener so /voice and the button share one owner and audio socket.
+    const listening = state.listenerReady ? state.listener : null;
+    const released = state.listener && !listening ? releaseListener(state.listener) : Promise.resolve();
+    state.listener = null;
+    state.listenerReady = false;
+    state.socket = listening;
     const generation = ++state.generation;
     const current = () => !state.disposed && generation === state.generation;
+    if (listening) {
+        listening.onclose = () => { if (current()) stop(host, "Voice disconnected. Start voice to try again."); };
+        listening.onerror = () => { if (current()) stop(host, "Voice could not connect. Start voice to try again."); };
+    }
     state.phase = "permission";
     state.muted = false;
     state.playbackBlocked = false;
@@ -190,7 +240,15 @@ export async function start(host: HTMLElement) {
         const terminalMode = await state.dotnet.invokeMethodAsync("GetVoiceMode");
         if (!current()) return;
         if (typeof terminalMode !== "boolean") { stop(host, "Voice settings could not load. Check your connection and try again."); return; }
+        if (terminalRequested && !terminalMode) { stop(host, "Terminal voice is disabled. Enable it under My settings → Voice."); return; }
         state.terminalMode = terminalMode;
+        if (!terminalMode && listening) {
+            listening.onclose = null;
+            listening.onerror = null;
+            await releaseListener(listening);
+            if (!current()) return;
+            state.socket = null;
+        }
         void reportInputs(state);
         state.phase = "connecting";
         void report(state);
@@ -253,9 +311,11 @@ export async function start(host: HTMLElement) {
         if (!current()) return;
         const url = new URL(`ws/agents/${state.agent}/voice`, document.baseURI);
         url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
-        const socket = state.socket = new WebSocket(url);
+        await released;
+        if (!current()) return;
+        const socket = state.socket = (state.terminalMode ? listening : null) ?? new WebSocket(url);
         let answered = false;
-        socket.onopen = () => {
+        const sendOffer = () => {
             if (current()) {
                 socket.send(JSON.stringify({ type: "start", sdp: peer.localDescription.sdp, ...(state.terminalMode ? { mode: "terminal" } : {}) }));
                 state.signalingStarted = true;
@@ -288,6 +348,8 @@ export async function start(host: HTMLElement) {
                 }
             } catch { if (current()) stop(host, "Voice could not connect. You can start it again."); }
         };
+        socket.onopen = sendOffer;
+        if (socket.readyState === WebSocket.OPEN) sendOffer();
         socket.onerror = () => { if (current()) stop(host, "Voice could not connect. Check your connection and agent access."); };
         socket.onclose = event => {
             if (current()) stop(host, event.code === 1000 ? null : "Voice disconnected. You can start it again.");
@@ -350,7 +412,12 @@ export async function play(host: HTMLElement) {
 export function stop(host: HTMLElement, error: string | null = null) {
     const state = voices.get(host);
     if (!state) return;
-    ++state.generation;
+    const generation = ++state.generation;
+    const previousSocket = state.socket ?? state.listener;
+    clearTimeout(state.listenTimer);
+    state.listener?.close();
+    state.listener = null;
+    state.listenerReady = false;
     state.signalingStarted = false;
     clearTimeout(state.timer);
     cancelAnimationFrame(state.inputFrame);
@@ -384,6 +451,14 @@ export function stop(host: HTMLElement, error: string | null = null) {
     state.playbackBlocked = false;
     if (active === state) active = null;
     void report(state, error);
+    if (!error && !state.disposed && !document.hidden) {
+        // Wait for server cleanup and owner release before accepting the next terminal request.
+        const released = previousSocket ? releaseListener(previousSocket) : Promise.resolve();
+        void released.then(() => {
+            if (state.generation === generation && !state.disposed && !document.hidden)
+                state.listenTimer = setTimeout(() => listen(state), 0);
+        });
+    }
 }
 
 export function dispose(host: HTMLElement) {

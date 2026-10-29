@@ -19,6 +19,91 @@ public sealed class CodexNativeVoiceTests
     }
 
     [Fact(Timeout = 30000)]
+    public async Task NativeSignalingSupportsTerminalAndButtonStartsWithoutDoubleToggling()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Directory.CreateTempSubdirectory("dam-voice-request-").FullName;
+        var adapter = Path.Combine(root, "adapter.py");
+        await File.WriteAllTextAsync(adapter, Resource("CodexNativeVoice.py"), Ct);
+        const string test = """
+            import json,os,select,socket,struct,subprocess,sys,time
+            from pathlib import Path
+            root=Path(sys.argv[2]); state=root/'.deveagentmanager/codex-voice/test'; state.mkdir(parents=True)
+            address=root/'audio.sock'; calls=root/'tmux-calls'
+            tmux=root/'tmux'
+            tmux.write_text('#!/bin/sh\nprintf called >> "'+str(calls)+'"\n'); tmux.chmod(0o700)
+            env=dict(os.environ,HOME=str(root),PATH=str(root)+':'+os.environ['PATH'])
+            env.pop('TMUX',None); env.pop('TMUX_PANE',None)
+            (state/'connection.json').write_text(json.dumps(dict(sessionId='session',supervisor=os.getpid(),nativeAdapter=True,
+                nativeAudioSocket=str(address),tmuxSocket=str(root/'unused-test-socket'),tmuxPane='%0')))
+            for terminal in (True,False):
+                p=subprocess.Popen([sys.executable,'-I','-u',sys.argv[1],'test','session'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env)
+                def read(n):
+                    result=b''
+                    while len(result)<n:
+                        assert select.select([p.stdout],[],[],5)[0], 'adapter response timed out'
+                        part=os.read(p.stdout.fileno(),n-len(result)); assert part, p.stderr.read().decode()
+                        result+=part
+                    return result
+                def receive():
+                    header=read(2); n=header[1]&127
+                    if n==126: n=struct.unpack('!H',read(2))[0]
+                    if n==127: n=struct.unpack('!Q',read(8))[0]
+                    return json.loads(read(n))
+                def send(value):
+                    data=json.dumps(value).encode(); mask=b'test'
+                    header=bytes([129,128|len(data)]) if len(data)<126 else bytes([129,254])+struct.pack('!H',len(data))
+                    p.stdin.write(header+mask+bytes(v^mask[i%4] for i,v in enumerate(data))); p.stdin.flush()
+                helper=None
+                try:
+                    p.stdin.write(b'GET / HTTP/1.1\r\nSec-WebSocket-Key: dGVzdC1vbmx5LWtleQ==\r\n\r\n'); p.stdin.flush()
+                    header=b''
+                    while not header.endswith(b'\r\n\r\n'): header+=read(1)
+                    assert receive()['type']=='ready'
+                    assert not calls.exists(), 'idle listener started terminal voice'
+                    if not terminal:
+                        send(dict(type='start',sdp='test-only offer'))
+                        for attempt in range(200):
+                            if calls.exists(): break
+                            time.sleep(.01)
+                        assert calls.exists(), 'button did not start terminal voice'
+                    helper=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); helper.settimeout(5); helper.connect(str(address))
+                    helper.sendall(b'{"type":"offer"}\n')
+                    if terminal:
+                        assert receive()['type']=='requested'
+                        assert not calls.exists(), 'terminal request toggled voice'
+                        send(dict(type='start',sdp='test-only offer'))
+                    data=b''
+                    while not data.endswith(b'\n'): data+=helper.recv(4096)
+                    assert json.loads(data)['sdp']=='test-only offer'
+                    if terminal: assert not calls.exists(), 'fulfilling /voice must not send F8'
+                    else: assert calls.read_text()=='called', 'button must send exactly one F8'
+                    helper.sendall(b'{"type":"close"}\n')
+                    assert receive()['type']=='closed'
+                    p.wait(timeout=5); assert p.returncode==0, p.stderr.read().decode()
+                    assert not address.exists(), 'audio socket leaked after closing'
+                finally:
+                    if helper: helper.close()
+                    if p.poll() is None: p.kill(); p.wait()
+            print('PASS: idle listener, terminal request, button start, no double toggle and socket cleanup')
+            """;
+        using var process = Process.Start(new ProcessStartInfo("python3", ["-I", "-c", test, adapter, root])
+            { RedirectStandardOutput = true, RedirectStandardError = true })!;
+        try
+        {
+            var output = await process.StandardOutput.ReadToEndAsync(Ct);
+            var error = await process.StandardError.ReadToEndAsync(Ct);
+            await process.WaitForExitAsync(Ct);
+            Assert.True(process.ExitCode == 0, output + error);
+        }
+        finally
+        {
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(CancellationToken.None); }
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact(Timeout = 30000)]
     public async Task NativeHelperWaitsForBrowserTransportAndAppliesControlsAndMeasuredLevels()
     {
         if (!OperatingSystem.IsLinux()) return;

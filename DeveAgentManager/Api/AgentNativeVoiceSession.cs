@@ -8,7 +8,7 @@ namespace DeveAgentManager.Api;
 /// <summary>Native audio signaling only. The terminal owns the call and delegation; browser WebRTC carries audio.</summary>
 internal static class AgentNativeVoiceSession
 {
-    public static async Task RunAsync(WebSocket browser, WebSocket codex, AgentVoiceTarget target, AgentService agents, RunnerShell shell, string sdp, CancellationToken ct)
+    public static async Task RunAsync(WebSocket browser, WebSocket codex, AgentVoiceTarget target, AgentService agents, RunnerShell shell, string? sdp, CancellationToken ct)
     {
         if (target.NativeConnectCommand is null) throw new InvalidOperationException("This harness does not support terminal voice audio.");
         using var opening = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -36,6 +36,8 @@ internal static class AgentNativeVoiceSession
         using var pumps = CancellationTokenSource.CreateLinkedTokenSource(ct);
         using var sends = new SemaphoreSlim(1, 1);
         var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var triggered = false;
         var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         async Task SendBrowserAsync(object value, CancellationToken token)
         {
@@ -66,13 +68,19 @@ internal static class AgentNativeVoiceSession
         {
             while (true)
             {
-                using var message = await AgentVoiceSocketEndpoint.ReceiveAsync(browser, 4096, pumps.Token);
+                using var message = await AgentVoiceSocketEndpoint.ReceiveAsync(browser, 70 * 1024, pumps.Token);
                 if (message is null) return;
                 var root = message.RootElement;
                 if (!root.TryGetProperty("type", out var type)) throw new InvalidOperationException("Unexpected terminal voice control.");
                 object value;
                 switch (type.GetString())
                 {
+                    case "start" when sdp is null && root.TryGetProperty("sdp", out var offer) && offer.ValueKind == JsonValueKind.String
+                        && offer.GetString() is { Length: > 0 and <= 65536 } description:
+                        sdp = description;
+                        triggered = true;
+                        requested.TrySetResult();
+                        value = new { type = "start", sdp }; break;
                     case "stop": return;
                     case "connected": value = new { type = "connected" }; break;
                     case "controlsApplied": value = new { type = "controlsApplied" }; break;
@@ -97,6 +105,10 @@ internal static class AgentNativeVoiceSession
                 object value;
                 switch (type.GetString())
                 {
+                    case "requested":
+                        triggered = true;
+                        requested.TrySetResult();
+                        value = new { type = "requested" }; break;
                     case "closed": return;
                     case "active":
                         connected.TrySetResult();
@@ -122,16 +134,21 @@ internal static class AgentNativeVoiceSession
         }
         async Task DeadlineAsync()
         {
+            await requested.Task.WaitAsync(pumps.Token);
             await connected.Task.WaitAsync(TimeSpan.FromSeconds(35), pumps.Token);
             await Task.Delay(Timeout.Infinite, pumps.Token);
         }
         var backend = BackendAsync();
         Task? input = null, output = null, watch = null, deadline = null;
-        var triggered = false;
         try
         {
-            await AgentVoiceSocketEndpoint.SendAsync(audio.Socket, new { type = "start", sdp }, opening.Token);
-            triggered = true;
+            if (sdp is not null)
+            {
+                triggered = true;
+                requested.TrySetResult();
+                await AgentVoiceSocketEndpoint.SendAsync(audio.Socket, new { type = "start", sdp }, opening.Token);
+            }
+            else await SendBrowserAsync(new { type = "ready" }, opening.Token);
             input = BrowserAsync(); output = AudioAsync(); watch = WatchAsync(); deadline = DeadlineAsync();
             await await Task.WhenAny(backend, input, output, watch, deadline);
         }
