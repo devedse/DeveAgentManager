@@ -166,8 +166,9 @@ internal static class AgentEndpoints
             await limits.SetAutomaticAsync(agentId, request.Enabled, request.Remaining, ct);
             return Results.NoContent();
         }).RequireAgent(AgentAccess.Write);
-        agents.MapGet("/{agentId:guid}/limit", async (Guid agentId, AgentContinuations limits, CancellationToken ct) =>
-            await limits.GetAsync(agentId, ct) is { } limit ? Results.Ok(limit) : Results.NotFound()).RequireAgent(AgentAccess.Read);
+        // No usage limit is an answer (null), not a 404: browsers show every 404 as an error.
+        agents.MapGet("/{agentId:guid}/limit", (Guid agentId, AgentContinuations limits, CancellationToken ct) => limits.GetAsync(agentId, ct))
+            .RequireAgent(AgentAccess.Read);
         agents.MapPost("/{agentId:guid}/limit/continue", async (Guid agentId, ScheduleContinueRequest request, AgentContinuations limits, CancellationToken ct) =>
         {
             await limits.ScheduleAsync(agentId, request.ResetAtUtc, ct, request.ExpectedDetectedAt, request.ContinueAfterMinutes, request.Manual);

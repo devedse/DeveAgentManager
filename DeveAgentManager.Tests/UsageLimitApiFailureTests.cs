@@ -55,6 +55,29 @@ public class UsageLimitApiFailureTests
         Assert.NotNull(recovered.DetectedResetAt);
     }
 
+    [Fact]
+    public async Task LimitApiAnswersNull_WhenTheAgentHasNoLimit()
+    {
+        await using var manager = new Manager();
+        var ct = TestContext.Current.CancellationToken;
+        using var client = manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        using var login = await client.PostAccountAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string>
+        { ["username"] = "admin", ["password"] = "parser-test-only-password", ["returnUrl"] = "/" }), ct);
+        Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+        var id = Guid.NewGuid();
+        await using (var db = await manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync(ct))
+        {
+            var runner = new Runner { Id = Guid.NewGuid(), OwnerId = User.BootstrapId, Name = "test-runner", State = RunnerState.Stopped };
+            db.Runners.Add(runner);
+            db.Agents.Add(new Agent { Id = id, OwnerId = User.BootstrapId, RunnerId = runner.Id, Name = "test-agent", HarnessId = "codex", HarnessSessionId = "test-session" });
+            await db.SaveChangesAsync(ct);
+        }
+        using var response = await client.GetAsync($"/api/agents/{id}/limit", ct);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Null(await response.Content.ReadFromJsonAsync<AgentLimitDto>(ApiJson.Options, ct));
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/agents/{Guid.NewGuid()}/limit", ct)).StatusCode);
+    }
+
     private sealed class Manager : WebApplicationFactory<DeveAgentManager.Api.DtoMapper>
     {
         private readonly string _data = Directory.CreateTempSubdirectory("dam-parser-api-").FullName;
