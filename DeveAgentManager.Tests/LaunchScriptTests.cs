@@ -104,6 +104,21 @@ public sealed class LaunchScriptTests : IDisposable
         }
     }
 
+    /// <summary>The heredoc writes content as it is: nothing in it is expanded or ends it early.</summary>
+    [Fact]
+    public void LaunchFiles_ArriveAsTheyAre()
+    {
+        if (!HasTmux())
+        {
+            return;
+        }
+
+        const string content = "echo '$HOME' \"$(touch \"$HOME/injected\")\" `touch \"$HOME/injected\"` \\ \\n\r\nDAM_FILE_\nEOF\n\tlast line";
+        Run(AgentService.BuildLaunchFilesScript([("$HOME/odd/file.sh", content)]));
+        Assert.Equal(content.ReplaceLineEndings("\n") + "\n", File.ReadAllText(Path.Combine(_home, "odd", "file.sh")));
+        Assert.False(File.Exists(Path.Combine(_home, "injected")));
+    }
+
     private string LaunchFilePath => AgentService.LaunchFile(_agentId).Replace("$HOME", _home);
 
     private string Script(string harnessScript, bool restart)

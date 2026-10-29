@@ -1234,20 +1234,23 @@ public sealed partial class AgentService(
 
     /// <summary>
     /// Writes the files that differ, each whole by rename, so a pane never reads half a file and concurrent starts don't
-    /// mix theirs. Base64, so the content needs no quoting.
+    /// mix theirs. A quoted heredoc keeps the content as it is; its end marker holds the content's hash, so no line of the
+    /// content ends it early.
     /// </summary>
     internal static string BuildLaunchFilesScript(IReadOnlyList<(string Path, string Content)> files) => string.Concat(files.Select(file =>
     {
-        var bytes = Encoding.UTF8.GetBytes(file.Content);
-        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
-        var encoded = string.Join('\n', Convert.ToBase64String(bytes).Chunk(76).Select(line => new string(line)));
+        // As the heredoc writes it: Unix line endings, ending in one.
+        var content = file.Content.ReplaceLineEndings("\n");
+        if (!content.EndsWith('\n')) content += "\n";
+        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(content)));
+        var end = "DAM_FILE_" + hash[..16];
+        if (content.Split('\n').Contains(end)) throw new ArgumentException($"{file.Path} contains its heredoc end marker.");
         return $$"""
             file="{{file.Path}}"
             if [ "$(sha256sum 2>/dev/null < "$file")" != "{{hash}}  -" ]; then
               mkdir -p "$(dirname "$file")"
-              base64 -d > "$file.dam-tmp-$$" <<'DAM_LAUNCH_FILE'
-            {{encoded}}
-            DAM_LAUNCH_FILE
+              cat > "$file.dam-tmp-$$" <<'{{end}}'
+            {{content}}{{end}}
               mv -f "$file.dam-tmp-$$" "$file"
             fi
 
