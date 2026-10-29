@@ -505,7 +505,6 @@
         return Array.from(dataTransfer?.files ?? []);
     }
 
-    const MAX_IMAGE_BYTES = 500 * 1024 * 1024; // TerminalService.MaxUploadBytes
     const IMAGE_CHUNK_BYTES = 64 * 1024; // TerminalSocket.ImageChunkBytes
     // A large file is read a slice at a time and only this much waits in the socket, so it isn't held in the page.
     const IMAGE_SLICE_BYTES = 1024 * 1024;
@@ -518,10 +517,6 @@
     // Not an HTTP upload: a reverse proxy's request size limit (nginx: 1 MB by default) doesn't apply to a WebSocket.
     // When the connection drops meanwhile (a bad network), it is sent again once the terminal has reconnected.
     async function uploadImage(id, file, progress?: (fraction: number) => void) {
-        if (file.size > MAX_IMAGE_BYTES) {
-            throw new Error(`Files can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB.`);
-        }
-
         if (file.size === 0) {
             throw new Error(`${file.name || "The file"} is empty.`);
         }

@@ -348,9 +348,9 @@ file. Keep `/data` on a local disk; SQLite's write-ahead log doesn't work on net
   also images such as screenshots and files copied in your file manager, such as a log. Files can be dropped on the
   terminal too, and images picked with the **📎 Image** key (on phones: gallery, camera, screenshots). They are stored
   on the Runner in `~/.deveagentmanager/uploads`, and their path is pasted into the terminal, like pi's own Ctrl+V does
-  locally. The harness sends a PNG, JPEG, WebP or GIF image to the model; the agent reads other files. Up to 500 MB;
-  a large file waits on the Manager's disk (`terminal-uploads` in its data folder) while it arrives, and what you type
-  meanwhile follows once it is sent.
+  locally. The harness sends a PNG, JPEG, WebP or GIF image to the model; the agent reads other files. There is no fixed
+  file size limit. Large files wait on the Manager's disk (`terminal-uploads` in its data folder) while they arrive;
+  what you type meanwhile follows once the file is sent.
 - **Copying** out of a terminal goes to your device's clipboard: select text with the mouse (tmux copies it when you
   let go), or use the harness's own copy, such as Claude Code's `/copy`. Programs copy with OSC 52, which the browser
   accepts only within 5 seconds of a key, tap or click in that terminal, so a program can't fill your clipboard by

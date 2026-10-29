@@ -49,9 +49,6 @@ public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactor
         return await OpenAsync(runner, command, columns, rows, cancellationToken);
     }
 
-    /// <summary>Largest file (an image, a log, a build, …) that can be pasted into a terminal.</summary>
-    public const long MaxUploadBytes = 500L * 1024 * 1024;
-
     /// <summary>The image types harnesses can send to a model (pi: PNG, JPEG, WebP and GIF).</summary>
     private static readonly Dictionary<string, string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -72,9 +69,9 @@ public sealed class TerminalService(IDbContextFactory<ManagerDbContext> dbFactor
     /// <param name="content">The whole file, from its start; seekable (an <see cref="NewUploadBuffer"/>).</param>
     public async Task<string> UploadAsync(Guid? agentId, Guid? runnerId, string? fileName, Stream content, CancellationToken cancellationToken)
     {
-        if (content.Length == 0 || content.Length > MaxUploadBytes)
+        if (content.Length == 0)
         {
-            throw new ArgumentException($"Files can be up to {MaxUploadBytes / 1024 / 1024} MB, and not empty.");
+            throw new ArgumentException("Files must not be empty.");
         }
 
         // Its first bytes tell whether it is an image.

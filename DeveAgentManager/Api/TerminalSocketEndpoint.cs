@@ -303,10 +303,10 @@ public static partial class TerminalSocketEndpoint
                     }
                     else if ((string?)control["type"] == TerminalSocket.Image)
                     {
-                        // The browser checks the size first, so a wrong one isn't from the Portal: stop rather than type the
-                        // image's bytes into the terminal.
+                        // Require a positive byte count and only one file at a time, so the file's bytes cannot
+                        // accidentally become terminal input.
                         var size = (long?)control["size"] ?? 0;
-                        if (uploads is null || image is not null || size <= 0 || size > TerminalService.MaxUploadBytes)
+                        if (uploads is null || image is not null || size <= 0)
                         {
                             throw new InvalidDataException("Unexpected image.");
                         }

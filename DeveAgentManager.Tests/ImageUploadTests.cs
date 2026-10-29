@@ -55,13 +55,20 @@ public class ImageUploadTests
     }
 
     [Fact]
-    public async Task RefusesEmptyAndTooBigFiles()
+    public async Task RefusesEmptyFiles()
     {
         await Assert.ThrowsAsync<ArgumentException>(() => Service().UploadAsync(null, Guid.NewGuid(), "a.log", new MemoryStream(), CancellationToken.None));
-        // Refused on its length, before anything is read.
-        await Assert.ThrowsAsync<ArgumentException>(() => Service().UploadAsync(null, Guid.NewGuid(), "a.log", new LengthOnly(TerminalService.MaxUploadBytes + 1),
+    }
+
+    [Theory]
+    [InlineData(500L * 1024 * 1024 + 1)]
+    [InlineData(3L * 1024 * 1024 * 1024)]
+    public async Task LargeFilesReachTheStreamingReadWithoutASizeRejection(long length)
+    {
+        // Probe the streaming boundary without allocating or transferring gigabytes.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => Service().UploadAsync(null, Guid.NewGuid(), "build.tar", new LengthOnly(length),
             CancellationToken.None));
-        Assert.Equal(500L * 1024 * 1024, TerminalService.MaxUploadBytes);
+        Assert.Equal("Upload read started.", error.Message);
     }
 
     [Fact]
@@ -100,7 +107,7 @@ public class ImageUploadTests
         public override bool CanWrite => false;
         public override long Length => length;
         public override long Position { get; set; }
-        public override int Read(byte[] buffer, int offset, int count) => throw new InvalidOperationException("Read before the size check.");
+        public override int Read(byte[] buffer, int offset, int count) => throw new InvalidOperationException("Upload read started.");
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
