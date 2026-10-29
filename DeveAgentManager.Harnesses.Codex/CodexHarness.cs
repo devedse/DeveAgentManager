@@ -130,7 +130,7 @@ public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHar
             if codex app-server proxy --help >/dev/null 2>&1; then
               server_defaults=()
               if {{starts}}; then server_defaults=({{serverDefaults.TrimStart()}}); fi
-              exec python3 -c {{ShellQuote.Quote(VoiceLauncher)}} {{ShellQuote.Quote(agentId.ToString("N"))}} {{id}}{{instructions}} "${server_defaults[@]}"
+              exec python3 -I "{{VoiceLauncherFile}}" {{ShellQuote.Quote(agentId.ToString("N"))}} {{id}}{{instructions}} "${server_defaults[@]}"
             fi
             """ : "";
         // Without its background server: that listens on a socket in CODEX_HOME, and an account's folder is too long a
@@ -148,6 +148,12 @@ public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHar
     }
 
     private static readonly string VoiceLauncher = ReadVoiceLauncher();
+
+    /// <summary>The voice launcher on the Runner. Inline, it made the start command too long for tmux and SSH.</summary>
+    public const string VoiceLauncherFile = "$HOME/.deveagentmanager/codex-voice-launcher.py";
+
+    public IReadOnlyList<(string Path, string Content)> LaunchFiles { get; } = [(VoiceLauncherFile, VoiceLauncher)];
+
     private static readonly string NativeVoiceBridge = ReadNativeVoiceBridge();
 
     private static string ReadNativeVoiceBridge()

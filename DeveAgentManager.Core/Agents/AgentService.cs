@@ -1154,7 +1154,8 @@ public sealed partial class AgentService(
         // The session starts with a shell, remain-on-exit is switched on, and only then the harness replaces the shell,
         // so even a harness that exits immediately leaves its output behind. Targets need the trailing ':' (session:window).
         var target = ShellQuote.Quote("=" + agent.TmuxSession + ":");
-        var script = BuildLaunchScript(session, ShellQuote.Quote(agent.TmuxSession), target, directory, ShellQuote.Quote(launch), restart);
+        var script = BuildLaunchScript(session, ShellQuote.Quote(agent.TmuxSession), target, directory, ShellQuote.Quote(launch), restart,
+            BuildLaunchFilesScript(harness.LaunchFiles));
         logger.LogInformation("{Action} agent {Agent} on {Runner}", restart ? "Restarting" : "Starting", agent.Name, runner.Name);
         var result = await shell.RunAsync(runner, script, TimeSpan.FromMinutes(1), cancellationToken);
         result.EnsureSuccess($"Starting {harness.DisplayName}");
@@ -1184,7 +1185,8 @@ public sealed partial class AgentService(
     /// which is replaced. A pane whose harness is still running is only replaced when restarting (a start leaves it alone),
     /// and then the harness first gets SIGTERM and a grace period, so it can shut down instead of dying with its terminal.
     /// </summary>
-    internal static string BuildLaunchScript(string session, string sessionName, string target, string directory, string launch, bool restart) => $$"""
+    internal static string BuildLaunchScript(string session, string sessionName, string target, string directory, string launch, bool restart,
+        string files = "") => $$"""
         set -e
         created=0
         if ! tmux has-session -t {{session}} 2>/dev/null; then
@@ -1205,8 +1207,31 @@ public sealed partial class AgentService(
             i=$((i + 1))
           done
         fi
+        {{files}}
         tmux respawn-pane -k -t {{target}} -c {{directory}} {{launch}}
         """;
+
+    /// <summary>
+    /// Writes a harness's <see cref="IHarness.LaunchFiles"/> that differ, each whole by rename, so a pane never reads half
+    /// a file and concurrent starts don't mix theirs. Base64, so no quoting can make the content longer.
+    /// </summary>
+    internal static string BuildLaunchFilesScript(IReadOnlyList<(string Path, string Content)> files) => string.Concat(files.Select(file =>
+    {
+        var bytes = Encoding.UTF8.GetBytes(file.Content);
+        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
+        var encoded = string.Join('\n', Convert.ToBase64String(bytes).Chunk(76).Select(line => new string(line)));
+        return $$"""
+            file="{{file.Path}}"
+            if [ "$(sha256sum 2>/dev/null < "$file")" != "{{hash}}  -" ]; then
+              mkdir -p "$(dirname "$file")"
+              base64 -d > "$file.dam-tmp-$$" <<'DAM_LAUNCH_FILE'
+            {{encoded}}
+            DAM_LAUNCH_FILE
+              mv -f "$file.dam-tmp-$$" "$file"
+            fi
+
+            """;
+    }));
 
     private IHarness GetHarness(string harnessId) =>
         _harnesses.GetValueOrDefault(harnessId) ?? throw new ArgumentException($"Unknown harness '{harnessId}'.");

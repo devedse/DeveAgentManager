@@ -38,6 +38,13 @@ public interface IHarness
     /// </summary>
     string BuildLaunchCommand(HarnessLaunch launch);
 
+    /// <summary>
+    /// Files the launch command reads on the Runner: a path as in a double-quoted shell word ("$HOME/…") and its content.
+    /// Every start writes them first. Large scripts belong here, not in the launch command: tmux refuses commands over
+    /// 16 KiB, and the command is quoted again for every shell it passes through.
+    /// </summary>
+    IReadOnlyList<(string Path, string Content)> LaunchFiles => [];
+
     /// <summary>A byte stream to the running agent's voice control socket; null when unsupported. Never starts another agent.</summary>
     string? VoiceConnectCommand(Guid agentId, string sessionId) => null;
     /// <summary>Private native-terminal audio signaling over SSH; null when unsupported.</summary>

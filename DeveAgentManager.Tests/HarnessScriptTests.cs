@@ -1,3 +1,4 @@
+using DeveAgentManager.Core.Agents;
 using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Harnesses.Claude;
@@ -363,6 +364,10 @@ public sealed class HarnessScriptTests : IDisposable
             while True: time.sleep(.05)
             """);
         File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        // The start script writes the launcher; the launch command only names it.
+        Run(AgentService.BuildLaunchFilesScript(harness.LaunchFiles));
+        var (launcherPath, launcher) = Assert.Single(harness.LaunchFiles);
+        Assert.Equal(launcher, File.ReadAllText(launcherPath.Replace("$HOME", _home)));
         var agentId = Guid.NewGuid();
         const string sessionId = "11111111-2222-3333-4444-555555555555";
         const string instructions = "Keep `literal` and $(touch injected) unchanged.\nSecond line.";

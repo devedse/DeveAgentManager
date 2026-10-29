@@ -25,12 +25,15 @@ Each supported Codex agent owns one app-server and one terminal UI, with the ter
 that server. Both use the agent's existing runtime, login, instructions, permissions, working folder and native
 conversation. No second conversation or coding process is created when voice starts.
 
-The supervisor runs in the agent's tmux pane. It holds an exclusive per-agent lock, creates a short private Unix socket
-under `/tmp`, and records its socket and native conversation in `~/.deveagentmanager/codex-voice/<agent>/connection.json`.
-Codex's server log is alongside that record. Normal exit and termination stop both children and clean up the socket.
-Linux parent-death signals also terminate children when the supervisor is killed. Long account runtime paths therefore
-do not exceed the Unix socket path limit. Permissions and developer instructions are configured on the server because
-Codex rejects permission overrides on a remote terminal resume.
+The supervisor runs in the agent's tmux pane. Each start writes it to `~/.deveagentmanager/codex-voice-launcher.py`
+first and the pane runs that file: inline, the start command would exceed tmux's 16 KiB command limit and SSH's packet
+size (`LaunchScriptTests` checks every harness's start against both). It holds an exclusive per-agent lock, creates a
+short private Unix socket under `/tmp`, and records its socket and native conversation in
+`~/.deveagentmanager/codex-voice/<agent>/connection.json`. Codex's server log is alongside that record. Normal exit and
+termination stop both children and clean up the socket. Linux parent-death signals also terminate children when the
+supervisor is killed. Long account runtime paths therefore do not exceed the Unix socket path limit. Permissions and
+developer instructions are configured on the server because Codex rejects permission overrides on a remote terminal
+resume.
 
 For supported packaged Linux installations, the launcher prepares a private copy of the installed Codex package with
 a browser audio helper. It leaves the installed package unchanged and uses the same agent runtime and conversation.
