@@ -266,6 +266,6 @@ public sealed class SessionLockTests
         public string InstallScript => "true";
         public string VersionCommand => "true";
         public IReadOnlyList<string> ConfigFiles => [];
-        public string BuildLaunchCommand(HarnessLaunch launch) => "sleep 600";
+        public string BuildLaunchScript(HarnessLaunch launch) => "exec sleep 600";
     }
 }

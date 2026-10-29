@@ -55,7 +55,7 @@ public sealed class HarnessScriptTests : IDisposable
     [Fact]
     public void Claude_Launch_ResumesWhenTheConversationExists()
     {
-        var command = new ClaudeHarness().BuildLaunchCommand(new("11111111-2222-3333-4444-555555555555", "maze", "/w"));
+        var command = new ClaudeHarness().BuildLaunchScript(new("11111111-2222-3333-4444-555555555555", "maze", "/w"));
         Assert.Contains("--resume", command);
         Assert.Contains("--session-id", command);
         Assert.Contains("--dangerously-skip-permissions", command);
@@ -82,7 +82,7 @@ public sealed class HarnessScriptTests : IDisposable
             File.WriteAllText(Path.Combine(directory, id + ".jsonl"), new ClaudeSessionFormat().Write(imported, id, _work));
         }
         File.WriteAllText(Path.Combine(_bin, "claude"), "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HOME/launch-args\"\n");
-        Run(new ClaudeHarness().BuildLaunchCommand(new(id, "test", _work, model, Transferred: true)));
+        Run(new ClaudeHarness().BuildLaunchScript(new(id, "test", _work, model, Transferred: true)));
         var args = File.ReadAllLines(Path.Combine(_home, "launch-args"));
         Assert.Contains(exists ? "--resume" : "--session-id", args);
         var position = Array.IndexOf(args, "--model");
@@ -108,7 +108,7 @@ public sealed class HarnessScriptTests : IDisposable
         File.WriteAllText(stub, "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nprintf '%s\\0' \"$@\" > \"$HOME/launch-args\"\n");
         File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 
-        Run($"cd {_work} && {harness.BuildLaunchCommand(new("11111111-2222-3333-4444-555555555555", "test", _work, Instructions: hint))}");
+        Run($"cd {_work}\n{harness.BuildLaunchScript(new("11111111-2222-3333-4444-555555555555", "test", _work, Instructions: hint))}");
 
         var args = File.ReadAllText(Path.Combine(_home, "launch-args")).TrimEnd('\0').Split('\0');
         var value = args[Array.IndexOf(args, flag) + 1];
@@ -121,7 +121,7 @@ public sealed class HarnessScriptTests : IDisposable
         Assert.Equal(hint, value);
         Assert.False(File.Exists(Path.Combine(_work, "injected")));
         Assert.DoesNotContain(flag == "-c" ? "developer_instructions" : flag,
-            harness.BuildLaunchCommand(new("11111111-2222-3333-4444-555555555555", "test", _work)));
+            harness.BuildLaunchScript(new("11111111-2222-3333-4444-555555555555", "test", _work)));
     }
 
     private static string Python(string code, string argument)
@@ -215,14 +215,14 @@ public sealed class HarnessScriptTests : IDisposable
         Assert.Equal(["--resume", id], Launch(harness, launch, "")[^2..]);
     }
 
-    /// <summary>Starts the harness's launch command with a stub that records its arguments; <paramref name="help"/> is what its --help shows.</summary>
+    /// <summary>Starts the harness's launch script with a stub that records its arguments; <paramref name="help"/> is what its --help shows.</summary>
     private string[] Launch(IHarness harness, HarnessLaunch launch, string help)
     {
         var stub = Path.Combine(_bin, harness.Id);
         // NUL-separated, so arguments with spaces stay whole.
         File.WriteAllText(stub, $"#!/bin/sh\nif [ \"$1\" = --help ]; then printf '%s\\n' {DeveAgentManager.Core.Ssh.ShellQuote.Quote(help)}; exit 0; fi\nprintf '%s\\0' \"$@\" > \"$HOME/launch-args\"\n");
         File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        Run($"cd {_work} && {harness.BuildLaunchCommand(launch)}");
+        Run($"cd {_work}\n{harness.BuildLaunchScript(launch)}");
         return File.ReadAllText(Path.Combine(_home, "launch-args")).TrimEnd('\0').Split('\0');
     }
 
@@ -364,14 +364,14 @@ public sealed class HarnessScriptTests : IDisposable
             while True: time.sleep(.05)
             """);
         File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        // The start script writes the launcher; the launch command only names it.
+        // The start script writes the launcher; the launch script only names it.
         Run(AgentService.BuildLaunchFilesScript(harness.LaunchFiles));
         var (launcherPath, launcher) = Assert.Single(harness.LaunchFiles);
         Assert.Equal(launcher, File.ReadAllText(launcherPath.Replace("$HOME", _home)));
         var agentId = Guid.NewGuid();
         const string sessionId = "11111111-2222-3333-4444-555555555555";
         const string instructions = "Keep `literal` and $(touch injected) unchanged.\nSecond line.";
-        var start = new ProcessStartInfo("bash", ["-c", "cd " + _work + " && exec " + harness.BuildLaunchCommand(
+        var start = new ProcessStartInfo("bash", ["-c", "cd " + _work + "\n" + harness.BuildLaunchScript(
             new(sessionId, "voice-test", _work, Model: "gpt-6-sol", Instructions: instructions, AgentId: agentId))])
         { RedirectStandardOutput = true, RedirectStandardError = true };
         start.Environment["HOME"] = _home;

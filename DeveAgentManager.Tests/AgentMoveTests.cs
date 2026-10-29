@@ -587,7 +587,7 @@ public sealed class AgentMoveTests
         public string InstallScript => "true";
         public string VersionCommand => "true";
         public IReadOnlyList<string> ConfigFiles => [];
-        public string BuildLaunchCommand(HarnessLaunch launch) => "bash -c " + ShellQuote.Quote("printf 'launch\\n' >> " + ShellQuote.Quote(launches) + "; exec sleep 600");
+        public string BuildLaunchScript(HarnessLaunch launch) => "printf 'launch\\n' >> " + ShellQuote.Quote(launches) + "\nexec sleep 600";
     }
 
     private sealed class Fixture(RunnerShellIntegrationTests.Fixture ssh, ServiceProvider services, Agent agent, Runner target, User other) : IAsyncDisposable

@@ -45,7 +45,7 @@ public sealed class GrokHarness(HttpMessageHandler? tokenHandler = null) : IHarn
         }
     }
 
-    public string BuildLaunchCommand(HarnessLaunch launch)
+    public string BuildLaunchScript(HarnessLaunch launch)
     {
         var id = ShellQuote.Quote(launch.SessionId);
         var socketId = Guid.Parse(launch.SessionId).ToString("N");
@@ -57,7 +57,7 @@ public sealed class GrokHarness(HttpMessageHandler? tokenHandler = null) : IHarn
         var defaults = (model.Length == 0 ? "" : $"\nif {starts}; then {model}; fi")
             + (string.IsNullOrWhiteSpace(launch.Effort) ? ""
                 : $"\nif grok --help 2>/dev/null | grep -- '--reasoning-effort' >/dev/null; then effort=(--reasoning-effort {ShellQuote.Quote(launch.Effort.Trim())}); fi");
-        var script = $$"""
+        return $$"""
             set -euo pipefail
             export GROK_DISABLE_AUTOUPDATER=1
             socket_dir="/tmp/dam-grok-$(id -u)-{{socketId}}"
@@ -68,7 +68,6 @@ public sealed class GrokHarness(HttpMessageHandler? tokenHandler = null) : IHarn
             effort=(){{defaults}}
             exec grok --leader-socket "$socket_dir/leader.sock" --trust --always-approve --fullscreen "$mode" {{id}} "${model[@]}" "${effort[@]}"{{flags}}
             """;
-        return "bash -c " + ShellQuote.Quote(script);
     }
 
     public IReadOnlyList<string> ConfigFiles { get; } = ["~/.grok/config.toml", "~/.grok/AGENTS.md"];

@@ -111,7 +111,7 @@ public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHar
     /// <summary>Codex's own ids are UUIDv7; a new one per conversation.</summary>
     public string NewSessionId(Guid agentId) => Guid.CreateVersion7().ToString();
 
-    public string BuildLaunchCommand(HarnessLaunch launch)
+    public string BuildLaunchScript(HarnessLaunch launch)
     {
         var id = ShellQuote.Quote(launch.SessionId);
         // A -c value is parsed as TOML, so the instructions go in as a TOML string.
@@ -135,7 +135,7 @@ public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHar
             """ : "";
         // Without its background server: that listens on a socket in CODEX_HOME, and an account's folder is too long a
         // path for a socket (108 characters), so Codex would refuse to start. Older Codex versions don't have the flag.
-        var script = $$"""
+        return $$"""
             node "{{PrepareScript}}" {{id}}
             flags=""
             if codex --help 2>/dev/null | grep -q -- '--no-daemon'; then flags="--no-daemon"; fi
@@ -144,12 +144,11 @@ public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHar
             {{voice}}
             exec codex $flags --dangerously-bypass-approvals-and-sandbox{{instructions}} "${start[@]}" resume {{id}}
             """;
-        return "bash -c " + ShellQuote.Quote(script);
     }
 
     private static readonly string VoiceLauncher = ReadVoiceLauncher();
 
-    /// <summary>The voice launcher on the Runner. Inline, it made the start command too long for tmux and SSH.</summary>
+    /// <summary>The voice launcher on the Runner, written at every start (<see cref="LaunchFiles"/>).</summary>
     public const string VoiceLauncherFile = "$HOME/.deveagentmanager/codex-voice-launcher.py";
 
     public IReadOnlyList<(string Path, string Content)> LaunchFiles { get; } = [(VoiceLauncherFile, VoiceLauncher)];

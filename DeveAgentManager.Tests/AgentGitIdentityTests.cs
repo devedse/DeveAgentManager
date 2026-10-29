@@ -172,7 +172,7 @@ public sealed class AgentGitIdentityTests
         public string InstallScript => "true";
         public string VersionCommand => "true";
         public IReadOnlyList<string> ConfigFiles => [];
-        public string BuildLaunchCommand(HarnessLaunch launch) =>
-            "bash -c " + ShellQuote.Quote("printf '%s\\n' \"$GIT_CONFIG_GLOBAL\" >> " + ShellQuote.Quote(launches) + "; exec sleep 600");
+        public string BuildLaunchScript(HarnessLaunch launch) =>
+            "printf '%s\\n' \"$GIT_CONFIG_GLOBAL\" >> " + ShellQuote.Quote(launches) + "\nexec sleep 600";
     }
 }

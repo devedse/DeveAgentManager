@@ -49,7 +49,7 @@ public sealed class PiHarness : IHarness
     /// when a conversation starts, or right after a switch from another harness (its recorded models aren't a choice made
     /// in pi); settings.json has the Manager's for anything else.
     /// </summary>
-    public string BuildLaunchCommand(HarnessLaunch launch)
+    public string BuildLaunchScript(HarnessLaunch launch)
     {
         var id = ShellQuote.Quote(launch.SessionId);
         var command = $"pi --session-id {id} --name {ShellQuote.Quote(launch.DisplayName)}"
@@ -67,14 +67,13 @@ public sealed class PiHarness : IHarness
         var model = !compatibleModel || string.IsNullOrWhiteSpace(launch.Model) ? ""
             : (string.IsNullOrWhiteSpace(provider) ? "" : " --provider " + ShellQuote.Quote(provider.Trim())) + " --model " + ShellQuote.Quote(launch.Model.Trim());
         var defaults = model + (string.IsNullOrWhiteSpace(launch.Effort) ? "" : " --thinking " + ShellQuote.Quote(launch.Effort.Trim()));
-        if (defaults.Length == 0) return command;
-        if (launch.Transferred) return command + defaults;
-        var script = $$"""
+        if (defaults.Length == 0) return "exec " + command;
+        if (launch.Transferred) return "exec " + command + defaults;
+        return $$"""
             start=()
             if ! ls "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"/sessions/*/*_{{id}}.jsonl >/dev/null 2>&1; then start=({{defaults.TrimStart()}}); fi
             exec {{command}} "${start[@]}"
             """;
-        return "bash -c " + ShellQuote.Quote(script);
     }
 
     public IReadOnlyList<string> ConfigFiles { get; } = ["~/.pi/agent/auth.json", "~/.pi/agent/settings.json"];

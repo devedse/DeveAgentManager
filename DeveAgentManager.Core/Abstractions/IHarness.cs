@@ -33,15 +33,15 @@ public interface IHarness
     string? BusyPattern => null;
 
     /// <summary>
-    /// Command that starts the harness for an agent. It is run inside tmux in the agent's working directory and must
-    /// resume the same conversation when it is run again (after a restart or a Runner reboot).
+    /// Bash that starts the harness for an agent: the end of the agent's launch file, after its environment. It runs in
+    /// tmux in the agent's working directory, must <c>exec</c> the harness (stopping the pane then stops the harness) and
+    /// must resume the same conversation when it is run again (after a restart or a Runner reboot).
     /// </summary>
-    string BuildLaunchCommand(HarnessLaunch launch);
+    string BuildLaunchScript(HarnessLaunch launch);
 
     /// <summary>
-    /// Files the launch command reads on the Runner: a path as in a double-quoted shell word ("$HOME/…") and its content.
-    /// Every start writes them first. Large scripts belong here, not in the launch command: tmux refuses commands over
-    /// 16 KiB, and the command is quoted again for every shell it passes through.
+    /// Files the launch script reads on the Runner: a path as in a double-quoted shell word ("$HOME/…") and its content.
+    /// Every start writes them before the launch file.
     /// </summary>
     IReadOnlyList<(string Path, string Content)> LaunchFiles => [];
 

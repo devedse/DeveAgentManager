@@ -527,7 +527,8 @@ public sealed partial class AgentService(
         if (agent.Runner!.State == RunnerState.Ready)
         {
             // Keep the latest conversation: the session stays in the Manager after the agent is gone.
-            await shell.RunAsync(agent.Runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: cancellationToken);
+            await shell.RunAsync(agent.Runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true\nrm -f -- \"{LaunchFile(agent.Id)}\"",
+                cancellationToken: cancellationToken);
             try { await sessions.SyncRunnerLockedAsync(agent.Runner, cancellationToken, agent.Id); }
             catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Final session sync failed for {Agent}", agentId); }
         }
@@ -1120,7 +1121,7 @@ public sealed partial class AgentService(
             accountEnvironment = await accounts.PreparePiManagedRuntimeAsync(runner, agent, piLogins, cancellationToken);
         }
 
-        var harnessCommand = harness.BuildLaunchCommand(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model.Model, instructions,
+        var harnessScript = harness.BuildLaunchScript(new HarnessLaunch(agent.HarnessSessionId, agent.Name, agent.WorkingDirectory, model.Model, instructions,
             model.Effort, model.Provider, transferred, agent.HarnessId == "pi" ? ownModel?.ScopedModels ?? managerConfig.ScopedModels : null,
             agent.HarnessId == "pi" && account is not null ? PiManagedLogin.Provider(account.HarnessId) : null, piSelection is not null, AgentId: agent.Id));
 
@@ -1141,21 +1142,14 @@ public sealed partial class AgentService(
         await loginDb.Agents.Where(a => a.Id == agent.Id).ExecuteUpdateAsync(s => s
             .SetProperty(a => a.RunningAccountId, account == null ? (Guid?)null : account.Id)
             .SetProperty(a => a.RunningGitIdentityUserId, (Guid?)identity), cancellationToken);
-        // The browser terminal (xterm.js) and tmux support 24-bit color, but programs inside tmux only use it when told.
         var zone = Runners.RunnerTimeZones.Validate(runner.TimeZoneId ?? await settings.GetDefaultTimeZoneAsync(cancellationToken));
         var stored = await sessions.GetForAgentAsync(agent.Id, cancellationToken);
         if (artifactTokens is not null) await artifactTokens.InstallAsync(shell, runner, agent, cancellationToken);
         var imageContext = $"export DAM_AGENT_ID={ShellQuote.Quote(agent.Id.ToString("N"))}; export DAM_SESSION_ID={ShellQuote.Quote(stored?.Id.ToString("N") ?? "")}; ";
-        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; {ownerEnvironment}{accountEnvironment}{imageContext}export TZ={ShellQuote.Quote(zone)}; export COLORTERM=truecolor; exec {harnessCommand}");
-        var session = ShellQuote.Quote("=" + agent.TmuxSession);
-        var directory = ShellQuote.Quote(agent.WorkingDirectory);
-
-        // Keep the pane after the harness exits, so its last output stays visible and it can be restarted in place.
-        // The session starts with a shell, remain-on-exit is switched on, and only then the harness replaces the shell,
-        // so even a harness that exits immediately leaves its output behind. Targets need the trailing ':' (session:window).
-        var target = ShellQuote.Quote("=" + agent.TmuxSession + ":");
-        var script = BuildLaunchScript(session, ShellQuote.Quote(agent.TmuxSession), target, directory, ShellQuote.Quote(launch), restart,
-            BuildLaunchFilesScript(harness.LaunchFiles));
+        var launchFile = LaunchFile(agent.Id);
+        var files = harness.LaunchFiles
+            .Append((launchFile, BuildLaunchFile(ownerEnvironment + accountEnvironment + imageContext, zone, harnessScript))).ToList();
+        var script = BuildStartScript(agent.TmuxSession, agent.WorkingDirectory, launchFile, files, restart);
         logger.LogInformation("{Action} agent {Agent} on {Runner}", restart ? "Restarting" : "Starting", agent.Name, runner.Name);
         var result = await shell.RunAsync(runner, script, TimeSpan.FromMinutes(1), cancellationToken);
         result.EnsureSuccess($"Starting {harness.DisplayName}");
@@ -1180,17 +1174,43 @@ public sealed partial class AgentService(
     /// <summary>Seconds a running harness gets to exit after SIGTERM before a restart kills it.</summary>
     internal const int GracefulStopSeconds = 10;
 
+    /// <summary>The agent's launch file on the Runner: what its tmux pane runs.</summary>
+    internal static string LaunchFile(Guid agentId) => $"$HOME/.deveagentmanager/launch/{agentId:N}.sh";
+
+    /// <summary>
+    /// The agent's launch file: the Manager's and the agent's environment, then the harness's launch script. A file keeps
+    /// the pane's command one short line: inline, the script would be quoted again by every shell it passes through.
+    /// COLORTERM: the browser terminal (xterm.js) and tmux support 24-bit color, but programs only use it when told.
+    /// </summary>
+    internal static string BuildLaunchFile(string environment, string zone, string harnessScript) => $"""
+        . "{RunnerShell.EnvScript}"
+        {environment.TrimEnd()}
+        export TZ={ShellQuote.Quote(zone)}
+        export COLORTERM=truecolor
+        {harnessScript}
+
+        """;
+
     /// <summary>
     /// The script that starts the harness in the agent's tmux pane. The pane of a session created here runs a plain shell,
     /// which is replaced. A pane whose harness is still running is only replaced when restarting (a start leaves it alone),
     /// and then the harness first gets SIGTERM and a grace period, so it can shut down instead of dying with its terminal.
+    /// The pane keeps running after the harness exits (remain-on-exit), so its last output stays visible and it can be
+    /// restarted in place; even a harness that exits immediately leaves its output behind. Only a pane that is replaced
+    /// gets new <paramref name="files"/>, its <paramref name="launchFile"/> among them.
     /// </summary>
-    internal static string BuildLaunchScript(string session, string sessionName, string target, string directory, string launch, bool restart,
-        string files = "") => $$"""
+    internal static string BuildStartScript(string tmuxSession, string workingDirectory, string launchFile,
+        IReadOnlyList<(string Path, string Content)> files, bool restart)
+    {
+        var session = ShellQuote.Quote("=" + tmuxSession);
+        // Targets need the trailing ':' (session:window).
+        var target = ShellQuote.Quote("=" + tmuxSession + ":");
+        var directory = ShellQuote.Quote(workingDirectory);
+        return $$"""
         set -e
         created=0
         if ! tmux has-session -t {{session}} 2>/dev/null; then
-          tmux -u new-session -d -s {{sessionName}} -x 200 -y 50 -c {{directory}}
+          tmux -u new-session -d -s {{ShellQuote.Quote(tmuxSession)}} -x 200 -y 50 -c {{directory}}
           created=1
         fi
         tmux set-option -t {{target}} remain-on-exit on
@@ -1207,13 +1227,14 @@ public sealed partial class AgentService(
             i=$((i + 1))
           done
         fi
-        {{files}}
-        tmux respawn-pane -k -t {{target}} -c {{directory}} {{launch}}
+        {{BuildLaunchFilesScript(files)}}
+        tmux respawn-pane -k -t {{target}} -c {{directory}} {{ShellQuote.Quote($"exec bash \"{launchFile}\"")}}
         """;
+    }
 
     /// <summary>
-    /// Writes a harness's <see cref="IHarness.LaunchFiles"/> that differ, each whole by rename, so a pane never reads half
-    /// a file and concurrent starts don't mix theirs. Base64, so no quoting can make the content longer.
+    /// Writes the files that differ, each whole by rename, so a pane never reads half a file and concurrent starts don't
+    /// mix theirs. Base64, so the content needs no quoting.
     /// </summary>
     internal static string BuildLaunchFilesScript(IReadOnlyList<(string Path, string Content)> files) => string.Concat(files.Select(file =>
     {

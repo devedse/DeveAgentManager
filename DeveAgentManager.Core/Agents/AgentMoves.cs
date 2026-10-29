@@ -489,7 +489,8 @@ public sealed partial class AgentService
         {
             (await shell.RunAsync(source, "tmux kill-session -t " + ShellQuote.Quote("=" + member.TmuxSession)
                 + " 2>/dev/null || true\nrm -f -- " + ShellQuote.Path($"~/.deveagentmanager/artifact-access/{member.Agent}.token")
-                + " " + ShellQuote.Path($"~/.deveagentmanager/tasks/{member.AgentId:N}.json") + " " + ShellQuote.Path($"~/.deveagentmanager/tasks/{member.AgentId:N}.lock"),
+                + " " + ShellQuote.Path($"~/.deveagentmanager/tasks/{member.AgentId:N}.json") + " " + ShellQuote.Path($"~/.deveagentmanager/tasks/{member.AgentId:N}.lock")
+                + $" \"{LaunchFile(member.AgentId)}\"",
                 cancellationToken: ct)).EnsureSuccess("Removing source agent runtime");
         }
         await using (var db = await dbFactory.CreateDbContextAsync(ct))

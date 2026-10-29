@@ -90,7 +90,7 @@ public sealed class ClaudeHarness : IHarness
     /// login's own). The effort is given at every start: Claude doesn't restore it, and only reads a top-level
     /// <c>effortLevel</c> in settings.json for older models.
     /// </summary>
-    public string BuildLaunchCommand(HarnessLaunch launch)
+    public string BuildLaunchScript(HarnessLaunch launch)
     {
         var id = ShellQuote.Quote(launch.SessionId);
         var name = ShellQuote.Quote(launch.DisplayName);
@@ -101,7 +101,7 @@ public sealed class ClaudeHarness : IHarness
         // Versions before the flag would refuse to start with it.
         var effort = string.IsNullOrWhiteSpace(launch.Effort) ? ""
             : $"\nif claude --help 2>/dev/null | grep -q -- '--effort'; then effort=(--effort {ShellQuote.Quote(launch.Effort.Trim())}); fi";
-        var script = $$"""
+        return $$"""
             node "{{PrepareScript}}" 2>/dev/null || true
             effort=(){{effort}}
             if ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/{{id}}.jsonl >/dev/null 2>&1; then
@@ -109,7 +109,6 @@ public sealed class ClaudeHarness : IHarness
             fi
             exec claude --dangerously-skip-permissions --session-id {{id}} --name {{name}}{{model}} "${effort[@]}"{{instructions}}
             """;
-        return "bash -c " + ShellQuote.Quote(script);
     }
 
     public IReadOnlyList<string> ConfigFiles { get; } = ["~/.claude/settings.json", "~/.claude/CLAUDE.md"];

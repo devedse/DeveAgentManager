@@ -164,12 +164,12 @@ public sealed class PiManagedLoginTests(ApiSecurityTests.Manager manager) : ICla
         Assert.NotNull(PiModelScope.Problem(Enumerable.Repeat("x", 65).ToList()));
         var harness = new PiHarness();
         var launch = new DeveAgentManager.Core.Abstractions.HarnessLaunch("test-session", "Test", "/tmp/test-workspace", ScopedModels: mine.ScopedModels);
-        Assert.Contains("--models 'claude-code/*:high,dam-codex/*'", harness.BuildLaunchCommand(launch));
-        Assert.Contains("--models 'claude-code/*:high,dam-codex/*'", harness.BuildLaunchCommand(launch with { ScopedModels = [" claude-code/*:high ", "dam-codex/*", "dam-codex/*"] }));
-        Assert.Contains("--models '*'", harness.BuildLaunchCommand(launch with { ScopedModels = [] }));
-        Assert.DoesNotContain("--models", harness.BuildLaunchCommand(launch with { ScopedModels = null }));
-        Assert.DoesNotContain("--provider", harness.BuildLaunchCommand(launch with { ManagedLoginProvider = "dam-codex", Provider = "github-copilot", Model = "claude-example" }));
-        Assert.Contains("--provider dam-codex", harness.BuildLaunchCommand(launch with { ManagedLoginProvider = "dam-codex", Model = "dam-codex/test-model" }));
+        Assert.Contains("--models 'claude-code/*:high,dam-codex/*'", harness.BuildLaunchScript(launch));
+        Assert.Contains("--models 'claude-code/*:high,dam-codex/*'", harness.BuildLaunchScript(launch with { ScopedModels = [" claude-code/*:high ", "dam-codex/*", "dam-codex/*"] }));
+        Assert.Contains("--models '*'", harness.BuildLaunchScript(launch with { ScopedModels = [] }));
+        Assert.DoesNotContain("--models", harness.BuildLaunchScript(launch with { ScopedModels = null }));
+        Assert.DoesNotContain("--provider", harness.BuildLaunchScript(launch with { ManagedLoginProvider = "dam-codex", Provider = "github-copilot", Model = "claude-example" }));
+        Assert.Contains("--provider dam-codex", harness.BuildLaunchScript(launch with { ManagedLoginProvider = "dam-codex", Model = "dam-codex/test-model" }));
     }
 
     [Fact]

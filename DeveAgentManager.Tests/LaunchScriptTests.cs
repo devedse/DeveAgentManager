@@ -12,7 +12,7 @@ using Xunit;
 namespace DeveAgentManager.Tests;
 
 /// <summary>
-/// Runs the agent launch script against a real tmux (on its own server, so it doesn't touch the user's sessions).
+/// Runs the agent start script against a real tmux (on its own server, so it doesn't touch the user's sessions).
 /// A start must never kill a harness that is still running: that is what crashed pi mid-tool-call.
 /// </summary>
 public sealed class LaunchScriptTests : IDisposable
@@ -20,7 +20,14 @@ public sealed class LaunchScriptTests : IDisposable
     private readonly string _tmuxDir = Directory.CreateTempSubdirectory("dam-tmux-").FullName;
     private readonly string _work = Directory.CreateTempSubdirectory("dam-work-").FullName;
     private readonly string _home = Directory.CreateTempSubdirectory("dam-launch-home-").FullName;
+    private readonly Guid _agentId = Guid.NewGuid();
     private const string SessionName = "dam-launchtest";
+
+    public LaunchScriptTests()
+    {
+        Directory.CreateDirectory(Path.Combine(_home, ".deveagentmanager"));
+        File.WriteAllText(Path.Combine(_home, ".deveagentmanager", "env.sh"), "");
+    }
 
     [Fact]
     public void Start_LeavesARunningHarnessAlone_RestartReplacesIt()
@@ -32,17 +39,19 @@ public sealed class LaunchScriptTests : IDisposable
 
         // The "harness" exits on SIGTERM, like pi does.
         var marker = Path.Combine(_work, "starts");
-        var launch = $"sh -c 'echo x >> {marker}; trap \"exit 0\" TERM; while :; do sleep 0.2; done'";
+        var launch = $"exec sh -c 'echo x >> {marker}; trap \"exit 0\" TERM; while :; do sleep 0.2; done'";
 
         Run(Script(launch, restart: false));
         WaitFor(() => Starts(marker) == 1);
         var firstPid = PanePid();
         Assert.Equal(1, Starts(marker));
 
-        var output = Run(Script(launch, restart: false));
+        // A start that finds the harness running changes nothing, its launch file included.
+        var output = Run(Script(launch + "\n# changed", restart: false));
         Assert.Contains(AgentService.AlreadyRunningMarker, output);
         Assert.Equal(firstPid, PanePid());
         Assert.Equal(1, Starts(marker));
+        Assert.DoesNotContain("# changed", File.ReadAllText(LaunchFilePath));
 
         Run(Script(launch, restart: true));
         Assert.NotEqual(firstPid, PanePid());
@@ -56,15 +65,15 @@ public sealed class LaunchScriptTests : IDisposable
     }
 
     /// <summary>
-    /// tmux refuses commands over 16 KiB ("command too long") and SSH.NET packets over 68,536 bytes ("Packet is too big"),
-    /// and the launch command is quoted again for every shell it passes through. Scripts belong in launch files.
+    /// The pane runs the agent's launch file, so tmux gets one short command (it refuses commands over 16 KiB) and nothing
+    /// is quoted inside quotes. The start script fits SSH.NET's packets (68,536 bytes), and every file arrives whole.
     /// </summary>
     [Theory]
     [InlineData("pi")]
     [InlineData("claude")]
     [InlineData("codex")]
     [InlineData("grok")]
-    public void Start_FitsTmuxAndSsh_ForEveryHarness(string harnessId)
+    public void Start_KeepsThePaneCommandShort_ForEveryHarness(string harnessId)
     {
         if (!HasTmux())
         {
@@ -72,26 +81,36 @@ public sealed class LaunchScriptTests : IDisposable
         }
 
         IHarness harness = harnessId switch { "claude" => new ClaudeHarness(), "codex" => new CodexHarness(), "grok" => new GrokHarness(), _ => new PiHarness() };
-        var command = harness.BuildLaunchCommand(new(Guid.NewGuid().ToString(), "size-test", _work, Model: "gpt-6-sol",
-            Instructions: AgentService.LaunchInstructions, Effort: "high", AgentId: Guid.NewGuid()));
-        // Composed as AgentService does, with more login and runtime environment than a real start has.
+        var harnessScript = harness.BuildLaunchScript(new(Guid.NewGuid().ToString(), "size-test", _work, Model: "gpt-6-sol",
+            Instructions: AgentService.LaunchInstructions, Effort: "high", AgentId: _agentId));
+        // More login and runtime environment than a real start has.
         var environment = string.Concat(Enumerable.Range(0, 8).Select(i =>
-            $". \"$HOME/.deveagentmanager/accounts/{Guid.NewGuid():N}/env.sh\"; export DAM_TEST_{i}=\"{new string('x', 160)}\"; "));
-        var launch = "bash -c " + ShellQuote.Quote($". \"{RunnerShell.EnvScript}\"; {environment}exec {command}");
-        // The pane exits before it reaches the harness: only tmux's acceptance of the command is tested.
-        var script = Script("exit 0; " + launch, restart: false, AgentService.BuildLaunchFilesScript(harness.LaunchFiles));
-        Assert.InRange(Encoding.UTF8.GetByteCount(RunnerShell.Wrap(script)), 0, 60_000);
+            $". \"$HOME/.deveagentmanager/accounts/{Guid.NewGuid():N}/env\"; export DAM_TEST_{i}=\"{new string('x', 160)}\"; "));
+        var launchFile = AgentService.LaunchFile(_agentId);
+        var launch = AgentService.BuildLaunchFile(environment, "Etc/UTC", harnessScript);
+        var files = harness.LaunchFiles.Append((launchFile, launch)).ToList();
+        var script = AgentService.BuildStartScript(SessionName, _work, launchFile, files, restart: false);
 
-        Run(script);
-        foreach (var (path, content) in harness.LaunchFiles)
+        Assert.InRange(Encoding.UTF8.GetByteCount(RunnerShell.Wrap(script)), 0, 60_000);
+        Assert.InRange(script.Split('\n').Single(l => l.StartsWith("tmux respawn-pane", StringComparison.Ordinal)).Length, 0, 200);
+        Assert.DoesNotContain("'\"'\"'", script);
+        Assert.DoesNotContain("'\"'\"'", launch);
+
+        // Only the files: the pane would start the real harness.
+        Run(AgentService.BuildLaunchFilesScript(files));
+        foreach (var (path, content) in files)
         {
             Assert.Equal(content, File.ReadAllText(path.Replace("$HOME", _home)));
         }
     }
 
-    private string Script(string launch, bool restart, string files = "") => AgentService.BuildLaunchScript(
-        ShellQuote.Quote("=" + SessionName), ShellQuote.Quote(SessionName), ShellQuote.Quote("=" + SessionName + ":"),
-        ShellQuote.Quote(_work), ShellQuote.Quote(launch), restart, files);
+    private string LaunchFilePath => AgentService.LaunchFile(_agentId).Replace("$HOME", _home);
+
+    private string Script(string harnessScript, bool restart)
+    {
+        var launchFile = AgentService.LaunchFile(_agentId);
+        return AgentService.BuildStartScript(SessionName, _work, launchFile, [(launchFile, AgentService.BuildLaunchFile("", "Etc/UTC", harnessScript))], restart);
+    }
 
     private static int Starts(string marker) => File.Exists(marker) ? File.ReadAllLines(marker).Length : 0;
 

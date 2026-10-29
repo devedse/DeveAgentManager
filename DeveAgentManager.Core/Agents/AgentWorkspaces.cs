@@ -329,7 +329,8 @@ public sealed partial class AgentService
                 removing = await BeginLongOperationAsync(agent.Id, "being removed", ct);
                 try
                 {
-                    await shell.RunAsync(runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true", cancellationToken: ct);
+                    await shell.RunAsync(runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true\nrm -f -- \"{LaunchFile(agent.Id)}\"",
+                        cancellationToken: ct);
                     try { await sessions.SyncRunnerLockedAsync(runner, ct, agent.Id); }
                     catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Final session sync failed for {Agent}", agentId); }
                     await sessions.PreserveArtifactsAsync(agent.Id, ct);
