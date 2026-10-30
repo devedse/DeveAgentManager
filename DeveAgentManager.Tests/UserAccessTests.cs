@@ -273,6 +273,9 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
         Assert.Equal(HttpStatusCode.BadRequest, switching.StatusCode);
         Assert.Contains("Use access", await switching.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.Forbidden, (await ketty.DeleteAsync($"/api/agents/{admins.AgentId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await ketty.DeleteAsync($"/api/agents/{admins.AgentId}?deleteFolder=true")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await ketty.GetAsync($"/api/agents/{admins.AgentId}/deletion")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await ketty.GetAsync($"/api/agents/{admins.AgentId}/folder-size")).StatusCode);
         await manager.Services.GetRequiredService<RunnerMembers>().SetAsync(TestUsers.Admin, admins.RunnerId, kettyId, RunnerAccess.Use);
         Assert.True((await AgentAsync(ketty, admins.AgentId)).CanUseRunner);
 

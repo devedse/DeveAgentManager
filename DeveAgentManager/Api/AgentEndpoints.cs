@@ -64,9 +64,15 @@ internal static class AgentEndpoints
             return Results.NoContent();
         }).RequireAgent(AgentAccess.Write);
 
-        agents.MapDelete("/{agentId:guid}", async (Guid agentId, AgentService service, CancellationToken ct) =>
+        // What deleting would affect (its folder, unsaved work, conversations), then the agent alone or with its folder.
+        agents.MapGet("/{agentId:guid}/deletion", (Guid agentId, AgentService service, CancellationToken ct) =>
+            service.GetDeletionAsync(agentId, ct)).RequireAgent(AgentAccess.Owner);
+        agents.MapGet("/{agentId:guid}/folder-size", (Guid agentId, AgentService service, CancellationToken ct) =>
+            service.MeasureFolderAsync(agentId, ct)).RequireAgent(AgentAccess.Owner);
+        agents.MapDelete("/{agentId:guid}", async (Guid agentId, bool? deleteFolder, AgentService service, CancellationToken ct) =>
         {
-            await service.DeleteAsync(agentId, ct);
+            if (deleteFolder == true) await service.DeleteWithFolderAsync(agentId, ct);
+            else await service.DeleteAsync(agentId, ct);
             return Results.NoContent();
         }).RequireAgent(AgentAccess.Owner);
 

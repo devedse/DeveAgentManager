@@ -234,13 +234,7 @@ else
 
     private async Task DeleteAsync(AgentDto agent)
     {
-        var confirmed = await Dialogs.ShowMessageBoxAsync(
-            $"Delete agent '{agent.Name}'?",
-            (MarkupString)$"The harness is stopped and the agent is removed from the Manager. Its folder <code>{System.Net.WebUtility.HtmlEncode(agent.WorkingDirectory)}</code> and the conversation files stay on the Runner.",
-            yesText: "Delete", cancelText: "Cancel");
-        if (confirmed == true)
-        {
-            await RunAsync(agent, () => Api.DeleteAgentAsync(agent.Id), $"Deleted '{agent.Name}'");
-        }
+        if (await DeleteAgentDialog.ShowAsync(Dialogs, agent) is { } deleted)
+            Snackbar.Add(deleted.FolderDeleted ? $"Deleted '{agent.Name}' and its folder" : $"Deleted '{agent.Name}'", Severity.Success);
     }
 }

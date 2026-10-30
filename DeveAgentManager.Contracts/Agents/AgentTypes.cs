@@ -52,6 +52,17 @@ public sealed record WorkspaceChangesDto(string Path, bool Exists, int Uncommitt
 
 public sealed record RemoveWorkspaceRequest(bool KeepFiles);
 
+/// <summary>What deleting an agent would affect: its conversations stay; its folder can be kept or deleted with it.</summary>
+/// <param name="Checked">The folder was checked on the Runner. When it couldn't be, <paramref name="Blocked"/> says why.</param>
+/// <param name="Blocked">Why the folder can't be deleted with the agent. The agent alone can still be deleted.</param>
+/// <param name="Git">The folder is a Git repository: <paramref name="Uncommitted"/> and <paramref name="Unpushed"/> count its unsaved work.</param>
+/// <param name="GitProblem">Why Git couldn't tell what is unsaved.</param>
+public sealed record AgentDeletionDto(string Path, int Conversations, bool Checked, bool Exists, string? Blocked,
+    bool Git, int Uncommitted, IReadOnlyList<string> Sample, int Unpushed, string? GitProblem);
+
+/// <summary>Disk space of a folder, each file counted once. <paramref name="FreedBytes"/> leaves out files also linked from outside it.</summary>
+public sealed record FolderSizeDto(long Bytes, long FreedBytes, long Files);
+
 /// <summary>A folder kept when its workspace was removed. It can be deleted or used by a new workspace.</summary>
 public sealed record KeptFolderDto(string Path, string Name, string? Branch, DateTime RemovedAt);
 

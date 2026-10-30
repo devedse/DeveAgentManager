@@ -4009,6 +4009,12 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .workspace-start-disk { display: block; color: var(--dam-muted); margin-top: 4px; overflow-wrap: anywhere; }
 .workspace-remove-path { overflow-wrap: anywhere; }
 .workspace-remove-list { margin: 8px 0 0 20px; overflow-wrap: anywhere; }
+.delete-agent-title { overflow-wrap: anywhere; }
+.delete-agent-list li { margin-top: 2px; }
+.delete-agent-warning { color: var(--dam-warning); }
+/* Three buttons don't fit a phone's width: they wrap, the destructive one last. */
+.delete-agent-dialog .mud-dialog-actions { flex-wrap: wrap; gap: 8px; }
+.delete-agent-dialog .mud-dialog-actions > .mud-button-root { margin-left: 0; }
 .conversation-chooser-title { overflow-wrap: anywhere; }
 .conversation-chooser-options { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 16px; }
 .conversation-chooser-options .mud-button-root { max-width: 100%; text-align: left; }

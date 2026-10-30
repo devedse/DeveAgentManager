@@ -512,26 +512,17 @@ public sealed partial class AgentService(
         events.AgentChanged(runner.Id, agent.Id);
     }
 
-    /// <summary>Stops the agent and forgets it. Its folder and the harness's own session files stay on the Runner.</summary>
+    /// <summary>
+    /// Stops the agent and forgets it. Its folder and the harness's own session files stay on the Runner;
+    /// <see cref="DeleteWithFolderAsync"/> deletes the folder too.
+    /// </summary>
     public async Task DeleteAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
         using var lease = await LockAgentAsync(agentId, cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await db.Agents.Include(a => a.Runner).FirstAsync(a => a.Id == agentId, cancellationToken);
-        if (agent.MoveJson is not null) throw new InvalidOperationException("Finish the agent move before deleting it.");
-        if (InLongOperation(agent.Id)) throw new InvalidOperationException(Busy(agent.Id));
-        if (agent.IsClone)
-            throw new InvalidOperationException("Use Remove workspace: it checks the workspace's uncommitted and unpushed work before deleting its folder.");
-        if (agent.ProjectId is { } projectId && await db.Agents.AnyAsync(a => a.ProjectId == projectId && a.Id != agent.Id, cancellationToken))
-            throw new InvalidOperationException("Keep Main while the project has other workspaces. Remove those workspaces first.");
-        if (agent.Runner!.State == RunnerState.Ready)
-        {
-            // Keep the latest conversation: the session stays in the Manager after the agent is gone.
-            await shell.RunAsync(agent.Runner, $"tmux kill-session -t {ShellQuote.Quote("=" + agent.TmuxSession)} 2>/dev/null || true\nrm -f -- \"{LaunchFile(agent.Id)}\"",
-                cancellationToken: cancellationToken);
-            try { await sessions.SyncRunnerLockedAsync(agent.Runner, cancellationToken, agent.Id); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Final session sync failed for {Agent}", agentId); }
-        }
+        await RequireDeletableAsync(db, agent, cancellationToken);
+        if (agent.Runner!.State == RunnerState.Ready) await StopForDeletionAsync(agent.Runner, agent, cancellationToken);
 
         await sessions.PreserveArtifactsAsync(agentId, cancellationToken);
         db.Agents.Remove(agent);

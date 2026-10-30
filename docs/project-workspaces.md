@@ -113,6 +113,20 @@ Main is never removed this way; the Main agent can be deleted once the other wor
 Delete is greyed out). Move project waits
 until kept folders are deleted or reused.
 
+## Deleting an agent
+
+**Delete** on Main (once its workspaces are gone) or on an agent without workspaces lists what it affects: the folder,
+its size on disk and file count, uncommitted files and unpushed commits (or that it isn't a Git repository), and how
+many conversations stay in the Manager's history. The choices are **Delete agent only**, which leaves the folder on the
+Runner, and **Delete agent and folder**. Either way the harness stops, the conversation syncs one last time, and
+conversations, shared files and images stay.
+
+The Runner checks the folder when the dialog opens and again right before deleting. It refuses a home folder or one
+containing it, top-level and system folders, `~/.deveagentmanager` and `~/.ssh`, mount points, symbolic links and
+another user's folder; the Manager refuses a folder that overlaps another agent's folder or a kept workspace folder.
+Then only the agent can be deleted, and the dialog says why. Deleting the folder runs after the locks are released and
+finishes even when the browser stops waiting; if it fails, the agent stays and its status says why.
+
 ## Sharing and creation rights
 
 Creating workspaces requires project ownership and Runner Use access. Sharing or leaving the project applies to all

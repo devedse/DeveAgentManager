@@ -221,7 +221,18 @@ public sealed partial class ManagerApi(HttpClient http, NavigationManager naviga
 
     public Task StopAgentAsync(Guid agentId) => SendAsync(HttpMethod.Post, $"api/agents/{agentId}/stop");
 
-    public Task DeleteAgentAsync(Guid agentId) => SendAsync(HttpMethod.Delete, $"api/agents/{agentId}");
+    public Task<AgentDeletionDto> GetAgentDeletionAsync(Guid agentId) => GetAsync<AgentDeletionDto>($"api/agents/{agentId}/deletion");
+
+    /// <summary>Canceling (closing the dialog) ends the request, and with it the measurement on the Runner.</summary>
+    public async Task<FolderSizeDto> MeasureAgentFolderAsync(Guid agentId, CancellationToken ct)
+    {
+        using var response = await http.GetAsync($"api/agents/{agentId}/folder-size", ct);
+        await EnsureSuccessAsync(response);
+        return (await response.Content.ReadFromJsonAsync<FolderSizeDto>(ApiJson.Options, ct))!;
+    }
+
+    public Task DeleteAgentAsync(Guid agentId, bool deleteFolder = false) =>
+        SendAsync(HttpMethod.Delete, $"api/agents/{agentId}{(deleteFolder ? "?deleteFolder=true" : "")}");
 
     public Task SwitchAgentAsync(Guid agentId, string harnessId, Guid? accountId) =>
         SendAsync(HttpMethod.Post, $"api/agents/{agentId}/switch", new SwitchAgentRequest(harnessId, accountId));

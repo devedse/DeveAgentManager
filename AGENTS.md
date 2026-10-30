@@ -113,7 +113,8 @@ A Project groups Main and its workspaces on one Runner. A workspace other than M
 conversation, tasks, notifications and continuation policy; several can run at once, each running one conversation.
 Opening a workspace or choosing a conversation never changes execution by itself: Start/Stop target one agent, and
 replacing a conversation is an explicit choice. Conversations belong to the project and outlive removed workspaces.
-Only delete folders whose `.git/dam-workspace` marker matches; never hardlink working files. Move project targets Main
+Only delete workspace folders whose `.git/dam-workspace` marker matches; an agent's own folder is deleted only by an
+explicit Delete agent and folder, after the Runner-side refusals in `workspace.py`. Never hardlink working files. Move project targets Main
 and every workspace, including stopped ones. Keep project sharing consistent across current and future workspaces; a
 standalone conversation share stays narrow. Project groups order by their latest child reply, then children use
 `AgentOrder.ByLastReply()`. Recorded creation plans and markers reconcile interrupted creation without repeating it.

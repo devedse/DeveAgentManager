@@ -3,6 +3,8 @@
 A workspace is an independent clone in <main>.workspaces/<name>. Git hardlinks the history; working files are
 written by checkout, or copied with copy-on-write where the filesystem supports it. The ownership marker lives in
 the clone's .git folder, so it moves with the folder and never shows in `git status`.
+
+The folder, measure and delete phases are for deleting an agent's own folder together with the agent.
 """
 import json
 import os
@@ -303,12 +305,8 @@ def verify(c):
     print(json.dumps(dict(Branch=current_branch(path) or out(path, 'rev-parse', '--short', 'HEAD'))))
 
 
-def changes(c):
-    """What removing or updating would affect: uncommitted files and commits that are on no remote."""
-    path = Path(c['Path'])
-    if path.is_symlink() or not (path / '.git').is_dir():
-        print(json.dumps(dict(Exists=False, Uncommitted=0, Sample=[], Unpushed=0, Upstream=None, Branch=None, Owned=False)))
-        return
+def unsaved(path):
+    """Uncommitted files (the first three as a sample) and commits that are on no remote."""
     entries, skip = [], False
     for item in git(path, 'status', '--porcelain=v1', '-z', '--untracked-files=all', text=False).stdout.split(b'\0'):
         if skip or not item:
@@ -319,9 +317,121 @@ def changes(c):
         entries.append(os.fsdecode(item[3:]))
     has_commits = ok(path, 'rev-parse', '--verify', '--quiet', 'HEAD')
     unpushed = int(out(path, 'rev-list', '--count', 'HEAD', '--branches', '--not', '--remotes')) if has_commits else 0
+    return dict(Uncommitted=len(entries), Sample=entries[:3], Unpushed=unpushed)
+
+
+def changes(c):
+    """What removing or updating would affect: uncommitted files and commits that are on no remote."""
+    path = Path(c['Path'])
+    if path.is_symlink() or not (path / '.git').is_dir():
+        print(json.dumps(dict(Exists=False, Uncommitted=0, Sample=[], Unpushed=0, Upstream=None, Branch=None, Owned=False)))
+        return
+    work = unsaved(path)
     tracked = git(path, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}', check=False).stdout.strip() or None
-    print(json.dumps(dict(Exists=True, Uncommitted=len(entries), Sample=entries[:3], Unpushed=unpushed, Upstream=tracked,
-                          Branch=current_branch(path), Owned=owned(path, c.get('Token')))))
+    print(json.dumps(dict(Exists=True, **work, Upstream=tracked, Branch=current_branch(path), Owned=owned(path, c.get('Token')))))
+
+
+# An agent's own folder (Main, or an agent without a project) can be deleted with the agent. Whatever the folder, these
+# are never deleted: the home folder or a folder containing it, top-level and system folders, the Manager's own files,
+# mount points, symbolic links and folders of another user.
+SYSTEM = ('/bin', '/boot', '/dev', '/etc', '/lib', '/lib32', '/lib64', '/libx32', '/proc', '/run', '/sbin', '/sys', '/usr')
+
+
+def within(path, folder):
+    return path == folder or folder in path.parents
+
+
+def refusal(path):
+    """Why this folder must not be deleted, or None. Checked when asked and again right before deleting."""
+    if not path.is_absolute():
+        return 'Its path is not absolute.'
+    if path.is_symlink():
+        return 'It is a symbolic link.'
+    if not path.is_dir():
+        return 'It is not a folder.'
+    real, home = path.resolve(), Path.home().resolve()
+    if len(real.parts) < 3:
+        return 'It is a top-level folder.'
+    if within(home, real):
+        return 'It is the home folder, or contains it.'
+    if any(within(real, home / name) for name in ('.deveagentmanager', '.ssh')) or any(within(real, Path(p)) for p in SYSTEM):
+        return 'It belongs to the system or the Manager.'
+    if os.path.ismount(real):
+        return 'It is a mount point.'
+    if real.stat().st_uid != os.getuid():
+        return 'It belongs to another user on the Runner.'
+    if not os.access(real.parent, os.W_OK | os.X_OK):
+        return 'The Runner user cannot delete folders in ' + str(real.parent) + '.'
+    return None
+
+
+def folder(c):
+    """What deleting an agent's folder would affect: whether it may, and its unsaved Git work."""
+    path = Path(c['Path'])
+    result = dict(Exists=path.exists() or path.is_symlink(), Refusal=None, Git=False, Uncommitted=0, Sample=[], Unpushed=0, GitProblem=None)
+    if result['Exists'] or not path.is_absolute():
+        result['Refusal'] = refusal(path)
+    if result['Exists'] and path.is_absolute():
+        if not path.is_symlink() and (path / '.git').exists():
+            result['Git'] = True
+            try:
+                result.update(unsaved(path))
+            except Refused as error:
+                result['GitProblem'] = str(error)
+    print(json.dumps(result))
+
+
+def measure(c):
+    """The folder's disk space, each file once, and what deleting it frees: a file also linked from outside stays."""
+    path = Path(c['Path'])
+    used, freed, files, linked = 0, 0, 0, {}
+    if path.is_dir() and not path.is_symlink():
+        folders = [str(path)]
+        while folders:
+            try:
+                entries = os.scandir(folders.pop())
+            except OSError:
+                continue
+            with entries:
+                for entry in entries:
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    size = info.st_blocks * 512
+                    if entry.is_dir(follow_symlinks=False):
+                        folders.append(entry.path)
+                    else:
+                        files += 1
+                    if info.st_nlink > 1 and not stat.S_ISDIR(info.st_mode):
+                        seen = linked.setdefault((info.st_dev, info.st_ino), [info.st_nlink, size, 0])
+                        seen[2] += 1
+                    else:
+                        used += size
+                        freed += size
+        for links, size, seen in linked.values():
+            used += size
+            if seen >= links:
+                freed += size
+    print(json.dumps(dict(Bytes=used, FreedBytes=freed, Files=files)))
+
+
+def delete(c):
+    """Deletes an agent's folder, after checking again that it may."""
+    path = Path(c['Path'])
+    if not path.exists() and not path.is_symlink():
+        print(json.dumps(dict(Removed=False)))
+        return
+    reason = refusal(path)
+    if reason:
+        raise Refused(reason + ' It was left untouched: ' + str(path))
+    failed = []
+    handler = lambda function, name, error: failed.append(name)
+    shutil.rmtree(path, **(dict(onexc=handler) if sys.version_info >= (3, 12) else dict(onerror=handler)))
+    if failed:
+        raise Refused(f'{len(failed)} {"item" if len(failed) == 1 else "items"} could not be deleted, such as {failed[0]}. '
+                      'The rest of the folder was deleted.')
+    print(json.dumps(dict(Removed=True)))
 
 
 def remove(c):
@@ -371,7 +481,7 @@ def branches(c):
 
 
 PHASES = dict(inspect=inspect, preflight=preflight, create=create, verify=verify, changes=changes, remove=remove,
-              adopt=adopt, pull=pull, branches=branches)
+              adopt=adopt, pull=pull, branches=branches, folder=folder, measure=measure, delete=delete)
 
 if __name__ == '__main__':
     os.umask(0o022)

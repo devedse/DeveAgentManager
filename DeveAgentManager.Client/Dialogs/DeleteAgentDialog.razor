@@ -1,0 +1,150 @@
+@implements IDisposable
+@inject ManagerApi Api
+
+<MudDialog Class="delete-agent-dialog">
+    <TitleContent><div class="help-heading"><MudText Typo="Typo.h6" Class="delete-agent-title">Delete “@Agent.Name”?</MudText>
+        <HelpTip Label="Deleting an agent">
+            <p>Both options stop the harness and remove the agent from the Manager, with its terminal, settings and shares. Its conversations stay in the Manager's history, where they can be resumed in a new agent or exported. Its shared files and images stay too.</p>
+            <p>Delete agent only leaves the folder on the Runner, untouched. Delete agent and folder also deletes the folder, including uncommitted files and commits that were never pushed; that cannot be undone. The harness's own session files on the Runner are kept either way.</p>
+            <p>The size counts every file once, including Git history and ignored files such as dependencies and build output. Files also linked from other folders free less space.</p>
+            <p>A folder is never deleted when another agent or a kept workspace folder is inside it, or when it is a home, top-level or system folder, a mount point, a symbolic link, or another user's.</p>
+        </HelpTip></div></TitleContent>
+    <DialogContent>
+        <LoadingSection Loaded="@(_deletion is not null)" Error="@_loadError" Retry="LoadAsync" Label="Checking the agent's folder">
+            <Placeholder><SkeletonList Rows="3" Avatar="false" /></Placeholder>
+            <ChildContent>
+                @if (_deletion is { } deletion)
+                {
+                    @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mb-2">@_error</MudAlert> }
+                    <MudText Typo="Typo.body2">The harness stops and the agent is removed from the Manager. @ConversationsText</MudText>
+                    <MudText Typo="Typo.subtitle2" Class="mt-3">Folder</MudText>
+                    <MudText Typo="Typo.body2" Class="mono workspace-remove-path">@deletion.Path</MudText>
+                    @if (deletion.Checked && !deletion.Exists)
+                    {
+                        <MudText Typo="Typo.body2" Class="mt-1">It is already gone.</MudText>
+                    }
+                    else if (deletion.Checked)
+                    {
+                        <ul class="workspace-remove-list delete-agent-list">
+                            <li>
+                                <LoadingSection Loaded="@(_size is not null)" Error="@_sizeError" Retry="MeasureAsync" Label="Calculating the folder's size">
+                                    <Placeholder><Skeleton Width="14rem" /></Placeholder>
+                                    <ChildContent>@SizeText</ChildContent>
+                                </LoadingSection>
+                            </li>
+                            @if (deletion.GitProblem is not null)
+                            { <li class="delete-agent-warning">Git couldn't tell what is unsaved: @deletion.GitProblem</li> }
+                            else if (!deletion.Git)
+                            { <li class="delete-agent-warning">Not a Git repository: nothing in it is pushed anywhere.</li> }
+                            else if (deletion is { Uncommitted: 0, Unpushed: 0 })
+                            { <li>Nothing is uncommitted or unpushed.</li> }
+                            else
+                            {
+                                @if (deletion.Uncommitted > 0)
+                                { <li class="delete-agent-warning">@deletion.Uncommitted @(deletion.Uncommitted == 1 ? "file has" : "files have") uncommitted changes (@string.Join(", ", deletion.Sample)@(deletion.Uncommitted > deletion.Sample.Count ? $", +{deletion.Uncommitted - deletion.Sample.Count}" : ""))</li> }
+                                @if (deletion.Unpushed > 0)
+                                { <li class="delete-agent-warning">@deletion.Unpushed @(deletion.Unpushed == 1 ? "commit isn't" : "commits aren't") on any remote branch</li> }
+                            }
+                        </ul>
+                    }
+                    @if (deletion.Blocked is not null)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true" Class="mt-3">Only the agent can be deleted. @deletion.Blocked</MudAlert>
+                    }
+                }
+            </ChildContent>
+        </LoadingSection>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()" Disabled="_busy">Cancel</MudButton>
+        @if (_deletion is { Checked: true, Exists: false })
+        {
+            <MudButton OnClick="() => DeleteAsync(deleteFolder: false)" Disabled="_busy" Color="Color.Error" Variant="Variant.Filled">@(_busy ? "Deleting…" : "Delete agent")</MudButton>
+        }
+        else
+        {
+            <MudButton OnClick="() => DeleteAsync(deleteFolder: false)" Disabled="@(_busy || _deletion is null)" Variant="Variant.Outlined">@(_busy && !_deletingFolder ? "Deleting…" : "Delete agent only")</MudButton>
+            <MudButton OnClick="() => DeleteAsync(deleteFolder: true)" Disabled="@(_busy || _deletion is not { Checked: true, Blocked: null })" Color="Color.Error" Variant="Variant.Filled">@(_busy && _deletingFolder ? "Deleting…" : "Delete agent and folder")</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AgentDto Agent { get; set; } = default!;
+    private readonly CancellationTokenSource _closed = new();
+    private AgentDeletionDto? _deletion;
+    private FolderSizeDto? _size;
+    private string? _loadError, _sizeError, _error;
+    private bool _busy, _deletingFolder;
+
+    private string ConversationsText => _deletion?.Conversations switch
+    {
+        null or 0 => "It has no saved conversations.",
+        1 => "Its conversation stays in the Manager's history.",
+        var count => $"Its {count} conversations stay in the Manager's history.",
+    };
+
+    private string SizeText
+    {
+        get
+        {
+            var size = _size!;
+            var text = $"{ByteCount.Text(size.Bytes)} on disk · {size.Files:N0} {(size.Files == 1 ? "file" : "files")}";
+            // Mostly Git history hardlinked with another clone: say so, rather than promise space that isn't freed.
+            return size.FreedBytes < size.Bytes * 0.95 ? text + $" · frees about {ByteCount.Text(size.FreedBytes)}" : text;
+        }
+    }
+
+    /// <summary>Whether the agent was deleted, and with its folder.</summary>
+    public sealed record Result(bool FolderDeleted);
+
+    public static async Task<Result?> ShowAsync(IDialogService dialogs, AgentDto agent)
+    {
+        var dialog = await dialogs.ShowAsync<DeleteAgentDialog>("Delete agent", new DialogParameters<DeleteAgentDialog> { { d => d.Agent, agent } },
+            new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        return await dialog.Result is { Canceled: false, Data: Result result } ? result : null;
+    }
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loadError = null;
+        try
+        {
+            _deletion = await Api.GetAgentDeletionAsync(Agent.Id);
+            if (_deletion is { Checked: true, Exists: true } && !_closed.IsCancellationRequested) _ = MeasureAsync();
+        }
+        catch (ApiException ex) { _loadError = ex.Message; }
+        catch (HttpRequestException) { _loadError = LoadingSection.Unreachable; }
+    }
+
+    private async Task MeasureAsync()
+    {
+        _sizeError = null;
+        try { _size = await Api.MeasureAgentFolderAsync(Agent.Id, _closed.Token); }
+        catch (OperationCanceledException) when (_closed.IsCancellationRequested) { return; }
+        catch (OperationCanceledException) { _sizeError = "Measuring the folder took too long."; }
+        catch (ApiException) { _sizeError = "Couldn't measure the folder."; }
+        catch (HttpRequestException) { _sizeError = LoadingSection.Unreachable; }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task DeleteAsync(bool deleteFolder)
+    {
+        _busy = true; _deletingFolder = deleteFolder; _error = null;
+        try { await Api.DeleteAgentAsync(Agent.Id, deleteFolder); Dialog.Close(DialogResult.Ok(new Result(deleteFolder))); }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
+        // A large folder can outlast the browser's wait; the Manager finishes deleting it, and the agent then disappears.
+        catch (TaskCanceledException) { _error = "Still deleting on the Runner. The agent disappears from the list once it's done."; }
+        finally { _busy = false; }
+    }
+
+    public void Dispose()
+    {
+        _closed.Cancel();
+        _closed.Dispose();
+    }
+}
