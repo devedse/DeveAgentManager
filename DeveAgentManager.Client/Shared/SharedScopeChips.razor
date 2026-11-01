@@ -1,0 +1,20 @@
+@inject SharedArtifactScope Scope
+@* Only when another workspace of the project shared something: otherwise both would list the same. *@
+@if (Others > 0)
+{
+    <MudChipSet T="string" SelectedValue="@(ThisWorkspace ? This : All)" SelectedValueChanged="ChooseAsync"
+                SelectionMode="SelectionMode.SingleSelection" CheckMark="false" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                Class="shared-scope" aria-label="Show">
+        <MudChip Value="All">All workspaces @(Own + Others)</MudChip>
+        <MudChip Value="This">This workspace @Own</MudChip>
+    </MudChipSet>
+}
+@code {
+    [Parameter] public bool ThisWorkspace { get; set; }
+    /// <summary>How many the conversation's own workspace shared.</summary>
+    [Parameter] public int Own { get; set; }
+    /// <summary>How many other workspaces of its project shared.</summary>
+    [Parameter] public int Others { get; set; }
+    private const string All = "all", This = "this";
+    private Task ChooseAsync(string? value) => Scope.SetAsync(value == This);
+}

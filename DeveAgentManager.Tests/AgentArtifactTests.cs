@@ -74,6 +74,49 @@ public sealed class AgentArtifactTests : IDisposable
     }
 
     [Fact]
+    public async Task ListsSayWhichOtherWorkspaceSharedEach_AndRemovedWorkspacesKeepTheirsInTheProject()
+    {
+        var (main, _, current) = await SeedAsync();
+        var childId = Guid.NewGuid(); var childSession = Guid.NewGuid(); var deletedEarlier = Guid.NewGuid(); var reader = Guid.NewGuid();
+        await using (var db = Db.CreateDbContext())
+        {
+            db.Projects.Add(new() { Id = main.Id, RunnerId = main.RunnerId, OwnerId = main.OwnerId, Name = "project" });
+            (await db.Agents.SingleAsync(Ct)).ProjectId = main.Id;
+            db.Agents.Add(new() { Id = childId, RunnerId = main.RunnerId, OwnerId = main.OwnerId, Name = "fix-toolbar", ProjectId = main.Id, IsClone = true });
+            db.Sessions.AddRange(
+                new StoredSession { Id = childSession, AgentId = childId, WorkspaceAgentId = childId, OwnerId = main.OwnerId, ProjectId = main.Id,
+                    WorkingDirectory = "/work/app.workspaces/fix-toolbar" },
+                new StoredSession { Id = deletedEarlier, WorkspaceAgentId = childId, OwnerId = main.OwnerId, ProjectId = main.Id });
+            db.Users.Add(new() { Id = reader, Username = "conversation-reader", DisplayName = "Conversation reader" });
+            db.SessionShares.Add(new() { SessionId = current, UserId = reader });
+            await db.SaveChangesAsync(Ct);
+        }
+        var mainFile = await SaveAsync(current, "Main file"); var childFile = await SaveAsync(childSession, "Child file");
+        var earlierImage = await Images.SaveAsync(deletedEarlier, Guid.NewGuid(), Png, "chart.png", "Chart", Ct);
+
+        var fromMain = await Collection.ListFilesAsync(current, TestUsers.Admin, Ct);
+        Assert.Null(fromMain.Single(f => f.Id == mainFile.Id).OtherWorkspace);
+        Assert.Equal("fix-toolbar", fromMain.Single(f => f.Id == childFile.Id).OtherWorkspace);
+        var fromChild = await Collection.ListFilesAsync(childSession, TestUsers.Admin, Ct);
+        Assert.Equal("Main", fromChild.Single(f => f.Id == mainFile.Id).OtherWorkspace);
+        Assert.Null(fromChild.Single(f => f.Id == childFile.Id).OtherWorkspace);
+        Assert.Equal("fix-toolbar", Assert.Single(await Collection.ListImagesAsync(current, TestUsers.Admin, Ct)).OtherWorkspace);
+
+        // As Remove workspace does: a conversation deleted before, then the agent goes and its conversations keep the project.
+        await Sessions.DeleteAsync(deletedEarlier, Ct);
+        await Collection.PreserveAsync(childId, Ct);
+        await using (var db = Db.CreateDbContext()) await db.Agents.Where(a => a.Id == childId).ExecuteDeleteAsync(Ct);
+        fromMain = await Collection.ListFilesAsync(current, TestUsers.Admin, Ct);
+        Assert.Equal("fix-toolbar (removed)", fromMain.Single(f => f.Id == childFile.Id).OtherWorkspace);
+        var image = Assert.Single(await Collection.ListImagesAsync(current, TestUsers.Admin, Ct));
+        Assert.Equal((earlierImage.Id, "fix-toolbar (removed)"), (image.Id, image.OtherWorkspace));
+        Assert.NotNull(await Collection.FileAsync(current, childFile.Id, TestUsers.Admin, Ct));
+        Assert.Equal(2, (await Collection.ForAgentAsync(TestUsers.Admin, main.Id, Ct)).Files.Count);
+        // Someone only this conversation is shared with still sees only its own.
+        Assert.Equal(mainFile.Id, Assert.Single(await Collection.ListFilesAsync(current, TestUsers.Plain(reader), Ct)).Id);
+    }
+
+    [Fact]
     public async Task LegacyArtifactsSurviveSessionDeletionRestartAndNewSessionsWithoutCopyingBytes()
     {
         var (agent, old, current) = await SeedAsync();

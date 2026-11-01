@@ -66,7 +66,10 @@ public sealed class AgentArtifacts(IDbContextFactory<ManagerDbContext> factory, 
         return saved.Order().ToList();
     }
 
-    private async Task<List<Guid>> SourcesAsync(Guid session, CurrentUser? actor, CancellationToken ct)
+    private Task<List<Guid>> SourcesAsync(Guid session, CurrentUser? actor, CancellationToken ct) => SourcesAsync(session, actor, null, ct);
+
+    /// <param name="elsewhere">Filled with the sources that another workspace of the project shared, and its name.</param>
+    private async Task<List<Guid>> SourcesAsync(Guid session, CurrentUser? actor, Dictionary<Guid, string>? elsewhere, CancellationToken ct)
     {
         await _gate.WaitAsync(ct);
         try
@@ -82,30 +85,74 @@ public sealed class AgentArtifacts(IDbContextFactory<ManagerDbContext> factory, 
                 && !actor.Has(UserRoles.ConversationManager)
                 && await db.Sessions.AnyAsync(s => s.Id == session && s.OwnerId != actor.Id, ct)) return [session];
             if (await db.Agents.AnyAsync(a => a.Id == scope, ct))
-                return await ProjectSourcesAsync(db, scope.Value, actor, ct);
+                return await ProjectSourcesAsync(db, scope.Value, actor, ct, elsewhere);
             return sources;
         }
         finally { _gate.Release(); }
     }
 
-    private async Task<List<Guid>> ProjectSourcesAsync(ManagerDbContext db, Guid agentId, CurrentUser? actor, CancellationToken ct)
+    private async Task<List<Guid>> ProjectSourcesAsync(ManagerDbContext db, Guid agentId, CurrentUser? actor, CancellationToken ct,
+        Dictionary<Guid, string>? elsewhere = null)
     {
         var project = await db.Agents.Where(a => a.Id == agentId).Select(a => a.ProjectId).SingleOrDefaultAsync(ct);
-        var agents = project is null ? new List<Guid> { agentId } : await db.Agents.Where(a => a.ProjectId == project).Select(a => a.Id).ToListAsync(ct);
+        var agents = await db.Agents.Where(a => a.Id == agentId || project != null && a.ProjectId == project)
+            .Select(a => new { a.Id, Workspace = a.IsClone ? a.Name : "Main" }).ToListAsync(ct);
         var sources = new HashSet<Guid>();
-        foreach (var id in agents)
+        var own = new HashSet<Guid>();
+        foreach (var agent in agents)
         {
-            if (actor is not null && await access.AgentAsync(actor, id, ct) < AgentAccess.Read) continue;
-            sources.UnionWith(await BindAsync(db, id, ct));
+            if (actor is not null && await access.AgentAsync(actor, agent.Id, ct) < AgentAccess.Read) continue;
+            var bound = await BindAsync(db, agent.Id, ct);
+            sources.UnionWith(bound);
+            if (agent.Id == agentId) own.UnionWith(bound);
+            else if (elsewhere is not null) foreach (var source in bound) elsewhere.TryAdd(source, agent.Workspace);
         }
+        if (project is not null && (actor is null || await access.AgentAsync(actor, agentId, ct) >= AgentAccess.Read))
+            foreach (var (source, workspace) in await RemovedWorkspaceSourcesAsync(db, project.Value, agents.Select(a => a.Id).ToHashSet(), ct))
+            {
+                sources.Add(source);
+                elsewhere?.TryAdd(source, workspace);
+            }
+        // A conversation that ran here too is this workspace's.
+        foreach (var source in own) elsewhere?.Remove(source);
         return sources.Order().ToList();
     }
 
-    public async Task<List<SessionFileDto>> ListFilesAsync(Guid session, CurrentUser? actor, CancellationToken ct) =>
-        (await FilesAsync(await SourcesAsync(session, actor, ct), ct)).Select(f => f with { SessionId = session }).ToList();
+    /// <summary>
+    /// What removed workspaces of a project shared: their conversations stay with the project, with no workspace, and
+    /// their collections also hold conversations deleted before. Access follows the project's, like their conversations'.
+    /// </summary>
+    private async Task<Dictionary<Guid, string>> RemovedWorkspaceSourcesAsync(ManagerDbContext db, Guid project, HashSet<Guid> current, CancellationToken ct)
+    {
+        var result = (await db.Sessions.AsNoTracking().Where(s => s.ProjectId == project && s.WorkspaceAgentId == null && s.AgentId == null)
+                .Select(s => new { s.Id, s.WorkingDirectory }).ToListAsync(ct))
+            .ToDictionary(s => s.Id, s => s.WorkingDirectory is { } folder ? $"{folder.TrimEnd('/').Split('/')[^1]} (removed)" : "a removed workspace");
+        if (result.Count == 0 || !Directory.Exists(Folder)) return result;
+        foreach (var path in Directory.EnumerateFiles(Folder, "*.json"))
+        {
+            if (!Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "N", out var id) || current.Contains(id)) continue;
+            var index = await ReadIndexAsync(id, ct);
+            var known = index.FirstOrDefault(result.ContainsKey);
+            if (known == Guid.Empty) continue;
+            foreach (var source in index) result.TryAdd(source, result[known]);
+        }
+        return result;
+    }
 
-    public async Task<List<SessionImageDto>> ListImagesAsync(Guid session, CurrentUser? actor, CancellationToken ct) =>
-        (await ImagesAsync(await SourcesAsync(session, actor, ct), ct)).Select(i => i with { SessionId = session }).ToList();
+    public async Task<List<SessionFileDto>> ListFilesAsync(Guid session, CurrentUser? actor, CancellationToken ct)
+    {
+        var elsewhere = new Dictionary<Guid, string>();
+        // Own sources first: a copy that this workspace also has (a copied conversation) counts as its own.
+        var files = await FilesAsync((await SourcesAsync(session, actor, elsewhere, ct)).OrderBy(elsewhere.ContainsKey), ct);
+        return files.Select(f => f with { SessionId = session, OtherWorkspace = elsewhere.GetValueOrDefault(f.SessionId) }).ToList();
+    }
+
+    public async Task<List<SessionImageDto>> ListImagesAsync(Guid session, CurrentUser? actor, CancellationToken ct)
+    {
+        var elsewhere = new Dictionary<Guid, string>();
+        var images = await ImagesAsync((await SourcesAsync(session, actor, elsewhere, ct)).OrderBy(elsewhere.ContainsKey), ct);
+        return images.Select(i => i with { SessionId = session, OtherWorkspace = elsewhere.GetValueOrDefault(i.SessionId) }).ToList();
+    }
 
     private async Task<List<SessionFileDto>> FilesAsync(IEnumerable<Guid> sources, CancellationToken ct)
     {

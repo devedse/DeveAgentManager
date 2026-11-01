@@ -3446,6 +3446,13 @@ body:has(.terminal-layout) .agent-attention-popover {
 .session-image-card span, .session-image-card small { display: block; margin: 8px 12px; overflow-wrap: anywhere; }
 .session-image-card small { color: var(--mud-palette-text-secondary); }
 .session-file-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.shared-scope { margin: 0 0 12px; }
+/* Filled like a primary button: MudBlazor's own tint for the chosen chip is too faint to tell which it is. Its text
+   colour changes at once, so a fading background would hide both labels for a moment. */
+.shared-scope .mud-chip { transition: none; }
+.shared-scope .mud-chip.mud-chip-selected, .shared-scope .mud-chip.mud-chip-selected:hover:not(.mud-disabled) {
+    background-color: var(--mud-palette-primary); color: var(--mud-palette-primary-text);
+}
 .session-file { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px 14px; padding: 12px 14px; border: 1px solid var(--dam-border); border-radius: 12px; background: var(--dam-surface-2); }
 .session-file-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 10px; background: var(--dam-primary-soft); color: var(--dam-primary-text); }
 .session-file-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

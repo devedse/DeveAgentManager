@@ -1,25 +1,27 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
+@inject SharedArtifactScope Scope
 
 <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading shared images">
 <Placeholder><div class="session-image-gallery">@for (var i = 0; i < 3; i++) { <Skeleton Height="232px" /> }</div></Placeholder>
 <ChildContent>
-@if (_images.Count > 0)
+<SharedScopeChips ThisWorkspace="_thisWorkspace" Own="@_images.Count(i => i.OtherWorkspace is null)" Others="@_images.Count(i => i.OtherWorkspace is not null)" />
+@if (Shown.Count > 0)
 {
     <div class="session-image-gallery">
-        @foreach (var image in _images)
+        @foreach (var image in Shown)
         {
             <button type="button" class="session-image-card" @key="image.Id" @onclick="() => OpenAsync(image)" aria-label="@($"View {Title(image)}")">
                 <img src="@($"api/sessions/{SessionId}/images/{image.Id}")" alt="@Title(image)" loading="lazy" />
                 <span>@Title(image)</span>
-                <small>@image.CreatedAt.Humanize() · @(image.Bytes / 1024) KiB</small>
+                <small>@image.CreatedAt.Humanize() · @(image.Bytes / 1024) KiB@(image.OtherWorkspace is { } workspace ? $" · from {workspace}" : "")</small>
             </button>
         }
     </div>
 }
 else
 {
-    <MudText Typo="Typo.body2" Class="mud-text-secondary">No shared images yet.</MudText>
+    <MudText Typo="Typo.body2" Class="mud-text-secondary">@(_thisWorkspace && _images.Count > 0 ? "No shared images in this workspace yet." : "No shared images yet.")</MudText>
 }
 </ChildContent>
 </LoadingSection>
@@ -27,11 +29,30 @@ else
 @code {
     [Parameter, EditorRequired] public Guid SessionId { get; set; }
     private List<SessionImageDto> _images = [];
+    private bool _thisWorkspace;
+    private List<SessionImageDto> Shown => SharedArtifactScope.Shown(_images, i => i.OtherWorkspace, _thisWorkspace);
     protected override bool IsRelevant(ManagerEvent e) => e.SessionId == SessionId;
-    protected override Task LoadAsync() => LoadImagesAsync();
-    private async Task LoadImagesAsync() => _images = await Api.GetSessionImagesAsync(SessionId);
+    protected override async Task LoadAsync()
+    {
+        _thisWorkspace = await Scope.ThisWorkspaceAsync();
+        _images = await Api.GetSessionImagesAsync(SessionId);
+    }
+
+    protected override void OnInitialized() => Scope.Changed += OnScopeChanged;
+    private void OnScopeChanged() => _ = InvokeAsync(async () =>
+    {
+        _thisWorkspace = await Scope.ThisWorkspaceAsync();
+        StateHasChanged();
+    });
+
+    public override void Dispose()
+    {
+        Scope.Changed -= OnScopeChanged;
+        base.Dispose();
+    }
+
     private static string Title(SessionImageDto image) => string.IsNullOrWhiteSpace(image.Caption) ? image.FileName : image.Caption;
     private Task OpenAsync(SessionImageDto image) => Dialogs.ShowAsync<ImagePreviewDialog>(Title(image),
-        new DialogParameters<ImagePreviewDialog> { { d => d.Images, _images.ToArray() }, { d => d.ImageId, image.Id } },
+        new DialogParameters<ImagePreviewDialog> { { d => d.Images, Shown.ToArray() }, { d => d.ImageId, image.Id } },
         new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.ExtraLarge, CloseButton = true });
 }

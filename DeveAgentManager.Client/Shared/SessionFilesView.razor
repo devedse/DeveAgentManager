@@ -1,13 +1,15 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
+@inject SharedArtifactScope Scope
 
 <LoadingSection Loaded="Loaded" Error="@LoadError" Retry="RetryAsync" Label="Loading shared files">
 <Placeholder><SkeletonList Rows="2" /></Placeholder>
 <ChildContent>
-@if (_files.Count > 0)
+<SharedScopeChips ThisWorkspace="_thisWorkspace" Own="@_files.Count(f => f.OtherWorkspace is null)" Others="@_files.Count(f => f.OtherWorkspace is not null)" />
+@if (Shown.Count > 0)
 {
     <ul class="session-file-list">
-        @foreach (var file in _files)
+        @foreach (var file in Shown)
         {
             <li class="session-file" @key="file.Id">
                 <span class="session-file-icon" aria-hidden="true"><MudIcon Icon="@Icon(file.FileName)" /></span>
@@ -17,7 +19,7 @@
                     {
                         <span class="session-file-caption">@file.Caption</span>
                     }
-                    <small class="session-file-meta">@FileSize(file.Bytes) · @file.CreatedAt.Humanize() · <span class="mono" title="@($"SHA-256 {file.Sha256}")">SHA-256 @file.Sha256[..12]…</span></small>
+                    <small class="session-file-meta">@FileSize(file.Bytes) · @file.CreatedAt.Humanize()@(file.OtherWorkspace is { } workspace ? $" · from {workspace}" : "") · <span class="mono" title="@($"SHA-256 {file.Sha256}")">SHA-256 @file.Sha256[..12]…</span></small>
                 </div>
                 <div class="session-file-actions">
                     <MudButton OnClick="() => FilePreviewDialog.OpenAsync(Dialogs, file)" Class="session-file-view" Variant="Variant.Outlined" Size="Size.Small"
@@ -37,7 +39,7 @@
 }
 else
 {
-    <MudText Typo="Typo.body2" Class="mud-text-secondary">No shared files yet.</MudText>
+    <MudText Typo="Typo.body2" Class="mud-text-secondary">@(_thisWorkspace && _files.Count > 0 ? "No shared files in this workspace yet." : "No shared files yet.")</MudText>
 }
 </ChildContent>
 </LoadingSection>
@@ -46,11 +48,27 @@ else
     [Parameter, EditorRequired] public Guid SessionId { get; set; }
     private List<SessionFileDto> _files = [];
     private bool? _canDelete;
+    private bool _thisWorkspace;
+    private List<SessionFileDto> Shown => SharedArtifactScope.Shown(_files, f => f.OtherWorkspace, _thisWorkspace);
 
     protected override bool IsRelevant(ManagerEvent e) => e.SessionId == SessionId;
 
+    protected override void OnInitialized() => Scope.Changed += OnScopeChanged;
+    private void OnScopeChanged() => _ = InvokeAsync(async () =>
+    {
+        _thisWorkspace = await Scope.ThisWorkspaceAsync();
+        StateHasChanged();
+    });
+
+    public override void Dispose()
+    {
+        Scope.Changed -= OnScopeChanged;
+        base.Dispose();
+    }
+
     protected override async Task LoadAsync()
     {
+        _thisWorkspace = await Scope.ThisWorkspaceAsync();
         _files = await Api.GetSessionFilesAsync(SessionId);
         // Only the conversation's owner deletes; asked once, not on every conversation update.
         _canDelete ??= (await Api.GetSessionAsync(SessionId))?.Access == SessionAccess.Owner;

@@ -160,9 +160,15 @@ public sealed record RunnerUsageSample(DateTime At, double? CpuPercent, double? 
 
 /// <summary>Live desktop availability; never includes authorization cookies or paths.</summary>
 public sealed record DesktopStatusDto(string State, string Message, string? SessionType = null, string? Display = null, bool AutomationAvailable = false);
-public sealed record SessionImageDto(Guid Id, Guid SessionId, string FileName, string Caption, string ContentType, long Bytes, DateTime CreatedAt);
+/// <param name="OtherWorkspace">In a list for a conversation: the other workspace of its project that shared it; null when
+/// its own workspace did.</param>
+public sealed record SessionImageDto(Guid Id, Guid SessionId, string FileName, string Caption, string ContentType, long Bytes, DateTime CreatedAt,
+    string? OtherWorkspace = null);
 /// <summary>A file an agent shared for download (dam-tools share-file). <paramref name="Sha256"/> is lowercase hex.</summary>
-public sealed record SessionFileDto(Guid Id, Guid SessionId, string FileName, string Caption, long Bytes, string Sha256, DateTime CreatedAt);
+/// <param name="OtherWorkspace">In a list for a conversation: the other workspace of its project that shared it; null when
+/// its own workspace did.</param>
+public sealed record SessionFileDto(Guid Id, Guid SessionId, string FileName, string Caption, long Bytes, string Sha256, DateTime CreatedAt,
+    string? OtherWorkspace = null);
 public sealed record SaveDesktopSnapshotRequest(Guid SessionId, string? Caption = null);
 
 /// <param name="AccountId">The harness login it runs with; null uses its owner's default login.</param>

@@ -1,22 +1,43 @@
 @inherits LiveComponent
 @inject IDialogService Dialogs
+@inject SharedArtifactScope Scope
 @if (InMenu)
 {
-    <MudMenuItem Icon="@Icons.Material.Rounded.PhotoLibrary" OnClick="OpenAsync">Shared images@(_count > 0 ? $" ({_count})" : "")</MudMenuItem>
+    <MudMenuItem Icon="@Icons.Material.Rounded.PhotoLibrary" OnClick="OpenAsync">Shared images@(Count > 0 ? $" ({Count})" : "")</MudMenuItem>
 }
 else
 {
-    <MudBadge Content="@_count" Visible="@(_count > 0)" Color="Color.Primary" Overlap="true">
-        <MudIconButton Icon="@Icons.Material.Rounded.PhotoLibrary" Size="Size.Small" OnClick="OpenAsync" aria-label="@($"Shared images ({_count})")" title="Shared images" />
+    <MudBadge Content="@Count" Visible="@(Count > 0)" Color="Color.Primary" Overlap="true">
+        <MudIconButton Icon="@Icons.Material.Rounded.PhotoLibrary" Size="Size.Small" OnClick="OpenAsync" aria-label="@($"Shared images ({Count})")" title="Shared images" />
     </MudBadge>
 }
 @code {
     [Parameter] public Guid SessionId { get; set; }
     /// <summary>An entry in the toolbar's ⋮ menu, when the toolbar has no room for the button.</summary>
     [Parameter] public bool InMenu { get; set; }
-    private int _count;
+    private List<SessionImageDto> _shared = [];
+    private bool _thisWorkspace;
+    // As many as the list shows: only this workspace's when the tab shows only those.
+    private int Count => SharedArtifactScope.Shown(_shared, s => s.OtherWorkspace, _thisWorkspace).Count;
     protected override bool IsRelevant(ManagerEvent e) => e.SessionId == SessionId;
-    protected override async Task LoadAsync() => _count = (await Api.GetSessionImagesAsync(SessionId)).Count;
+    protected override async Task LoadAsync()
+    {
+        _thisWorkspace = await Scope.ThisWorkspaceAsync();
+        _shared = await Api.GetSessionImagesAsync(SessionId);
+    }
+
+    protected override void OnInitialized() => Scope.Changed += OnScopeChanged;
+    private void OnScopeChanged() => _ = InvokeAsync(async () =>
+    {
+        _thisWorkspace = await Scope.ThisWorkspaceAsync();
+        StateHasChanged();
+    });
+
+    public override void Dispose()
+    {
+        Scope.Changed -= OnScopeChanged;
+        base.Dispose();
+    }
     private Task OpenAsync() => Dialogs.ShowAsync<SharedImagesDialog>("Shared images",
         new DialogParameters<SharedImagesDialog> { { d => d.SessionId, SessionId } },
         new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Large, CloseButton = true });

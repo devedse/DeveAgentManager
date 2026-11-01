@@ -1022,6 +1022,8 @@ public sealed partial class AgentService(
         + "`dam-tools share-image <file> --caption \"<what it shows>\"`; it appears in their conversation. "
         + "To give the user a file to download, such as a built APK or installer, run "
         + "`dam-tools share-file <file> --caption \"<what it is>\"`. "
+        + "Share every image and file this way, reports and pages included, never through your harness’s own artifacts or "
+        + "publishing: only these stay with the conversation in the Manager. "
         + "Shared files and images belong to this agent across all its sessions. Use `dam-tools list-artifacts` for your collection, "
         + "`dam-tools list-artifacts --all` to discover readable agents and their artifacts, and "
         + "`dam-tools fetch-artifact <id> --agent <source-agent-id>` to get a local file, including from another runner. "

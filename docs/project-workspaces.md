@@ -96,7 +96,8 @@ ran, and `AgentId` where it is active now. A conversation is active in at most o
   when it differs, and whether the workspace it ran in still has uncommitted files or unpushed commits. The agent gets
   a note in the conversation that it now works in this folder, and that paths in earlier messages refer to the other
   one (see [session-formats.md](session-formats.md)).
-- **Removing a workspace** keeps its conversations with the project. Their access then follows the project's sharing.
+- **Removing a workspace** keeps its conversations, and the files and images it shared, with the project. Their access
+  then follows the project's sharing.
   A standalone conversation share stays limited to that conversation.
 
 ## Removing a workspace
@@ -132,7 +133,9 @@ finishes even when the browser stops waiting; if it fails, the agent stays and i
 Creating workspaces requires project ownership and Runner Use access. Sharing or leaving the project applies to all
 its current and future workspaces, using the existing Read/Write grants. Harness login permission stays independent.
 Project files shared as artifacts are visible across authorized workspaces, with their original conversation
-provenance and without copying the stored bytes.
+provenance and without copying the stored bytes. Each list says which other workspace shared an item, and **This
+workspace** hides the others for the current browser tab. A removed workspace's files and images stay listed with
+the project, as "_name_ (removed)", following the project's sharing like its conversations.
 
 Workspaces share Runner CPU/RAM, ports, desktop and external services; they are separate folders, not VMs or process
 isolation. Pi workspaces use private settings and history directories and keep pi's Runner-level login.

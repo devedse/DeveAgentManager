@@ -10,14 +10,6 @@ separate. Never replay a workload after transport loss or an ambiguous delivery.
 Controller outbox checks do not require recurring agent turns. Record live
 deployment/wake verification separately from host test success.
 
-## Sharing files with the user
-
-Share files and images through `dam-tools`, never through the harness's own artifacts or publishing (Claude
-artifacts, Codex or any other harness): they stay with the conversation in the Manager, for everyone who can read it,
-across harness switches. Use `dam-tools share-image <file> --caption "…"` for screenshots, charts and diagrams (PNG,
-JPEG, GIF or WebP up to 10 MiB) and `dam-tools share-file <file> --caption "…"` for anything to download, reports
-and pages included (up to 1 GiB; archive a folder first). See [docs/runner-desktop.md](docs/runner-desktop.md#agent-tools-dam-tools).
-
 ## Test process isolation
 
 Every test that invokes tmux must use an explicit, unique socket (`tmux -S <fixture-socket>`), including commands
