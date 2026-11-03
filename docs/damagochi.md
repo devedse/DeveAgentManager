@@ -79,6 +79,9 @@ over SSH is currently unattributed. Candidates are retained for seven days.
 
 ## Adding a species
 
+For the current animation implementation, see [How Damagochi pet animation works](damagochi-animation.md),
+including the wing deformation, Snek curves, drag gestures, slide wobble and gravity code.
+
 See the [Damagochi project README](../DeveAgentManager.Pets/README.md) for a full walkthrough, renderer examples, artwork
 requirements, the AI workflow and original prompts, and validation commands.
 
