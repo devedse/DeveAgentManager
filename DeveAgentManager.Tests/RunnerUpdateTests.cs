@@ -80,6 +80,29 @@ public class RunnerUpdateTests
     }
 
     [Fact]
+    public void RestartStatusReportsKernelsAndUnknownPartsKeepTheLastObservation()
+    {
+        const string output = "1.2.3\nDAM_REBOOT=1\nDAM_KERNEL_RUNNING=6.12.113+deb13-amd64\nDAM_KERNEL_INSTALLED=6.12.116+deb13-amd64\nDAM_KERNEL_AVAILABLE=6.12.117+deb13-amd64\n";
+        var (reboot, kernel) = RunnerUpdateMonitor.ParseRestart(output);
+        Assert.True(reboot);
+        Assert.Equal(new RunnerKernelDto("6.12.113+deb13-amd64", "6.12.116+deb13-amd64", "6.12.117+deb13-amd64"), kernel);
+        Assert.True(new RunnerUpdatesDto([], Kernel: kernel).RestartPending);
+        var current = RunnerUpdateMonitor.ParseRestart("DAM_REBOOT=0\nDAM_KERNEL_RUNNING=6.12.116+deb13-amd64\nDAM_KERNEL_INSTALLED=\nDAM_KERNEL_AVAILABLE=\r\n");
+        Assert.Equal((false, new RunnerKernelDto("6.12.116+deb13-amd64")), current);
+        Assert.False(new RunnerUpdatesDto([], Kernel: current.Kernel).RestartPending);
+        Assert.True(new RunnerUpdatesDto([], RebootRequired: true, Kernel: current.Kernel).RestartPending);
+        // Older scripts, missing or malformed lines: unknown, so callers keep the previous observation.
+        Assert.Equal((null, null), RunnerUpdateMonitor.ParseRestart("DAM_PACKAGES=0\n"));
+        Assert.Null(RunnerUpdateMonitor.ParseRestart("DAM_KERNEL_RUNNING=6.12.116+deb13-amd64\nDAM_KERNEL_INSTALLED=\n").Kernel);
+        Assert.Null(RunnerUpdateMonitor.ParseRestart("DAM_KERNEL_RUNNING=\nDAM_KERNEL_INSTALLED=\nDAM_KERNEL_AVAILABLE=\n").Kernel);
+        Assert.Null(RunnerUpdateMonitor.ParseRestart(output.Replace("INSTALLED=6.12.116+deb13-amd64", "INSTALLED=6.12.113+deb13-amd64")).Kernel);
+        Assert.Null(RunnerUpdateMonitor.ParseRestart(output.Replace("AVAILABLE=6.12.117+deb13-amd64", "AVAILABLE=6.12.116+deb13-amd64")).Kernel);
+        Assert.Null(RunnerUpdateMonitor.ParseRestart(output.Replace("6.12.117+deb13-amd64", "6.12.117 amd64")).Kernel);
+        Assert.Null(RunnerUpdateMonitor.ParseRestart(output + "DAM_KERNEL_RUNNING=6.12.116+deb13-amd64\n").Kernel);
+        Assert.Null(RunnerUpdateMonitor.ParseRestart(output.Replace("DAM_REBOOT=1", "DAM_REBOOT=yes")).Reboot);
+    }
+
+    [Fact]
     public void PackageDetailsAreBoundedAndIncompleteDetailsNeverReplaceSavedResults()
     {
         const string output = "DAM_PACKAGE\tlibexample:amd64\t1.0\t2.0\nDAM_PACKAGE\tnew-dependency\t\t1.2\nDAM_PACKAGES=2\nDAM_PACKAGE_DETAILS=1\nDAM_REBOOT=0\n";
@@ -144,7 +167,10 @@ public class RunnerUpdateTests
         {
             ["id"] = "#!/bin/sh\necho 1000\n",
             ["sudo"] = "#!/bin/sh\n[ \"$1\" = -n ] && shift\nexec \"$@\"\n",
-            ["apt-get"] = $"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{calls}'\n[ ! -f '{failed}' ] || exit 42\nif [ \"$*\" = '-s dist-upgrade' ]; then printf 'Inst existing [1.0] (2.0)\\nInst new-dependency (1.0)\\nRemv old-package [1.0]\\n'; fi\n"
+            ["apt-get"] = $"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{calls}'\n[ ! -f '{failed}' ] || exit 42\nif [ \"$*\" = '-s dist-upgrade' ]; then printf 'Inst existing [1.0] (2.0)\\nInst new-dependency (1.0)\\nInst linux-image-6.12.117+deb13-amd64 (6.12.117-1 Debian-Security:13/stable-security [amd64])\\nInst linux-image-6.12.117+deb13-amd64-dbg (6.12.117-1)\\nInst linux-image-amd64 [6.12.116-1] (6.12.117-1)\\nRemv old-package [1.0]\\n'; fi\n",
+            // The running kernel is older than one installed by unattended-upgrades; the simulation installs a newer one.
+            ["uname"] = "#!/bin/sh\nif [ \"$1\" = -r ]; then echo 6.12.113+deb13-amd64; else exec /usr/bin/uname \"$@\"; fi\n",
+            ["linux-version"] = "#!/bin/sh\ncase \"$1\" in list) printf '6.12.113+deb13-amd64\\n6.12.116+deb13-amd64\\n' ;; sort) sort -V ;; *) exit 2 ;; esac\n"
         };
         foreach (var (name, script) in scripts)
         {
@@ -152,11 +178,19 @@ public class RunnerUpdateTests
             await File.WriteAllTextAsync(path, script, ct);
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
-        var command = $"export PATH={ShellQuote.Quote(bin)}:$PATH\n" + RunnerSetupService.ReadResource("check-system-updates.sh");
+        var pathPrefix = $"export PATH={ShellQuote.Quote(bin)}:$PATH\n";
+        var command = pathPrefix + RunnerSetupService.SystemCheckScript;
         var result = await fixture.Shell.RunAsync(fixture.Runner, command, cancellationToken: ct);
         Assert.True(result.Succeeded, result.Combined);
-        Assert.Equal(2, RunnerUpdateMonitor.ParseSystem(result.Output).Count);
-        Assert.Equal([new("existing", "1.0", "2.0"), new("new-dependency", null, "1.0")], RunnerUpdateMonitor.ParseSystemPackages(result.Output, 2));
+        Assert.Equal(5, RunnerUpdateMonitor.ParseSystem(result.Output).Count);
+        Assert.Equal(new RunnerKernelDto("6.12.113+deb13-amd64", "6.12.116+deb13-amd64", "6.12.117+deb13-amd64"), RunnerUpdateMonitor.ParseRestart(result.Output).Kernel);
+        // The hourly check passes the last available kernel back: dropped once installed, kept while still newer.
+        async Task<RunnerKernelDto?> Hourly(string arguments) => RunnerUpdateMonitor.ParseRestart((await fixture.Shell.RunAsync(fixture.Runner,
+            pathPrefix + RunnerSetupService.RestartStatusScript + "\nset -o pipefail\ndam_restart_status " + arguments, cancellationToken: ct)).EnsureSuccess("Restart status").Output).Kernel;
+        Assert.Equal(new RunnerKernelDto("6.12.113+deb13-amd64", "6.12.116+deb13-amd64"), await Hourly("6.12.116+deb13-amd64"));
+        Assert.Equal(new RunnerKernelDto("6.12.113+deb13-amd64", "6.12.116+deb13-amd64"), await Hourly("6.12.110+deb13-amd64"));
+        Assert.Equal(new RunnerKernelDto("6.12.113+deb13-amd64", "6.12.116+deb13-amd64", "6.12.117+deb13-amd64"), await Hourly("6.12.117+deb13-amd64"));
+        Assert.Equal([new("existing", "1.0", "2.0"), new("new-dependency", null, "1.0")], RunnerUpdateMonitor.ParseSystemPackages(result.Output, 5)!.Take(2));
         var arguments = await File.ReadAllLinesAsync(calls, ct);
         Assert.Equal(2, arguments.Length);
         Assert.StartsWith("-q update ", arguments[0]);

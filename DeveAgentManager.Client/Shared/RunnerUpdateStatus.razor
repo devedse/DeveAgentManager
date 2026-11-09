@@ -17,10 +17,14 @@
                 <p>Tools: @(updates.SoftwareCheckedAt is { } softwareAt ? $"last checked {softwareAt.ToString("u")}" : "not checked yet"). System: @(updates.SystemCheckedAt is { } systemAt ? $"last checked {systemAt.ToString("u")}" : "not checked yet"). Counts are the last successful observations while refreshing or offline.</p>
                 @if (updates.SoftwareError is not null) { <p>@updates.SoftwareError. The previous results are kept; try Check now.</p> }
                 @if (updates.SystemError is not null) { <p>@updates.SystemError. The previous count is kept; try Check now.</p> }
-                <p>Checks don't install anything. Pi extension updates aren't included. The system count includes new dependencies required by dist-upgrade. A + means some tools could not be checked. A restart indicator appears when the operating system reports one is needed; some Debian systems don't provide that signal.</p>
+                <p>Checks don't install anything. Pi extension updates aren't included. The system count includes new dependencies required by dist-upgrade. A + means some tools could not be checked. Restart shows a 1 when a newer kernel is installed (unattended-upgrades often installs security kernels by itself; installed kernels are read hourly) or the operating system reports a restart is needed; some Debian systems don't provide that signal. Update all installs available kernels but never restarts the Runner.</p>
             </HelpTip>
         </span>
-        @if (updates.RebootRequired) { <span class="runner-reboot-needed"><MudIcon Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" />Restart needed</span> }
+        @if (updates.Kernel is { Installed: { } installedKernel } kernel)
+        {
+            <span class="runner-reboot-needed"><MudIcon Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" /><span>Running kernel @kernel.Running · restart to update to @installedKernel</span></span>
+        }
+        else if (updates.RebootRequired) { <span class="runner-reboot-needed"><MudIcon Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" />Restart needed</span> }
     }
 </div>
 

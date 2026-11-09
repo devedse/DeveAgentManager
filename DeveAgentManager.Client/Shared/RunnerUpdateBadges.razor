@@ -22,7 +22,7 @@
         {
             <span class="runner-update-pending"><Skeleton Width="22px" Height="12px" /></span>
         }
-        @if (updates.RebootRequired)
+        @if (ShowRestart && updates.RestartPending)
         {
             <MudIcon Icon="@Icons.Material.Rounded.RestartAlt" Size="Size.Small" Class="runner-reboot-icon" />
         }
@@ -35,4 +35,6 @@ else if (Runner.State == RunnerState.Ready)
 
 @code {
     [Parameter, EditorRequired] public RunnerDto Runner { get; set; } = default!;
+    /// <summary>Off where the Restart button shows the restart status itself.</summary>
+    [Parameter] public bool ShowRestart { get; set; } = true;
 }

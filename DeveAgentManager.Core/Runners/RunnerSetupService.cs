@@ -34,6 +34,13 @@ public sealed partial class RunnerSetupService(
 
     private static readonly Lazy<string> SetupScript = new(() => ReadResource("runner-setup.sh"));
     private static readonly Lazy<string> SystemUpdateScript = new(() => ReadResource("system-update.sh"));
+    private static readonly Lazy<string> RestartStatus = new(() => ReadResource("restart-status.sh"));
+
+    /// <summary>Defines <c>dam_restart_status</c>: the restart signal and the kernels (restart-status.sh). Installs nothing.</summary>
+    internal static string RestartStatusScript => RestartStatus.Value;
+
+    /// <summary>The system check: refreshes package lists, simulates dist-upgrade and reports the restart status. Installs nothing.</summary>
+    internal static string SystemCheckScript => RestartStatus.Value + "\n" + ReadResource("check-system-updates.sh");
     private static readonly Lazy<string> AgentTools = new(() => ReadResource("dam-tools.py"));
 
     /// <summary>What <c>sha256sum</c> prints for the dam-tools this Manager installs.</summary>

@@ -59,6 +59,8 @@ try {
                 { id: 'grok', name: 'Grok', installedVersion: '1.0.67', latestVersion: '1.0.70', updateAvailable: true },
                 { id: 'vscode', name: 'VS Code', installedVersion: '4.100.0', latestVersion: '4.100.0', updateAvailable: false }
             ], softwareCheckedAt: at, systemPackageCount: 6, systemCheckedAt: at, checking: false, rebootRequired: true,
+            // unattended-upgrades installed a newer kernel; a restart loads it.
+            kernel: { running: '6.12.113+deb13-amd64', installed: '6.12.116+deb13-amd64', available: null },
             systemPackages: [
                 { name: 'curl', installedVersion: '1.0', latestVersion: '1.1' },
                 { name: 'git', installedVersion: '2.0', latestVersion: '2.1' },
@@ -107,7 +109,32 @@ try {
         assert.match(await headerUpdate.innerText(), /3 tools/);
         assert.match(await headerUpdate.innerText(), /6 system/);
         await page.locator('.operation', { hasText: 'Update Codex' }).getByText('0.164.0', { exact: true }).waitFor();
-        await status.getByText('Restart needed', { exact: true }).waitFor();
+        await status.getByText('Running kernel 6.12.113+deb13-amd64 · restart to update to 6.12.116+deb13-amd64', { exact: true }).waitFor();
+        const headerRestart = page.locator('.page-header-actions').getByRole('button', { name: 'Restart', exact: true });
+        const restartTip = page.locator('.help-tooltip.mud-popover-open').filter({ hasText: 'Shuts the VM down and starts it again' });
+        // Restart carries the restart status: a 1 when a restart would load a newer kernel, and the kernels in its hover.
+        const assertRestart = async (button, notes: string[], badge: boolean, absent: string[] = []) => {
+            assert.equal(await button.locator('.runner-restart-count').count(), badge ? 1 : 0, `Restart badge ${badge ? 'shown' : 'hidden'}`);
+            if (badge) assert.equal((await button.locator('.runner-restart-count').innerText()).trim(), '1');
+            const hint = await page.locator('#' + await button.getAttribute('aria-describedby')).textContent();
+            await button.hover();
+            await restartTip.waitFor();
+            const text = await restartTip.innerText();
+            for (const note of notes) {
+                assert.ok(text.includes(note), `Restart hover shows "${note}": ${text}`);
+                assert.ok(hint.includes(note), `Screen readers hear "${note}": ${hint}`);
+            }
+            for (const note of absent) assert.ok(!text.includes(note), `Restart hover omits "${note}": ${text}`);
+            const bounds = await restartTip.boundingBox(), viewport = page.viewportSize();
+            assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= viewport.width + 1, 'The Restart tooltip fits the viewport');
+            if (badge) await restartTip.screenshot({ path: `/tmp/dam-restart-tooltip-${theme}-${viewport.width}.png` });
+            await page.mouse.move(0, 0);
+            await restartTip.waitFor({ state: 'hidden' });
+        };
+        const pendingKernel = ['Running kernel: 6.12.113+deb13-amd64.', 'Restart to update to kernel 6.12.116+deb13-amd64.'];
+        await assertRestart(headerRestart, pendingKernel, true);
+        assert.equal(await headerUpdate.locator('.runner-reboot-icon').count(), 0, 'Update all leaves the restart status to Restart');
+        await page.locator('.page-header-actions').screenshot({ path: `/tmp/dam-runner-header-${theme}.png` });
         const tip = page.locator('.help-tooltip.mud-popover-open').filter({ has: page.locator('.runner-upgrade-details') });
         assert.equal(await tip.count(), 0, 'Upgrade details stay out of view until hover or focus');
         const assertUpgradeTooltip = async button => {
@@ -205,6 +232,29 @@ try {
         await page.reload();
         await status.getByText('Tools up to date · System up to date', { exact: true }).waitFor({ timeout: 60000 });
         assert.equal(await headerUpdate.locator('.runner-update-count').count(), 0, 'No zero-count badge after a complete check');
+        // The kernel was observed before the restart; this check reports the running kernel as the newest.
+        updates = { ...updates, kernel: { running: '6.12.116+deb13-amd64', installed: null, available: null } };
+        await page.reload();
+        await status.getByText('Tools up to date · System up to date', { exact: true }).waitFor({ timeout: 60000 });
+        assert.equal(await status.locator('.runner-reboot-needed').count(), 0, 'No restart indicator once the newest kernel runs');
+        await assertRestart(headerRestart, ['Running kernel: 6.12.116+deb13-amd64.'], false, ['Restart to update', 'Restart to finish']);
+        // A kernel dist-upgrade would install: Update all lists it; Restart only explains it, since restarting can't load it yet.
+        updates = { ...updates, systemPackageCount: 1, systemPackages: [{ name: 'linux-image-6.12.117+deb13-amd64', installedVersion: null, latestVersion: '6.12.117-1' }],
+            kernel: { running: '6.12.116+deb13-amd64', installed: null, available: '6.12.117+deb13-amd64' } };
+        await page.reload();
+        await status.getByText('Tools up to date · 1 system updates', { exact: true }).waitFor({ timeout: 60000 });
+        await headerUpdate.hover();
+        await tip.getByText('Kernel', { exact: true }).waitFor();
+        await tip.locator('li').filter({ hasText: 'Linux' }).getByText('6.12.116+deb13-amd64 → 6.12.117+deb13-amd64', { exact: true }).waitFor();
+        await tip.getByText('The new kernel loads after a restart.', { exact: true }).waitFor();
+        await page.mouse.move(0, 0);
+        await tip.waitFor({ state: 'hidden' });
+        await assertRestart(headerRestart, ['Running kernel: 6.12.116+deb13-amd64.', 'Kernel 6.12.117+deb13-amd64 is available: Update all installs it, then restart to use it.'], false, ['Restart to update']);
+        // The system's own restart signal without a newer kernel.
+        updates = { ...updates, systemPackageCount: 0, systemPackages: [], rebootRequired: true, kernel: { running: '6.12.116+deb13-amd64', installed: null, available: null } };
+        await page.reload();
+        await status.getByText('Restart needed', { exact: true }).waitFor({ timeout: 60000 });
+        await assertRestart(headerRestart, ['Restart to finish installed updates.'], true);
         updates = structuredClone(observed);
         state = 'Stopped';
         await page.reload();
@@ -217,6 +267,9 @@ try {
         await card.locator('.runner-update-count').first().waitFor({ timeout: 60000 });
         await page.screenshot({ path: `/tmp/dam-runner-updates-cards-${theme}.png`, fullPage: true });
         await assertUpgradeTooltip(card.getByRole('button', { name: 'Update all', exact: true }));
+        const cardRestart = card.getByRole('button', { name: 'Restart', exact: true });
+        await assertRestart(cardRestart, pendingKernel, true);
+        assert.equal(await card.getByRole('button', { name: 'Update all', exact: true }).locator('.runner-reboot-icon').count(), 0);
         const buttons = card.locator('.runner-card-actions button');
         for (const width of [320, 360, 390, 768, 1400]) {
             await page.setViewportSize({ width, height: 844 });
@@ -236,6 +289,7 @@ try {
         await page.waitForTimeout(500);
         await page.screenshot({ path: `/tmp/dam-runner-updates-phone-${theme}.png`, fullPage: true });
         await assertUpgradeTooltip(card.getByRole('button', { name: 'Update all', exact: true }));
+        await assertRestart(cardRestart, pendingKernel, true);
         await page.goto(base + `/runners/${id}`);
         await status.getByText('3 tool updates · 6 system updates', { exact: true }).waitFor({ timeout: 60000 });
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Runner update details fit a phone');
@@ -252,5 +306,5 @@ try {
         await context.close();
         }
     }
-    console.log('Passed: Runner update counts, versions, unknown and failed checks, refresh, offline observations and phone layouts in both themes.');
+    console.log('Passed: Runner update counts, versions, kernels and Restart\'s badge on cards and the Runner page, unknown and failed checks, refresh, offline observations and phone layouts in both themes.');
 } finally { await browser.close(); }

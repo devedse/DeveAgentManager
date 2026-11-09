@@ -4051,6 +4051,17 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .runner-update-reading { display: inline-flex; min-height: 20px; align-items: center; }
 .runner-update-spinner { width: 14px !important; height: 14px !important; }
 .runner-reboot-needed { display: inline-flex; align-items: center; gap: 4px; color: var(--dam-primary); }
+.runner-reboot-needed > span { min-width: 0; overflow-wrap: anywhere; }
+/* Restart's badge: one restart loads the installed kernel and finishes updates waiting for it. */
+/* A corner badge, so it never widens the button or pushes a card's action labels onto two lines. */
+.hold-button-control:has(.runner-restart-badge) { position: relative; overflow: visible; }
+.runner-restart-badge { position: absolute; top: -6px; right: -6px; display: inline-flex; pointer-events: none; }
+.runner-restart-count {
+    display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
+    border-radius: 8px; font-size: .65rem; font-weight: 700; line-height: 1; letter-spacing: normal; text-transform: none;
+    color: var(--mud-palette-primary-text); background: var(--dam-primary); box-shadow: 0 0 0 2px var(--dam-surface);
+}
+.runner-restart-reason { font-weight: 650; }
 .runner-reboot-icon { color: var(--dam-primary); width: 15px !important; height: 15px !important; }
 .runner-software-version strong { color: var(--dam-primary); font-weight: 600; }
 .runner-card-actions .runner-card-update .hold-button-control { padding-inline: 7px; }

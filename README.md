@@ -56,6 +56,10 @@ when you close the tab.
   installs the latest pi, updates its packages and applies Manager settings → pi. Every step is idempotent, so all are
   safe to repeat. Running agents keep running and use the new versions after a restart. When an update needs the Runner
   restarted, such as a new kernel, the setup log says so. A new Runner's first setup doesn't upgrade its packages.
+- **Restart** shows a **1** when a restart would load a newer installed kernel (unattended-upgrades often installs
+  security kernels by itself) or the operating system reports that a restart is needed. Its hover shows the running
+  kernel and the kernel a restart updates to, as does the Runner page's update status. Update all lists and installs
+  available kernels but never restarts the Runner.
 - Each Runner card on the Runners page and the top of a Runner's page have **Start** or **Stop**, **Restart** (stop,
   then start; running agents stop as with Stop) and **Update all** (the same as Re-run setup). Each is held for 3
   seconds to confirm instead of asking in a dialog; hovering one says what it does.
@@ -66,8 +70,9 @@ when you close the tab.
   every six hours with `apt-get update`, followed by `apt-get -s dist-upgrade` to count upgrades and new dependencies.
   Checks install nothing. Failures retain previous observations, show an unknown status and retry after ten minutes;
   stopped Runners retain their last check. Checks run again after maintenance. Results are kept in memory and rebuilt
-  after a Manager restart. Pi extensions are not counted. A restart indicator uses the operating system's
-  `/var/run/reboot-required` signal when available.
+  after a Manager restart. Pi extensions are not counted. Restart's badge uses the operating system's
+  `/var/run/reboot-required` signal when available and compares the running kernel with the newest installed one
+  (read hourly with the installed versions); kernels `apt-get -s dist-upgrade` would install are shown with Update all.
 
 See [PLAN.md](PLAN.md) for where this is going (Jobs API, projects).
 

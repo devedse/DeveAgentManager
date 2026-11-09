@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Refresh package lists and simulate the same upgrade as Update all. Never installs or removes a package.
+# Runs after restart-status.sh (RunnerSetupService.SystemCheckScript), which defines dam_restart_status.
 set -euo pipefail
 export LC_ALL=C
 if [ "$(id -u)" -eq 0 ]; then
@@ -24,4 +25,7 @@ printf '%s\n' "$simulation" | awk '
     }
   }
   END { printf "DAM_PACKAGES=%d\nDAM_PACKAGE_DETAILS=1\n", count }'
-if [ -f /var/run/reboot-required ]; then echo DAM_REBOOT=1; else echo DAM_REBOOT=0; fi
+# New kernel images dist-upgrade would install (not debug symbols or unsigned builds), by release name.
+kernels="$(printf '%s\n' "$simulation" | awk '$1 == "Inst" && $2 ~ /^linux-image-[0-9]/ && $2 !~ /-(dbg|unsigned)$/ { print substr($2, 13) }')"
+# shellcheck disable=SC2086 # One release name per line; release names contain no spaces.
+dam_restart_status $kernels

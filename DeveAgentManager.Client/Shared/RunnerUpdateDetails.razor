@@ -47,6 +47,14 @@
         {
             <p>@(updates.SystemError is not null ? "System update check unavailable." : updates.SystemPackageCount == 0 ? "System packages up to date." : Active ? "Checking system packages…" : "System updates not checked.")</p>
         }
+        @if (updates.Kernel is { Available: { } availableKernel } kernel)
+        {
+            <p><b>Kernel</b></p>
+            <ul class="runner-upgrade-items">
+                <li><b>Linux</b> <span>@kernel.Running → @availableKernel</span></li>
+            </ul>
+            <p>The new kernel loads after a restart.</p>
+        }
         @if (observed && (updates.SoftwareError is not null || updates.SystemError is not null))
         {
             <p>Last check incomplete; showing saved results.</p>
@@ -55,7 +63,11 @@
         {
             <p>Refreshing; showing the last check.</p>
         }
-        @if (updates.RebootRequired)
+        @if (ShowRestart && updates.Kernel is { Installed: { } installedKernel } running)
+        {
+            <p>Running kernel: @running.Running. Restart the machine to update to kernel @installedKernel.</p>
+        }
+        else if (ShowRestart && updates.RebootRequired)
         {
             <p>Restart needed.</p>
         }
@@ -66,4 +78,6 @@
     private const int VisiblePackages = 6;
     [Parameter] public RunnerUpdatesDto? Updates { get; set; }
     [Parameter] public bool Active { get; set; } = true;
+    /// <summary>Off where the Restart button shows the installed kernel and the restart signal itself.</summary>
+    [Parameter] public bool ShowRestart { get; set; } = true;
 }

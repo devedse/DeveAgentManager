@@ -49,8 +49,11 @@ public sealed class RunnerUpdateMonitor(RunnerService runners, RunnerShell shell
                 try
                 {
                     var software = _software.Where(s => runner.HarnessIds.Contains(s.Id) || runner.ToolIds.Contains(s.Id)).ToArray();
-                    var script = "set -o pipefail\n" + string.Join('\n', software.Select(s =>
-                        $"version=$({s.Command} 2>/dev/null) || version=''; printf '%s=%s\\n' {ShellQuote.Quote(s.Id)} \"$version\""));
+                    // The restart status is cheap, so Restart's badge follows kernels installed by unattended-upgrades hourly.
+                    // The last available kernel is passed back so it is dropped once installed or superseded.
+                    var script = RunnerSetupService.RestartStatusScript + "\nset -o pipefail\n" + string.Join('\n', software.Select(s =>
+                        $"version=$({s.Command} 2>/dev/null) || version=''; printf '%s=%s\\n' {ShellQuote.Quote(s.Id)} \"$version\""))
+                        + "\ndam_restart_status" + (value.Kernel?.Available is { } available ? " " + ShellQuote.Quote(available) : "");
                     var output = (await shell.RunAsync(runner, script, TimeSpan.FromMinutes(2), ct)).EnsureSuccess("Reading installed versions").Output;
                     var installed = output.Split('\n').Select(l => l.Split('=', 2)).Where(p => p.Length == 2)
                         .GroupBy(p => p[0]).ToDictionary(g => g.Key, g => RunnerReleaseCatalog.NormalizeVersion(g.First()[1]));
@@ -63,7 +66,9 @@ public sealed class RunnerUpdateMonitor(RunnerService runners, RunnerShell shell
                         observations.Add(new(item.Id, item.Name, version, latest?.Version,
                             RunnerReleaseCatalog.IsNewer(version, latest?.Version), error));
                     }
+                    var (reboot, kernel) = ParseRestart(output);
                     value = value with { Software = observations, SoftwareCheckedAt = clock.GetUtcNow().UtcDateTime,
+                        RebootRequired = reboot ?? value.RebootRequired, Kernel = kernel ?? value.Kernel,
                         SoftwareError = observations.Any(s => s.Error is not null) ? "Some tool updates could not be checked" : null };
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -81,11 +86,11 @@ public sealed class RunnerUpdateMonitor(RunnerService runners, RunnerShell shell
             {
                 try
                 {
-                    var script = RunnerSetupService.ReadResource("check-system-updates.sh");
+                    var script = RunnerSetupService.SystemCheckScript;
                     var result = (await shell.RunAsync(runner, script, TimeSpan.FromMinutes(4), ct)).EnsureSuccess("Checking system packages");
                     var (count, reboot) = ParseSystem(result.Output);
                     var packages = ParseSystemPackages(result.Output, count);
-                    value = value with { SystemPackageCount = count, SystemPackages = packages, RebootRequired = reboot,
+                    value = value with { SystemPackageCount = count, SystemPackages = packages, RebootRequired = reboot, Kernel = ParseRestart(result.Output).Kernel ?? value.Kernel,
                         SystemCheckedAt = clock.GetUtcNow().UtcDateTime, SystemError = null };
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -110,6 +115,31 @@ public sealed class RunnerUpdateMonitor(RunnerService runners, RunnerShell shell
         if (counts.Length != 1 || !int.TryParse(counts[0][13..], out var count) || count < 0 || reboots.Length != 1 || reboots[0] is not ("DAM_REBOOT=0" or "DAM_REBOOT=1"))
             throw new FormatException("Incomplete system update observation.");
         return (count, reboots[0] == "DAM_REBOOT=1");
+    }
+
+    /// <summary>
+    /// What <c>dam_restart_status</c> printed (restart-status.sh). Each part is null (unknown, never "up to date") when it
+    /// is missing or malformed, so the last observation is kept.
+    /// </summary>
+    internal static (bool? Reboot, RunnerKernelDto? Kernel) ParseRestart(string output)
+    {
+        var lines = output.Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
+        string? Value(string name)
+        {
+            var found = lines.Where(line => line.StartsWith(name + "=", StringComparison.Ordinal)).ToArray();
+            return found.Length == 1 ? found[0][(name.Length + 1)..] : null;
+        }
+        var reboot = Value("DAM_REBOOT") switch { "1" => true, "0" => false, _ => (bool?)null };
+        var running = Value("DAM_KERNEL_RUNNING");
+        var installed = Value("DAM_KERNEL_INSTALLED");
+        var available = Value("DAM_KERNEL_AVAILABLE");
+        if (running is null || running.Length == 0 || !Release(running) || installed is null || available is null
+            || installed.Length > 0 && (!Release(installed) || installed == running)
+            || available.Length > 0 && (!Release(available) || available == running || available == installed))
+            return (reboot, null);
+        return (reboot, new(running, installed.Length == 0 ? null : installed, available.Length == 0 ? null : available));
+
+        static bool Release(string value) => value.Length <= 200 && !value.Any(c => char.IsControl(c) || char.IsWhiteSpace(c));
     }
 
     internal static IReadOnlyList<RunnerSystemPackageUpdateDto>? ParseSystemPackages(string output, int count)

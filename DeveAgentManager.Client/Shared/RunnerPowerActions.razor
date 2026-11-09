@@ -21,17 +21,25 @@
                         OnConfirmed="() => RunAsync(() => Api.StopRunnerAsync(Runner.Id))" />
         }
         <HoldButton Text="Restart" ActiveText="Restarting" Icon="@Icons.Material.Rounded.RestartAlt" Variant="Variant" Size="Size" Disabled="!Ready"
-                    Help="@RestartHelp"
-                    OnConfirmed="() => RunAsync(() => Api.RestartRunnerAsync(Runner.Id))" />
+                    Help="@string.Join(' ', RestartNotes.Append(RestartHelp))" HelpContent="RestartDetails"
+                    OnConfirmed="() => RunAsync(() => Api.RestartRunnerAsync(Runner.Id))">
+            <Adornment>
+                @if (Runner.Updates?.RestartPending == true)
+                {
+                    @* Help names the reason for screen readers. *@
+                    <span class="runner-restart-badge @(Ready ? "" : "updates-stale")" aria-hidden="true"><span class="runner-restart-count">1</span></span>
+                }
+            </Adornment>
+        </HoldButton>
     }
     <HoldButton Text="Update all" ActiveText="Updating" Icon="@Icons.Material.Rounded.SystemUpdateAlt" Variant="Variant" Size="Size"
                 Disabled="@(Busy || Runner.State == RunnerState.Stopped)" Class="@UpdateClass"
                 Help="@UpdateHelp"
                 OnConfirmed="() => RunAsync(() => Api.RerunSetupAsync(Runner.Id))">
-        <Adornment><RunnerUpdateBadges Runner="Runner" /></Adornment>
+        <Adornment><RunnerUpdateBadges Runner="Runner" ShowRestart="!CanRestart" /></Adornment>
         <HelpContent>
             <p>@UpdateActionHelp</p>
-            <RunnerUpdateDetails Updates="Runner.Updates" Active="@(Runner.State == RunnerState.Ready)" />
+            <RunnerUpdateDetails Updates="Runner.Updates" Active="@(Runner.State == RunnerState.Ready)" ShowRestart="!CanRestart" />
         </HelpContent>
     </HoldButton>
 }
@@ -49,7 +57,31 @@
     private const string UpdateActionHelp = "Updates tools and system packages, then reapplies setup. Agents keep running.";
     private string UpdateHelp => UpdateActionHelp + " "
         + RunnerUpdateStatus.Summary(Runner.Updates, Runner.State == RunnerState.Ready)
-        + (Runner.Updates?.RebootRequired == true ? ". Restart needed." : "");
+        + (!CanRestart && Runner.Updates?.RestartPending == true ? ". Restart needed." : "");
+
+    // Restart's own badge and hover carry the restart status (kernel, the system's restart signal) where it exists.
+    private bool CanRestart => Provider?.Capabilities.CanStartStop == true;
+
+    /// <summary>The running kernel and why to restart, first in Restart's hover; also its screen reader description.</summary>
+    private IEnumerable<string> RestartNotes
+    {
+        get
+        {
+            var updates = Runner.Updates;
+            if (updates?.Kernel is { } kernel) yield return $"Running kernel: {kernel.Running}.";
+            if (updates?.Kernel?.Installed is { } installed) yield return $"Restart to update to kernel {installed}.";
+            else if (updates?.RebootRequired == true) yield return "Restart to finish installed updates.";
+            if (updates?.Kernel?.Available is { } available) yield return $"Kernel {available} is available: Update all installs it, then restart to use it.";
+        }
+    }
+
+    private RenderFragment? RestartDetails => !RestartNotes.Any() ? null : @<text>
+        @foreach (var note in RestartNotes)
+        {
+            <p class="@(note.StartsWith("Restart ", StringComparison.Ordinal) ? "runner-restart-reason" : null)">@note</p>
+        }
+        <p>@RestartHelp</p>
+    </text>;
 
     private bool Busy => Runner.Operation is not null;
     private bool Ready => Runner.State == RunnerState.Ready && !Busy;
