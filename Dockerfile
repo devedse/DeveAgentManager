@@ -47,8 +47,7 @@ RUN dotnet publish "DeveAgentManager/DeveAgentManager.csproj" -c Release -o /app
 FROM base AS cpu-diagnostics
 ARG TARGETARCH
 USER root
-RUN --mount=type=bind,source=tools/docker/apt-retry.sh,target=/tmp/apt-retry.sh \
-    sh /tmp/apt-retry.sh install -y --no-install-recommends python3 binutils
+RUN apt-get update && apt-get install -y --no-install-recommends python3 binutils && rm -rf /var/lib/apt/lists/*
 COPY tools/cpu-profiler/download-profiler.py tools/cpu-profiler/download-symbols.py tools/cpu-profiler/verified_download.py /cpu-tools/
 RUN --mount=type=cache,target=/cpu-downloads,sharing=locked CPU_DOWNLOAD_CACHE=/cpu-downloads python3 /cpu-tools/download-profiler.py
 RUN --mount=type=cache,target=/cpu-downloads,sharing=locked CPU_DOWNLOAD_CACHE=/cpu-downloads python3 /cpu-tools/download-symbols.py
@@ -60,8 +59,7 @@ FROM base AS cpu-runtime
 # Ubuntu security fixes the .NET base image doesn't include yet; the image scan blocks fixed HIGH and CRITICAL issues.
 # CI passes the date, so the cached layer is refreshed daily. Here, not in base, so the diagnostics stage stays cached.
 ARG SECURITY_UPDATES_DAY
-RUN --mount=type=bind,source=tools/docker/apt-retry.sh,target=/tmp/apt-retry.sh \
-    sh /tmp/apt-retry.sh upgrade -y
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/publish .
 COPY --from=cpu-diagnostics /cpu-profiler /app/cpu-profiler
