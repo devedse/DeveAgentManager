@@ -130,7 +130,7 @@ public sealed class PiManagedLoginTests(ApiSecurityTests.Manager manager) : ICla
         Assert.False(File.Exists(runtime + "/claude-code/.credentials.json"));
         var second = await accountService.AddAsync(User.BootstrapId, "claude", "Second test-only pi login", AccountKind.Subscription, "test-only-second-oauth", Ct);
         await helper.EnsureOnRunnerAsync(ssh.Runner, second, Ct);
-        await File.WriteAllTextAsync(claude, "#!/bin/sh\nprintf '%s|%s' \"$CLAUDE_CODE_OAUTH_TOKEN\" \"$CLAUDE_CONFIG_DIR\"\n", Ct);
+        await File.WriteAllTextAsync(claude, "#!/bin/sh\nprintf '%s|%s|%s' \"$CLAUDE_CODE_OAUTH_TOKEN\" \"$CLAUDE_CONFIG_DIR\" \"${ANTHROPIC_BASE_URL-unset}\"\n", Ct);
         var multiple = await helper.PreparePiManagedRuntimeAsync(ssh.Runner, agent, new[] { account, second }, Ct);
         var noAmbient = await ssh.Shell.RunAsync(ssh.Runner, $"export PATH=\"{home}/bin:$PATH\"; " + multiple + check, cancellationToken: Ct);
         using var piState = System.Text.Json.JsonDocument.Parse(noAmbient.Output);
@@ -138,9 +138,15 @@ public sealed class PiManagedLoginTests(ApiSecurityTests.Manager manager) : ICla
         foreach (var login in new[] { account, second })
         {
             var wrapper = runtime + "/claude-" + login.Id.ToString("N") + ".sh";
-            var selected = await ssh.Shell.RunAsync(ssh.Runner, $"export PATH=\"{home}/bin:$PATH\"; export CLAUDE_CODE_OAUTH_TOKEN=wrong-account; \"{wrapper}\"", cancellationToken: Ct);
-            selected.EnsureSuccess("Checking a forwarded Claude wrapper");
-            Assert.Equal((login.Id == account.Id ? "test-only-oauth-token" : "test-only-second-oauth") + "|" + runtime + "/claude-" + login.Id.ToString("N"), selected.Output);
+            var expected = (login.Id == account.Id ? "test-only-oauth-token" : "test-only-second-oauth") + "|" + runtime + "/claude-" + login.Id.ToString("N");
+            // pi-claude-code's loopback relay must reach Claude Code (it replays pi's history and reads the response
+            // there); any other backend, inherited or not, is dropped.
+            foreach (var (baseUrl, seen) in new[] { ("http://127.0.0.1:41234/relay-test", "http://127.0.0.1:41234/relay-test"), ("https://proxy.example.com", "unset"), ("", "unset") })
+            {
+                var selected = await ssh.Shell.RunAsync(ssh.Runner, $"export PATH=\"{home}/bin:$PATH\"; export CLAUDE_CODE_OAUTH_TOKEN=wrong-account; export ANTHROPIC_BASE_URL='{baseUrl}'; \"{wrapper}\"", cancellationToken: Ct);
+                selected.EnsureSuccess("Checking a forwarded Claude wrapper");
+                Assert.Equal(expected + "|" + seen, selected.Output);
+            }
             Assert.False(File.Exists(runtime + "/claude-" + login.Id.ToString("N") + "/.credentials.json"));
         }
         var manifest = await File.ReadAllTextAsync(runtime + "/dam-logins.json", Ct);

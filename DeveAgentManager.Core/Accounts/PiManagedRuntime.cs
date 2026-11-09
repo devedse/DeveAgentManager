@@ -37,10 +37,14 @@ public sealed partial class AccountService
             {
                 (await shell.RunAsync(runner, PiManagedRuntimeScript(agent, $"claude-{login.Id:N}"), TimeSpan.FromSeconds(20), ct)).EnsureSuccess("Preparing pi Claude login");
                 // Credentials are read afresh by each CLI child, never exported into pi or copied to its auth.json.
+                // pi-claude-code points each request at its own loopback relay, which replays pi's history and reads
+                // the response; without it the bridge fails ("Unhandled Claude Code stop reason: missing"). Keep only
+                // that relay, never another backend.
                 var wrapper = $"""
                     #!/bin/bash
                     set -e
-                    unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+                    case "$ANTHROPIC_BASE_URL" in http://127.0.0.1:*) ;; *) unset ANTHROPIC_BASE_URL ;; esac
+                    unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
                     unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY
                     . "{EnvironmentFile(login.Id)}"
                     export CLAUDE_CONFIG_DIR="{config}"
