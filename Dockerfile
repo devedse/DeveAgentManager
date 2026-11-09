@@ -47,18 +47,8 @@ RUN dotnet publish "DeveAgentManager/DeveAgentManager.csproj" -c Release -o /app
 FROM base AS cpu-diagnostics
 ARG TARGETARCH
 USER root
-# Mirrors can change indexes between download and verification. Retry the complete verified transaction;
-# never disable package hash verification or continue with a partially downloaded index.
-RUN set -eu; \
-    for attempt in 1 2 3; do \
-      if apt-get update -o APT::Update::Error-Mode=any -o Acquire::Retries=3 \
-          && apt-get install -y --no-install-recommends -o Acquire::Retries=3 python3 binutils; then \
-        rm -rf /var/lib/apt/lists/*; exit 0; \
-      fi; \
-      rm -rf /var/lib/apt/lists/*; \
-      if [ "$attempt" = 3 ]; then exit 1; fi; \
-      sleep "$((attempt * 5))"; \
-    done
+RUN --mount=type=bind,source=tools/docker/apt-retry.sh,target=/tmp/apt-retry.sh \
+    sh /tmp/apt-retry.sh install -y --no-install-recommends python3 binutils
 COPY tools/cpu-profiler/download-profiler.py tools/cpu-profiler/download-symbols.py tools/cpu-profiler/verified_download.py /cpu-tools/
 RUN --mount=type=cache,target=/cpu-downloads,sharing=locked CPU_DOWNLOAD_CACHE=/cpu-downloads python3 /cpu-tools/download-profiler.py
 RUN --mount=type=cache,target=/cpu-downloads,sharing=locked CPU_DOWNLOAD_CACHE=/cpu-downloads python3 /cpu-tools/download-symbols.py
@@ -67,6 +57,11 @@ COPY tools/cpu-profiler/package-symbols.py /cpu-tools/
 RUN python3 /cpu-tools/package-symbols.py
 
 FROM base AS cpu-runtime
+# Ubuntu security fixes the .NET base image doesn't include yet; the image scan blocks fixed HIGH and CRITICAL issues.
+# CI passes the date, so the cached layer is refreshed daily. Here, not in base, so the diagnostics stage stays cached.
+ARG SECURITY_UPDATES_DAY
+RUN --mount=type=bind,source=tools/docker/apt-retry.sh,target=/tmp/apt-retry.sh \
+    sh /tmp/apt-retry.sh upgrade -y
 WORKDIR /app
 COPY --from=build /app/publish .
 COPY --from=cpu-diagnostics /cpu-profiler /app/cpu-profiler

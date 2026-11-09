@@ -121,6 +121,9 @@ jobs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Choose the security updates day
+      id: security_updates
+      run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
     - name: Build production image
       uses: docker/build-push-action@v7
       with:
@@ -132,6 +135,7 @@ jobs:
         labels: ${{ needs.prepare.outputs.image_labels }}
         build-args: |
           BUILD_VERSION=${{ needs.prepare.outputs.version }}
+          SECURITY_UPDATES_DAY=${{ steps.security_updates.outputs.day }}
         provenance: false
         sbom: false
         cache-from: type=gha,scope=production-${{ matrix.arch }}
