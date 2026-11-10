@@ -30,6 +30,22 @@ def git(repo, *args, check=True, text=True):
     return result
 
 
+# What git says when the remote wants a login it didn't get (no token, or one without access to the repository).
+REFUSED_LOGIN = ('could not read Username', 'could not read Password', 'Authentication failed', 'Repository not found')
+
+
+def remote(repo, advice, *args):
+    """git against the remote, with the owner's own token (GIT_CONFIG_GLOBAL). A refused login is explained."""
+    result = git(repo, *args, check=False)
+    if result.returncode == 0:
+        return result
+    error = result.stderr.strip()
+    if any(sign in error for sign in REFUSED_LOGIN):
+        raise Refused('The remote repository refused access. Add a GitHub token with access to it in My settings, '
+                      'Git and GitHub' + advice + '. (' + error.splitlines()[-1] + ')')
+    raise Refused(error or 'git ' + args[0] + ' failed.')
+
+
 def out(repo, *args):
     return git(repo, *args).stdout.strip()
 
@@ -251,8 +267,7 @@ def create(c):
                 git(temporary, 'config', '--add', key, value)
         commit, branch = c['Commit'], c.get('NewBranch') or c.get('Branch')
         if c.get('Pull'):
-            # Uses the Runner user's own Git credentials.
-            git(temporary, 'fetch', '--quiet', c['Remote'])
+            remote(temporary, ', or turn off Pull first', 'fetch', '--quiet', c['Remote'])
             commit = out(temporary, 'rev-parse', '--verify', 'refs/remotes/' + c['Upstream'] + '^{commit}')
         if c['Start'] == 'ExactCopy':
             if branch:
@@ -468,7 +483,7 @@ def pull(c):
         raise Refused('This branch has no remote branch to update from.')
     if int(out(path, 'rev-list', '--count', '@{upstream}..HEAD')) > 0:
         raise Refused('This workspace has commits that are not pushed. Push them before updating.')
-    git(path, 'pull', '--quiet', '--ff-only')
+    remote(path, '', 'pull', '--quiet', '--ff-only')
     print(json.dumps(dict(Branch=current_branch(path))))
 
 

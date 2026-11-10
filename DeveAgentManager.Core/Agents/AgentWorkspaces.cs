@@ -34,14 +34,20 @@ public sealed partial class AgentService
     /// <summary>Where a project's workspaces go: /work/app's are in /work/app.workspaces.</summary>
     public static string WorkspaceContainer(string main) => main.TrimEnd('/') + ".workspaces";
 
-    internal static string WorkspaceCommand(string phase, object data, int? timeoutSeconds = null) =>
-        (timeoutSeconds is { } seconds ? $"timeout {seconds} " : "") + "python3 - " + ShellQuote.Quote(phase) + " "
+    /// <param name="gitUser">For steps that reach the remote: whose own git config and GitHub token to use. The shared
+    /// Runner settings have no credentials (RunnerUsers), so without it a private repository refuses the pull.</param>
+    internal static string WorkspaceCommand(string phase, object data, int? timeoutSeconds = null, Guid? gitUser = null) =>
+        (gitUser is { } user ? $"export GIT_CONFIG_GLOBAL=\"{Runners.RunnerUsers.Folder(user)}/gitconfig\"; " : "")
+        // Never wait for a username on a terminal that isn't there: fail at once with a reason.
+        + "export GIT_TERMINAL_PROMPT=0; "
+        + (timeoutSeconds is { } seconds ? $"timeout {seconds} " : "") + "python3 - " + ShellQuote.Quote(phase) + " "
         + ShellQuote.Quote(JsonSerializer.Serialize(data, WorkspaceJson)) + " <<'DAM_WORKSPACE'\n" + WorkspaceScript + "\nDAM_WORKSPACE";
 
     /// <summary>Runs a workspace phase. Its refusals (exit code 3) are messages for the person, not failures.</summary>
-    private async Task<JsonElement> WorkspacePhaseAsync(Runner runner, string phase, object data, TimeSpan timeout, CancellationToken ct, int? timeoutSeconds = null)
+    private async Task<JsonElement> WorkspacePhaseAsync(Runner runner, string phase, object data, TimeSpan timeout, CancellationToken ct, int? timeoutSeconds = null,
+        Guid? gitUser = null)
     {
-        var result = await shell.RunAsync(runner, WorkspaceCommand(phase, data, timeoutSeconds), timeout, ct);
+        var result = await shell.RunAsync(runner, WorkspaceCommand(phase, data, timeoutSeconds, gitUser), timeout, ct);
         if (result.ExitCode == 3) throw new WorkspaceRefusedException(result.Error.Trim());
         result.EnsureSuccess("Workspace " + phase);
         using var document = JsonDocument.Parse(result.Output.Trim().Split('\n')[^1]);
@@ -190,7 +196,7 @@ public sealed partial class AgentService
         {
             var result = creation.Reuse is { } reuse
                 ? await WorkspacePhaseAsync(runner, "adopt", new { reuse.Path, reuse.Token, NewToken = agent.Id.ToString("N") }, TimeSpan.FromMinutes(1), ct)
-                : await WorkspacePhaseAsync(runner, "create", creation.Plan!, TimeSpan.FromMinutes(30), ct);
+                : await WorkspacePhaseAsync(runner, "create", creation.Plan!, TimeSpan.FromMinutes(30), ct, gitUser: creation.Agent.OwnerId);
             prepared = true;
             agent.RepositoryBranch = Text(result, "Branch") ?? agent.RepositoryBranch;
             await sessions.AttachToAgentAsync(runner, agent, creation.Resume?.Id, ct);
@@ -437,5 +443,5 @@ public sealed partial class AgentService
 
     /// <summary>Pulls a workspace's branch before a new conversation, when it has nothing uncommitted or unpushed.</summary>
     private Task UpdateWorkspaceAsync(Runner runner, Agent agent, CancellationToken ct) =>
-        WorkspacePhaseAsync(runner, "pull", new { Path = agent.WorkingDirectory }, TimeSpan.FromMinutes(3), ct);
+        WorkspacePhaseAsync(runner, "pull", new { Path = agent.WorkingDirectory }, TimeSpan.FromMinutes(3), ct, gitUser: agent.OwnerId);
 }
