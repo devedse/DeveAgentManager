@@ -52,7 +52,10 @@ export interface PetArtModule {
 
 Pointer capture keeps the gesture attached to the pet when the pointer leaves
 its bounds. Once movement exceeds seven pixels, the host shows the scared
-`drag` pose and makes the screen position follow the pointer.
+`drag` pose and makes the screen position follow the pointer. While the pointer
+is over "Drop here to hide", the target lights up (`over-hide`) and the pet
+cries (`sad`) from that moment until it leaves the target or is dropped there.
+The target sits behind the pet, so the pet stays visible on top of it.
 
 Source: `pet-host.ts`, inside `initialize`.
 
@@ -64,7 +67,11 @@ body.addEventListener("pointermove", e => {
         drag.moved = true; h.dragging = true; h.dragAt = h.time;
         clearTimeout(longPress); root.classList.add("dragging");
     }
-    if (drag.moved) { h.x = drag.x + dx; h.y = drag.y + dy; clamp(h); }
+    if (drag.moved) {
+        h.x = drag.x + dx; h.y = drag.y + dy; clamp(h);
+        const over = overHideTarget(root, e.clientX, e.clientY);
+        if (over !== h.overHide) { h.overHide = over; h.overHideAt = h.time; root.classList.toggle("over-hide", over); }
+    }
     drag.velocity.add(h.x, h.y, e.timeStamp);
     if (drag.moved) start(h);
 }, { signal });
@@ -202,13 +209,13 @@ if (h.flight) {
 ```
 
 The host then supplies the chosen pose to the renderer and schedules another
-frame. Active dragging overrides the ordinary pose; the other expressions here
-also account for hiding threats and low happiness.
+frame. Active dragging overrides the ordinary pose (crying over the hide target);
+the other expressions here also account for hiding threats and low happiness.
 
 ```typescript
-const motion = h.dragging && !h.snapshot!.needsAdoption ? "drag" : h.threatened && !h.snapshot!.needsAdoption ? "sad" : h.motion === "working" ? "idle" : h.motion === "idle" && h.snapshot!.happiness < 25 ? "sad" : h.motion;
+const motion = h.dragging && !h.snapshot!.needsAdoption ? (h.overHide ? "sad" : "drag") : h.threatened && !h.snapshot!.needsAdoption ? "sad" : h.motion === "working" ? "idle" : h.motion === "idle" && h.snapshot!.happiness < 25 ? "sad" : h.motion;
 h.root.dataset.motion = motion;
-h.renderer!.pose({ time: reduced ? 0 : h.time, motion, elapsed: reduced ? .8 : h.time - (h.dragging ? h.dragAt : h.motionAt), gaze: reduced ? { x: 0, y: 0 } : h.gaze,
+h.renderer!.pose({ time: reduced ? 0 : h.time, motion, elapsed: reduced ? .8 : h.time - (h.dragging ? (h.overHide ? h.overHideAt : h.dragAt) : h.motionAt), gaze: reduced ? { x: 0, y: 0 } : h.gaze,
     animate: !reduced, showRig: false, progress: h.snapshot!.stageProgress, transitioning: h.targetStage !== undefined, velocity: h.velocity });
 if (!reduced) h.frame = requestAnimationFrame(draw);
 ```

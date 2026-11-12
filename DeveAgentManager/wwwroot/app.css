@@ -4092,8 +4092,11 @@ span.skeleton { display: inline-block; vertical-align: middle; }
 .dam-pet-menu > button:hover,.dam-pet-menu > a:hover{background:var(--dam-bg)}
 .dam-pet-summary{display:flex;flex-direction:column;gap:3px;padding:8px 10px;border-bottom:1px solid var(--dam-border);margin-bottom:4px}
 .dam-pet-summary span{font-size:11px;color:var(--dam-muted)}
-.dam-pet-hide-target{display:none;position:fixed;bottom:12px;left:50%;transform:translateX(-50%);padding:14px 18px;border:2px dashed var(--dam-border);border-radius:12px;background:var(--dam-surface);color:var(--dam-text);font-size:12px}
+/* Behind the dragged Damagochi (z-index within the host), and lit up while it is held over the target. */
+.dam-pet-hide-target{display:none;position:fixed;z-index:-1;bottom:12px;left:50%;transform:translateX(-50%);padding:14px 18px;border:2px dashed var(--dam-border);border-radius:12px;background:var(--dam-surface);color:var(--dam-text);font-size:12px;transition:transform .15s ease-out,border-color .15s,background-color .15s,box-shadow .15s}
 .dam-pet-host.dragging .dam-pet-hide-target{display:block}
+.dam-pet-host.over-hide .dam-pet-hide-target{border-style:solid;border-color:var(--dam-primary);background:color-mix(in srgb,var(--dam-primary) 22%,var(--dam-surface));color:var(--dam-primary-text);box-shadow:0 8px 28px color-mix(in srgb,var(--dam-primary) 35%,transparent);transform:translateX(-50%) translateY(-4px) scale(1.08)}
+@media(prefers-reduced-motion:reduce){.dam-pet-hide-target{transition:none}.dam-pet-host.over-hide .dam-pet-hide-target{transform:translateX(-50%)}}
 .dam-pet-stats{display:flex;gap:16px;flex-wrap:wrap;margin-top:16px;color:var(--dam-muted);font-size:13px}
 .dam-pet-host[data-art-error]:after{content:attr(data-art-error);display:block;background:var(--dam-surface);color:var(--dam-text);font-size:11px;padding:8px;border-radius:8px}
 @media(prefers-reduced-motion:reduce){.dam-pet-host *{scroll-behavior:auto}}

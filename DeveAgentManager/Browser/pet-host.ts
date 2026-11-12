@@ -16,6 +16,8 @@ interface Host {
     threatened: boolean; nextIdleAt: number; retiringAt?: number; retiringReduced?: boolean; requestedRenderer?: string; adopting?: boolean;
     departure?: { at: number; expected: string; resolve: () => void };
     flight?: PetFlight; slide?: PetSlide; velocity?: Velocity; dragging: boolean; dragAt: number;
+    /** Dragged over "Drop here to hide": it cries from the moment the pointer arrives. */
+    overHide: boolean; overHideAt: number;
 }
 const hosts = new WeakMap<HTMLElement, Host>();
 const artModules = new Map<string, Promise<PetArtModule>>();
@@ -24,7 +26,7 @@ const durations: Record<string, number> = { happy: 3.3, wave: 3.2, hop: 3.15, pe
 export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNetPet): void {
     const h: Host = { root, mount, dotnet, abort: new AbortController(), visible: false, frame: 0, time: 0, last: 0,
         motion: "idle", motionAt: 0, stage: -1, stageAt: 0, key: "", loadVersion: 0, gaze: { x: 0, y: 0 }, x: 0, y: 0,
-        threatened: false, nextIdleAt: 8 + Math.random() * 10, dragging: false, dragAt: 0 };
+        threatened: false, nextIdleAt: 8 + Math.random() * 10, dragging: false, dragAt: 0, overHide: false, overHideAt: 0 };
     hosts.set(root, h);
     const body = root.querySelector<HTMLElement>(".dam-pet-body")!;
     const signal = h.abort.signal;
@@ -34,7 +36,7 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
     const cancel = () => {
         clearTimeout(longPress);
         if (drag) { suppressClick ||= drag.moved; if (drag.moved) savePosition(h); if (body.hasPointerCapture(drag.id)) body.releasePointerCapture(drag.id); }
-        drag = null; h.dragging = false; root.classList.remove("dragging"); start(h);
+        drag = null; h.dragging = false; h.overHide = false; root.classList.remove("dragging", "over-hide"); start(h);
     };
     body.addEventListener("pointerdown", e => {
         if (e.button !== 0) return;
@@ -52,7 +54,11 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
             drag.moved = true; h.dragging = true; h.dragAt = h.time;
             clearTimeout(longPress); root.classList.add("dragging");
         }
-        if (drag.moved) { h.x = drag.x + dx; h.y = drag.y + dy; clamp(h); }
+        if (drag.moved) {
+            h.x = drag.x + dx; h.y = drag.y + dy; clamp(h);
+            const over = overHideTarget(root, e.clientX, e.clientY);
+            if (over !== h.overHide) { h.overHide = over; h.overHideAt = h.time; root.classList.toggle("over-hide", over); }
+        }
         drag.velocity.add(h.x, h.y, e.timeStamp);
         if (drag.moved) start(h);
     }, { signal });
@@ -60,8 +66,7 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
         if (!drag || e.pointerId !== drag.id) return;
         const moved = drag.moved;
         const velocity = drag.velocity.release(h.x, h.y, e.timeStamp);
-        const target = root.querySelector<HTMLElement>(".dam-pet-hide-target")!.getBoundingClientRect();
-        const dismiss = moved && e.clientX >= target.left && e.clientX <= target.right && e.clientY >= target.top && e.clientY <= target.bottom;
+        const dismiss = moved && overHideTarget(root, e.clientX, e.clientY);
         suppressClick = moved; cancel();
         if (dismiss) call("Dismiss");
         else if (moved && !reducedMotion(h) && !h.snapshot?.needsAdoption && h.targetStage === undefined) {
@@ -92,6 +97,11 @@ export function initialize(root: HTMLElement, mount: HTMLElement, dotnet: DotNet
     window.visualViewport?.addEventListener("resize", () => clamp(h), { signal });
     document.addEventListener("visibilitychange", () => { h.last = 0; if (document.hidden) { cancel(); stopMovement(h); finishDeparture(h, true); cancelAnimationFrame(h.frame); h.frame = 0; } else start(h); }, { signal });
     matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => { if (reducedMotion(h)) stopMovement(h); start(h); }, { signal });
+}
+/** The pointer is over the hide target, which is shown only while dragging. */
+function overHideTarget(root: HTMLElement, x: number, y: number): boolean {
+    const target = root.querySelector<HTMLElement>(".dam-pet-hide-target")!.getBoundingClientRect();
+    return target.width > 0 && x >= target.left && x <= target.right && y >= target.top && y <= target.bottom;
 }
 function savePosition(h: Host): void {
     try { localStorage.setItem(h.key, JSON.stringify({ x: h.x / innerWidth, y: h.y / innerHeight })); } catch { /* Storage may be unavailable. */ }
@@ -261,9 +271,9 @@ function start(h: Host): void {
             const actions = ["peck", "peck", "walk", "wave", "hop"];
             h.motion = actions[Math.floor(Math.random() * actions.length)]; h.motionAt = h.time; h.nextIdleAt = h.time + 12 + Math.random() * 14;
         }
-        const motion = h.dragging && !h.snapshot!.needsAdoption ? "drag" : h.threatened && !h.snapshot!.needsAdoption ? "sad" : h.motion === "working" ? "idle" : h.motion === "idle" && h.snapshot!.happiness < 25 ? "sad" : h.motion;
+        const motion = h.dragging && !h.snapshot!.needsAdoption ? (h.overHide ? "sad" : "drag") : h.threatened && !h.snapshot!.needsAdoption ? "sad" : h.motion === "working" ? "idle" : h.motion === "idle" && h.snapshot!.happiness < 25 ? "sad" : h.motion;
         h.root.dataset.motion = motion;
-        h.renderer!.pose({ time: reduced ? 0 : h.time, motion, elapsed: reduced ? .8 : h.time - (h.dragging ? h.dragAt : h.motionAt), gaze: reduced ? { x: 0, y: 0 } : h.gaze,
+        h.renderer!.pose({ time: reduced ? 0 : h.time, motion, elapsed: reduced ? .8 : h.time - (h.dragging ? (h.overHide ? h.overHideAt : h.dragAt) : h.motionAt), gaze: reduced ? { x: 0, y: 0 } : h.gaze,
             animate: !reduced, showRig: false, progress: h.snapshot!.stageProgress, transitioning: h.targetStage !== undefined, velocity: h.velocity });
         if (!reduced) h.frame = requestAnimationFrame(draw);
     };

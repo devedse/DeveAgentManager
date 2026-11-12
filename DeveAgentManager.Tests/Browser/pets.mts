@@ -162,7 +162,23 @@ try {
         await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2); await page.mouse.down();
         await page.mouse.move(bounds.x + bounds.width / 2 + 20, bounds.y + bounds.height / 2, { steps: 3 });
         const target = (await page.locator('.dam-pet-hide-target').boundingBox())!;
-        await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 8 }); await page.mouse.up();
+        const hovering = (over: boolean) => page.waitForFunction(over => {
+            const host = document.querySelector<HTMLElement>('.dam-pet-host')!;
+            return host.classList.contains('over-hide') === over && host.dataset.motion === (over ? 'sad' : 'drag');
+        }, over);
+        await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 8 });
+        // Over the target: it lights up, the Damagochi cries at once and stays drawn on top of the target.
+        await hovering(true);
+        assert.equal(await page.locator('.dam-pet-hide-target').evaluate(node => getComputedStyle(node).zIndex), '-1');
+        assert.notEqual(await page.locator('.dam-pet-hide-target').evaluate(node => getComputedStyle(node).borderStyle), 'dashed');
+        await page.waitForTimeout(300); // Let the highlight transition finish for the screenshot.
+        await page.screenshot({ path: '/tmp/damagochi-hide-hover.png' });
+        // Moving off it again restores the dragged pose; nothing is hidden until the drop.
+        await page.mouse.move(target.x + target.width / 2, target.y - 160, { steps: 4 });
+        await hovering(false);
+        await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 4 });
+        await hovering(true);
+        await page.mouse.up();
     }, true, [otherScreen]);
     assert.ok((await api(context, 'me/pet')).pet.snoozedUntil);
     await api(context, 'me/pet/interact', 'POST', { action: 'wake' }); await pet.waitFor(); await otherPet.waitFor();
