@@ -104,7 +104,7 @@
     private string? _keptError;
 
     protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.Kind is ManagerEventKind.AgentChanged or ManagerEventKind.AgentRemoved
-        or ManagerEventKind.SessionChanged or ManagerEventKind.SessionRemoved;
+        or ManagerEventKind.SessionChanged or ManagerEventKind.SessionRemoved or ManagerEventKind.SettingsChanged or ManagerEventKind.AccessChanged;
 
     protected override async Task LoadAsync()
     {

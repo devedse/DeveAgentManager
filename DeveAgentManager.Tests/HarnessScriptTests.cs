@@ -335,9 +335,11 @@ public sealed class HarnessScriptTests : IDisposable
     }
 
     [Theory(Timeout = 30000)]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Codex_VoiceServerAndTerminalShareOneOwnedLifetime(bool forceKill)
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, true)]
+    [InlineData(false, true, false)]
+    public async Task Codex_VoiceServerAndTerminalShareOneOwnedLifetime(bool forceKill, bool hasTurn, bool transferred)
     {
         if (!OperatingSystem.IsLinux() || !HasTools() || !Which("python3")) return;
         var harness = new CodexHarness();
@@ -371,8 +373,15 @@ public sealed class HarnessScriptTests : IDisposable
         var agentId = Guid.NewGuid();
         const string sessionId = "11111111-2222-3333-4444-555555555555";
         const string instructions = "Keep `literal` and $(touch injected) unchanged.\nSecond line.";
+        if (hasTurn)
+        {
+            var directory = Path.Combine(_home, ".codex", "sessions", "2026", "11", "13");
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, $"rollout-test-{sessionId}.jsonl"),
+                """{"type":"turn_context","payload":{"model":"gpt-6-sol","effort":"low"}}""" + "\n");
+        }
         var start = new ProcessStartInfo("bash", ["-c", "cd " + _work + "\n" + harness.BuildLaunchScript(
-            new(sessionId, "voice-test", _work, Model: "gpt-6-sol", Instructions: instructions, AgentId: agentId))])
+            new(sessionId, "voice-test", _work, Model: "gpt-6-sol", Effort: "xhigh", Instructions: instructions, Transferred: transferred, AgentId: agentId))])
         { RedirectStandardOutput = true, RedirectStandardError = true };
         start.Environment["HOME"] = _home;
         start.Environment["PATH"] = _bin + ":" + Environment.GetEnvironmentVariable("PATH");
@@ -393,11 +402,15 @@ public sealed class HarnessScriptTests : IDisposable
             var server = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(_home, "server-args"), TestContext.Current.CancellationToken))!.AsArray().Select(n => (string)n!).ToArray();
             Assert.Contains("approval_policy=\"never\"", server);
             Assert.Contains("sandbox_mode=\"danger-full-access\"", server);
-            Assert.Contains("model=\"gpt-6-sol\"", server);
+            var applyDefaults = transferred || !hasTurn;
+            Assert.Equal(applyDefaults, server.Contains("model=\"gpt-6-sol\""));
+            Assert.Equal(applyDefaults, server.Contains("model_reasoning_effort=\"xhigh\""));
             var passed = server.Single(s => s.StartsWith("developer_instructions=", StringComparison.Ordinal));
             Assert.Equal(instructions, Python("import sys,tomllib; sys.stdout.write(tomllib.loads(sys.argv[1])['developer_instructions'])", passed));
             var terminal = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(_home, "terminal-args"), TestContext.Current.CancellationToken))!.AsArray().Select(n => (string)n!).ToArray();
-            Assert.Equal(new[] { "--remote", "unix://" + socket, "resume", sessionId }, terminal);
+            Assert.Equal(applyDefaults
+                ? new[] { "--remote", "unix://" + socket, "-m", "gpt-6-sol", "-c", "model_reasoning_effort=\"xhigh\"", "resume", sessionId }
+                : new[] { "--remote", "unix://" + socket, "resume", sessionId }, terminal);
             Assert.False(File.Exists(Path.Combine(_work, "injected")));
             if (forceKill) process.Kill();
             else

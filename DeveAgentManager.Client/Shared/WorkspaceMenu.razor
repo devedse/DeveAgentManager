@@ -70,7 +70,7 @@
             @if (WorkspaceGroups.Running(agent))
             { <MudIconButton Icon="@Icons.Material.Rounded.Stop" Size="Size.Small" aria-label="@($"Stop {WorkspaceGroups.WorkspaceName(agent)}")" title="Stop" Disabled="@(_busy.Contains(agent.Id) || agent.MovePending)" OnClick="() => RunAsync(agent, () => Api.StopAgentAsync(agent.Id))" /> }
             else
-            { <MudIconButton Icon="@Icons.Material.Rounded.PlayArrow" Color="Color.Success" Size="Size.Small" aria-label="@($"Start {WorkspaceGroups.WorkspaceName(agent)}")" title="Start" Disabled="@(_busy.Contains(agent.Id) || agent.MovePending || agent.RunnerState != RunnerState.Ready)" OnClick="() => RunAsync(agent, () => Api.StartAgentAsync(agent.Id))" /> }
+            { <MudIconButton Icon="@Icons.Material.Rounded.PlayArrow" Color="Color.Success" Size="Size.Small" aria-label="@($"Start {WorkspaceGroups.WorkspaceName(agent)}")" title="@(AgentTable.StartProblem(agent) ?? "Start")" Disabled="@(_busy.Contains(agent.Id) || AgentTable.StartProblem(agent) is not null)" OnClick="() => RunAsync(agent, () => Api.StartAgentAsync(agent.Id))" /> }
         }
     </div>;
 

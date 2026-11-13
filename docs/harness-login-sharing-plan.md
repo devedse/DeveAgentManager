@@ -119,6 +119,11 @@ Before confirmation, show which of the target user's agents lose their effective
 may be interrupted. Other users' agents with valid access continue. Do not automatically restart affected
 agents with another credential. A stopped agent explains that a permitted login must be chosen.
 
+The stopped agent page offers **Change harness or login…**, including when the old login has been deleted.
+Start and Restart use server-reported login availability on the agent page, lists and workspace menu. A pending
+stop has a separate explanation; switching verifies the old harness stopped before clearing that pending work.
+Status polling preserves the access-loss explanation instead of replacing it with a generic exit-code message.
+
 Commit access changes and persistent enforcement work together. Recheck access immediately before credential
 distribution and launch, using binding/access revisions so a concurrent grant removal wins over a stale
 launch or reconnect. Reconnect must recheck Manage both while the terminal is open and before saving its result.

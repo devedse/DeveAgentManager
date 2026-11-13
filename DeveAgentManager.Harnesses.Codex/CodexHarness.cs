@@ -130,7 +130,7 @@ public sealed class CodexHarness(HttpMessageHandler? tokenHandler = null) : IHar
             if codex app-server proxy --help >/dev/null 2>&1; then
               server_defaults=()
               if {{starts}}; then server_defaults=({{serverDefaults.TrimStart()}}); fi
-              exec python3 -I "{{VoiceLauncherFile}}" {{ShellQuote.Quote(agentId.ToString("N"))}} {{id}}{{instructions}} "${server_defaults[@]}"
+              exec python3 -I "{{VoiceLauncherFile}}" {{ShellQuote.Quote(agentId.ToString("N"))}} {{id}}{{instructions}} "${server_defaults[@]}" -- "${start[@]}"
             fi
             """ : "";
         // Without its background server: that listens on a socket in CODEX_HOME, and an account's folder is too long a

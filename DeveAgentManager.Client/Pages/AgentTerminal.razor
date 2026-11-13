@@ -57,8 +57,11 @@
             {
                 <span class="toolbar-item" data-toolbar="limit"><AgentLimitButton @key="AgentId" AgentId="AgentId" Overflowed="@Overflowed("limit")" /></span>
                 <span class="toolbar-item terminal-quick-desktop" data-toolbar="quick"><QuickCommandMenu AgentId="AgentId" HarnessId="@_agent.HarnessId" Disabled="_busy" /></span>
-                <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" />
                 <span class="toolbar-item" data-toolbar="viewers"><AgentViewers AgentId="_agent.Id" OwnTty="@_terminal?.Tty" Harness="@_agent.HarnessId" /></span>
+            }
+            @if (write)
+            {
+                <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" Disabled="_busy" />
             }
             @if (read)
             {
@@ -152,7 +155,7 @@
                                 <MudMenuItem Icon="@(_vsCodeIcon ?? Icons.Material.Rounded.Code)" Href="@($"agents/{_agent.Id}/vscode")">VS Code</MudMenuItem>
                             }
                             <MudDivider Class="my-1" />
-                            <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="_busy" OnClick="RestartAsync">Restart the harness</MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="@(_busy || AgentTable.StartProblem(_agent) is not null)" title="@AgentTable.StartProblem(_agent)" OnClick="RestartAsync">Restart the harness</MudMenuItem>
                             <MudMenuItem Icon="@Icons.Material.Rounded.Stop" Disabled="_busy" OnClick="StopAsync">Stop the agent</MudMenuItem>
                         }
                     </ChildContent>
@@ -211,12 +214,13 @@
     {
         <div class="terminal-stopped">
             <EmptyState Icon="@Icons.Material.Rounded.PauseCircle" Title="@($"'{_agent.Name}' is not running")"
-                        Text="@(_agent.Access >= AgentAccess.Write ? _agent.StateMessage ?? "Start it to continue. The harness resumes the same conversation." : $"{_agent.OwnerName} or someone with read-write access can start it.")">
+                        Text="@(_agent.Access >= AgentAccess.Write ? _agent.LoginStatus?.Reason ?? _agent.StateMessage ?? "Start it to continue. The harness resumes the same conversation." : $"{_agent.OwnerName} or someone with read-write access can start it.")">
                 @if (_agent.Access >= AgentAccess.Write)
                 {
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" Disabled="_busy || _agent.RunnerState != RunnerState.Ready" OnClick="StartAsync">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlayArrow" Disabled="@(_busy || AgentTable.StartProblem(_agent) is not null)" title="@AgentTable.StartProblem(_agent)" OnClick="StartAsync">
                         @(_agent.RunnerState == RunnerState.Ready ? "Start agent" : $"Runner is {_agent.RunnerState.ToString().ToLowerInvariant()}")
                     </MudButton>
+                    <AgentSwitchMenu Agent="_agent" Switched="OnSwitchedAsync" Recovery="true" Disabled="_busy" />
                 }
             </EmptyState>
         </div>
@@ -324,6 +328,7 @@
 
     // Its own Runner's changes (state, harnesses, tools), not every Runner's.
     protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.AgentId == AgentId
+        || managerEvent.Kind is ManagerEventKind.SettingsChanged or ManagerEventKind.AccessChanged
         || managerEvent.Kind == ManagerEventKind.RunnerChanged && (managerEvent.RunnerId is null || managerEvent.RunnerId == _agent?.RunnerId);
 
     protected override async Task LoadAsync()

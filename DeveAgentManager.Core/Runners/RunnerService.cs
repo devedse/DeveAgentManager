@@ -77,7 +77,7 @@ public sealed partial class RunnerService(
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var runners = await WithAccess(AccessControl.VisibleRunners(db, user)).OrderBy(r => r.Name).ToListAsync(cancellationToken);
-        await DeveAgentManager.Core.Agents.AgentAccountNames.LoadAsync(db, runners.SelectMany(r => r.Agents), cancellationToken);
+        await agents.LoadDisplayAsync(db, runners.SelectMany(r => r.Agents), cancellationToken);
         return runners;
     }
 
@@ -85,7 +85,7 @@ public sealed partial class RunnerService(
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var runner = await WithAccess(db.Runners).FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken);
-        if (runner is not null) await DeveAgentManager.Core.Agents.AgentAccountNames.LoadAsync(db, runner.Agents, cancellationToken);
+        if (runner is not null) await agents.LoadDisplayAsync(db, runner.Agents, cancellationToken);
         return runner;
     }
 

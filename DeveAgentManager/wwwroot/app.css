@@ -1328,6 +1328,8 @@ a {
     gap: 8px;
 }
 
+.terminal-stopped .empty-state-actions { flex-wrap: wrap; justify-content: center; }
+
 /* ---------- Dialogs & forms ---------- */
 
 .dialog-title {

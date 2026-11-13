@@ -219,7 +219,11 @@ public sealed record AgentDto(
     string? ProjectName = null,
     bool IsClone = false,
     bool WorkspaceCreationPending = false,
-    int Workspaces = 0);
+    int Workspaces = 0,
+    AgentLoginStatusDto? LoginStatus = null);
+
+/// <summary>Whether the configured login can be used on the next start, independently of Runner availability.</summary>
+public sealed record AgentLoginStatusDto(bool CanStart, string? Reason = null, bool StopPending = false);
 
 /// <summary>
 /// An agent's task list (dam-tools tasks), shown next to its terminal. <see cref="Revision"/> grows with every change,

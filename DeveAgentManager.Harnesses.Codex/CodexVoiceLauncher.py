@@ -13,6 +13,8 @@ import time
 
 os.umask(0o077)
 agent, session, *options = sys.argv[1:]
+separator = options.index('--')
+options, terminal_options = options[:separator], options[separator + 1:]
 state = Path.home() / '.deveagentmanager' / 'codex-voice' / agent
 state.mkdir(parents=True, exist_ok=True)
 owner = (state / 'owner.lock').open('w')
@@ -71,9 +73,10 @@ try:
                                           nativeAudioSocket=str(native_audio), tmuxSocket=os.environ.get('TMUX', '').split(',')[0],
                                           tmuxPane=os.environ.get('TMUX_PANE', ''))))
         pending.replace(marker)
-        # The server owns permissions and launch instructions. Remote resume rejects CLI permission overrides.
+        # The server owns permissions and instructions. The TUI must also send model/effort overrides on
+        # thread/resume: server defaults alone lose to the resumed history's effort (including a missing effort).
         terminal_env = dict(os.environ, DAM_NATIVE_VOICE_SOCKET=str(native_audio))
-        terminal = subprocess.Popen([terminal_executable, '--remote', 'unix://' + str(socket), 'resume', session], env=terminal_env, preexec_fn=parent_death)
+        terminal = subprocess.Popen([terminal_executable, '--remote', 'unix://' + str(socket), *terminal_options, 'resume', session], env=terminal_env, preexec_fn=parent_death)
         children.append(terminal)
         while not stopping and terminal.poll() is None and server.poll() is None:
             time.sleep(0.1)

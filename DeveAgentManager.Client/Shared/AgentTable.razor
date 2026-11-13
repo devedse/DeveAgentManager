@@ -43,7 +43,7 @@ else
                             }
                             else
                             {
-                                <span>Account on start: <AccountIdentity Username="@agent.AccountUsername" Name="@(agent.AccountName ?? "Default")" /></span>
+                                <span>Account on start: <AccountIdentity Username="@agent.AccountUsername" Name="@(agent.AccountName ?? (agent.LoginStatus is { CanStart: false } ? "Unavailable login" : "Default"))" /></span>
                             }
                             @if (CommitsAs(agent) is { } git)
                             {
@@ -86,8 +86,8 @@ else
                     }
                     else
                     {
-                        <MudTooltip Text="@(agent.State == AgentState.Exited ? "Restart (resumes the conversation)" : "Start (resumes the conversation)")">
-                            <MudIconButton Icon="@Icons.Material.Rounded.PlayArrow" Color="Color.Success" Size="Size.Small" Disabled="agent.RunnerState != RunnerState.Ready"
+                        <MudTooltip Text="@(StartProblem(agent) ?? (agent.State == AgentState.Exited ? "Restart (resumes the conversation)" : "Start (resumes the conversation)"))">
+                            <MudIconButton Icon="@Icons.Material.Rounded.PlayArrow" Color="Color.Success" Size="Size.Small" Disabled="@(StartProblem(agent) is not null)"
                                            OnClick="@(() => StartAsync(agent, false))" />
                         </MudTooltip>
                     }
@@ -101,7 +101,7 @@ else
                                 {
                                     <MudMenuItem Icon="@Icons.Material.Rounded.Code" Href="@($"agents/{agent.Id}/vscode")">Open in VS Code</MudMenuItem>
                                 }
-                                <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="@(() => StartAsync(agent, true))">Restart</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Rounded.RestartAlt" Disabled="@(StartProblem(agent) is not null)" title="@StartProblem(agent)" OnClick="@(() => StartAsync(agent, true))">Restart</MudMenuItem>
                                 <MudMenuItem Icon="@Icons.Material.Rounded.Image" Disabled="agent.RunnerState != RunnerState.Ready" OnClick="() => PickIconAsync(agent)">Icon...</MudMenuItem>
                             }
                             @* Owners share it; others see who else has it and can leave. Sharing covers the whole project, so
@@ -186,6 +186,10 @@ else
 
     public static string GitIdentityTitle(AgentGitIdentityDto identity) =>
         $"Commits and pushes with the git identity and GitHub token of {identity.DisplayName ?? "a deleted user"}, whoever prompts it";
+
+    public static string? StartProblem(AgentDto agent) => agent.LoginStatus?.Reason
+        ?? (agent.MovePending ? "Finish moving this agent before starting it."
+            : agent.RunnerState != RunnerState.Ready ? $"Runner is {agent.RunnerState.ToString().ToLowerInvariant()}." : null);
 
     private async Task StartAsync(AgentDto agent, bool restart)
     {

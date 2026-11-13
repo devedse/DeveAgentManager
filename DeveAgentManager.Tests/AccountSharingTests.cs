@@ -87,6 +87,30 @@ public sealed class AccountSharingTests : IClassFixture<ApiSecurityTests.Manager
     }
 
     [Fact]
+    public async Task AgentAvailabilityChecksTheOwnersCurrentGrantAndDefaultBeforeEnforcement()
+    {
+        var alice = await UserAsync(); var bob = await UserAsync();
+        var login = await LoginAsync(alice);
+        await _accounts.SetGrantAsync(alice, login.Id, bob.Id, AccountAccess.Use, Ct);
+        await using var db = await _factory.CreateDbContextAsync(Ct);
+        var runner = new Runner { Name = "r" + Guid.NewGuid().ToString("N"), OwnerId = User.BootstrapId, State = RunnerState.Stopped };
+        var agent = new Agent { Id = Guid.NewGuid(), Runner = runner, OwnerId = bob.Id, Name = "availability", HarnessId = "claude", State = AgentState.Stopped };
+        db.Agents.Add(agent); await db.SaveChangesAsync(Ct);
+        var agents = _manager.Services.GetRequiredService<DeveAgentManager.Core.Agents.AgentService>();
+        Assert.Equal(AccountService.LoginMissing, (await agents.GetAsync(agent.Id, Ct))!.LoginStatus!.Reason);
+        await _accounts.SetDefaultAsync(bob, login.Id, Ct);
+        Assert.True((await agents.GetAsync(agent.Id, Ct))!.LoginStatus!.CanStart);
+        // Simulate a grant disappearing before the enforcement sweep has persisted LoginBlocked.
+        db.AccountGrants.Remove(await db.AccountGrants.SingleAsync(g => g.AccountId == login.Id && g.UserId == bob.Id, Ct));
+        await db.SaveChangesAsync(Ct);
+        var unavailable = (await agents.GetAsync(agent.Id, Ct))!;
+        Assert.False(unavailable.LoginBlocked);
+        Assert.False(unavailable.LoginStatus!.CanStart);
+        Assert.Equal(AccountService.LoginSelectionRequired, unavailable.LoginStatus.Reason);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _accounts.ResolveAsync(unavailable, Ct));
+    }
+
+    [Fact]
     public async Task LastManagerRaceAndUserDeletionCannotOrphanOrCascadeSharedLogin()
     {
         var alice = await UserAsync(); var bob = await UserAsync();

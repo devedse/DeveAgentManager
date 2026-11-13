@@ -24,6 +24,8 @@ The reasons, verified with Codex 0.163 and Claude Code 2.1.310:
   a recorded turn, Codex used its own default effort, not the configured one. A conversation converted from another
   harness has no Codex turn either, or an old one from before. So the defaults are given until Codex records a turn,
   and always right after a switch. An account switch keeps the conversation's own settings.
+  With the owned app server, these overrides go to both the server and the remote terminal's resume request.
+  Server defaults alone do not override the effort restored by `thread/resume` (verified with Codex 0.167.2).
 - **Claude Code** restores a resumed conversation's model from the transcript. A converted transcript carries a
   compatibility model, so a switch gives the default model, or `default` (the login's own) when there is none.
   Claude doesn't restore the effort on resume. It reads a top-level `effortLevel` in the user settings file only for

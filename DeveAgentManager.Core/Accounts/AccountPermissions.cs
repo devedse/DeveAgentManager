@@ -260,7 +260,7 @@ public sealed partial class AccountService
             a.LoginBlocked = true;
             // An uncertain pi launch may still be recorded as Stopped or Error while its process is alive.
             a.LoginStopPending |= a.State is AgentState.Running or AgentState.Starting || a.HarnessId == "pi";
-            a.StateMessage = "Harness login access ended. Choose a permitted login.";
+            a.StateMessage = LoginBlockProblem(a);
         }
     }
 
@@ -315,6 +315,7 @@ public sealed partial class AccountService
                 (await shell.RunAsync(a.Runner, stop, TimeSpan.FromSeconds(30), ct))
                     .EnsureSuccess("Stopping agent after login access ended");
                 a.State = AgentState.Stopped; a.LoginStopPending = false; a.RunningAccountId = null; a.Working = false;
+                a.StateMessage = LoginSelectionRequired;
                 db.AgentPiLogins.RemoveRange(await db.AgentPiLogins.Where(b => b.AgentId == a.Id).ToListAsync(ct));
                 await db.SaveChangesAsync(ct);
                 events.AgentChanged(a.RunnerId, a.Id);

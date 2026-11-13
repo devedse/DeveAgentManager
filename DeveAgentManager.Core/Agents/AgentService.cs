@@ -42,7 +42,7 @@ public sealed partial class AgentService(
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agents = await WithAccess(AccessControl.VisibleAgents(db, user)).OrderByDescending(a => a.CreatedAt).ToListAsync(cancellationToken);
-        await AgentAccountNames.LoadAsync(db, agents, cancellationToken);
+        await LoadDisplayAsync(db, agents, cancellationToken);
         return agents;
     }
 
@@ -50,8 +50,15 @@ public sealed partial class AgentService(
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var agent = await WithAccess(db.Agents).FirstOrDefaultAsync(a => a.Id == agentId, cancellationToken);
-        if (agent is not null) await AgentAccountNames.LoadAsync(db, [agent], cancellationToken);
+        if (agent is not null) await LoadDisplayAsync(db, [agent], cancellationToken);
         return agent;
+    }
+
+    internal async Task LoadDisplayAsync(ManagerDbContext db, IEnumerable<Agent> agents, CancellationToken ct)
+    {
+        var items = agents.ToList();
+        await AgentAccountNames.LoadAsync(db, items, ct);
+        await accounts.LoadAvailabilityAsync(db, items, userSettings, ct);
     }
 
     private static IQueryable<Agent> WithAccess(IQueryable<Agent> agents) => agents.AsNoTracking().AsSplitQuery()
@@ -240,13 +247,18 @@ public sealed partial class AgentService(
                 runner = RequireReady(selected.Runner!);
                 if (!runner.HarnessIds.Contains(harnessId))
                     throw new InvalidOperationException($"{target.DisplayName} is not installed on '{runner.Name}'. Install it first (Runner → Operations).");
-                if (harnessId == selected.HarnessId && accountId == selected.AccountId && !selected.LoginBlocked) return;
+                if (selected.State == AgentState.Running && harnessId == selected.HarnessId && accountId == selected.AccountId
+                    && !selected.LoginBlocked && !selected.LoginStopPending) return;
             }
 
             // The per-agent operation owns the whole switch. Network work never owns the global session lock.
             stopping = true;
-            (await shell.RunAsync(runner, BuildStopScript(ShellQuote.Quote("=" + selected.TmuxSession + ":")), TimeSpan.FromMinutes(1), CancellationToken.None))
-                .EnsureSuccess("Stopping the harness");
+            using (await Accounts.AccountCoordination.LockAsync(CancellationToken.None))
+            {
+                await using var stoppedDb = await dbFactory.CreateDbContextAsync(CancellationToken.None);
+                var stopped = await stoppedDb.Agents.SingleAsync(a => a.Id == agentId, CancellationToken.None);
+                await ConfirmSwitchStopAsync(stoppedDb, runner, stopped);
+            }
             var transferred = harnessId != selected.HarnessId;
             if (transferred)
             {
@@ -304,6 +316,11 @@ public sealed partial class AgentService(
     private async Task StartSwitchedAsync(ManagerDbContext db, Runner runner, Agent agent, CurrentUser actor, Guid? accountId, bool transferred)
     {
         var ct = CancellationToken.None;
+        using var loginLease = await Accounts.AccountCoordination.LockAsync(ct);
+        await db.Entry(agent).ReloadAsync(ct);
+        await RequireOwnLoginAsync(actor, agent.Id, GetHarness(agent.HarnessId), accountId, ct);
+        // Access can end again while conversion runs. Never clear a pending stop just because a new login was chosen.
+        if (agent.LoginStopPending) await ConfirmSwitchStopAsync(db, runner, agent);
         agent.AccountId = accountId;
         agent.LoginBlocked = false;
         agent.LoginStopPending = false;
@@ -315,13 +332,26 @@ public sealed partial class AgentService(
         await db.SaveChangesAsync(ct);
         events.AgentChanged(runner.Id, agent.Id);
 
-        await LaunchAsync(runner, agent, restart: true, ct, transferred: transferred, loginActor: actor);
+        await LaunchLockedAsync(runner, agent, restart: true, ct, transferred: transferred, loginActor: actor);
         agent.State = AgentState.Running;
         agent.StateMessage = null;
         agent.ExitCode = null;
         agent.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
         events.AgentChanged(runner.Id, agent.Id);
+    }
+
+    private async Task ConfirmSwitchStopAsync(ManagerDbContext db, Runner runner, Agent agent)
+    {
+        var ct = CancellationToken.None;
+        (await shell.RunAsync(runner, BuildVerifiedStopScript(ShellQuote.Quote("=" + agent.TmuxSession + ":")), TimeSpan.FromMinutes(1), ct))
+            .EnsureSuccess("Stopping the previous harness before switching logins");
+        agent.LoginStopPending = false;
+        agent.RunningAccountId = null;
+        agent.State = AgentState.Stopped;
+        agent.Working = false;
+        db.AgentPiLogins.RemoveRange(await db.AgentPiLogins.Where(b => b.AgentId == agent.Id).ToListAsync(ct));
+        await db.SaveChangesAsync(ct);
     }
 
     private async Task RequireOwnLoginAsync(CurrentUser actor, Guid agentId, IHarness harness, Guid? accountId, CancellationToken cancellationToken)
@@ -392,7 +422,7 @@ public sealed partial class AgentService(
             if (changesHarness && !runner.HarnessIds.Contains(targetHarnessId))
                 throw new InvalidOperationException($"{target.DisplayName} is not installed on '{runner.Name}'. Install it first (Runner → Operations).");
             if (agent.LoginStopPending || !changesHarness && agent.LoginBlocked)
-                throw new InvalidOperationException("Choose a permitted login after pending enforcement completes.");
+                throw new InvalidOperationException(Accounts.AccountService.LoginBlockProblem(agent));
             // A login belongs to a harness. When restoring another harness, resolve the owner's permitted default for it
             // before stopping anything; never carry an incompatible login over or use ambient Runner credentials.
             await accounts.ResolveAsync(new Agent { Id = agent.Id, OwnerId = agent.OwnerId, HarnessId = targetHarnessId,
@@ -776,12 +806,13 @@ public sealed partial class AgentService(
                         agent.StateMessage = "The harness terminal disappeared unexpectedly. Start it to resume the conversation.";
                 }
 
-                if (agent.State != state || agent.ExitCode != exitCode)
+                var loginProblem = Accounts.AccountService.LoginBlockProblem(agent);
+                if (agent.State != state || agent.ExitCode != exitCode || loginProblem is not null && agent.StateMessage != loginProblem)
                 {
                     agent.State = state;
                     agent.ExitCode = exitCode;
-                    agent.StateMessage = state == AgentState.Exited ? $"The harness exited (code {exitCode}). Start it again to resume the conversation."
-                        : state == AgentState.Stopped ? agent.StateMessage : null;
+                    agent.StateMessage = loginProblem ?? (state == AgentState.Exited ? $"The harness exited (code {exitCode}). Start it again to resume the conversation."
+                        : state == AgentState.Stopped ? agent.StateMessage : null);
                     agent.UpdatedAt = DateTime.UtcNow;
                     agent.Working = working;
                     changedAgents.Add(agent.Id);
@@ -1038,11 +1069,17 @@ public sealed partial class AgentService(
     private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool transferred = false, CurrentUser? loginActor = null)
     {
         using var loginLease = await Accounts.AccountCoordination.LockAsync(cancellationToken);
+        await LaunchLockedAsync(runner, agent, restart, cancellationToken, transferred, loginActor);
+    }
+
+    /// <summary>The caller holds AccountCoordination through authorization, binding changes and remote launch.</summary>
+    private async Task LaunchLockedAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool transferred = false, CurrentUser? loginActor = null)
+    {
         await using var loginDb = await dbFactory.CreateDbContextAsync(cancellationToken);
         var savedLoginState = await loginDb.Agents.AsNoTracking().SingleAsync(a => a.Id == agent.Id, cancellationToken);
         agent.LoginBlocked = savedLoginState.LoginBlocked;
         agent.LoginStopPending = savedLoginState.LoginStopPending;
-        if (agent.LoginStopPending) throw new InvalidOperationException("Choose a permitted login after pending enforcement completes.");
+        if (agent.LoginStopPending) throw new InvalidOperationException(Accounts.AccountService.LoginStopPendingMessage);
         var harness = GetHarness(agent.HarnessId);
         if (!restart)
         {
@@ -1080,7 +1117,7 @@ public sealed partial class AgentService(
         var piLogins = piSelection is null ? [] : await accounts.ResolvePiLoginsAsync(agent.OwnerId, piSelection, cancellationToken);
         if (agent.LoginBlocked)
         {
-            if (piSelection is null) throw new InvalidOperationException("Choose a permitted login after pending enforcement completes.");
+            if (piSelection is null) throw new InvalidOperationException(Accounts.AccountService.LoginSelectionRequired);
             // An explicit personal selection was just reauthorized. A saved preference alone never starts a process.
             agent.LoginBlocked = false;
             await loginDb.Agents.Where(a => a.Id == agent.Id).ExecuteUpdateAsync(s => s.SetProperty(a => a.LoginBlocked, false), cancellationToken);

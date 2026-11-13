@@ -346,7 +346,8 @@
         await base.OnInitializedAsync();
     }
 
-    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.RunnerId == RunnerId;
+    protected override bool IsRelevant(ManagerEvent managerEvent) => managerEvent.RunnerId == RunnerId
+        || managerEvent.Kind is ManagerEventKind.SettingsChanged or ManagerEventKind.AccessChanged;
 
     protected override async Task LoadAsync()
     {

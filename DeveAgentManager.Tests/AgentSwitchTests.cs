@@ -73,6 +73,14 @@ public sealed class AgentSwitchTests
         try
         {
             await agents.StartAsync(agent.Id, cancellationToken: Ct);
+            // A revoked login can leave a durable pending stop. Switching harness must confirm that stop,
+            // then migrate without needing to launch the old harness or use its login again.
+            await using (var db = await factory.CreateDbContextAsync(Ct))
+            {
+                var blocked = await db.Agents.SingleAsync(a => a.Id == agent.Id, Ct);
+                blocked.LoginBlocked = true; blocked.LoginStopPending = true;
+                await db.SaveChangesAsync(Ct);
+            }
             using var request = CancellationTokenSource.CreateLinkedTokenSource(Ct);
             var switching = agents.SwitchAsync(TestUsers.Admin, agent.Id, "claude", null, request.Token);
             await converting.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
@@ -94,6 +102,7 @@ public sealed class AgentSwitchTests
             await switching.WaitAsync(TimeSpan.FromSeconds(60), Ct);
             var after = await SavedAsync();
             Assert.Equal(("claude", AgentState.Running, (string?)null), (after.HarnessId, after.State, after.StateMessage));
+            Assert.False(after.LoginBlocked); Assert.False(after.LoginStopPending);
             var stored = (await sessions.GetForAgentAsync(agent.Id, Ct))!;
             Assert.Equal(("claude", after.HarnessSessionId), (stored.HarnessId, stored.HarnessSessionId));
             var installed = new ClaudeSessionFormat().GetPath(after.HarnessSessionId, agent.WorkingDirectory, DateTime.UtcNow).Replace("~/", home + "/", StringComparison.Ordinal);

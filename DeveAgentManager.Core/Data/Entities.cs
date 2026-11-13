@@ -1,4 +1,5 @@
 using DeveAgentManager.Core.Abstractions;
+using DeveAgentManager.Contracts;
 
 namespace DeveAgentManager.Core.Data;
 
@@ -237,6 +238,9 @@ public class Agent
     /// <summary>Persisted before remote enforcement. Blocks launch until an explicit permitted selection.</summary>
     public bool LoginBlocked { get; set; }
     public bool LoginStopPending { get; set; }
+
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public AgentLoginStatusDto? LoginStatus { get; set; }
 
 
     public Account? Account { get; set; }
