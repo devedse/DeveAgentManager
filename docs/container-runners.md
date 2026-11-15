@@ -28,10 +28,10 @@ the host's kernel. The Manager therefore only creates unprivileged containers.
 - Unprivileged, with only the `nesting` feature, which an API token may set on unprivileged containers.
 
 Containers have no cloud-init. Only root gets the Manager's SSH key when the container is created. The Manager logs in
-as root once, installs `sudo` and `python3`, creates the Runner Account (`RUNNER_USERNAME`) with its password and
-passwordless sudo, and checks that it can log in as that account. Then it removes its key from root. From there,
-setup, agents, Start, Stop, Restart and Delete work exactly as for VMs. The Manager reads the container's IP from
-Proxmox, so it needs no guest agent.
+as root once, installs `sudo` and `python3`, creates the Runner Account (`RUNNER_USERNAME`) with its password,
+passwordless sudo and the `render` and `video` groups, and checks that it can log in as that account. Then it removes
+its key from root. From there, setup, agents, Start, Stop, Restart and Delete work exactly as for VMs. The Manager
+reads the container's IP from Proxmox, so it needs no guest agent.
 
 ## GPU
 
@@ -46,9 +46,9 @@ The group ID is the container's `render` group, which the Manager reads from the
 `ls -l /dev/dri/by-path/` on the host shows which `renderD` node belongs to which card. Use the `renderD` node itself:
 the container sees a device under the same path as the host.
 
-Restart the Runner, then use **Set up GPU**. It installs the Mesa Vulkan, VA-API and OpenCL drivers and adds the
-Runner Account to the `render` group, and the panel then names the GPU that Vulkan reports. Restart running agents to
-give them the group.
+Restart the Runner, then use **Set up GPU**. It installs the Mesa Vulkan, VA-API and OpenCL drivers, and the panel
+then names the GPU that Vulkan reports. Agents can use it right away: the Runner Account has been in the `render` group
+since the container was created. Mesa covers Intel and AMD GPUs; NVIDIA's own driver is not installed.
 
 ## Limits
 

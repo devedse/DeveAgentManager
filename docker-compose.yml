@@ -40,6 +40,7 @@ services:
       # Runner Templates (Proxmox template VMIDs)
       TEMPLATE_HEADLESS_VMID: "10100"
       TEMPLATE_DESKTOP_VMID: "10120"
+      # TEMPLATE_CONTAINER: local    # container Runners: storage with Debian CT templates (docs/container-runners.md)
 
       # Runner Account, created on every new VM through cloud-init (each Runner gets a random password of its own)
       RUNNER_USERNAME: remoteman
