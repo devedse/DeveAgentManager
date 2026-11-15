@@ -43,6 +43,7 @@ public sealed partial class DesktopTunnels(RunnerShell shell, ManagerEvents even
 
     /// <summary>Starts the desktop if it was stopped, then prints KasmVNC's password for the Manager.</summary>
     internal const string StartScript = """
+        export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
         systemctl --user is-active --quiet dam-browser-desktop.service || systemctl --user start dam-browser-desktop.service
         cat ~/.deveagentmanager/browser-desktop.password
         """;

@@ -114,10 +114,11 @@ fi
 rc.write_text(block + old)
 PY
 cat > "$HOME/.deveagentmanager/desktop-env.sh" <<'EOF'
-# Refresh only display settings; do not evaluate any session file as shell code.
+# Refresh only display settings; do not evaluate any session file as shell code. XDG_RUNTIME_DIR stays: it is the
+# account's (systemctl --user needs it), with or without a desktop.
 if [ -x "$HOME/.deveagentmanager/desktop.py" ]; then
   dam_desktop_exports=$(python3 "$HOME/.deveagentmanager/desktop.py" env 2>/dev/null) || dam_desktop_exports=""
-  unset DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS XDG_SESSION_TYPE XDG_CURRENT_DESKTOP XDG_SESSION_ID
+  unset DISPLAY XAUTHORITY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_SESSION_TYPE XDG_CURRENT_DESKTOP XDG_SESSION_ID
   if [ -n "$dam_desktop_exports" ]; then eval "$dam_desktop_exports"; fi
   unset dam_desktop_exports
 fi
@@ -127,6 +128,7 @@ python3 "$HOME/.deveagentmanager/desktop.py" remove-instructions
 
 if [ "$mode" = browser ]; then
   # Runs as long as the Runner does (setup enabled lingering), and comes back after a crash or logging out.
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
   systemctl --user daemon-reload
   systemctl --user enable dam-browser-desktop.service >/dev/null 2>&1
   if systemctl --user is-active --quiet dam-browser-desktop.service; then

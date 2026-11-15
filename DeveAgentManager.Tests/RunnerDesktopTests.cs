@@ -44,6 +44,17 @@ public class RunnerDesktopTests
     }
 
     [Fact]
+    public void ShellsKeepTheirRuntimeDirectory_WhenNoDesktopRuns()
+    {
+        // desktop-env.sh clears the display settings before every Bash command. XDG_RUNTIME_DIR is the account's, not the
+        // desktop's: without it systemctl --user can't start a stopped browser desktop again.
+        var setup = RunnerSetupService.ReadResource("desktop-setup.sh");
+        Assert.Contains("unset DISPLAY XAUTHORITY", setup);
+        Assert.DoesNotMatch(@"unset [^\n]*XDG_RUNTIME_DIR", setup);
+        Assert.StartsWith("export XDG_RUNTIME_DIR=", DeveAgentManager.Core.Editor.DesktopTunnels.StartScript);
+    }
+
+    [Fact]
     public void OnlyDesktopRunnersLoadTheGraphicalEnvironment()
     {
         Assert.DoesNotContain("desktop-env", RunnerSetupService.BuildAgentEnv());
