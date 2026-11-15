@@ -32,7 +32,13 @@
             </TitleContent>
             <Actions>
                 <MudButton Href="@($"runners/{_runner.Id}/shell")" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.Terminal" Disabled="!ready">Shell</MudButton>
-                @if (_runner.Kind == RunnerKind.Desktop)
+                @if (_runner is { Kind: RunnerKind.Desktop, BrowserDesktop: true })
+                {
+                    @* The Manager's own page, not the Portal's: it signs in on the Runner's editor origin and opens KasmVNC there. *@
+                    <MudButton Href="@($"editor/runners/{_runner.Id}/desktop")" Target="_blank" Rel="noopener" Variant="Variant.Outlined"
+                               StartIcon="@Icons.Material.Rounded.DesktopWindows" Disabled="!ready">Open desktop</MudButton>
+                }
+                else if (_runner.Kind == RunnerKind.Desktop)
                 {
                     <MudButton Href="@($"runners/{RunnerId}/desktop")" Variant="Variant.Outlined" StartIcon="@Icons.Material.Rounded.DesktopWindows" Disabled="!ready">Desktop</MudButton>
                 }
@@ -116,7 +122,17 @@
                     <div class="panel mb-4">
                         <div class="panel-header">
                             <div class="help-heading"><MudText Typo="Typo.h6">Desktop</MudText>
-                                <HelpTip Label="Runner desktop">Desktop setup configures automatic login and refreshes the display environment before Bash commands, so GUI apps open on the real shared desktop. Use Desktop to view it or save snapshots. Re-run setup updates existing runners and preserves a logged-in desktop. Restart existing agents to load the automatic environment refresh.</HelpTip></div>
+                                <HelpTip Label="Runner desktop">
+                                    @if (_runner.BrowserDesktop)
+                                    {
+                                        <p>An XFCE desktop that the Manager runs on this Runner (KasmVNC), on its GPU when one is passed in. Open desktop opens it in a new tab, for everyone who may use the Shell. It keeps running when you close the tab, and starts with the Runner.</p>
+                                        <p>For games and 3D viewports, turn on Game Cursor Mode in KasmVNC's panel (the tab at the left edge); Escape turns it off. Agents can see and operate the desktop, and GUI apps they start appear on it. Restart existing agents to give them its environment.</p>
+                                    }
+                                    else
+                                    {
+                                        <p>Desktop setup configures automatic login and refreshes the display environment before Bash commands, so GUI apps open on the real shared desktop. Use Desktop to view it or save snapshots. Re-run setup updates existing runners and preserves a logged-in desktop. Restart existing agents to load the automatic environment refresh.</p>
+                                    }
+                                </HelpTip></div>
                             <MudIconButton Icon="@Icons.Material.Rounded.Refresh" Size="Size.Small" Disabled="_refreshingDesktop || !ready" OnClick="RefreshDesktopAsync" aria-label="Refresh desktop status" />
                         </div>
                         @if (_desktop is null || _refreshingDesktop)
@@ -184,7 +200,7 @@
                         @if (_runner.MachineId is not null && _runner.ProviderId != "existing")
                         {
                             <dt>Machine</dt>
-                            <dd class="mono">@(_runner.TemplateId == "container" ? "CT" : "VM") @_runner.MachineId</dd>
+                            <dd class="mono">@(IsContainer(_runner) ? "CT" : "VM") @_runner.MachineId</dd>
                         }
                         @if (_runner.TemplateId is not null)
                         {
@@ -288,6 +304,17 @@
                             </div>
                             <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="operation is not null || _runner.State == RunnerState.Stopped" OnClick="RerunSetupAsync">Run</MudButton>
                         </div>
+                        @if (_runner.Kind == RunnerKind.Headless)
+                        {
+                            <div class="operation">
+                                <MudIcon Icon="@Icons.Material.Rounded.DesktopWindows" Class="operation-icon" />
+                                <div class="operation-text">
+                                    <div class="operation-name help-heading"><span>Add desktop</span><HelpTip Label="Add desktop"><p>Installs an XFCE desktop that you open in the browser (KasmVNC), with Firefox, and makes this a desktop Runner. It uses the Runner's GPU when one is passed in.</p><p>Agents can see and operate it; restart running agents so the apps they start appear on it. The Manager can't remove it again.</p></HelpTip></div>
+                                    <div class="operation-description">A desktop in the browser, for logins and GUI apps.</div>
+                                </div>
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="!ready" OnClick="AddDesktopAsync">Add</MudButton>
+                            </div>
+                        }
                         <div class="operation">
                             <MudIcon Icon="@Icons.Material.Rounded.Key" Class="operation-icon" />
                             <div class="operation-text">
@@ -328,6 +355,9 @@
     private DesktopStatusDto? _desktop;
     private DateTime _desktopReadAt;
     private bool _refreshingDesktop;
+    /// <summary>Proxmox's container templates (with or without a desktop).</summary>
+    private static bool IsContainer(RunnerDto runner) => runner.TemplateId is "container" or "container-desktop";
+
     private string DesktopTitle => _desktop?.State switch { "ready" => "Desktop ready", "login-required" => "Login required", "setup-required" => "Setup required", _ => "Desktop unavailable" };
 
     private async Task RefreshDesktopAsync()
@@ -418,6 +448,19 @@
         }
     }
 
+    private async Task AddDesktopAsync()
+    {
+        var confirmed = await Dialogs.ShowMessageBoxAsync(
+            $"Add a desktop to '{_runner!.Name}'?",
+            "This installs XFCE, Firefox and KasmVNC (about 1 GB) and runs the desktop for as long as the Runner runs. You open it with Open desktop; agents can operate it. The Manager can't remove it again.",
+            yesText: "Add desktop", cancelText: "Cancel");
+        if (confirmed == true)
+        {
+            _waitingFor.Add("desktop");
+            await RunAsync(() => Api.AddRunnerDesktopAsync(RunnerId));
+        }
+    }
+
     private long _runnerLoadVersion;
     private bool _checkingUpdates;
     private async Task CheckUpdatesAsync()
@@ -496,7 +539,7 @@
             return;
         }
 
-        var what = finished.Operation == "install" ? "Installing" : "Updating";
+        var what = finished.Operation switch { "install" => "Installing", "desktop" => "Adding the desktop", _ => "Updating" };
         _ = InvokeAsync(() => Snackbar.Add(finished.Error is null ? $"{what} finished on '{finished.RunnerName}'." : $"{what} failed: {finished.Error}",
             finished.Error is null ? Severity.Success : Severity.Error));
     }
@@ -521,7 +564,7 @@
     {
         var provider = _info?.Providers.FirstOrDefault(p => p.Id == _runner!.ProviderId);
         var destroys = provider?.Capabilities.CanDestroy == true && _runner!.MachineId is not null;
-        var machine = _runner!.TemplateId == "container" ? "container" : "VM";
+        var machine = IsContainer(_runner!) ? "container" : "VM";
         var message = destroys
             ? $"This deletes {machine} {_runner!.MachineId} and its disks on {provider!.DisplayName}, including every agent and all work on it that was not pushed."
             : "The Runner is removed from the Manager and its agents are stopped. The machine itself is left alone.";
