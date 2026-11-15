@@ -1,5 +1,8 @@
 (async () => {
   const values = new URLSearchParams(location.hash.slice(1));
+  const what = values.get('app') === 'desktop' ? 'the desktop' : 'VS Code';
+  document.getElementById('status').textContent = `Opening ${what}…`;
+  document.title = `Opening ${what}`;
   if (values.get('theme') === 'light') document.documentElement.dataset.theme = 'light';
   values.delete('theme');
   history.replaceState(null, '', location.pathname);
@@ -7,6 +10,6 @@
   if (response.redirected) location.replace(response.url);
   else {
     document.querySelector('.spinner').remove();
-    document.getElementById('status').textContent = 'This link has expired. Open VS Code from the Manager again.';
+    document.getElementById('status').textContent = `This link has expired. Open ${what} from the Manager again.`;
   }
 })();

@@ -88,6 +88,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<EditorTunnels>();
         services.AddSingleton<IEditorUpstreams>(sp => sp.GetRequiredService<EditorTunnels>());
         services.AddHostedService(sp => sp.GetRequiredService<EditorTunnels>());
+        services.AddSingleton<DesktopTunnels>();
+        services.AddSingleton<IDesktopUpstreams>(sp => sp.GetRequiredService<DesktopTunnels>());
+        services.AddHostedService(sp => sp.GetRequiredService<DesktopTunnels>());
         services.AddHostedService<RunnerMonitor>();
         services.AddHostedService<AgentToolsSync>();
         services.AddHostedService<Accounts.AccountRenewalService>();
