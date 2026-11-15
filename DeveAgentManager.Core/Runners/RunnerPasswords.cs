@@ -121,6 +121,18 @@ public sealed class RunnerPasswords(
         logger.LogInformation("Password of {Runner} changed", runner.Name);
     }
 
+    /// <summary>
+    /// Makes the SSH server read its configuration again. A socket-activated one (as in Debian's container templates)
+    /// has no ssh.service running: it starts an sshd for every connection, which reads the configuration anyway.
+    /// </summary>
+    internal const string ReloadSshScript = """
+        if systemctl is-active --quiet ssh; then sudo -n systemctl reload ssh
+        elif systemctl is-active --quiet sshd; then sudo -n systemctl reload sshd
+        elif systemctl is-active --quiet ssh.socket || systemctl is-active --quiet sshd.socket; then :
+        else echo "Found no running SSH server to reload (ssh, sshd or ssh.socket)." >&2; exit 4
+        fi
+        """;
+
     private async Task ApplyKeysOnlyAsync(Runner runner, bool keysOnly, CancellationToken cancellationToken)
     {
         // A drop-in sorted before cloud-init's (50-cloud-init.conf): sshd takes the first value it reads.
@@ -134,7 +146,7 @@ public sealed class RunnerPasswords(
         (await shell.RunAsync(runner, $"""
             {script}
             sudo -n sshd -t
-            sudo -n systemctl reload ssh 2>/dev/null || sudo -n systemctl reload sshd
+            {ReloadSshScript}
             """, TimeSpan.FromSeconds(30), cancellationToken)).EnsureSuccess(keysOnly ? "Turning off SSH password logins" : "Allowing SSH password logins");
     }
 
