@@ -14,7 +14,7 @@ using Yarp.ReverseProxy.Forwarder;
 namespace DeveAgentManager.Api;
 
 /// <summary>
-/// VS Code runs on a separate origin for each public Runner, dispatched by hostname on the Portal port.
+/// VS Code (and a browser desktop: KasmVNC) runs on a separate origin for each public Runner, dispatched by hostname on the Portal port.
 /// Local direct IP access can use the optional editor port. Portal links check Runner Use access and issue
 /// short-lived, single-use session tickets. The bootstrap exchanges a URL fragment through a same-origin POST;
 /// every editor request and live connection checks the same revocable sign-in session and current Runner access.
@@ -62,6 +62,12 @@ public static class EditorEndpoints
                 ? await OpenAsync(context, user, runner, runner.HomeDirectory)
                 : Page(StatusCodes.Status404NotFound, "This Runner doesn't exist (any more)."));
 
+        // A browser desktop (XFCE on KasmVNC): the same origin, ticket and cookie as VS Code, and the same access as the Shell.
+        links.MapGet("/runners/{runnerId:guid}/desktop", async (Guid runnerId, HttpContext context, RunnerService runners, AccessControl access, CancellationToken ct) =>
+            SignIn.UsableUser(context) is { } user && await access.RunnerAsync(user, runnerId, ct) >= RunnerAccess.Use && await runners.GetAsync(runnerId, ct) is { } runner
+                ? await OpenAsync(context, user, runner, null, desktop: true)
+                : Page(StatusCodes.Status404NotFound, "This Runner doesn't exist (any more)."));
+
         links.MapGet("/agents/{agentId:guid}", async (Guid agentId, HttpContext context, AgentService agents, AccessControl access, CancellationToken ct) =>
             SignIn.UsableUser(context) is { } user && await access.AgentAsync(user, agentId, ct) >= AgentAccess.Write && await agents.GetAsync(agentId, ct) is { Runner: { } runner } agent
                 ? await OpenAsync(context, user, runner, agent.WorkingDirectory)
@@ -94,24 +100,35 @@ public static class EditorEndpoints
         && (request.Headers["Sec-Fetch-Site"].ToString() is "same-origin" or "none"
             || DeploymentBoundary.IsLocal(request.HttpContext) && request.Headers["Sec-Fetch-Site"].Count == 0);
 
-    private static async Task<IResult> OpenAsync(HttpContext context, CurrentUser user, Runner runner, string? folder)
+    private static async Task<IResult> OpenAsync(HttpContext context, CurrentUser user, Runner runner, string? folder, bool desktop = false)
     {
+        var what = desktop ? "the desktop" : "VS Code";
         if (!FromThePortal(context.Request))
         {
-            return Page(StatusCodes.Status403Forbidden, "Open VS Code from the Manager's own pages.");
+            return Page(StatusCodes.Status403Forbidden, $"Open {what} from the Manager's own pages.");
         }
 
-        if (!runner.ToolIds.Contains(VsCodeTool.ToolId))
+        if (desktop && !HasBrowserDesktop(runner))
+        {
+            return Page(StatusCodes.Status409Conflict, $"'{runner.Name}' has no desktop in the browser. Add one on the Runner page, under Operations.");
+        }
+
+        if (!desktop && !runner.ToolIds.Contains(VsCodeTool.ToolId))
         {
             return Page(StatusCodes.Status409Conflict, $"VS Code is not installed on '{runner.Name}'. Install it on the Runner page, under Operations.");
         }
 
         if (await context.RequestServices.GetRequiredService<AccessControl>().RunnerAsync(user, runner.Id, context.RequestAborted) < RunnerAccess.Use)
-            return Page(StatusCodes.Status404NotFound, "Runner access is required to open VS Code.");
+            return Page(StatusCodes.Status404NotFound, $"Runner access is required to open {what}.");
         var origin = EditorBase(context, runner.Name);
         var ticket = await context.RequestServices.GetRequiredService<SignInSessions>().IssueEditorTicketAsync(
             SignIn.SessionId(context), runner.Id, origin, context.RequestAborted);
         var query = QueryString.Create("ticket", ticket);
+        if (desktop)
+        {
+            query = query.Add("app", "desktop");
+        }
+
         if (!string.IsNullOrEmpty(folder))
         {
             query = query.Add("folder", folder);
@@ -169,6 +186,7 @@ public static class EditorEndpoints
         }
 
         var prefix = $"/runners/{runnerId}/code";
+        var desktopPrefix = $"/runners/{runnerId}/desktop";
         if (parts[3] == "auth")
         {
             if (HttpMethods.IsGet(context.Request.Method))
@@ -185,6 +203,15 @@ public static class EditorEndpoints
         else if (parts[3].StartsWith("code/", StringComparison.Ordinal))
         {
             await ProxyAsync(context, runnerId, new PathString(path[prefix.Length..]));
+        }
+        else if (parts[3] == "desktop")
+        {
+            // KasmVNC's viewer loads everything relative to its page: it needs the trailing slash.
+            await WriteAsync(context, Results.Redirect($"{desktopPrefix}/{context.Request.QueryString}"));
+        }
+        else if (parts[3].StartsWith("desktop/", StringComparison.Ordinal))
+        {
+            await ProxyDesktopAsync(context, runnerId, new PathString(path[desktopPrefix.Length..]));
         }
         else
         {
@@ -228,20 +255,132 @@ public static class EditorEndpoints
             MaxAge = CookieLifetime,
             IsEssential = true,
         });
+        if (form["app"] == "desktop")
+        {
+            // The viewer's WebSocket goes to its own path: KasmVNC's default (/websockify) is outside the Runner's prefix.
+            return NoStore(context, Results.Redirect($"/runners/{runnerId}/desktop/{QueryString.Create("path", $"runners/{runnerId}/desktop/websockify")}"));
+        }
+
         var folder = form["folder"].ToString();
         var query = folder.Length > 0 ? QueryString.Create("folder", folder) : QueryString.Empty;
         return NoStore(context, Results.Redirect($"/runners/{runnerId}/code/{query}"));
+    }
+
+    private static bool HasBrowserDesktop(Runner runner) => runner is { Kind: Core.Abstractions.RunnerKind.Desktop, BrowserDesktop: true };
+
+    /// <summary>Every request on the editor origin: the cookie's sign-in for this Runner, the user, and their current Runner access.</summary>
+    private static async Task<(CurrentUser User, EditorPass Pass)?> AuthorizeAsync(HttpContext context, Guid runnerId)
+    {
+        var services = context.RequestServices;
+        if (EditorPass.Parse(Unprotect(CookieProtector(context), context.Request.Cookies[DeploymentBoundary.IsLocal(context) ? CookieName : PublicCookieName])) is not { } pass || pass.RunnerId != runnerId
+            || await services.GetRequiredService<UserService>().ValidateAsync(pass.UserId, pass.SecurityStamp, context.RequestAborted) is not { MustChangePassword: false } user
+            || await services.GetRequiredService<SignInSessions>().ValidateAsync(pass.SessionId, pass.UserId, pass.SecurityStamp,
+                DeploymentBoundary.IsLocal(context), touch: true, ct: context.RequestAborted) is null
+            || await services.GetRequiredService<AccessControl>().RunnerAsync(user, runnerId, context.RequestAborted) < RunnerAccess.Use)
+        {
+            return null;
+        }
+
+        return (user, pass);
+    }
+
+    /// <summary>A Runner's browser desktop: KasmVNC through its tunnel, with the login only the Manager knows.</summary>
+    private static async Task ProxyDesktopAsync(HttpContext context, Guid runnerId, PathString path)
+    {
+        var services = context.RequestServices;
+        if (await AuthorizeAsync(context, runnerId) is not var (user, pass))
+        {
+            await WriteAsync(context, Page(StatusCodes.Status401Unauthorized, "Open the desktop from the Manager (Open desktop on the Runner page)."));
+            return;
+        }
+
+        // The viewer keeps a WebSocket open: it closes when the user's access or sign-in ends meanwhile.
+        var access = services.GetRequiredService<AccessControl>();
+        using var watched = services.GetRequiredService<OpenConnections>().Register(user, pass.SecurityStamp,
+            async (current, ct) => await access.RunnerAsync(current, runnerId, ct) >= RunnerAccess.Use, context.Abort, pass.SessionId);
+        var runner = await services.GetRequiredService<RunnerService>().GetAsync(runnerId, context.RequestAborted);
+        if (runner is null || !HasBrowserDesktop(runner))
+        {
+            await WriteAsync(context, Page(StatusCodes.Status404NotFound, "This Runner has no desktop in the browser (any more)."));
+            return;
+        }
+
+        if (runner.State != RunnerState.Ready)
+        {
+            await WriteAsync(context, Page(StatusCodes.Status503ServiceUnavailable, $"'{runner.Name}' is not ready ({runner.State}). Try again when it is."));
+            return;
+        }
+
+        var upstreams = services.GetRequiredService<IDesktopUpstreams>();
+        using var inUse = upstreams.Use(runnerId);
+        DesktopUpstream upstream;
+        try
+        {
+            upstream = await upstreams.GetAsync(runner, context.RequestAborted);
+        }
+        catch (Exception ex) when (!context.RequestAborted.IsCancellationRequested)
+        {
+            services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(EditorEndpoints)).LogWarning(ex, "Could not open the desktop of {Runner}", runner.Name);
+            await WriteAsync(context, Page(StatusCodes.Status502BadGateway, $"Could not open the desktop of '{runner.Name}': {ex.Message}"));
+            return;
+        }
+
+        var error = await services.GetRequiredService<IHttpForwarder>().SendAsync(context, $"http://127.0.0.1:{upstream.LocalPort}", Upstream, RequestConfig,
+            new DesktopTransformer(path, upstream.Authorization));
+        if (error is ForwarderError.Request or ForwarderError.RequestTimedOut or ForwarderError.UpgradeRequestDestination)
+        {
+            upstreams.Forget(runnerId);
+        }
+    }
+
+    /// <summary>Nothing of the browser's (the Manager's cookies, any identity) reaches the Runner; only the desktop's own login.</summary>
+    private sealed class DesktopTransformer(PathString path, string authorization) : HttpTransformer
+    {
+        public override async ValueTask TransformRequestAsync(HttpContext httpContext, HttpRequestMessage proxyRequest, string destinationPrefix, CancellationToken cancellationToken)
+        {
+            await base.TransformRequestAsync(httpContext, proxyRequest, destinationPrefix, cancellationToken);
+            proxyRequest.RequestUri = RequestUtilities.MakeDestinationAddress(destinationPrefix, path, httpContext.Request.QueryString);
+            RemoveIdentityHeaders(httpContext, proxyRequest);
+            proxyRequest.Headers.Remove(HeaderNames.Cookie);
+            proxyRequest.Headers.TryAddWithoutValidation(HeaderNames.Authorization, authorization);
+        }
+
+        public override async ValueTask<bool> TransformResponseAsync(HttpContext httpContext, HttpResponseMessage? proxyResponse, CancellationToken cancellationToken)
+        {
+            var copyBody = await base.TransformResponseAsync(httpContext, proxyResponse, cancellationToken);
+            // Cookies and Clear-Site-Data would be the Manager's host's; a login prompt would ask for a password nobody has.
+            httpContext.Response.Headers.Remove(HeaderNames.SetCookie);
+            httpContext.Response.Headers.Remove("Clear-Site-Data");
+            httpContext.Response.Headers.Remove(HeaderNames.WWWAuthenticate);
+            return copyBody;
+        }
+    }
+
+    /// <summary>The browser's credentials and identity claims: never sent to a Runner.</summary>
+    private static void RemoveIdentityHeaders(HttpContext httpContext, HttpRequestMessage proxyRequest)
+    {
+        foreach (var header in proxyRequest.Headers.Select(h => h.Key).ToArray())
+        {
+            if (header.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+                || header.Equals("Proxy-Authorization", StringComparison.OrdinalIgnoreCase)
+                || header.StartsWith("X-Auth", StringComparison.OrdinalIgnoreCase)
+                || header.StartsWith("X-Forwarded", StringComparison.OrdinalIgnoreCase)
+                || header.Equals("Remote-User", StringComparison.OrdinalIgnoreCase)
+                || header.Equals("X-Remote-User", StringComparison.OrdinalIgnoreCase)
+                || header.Equals("X-Remote-Email", StringComparison.OrdinalIgnoreCase)
+                || header.Equals("X-User", StringComparison.OrdinalIgnoreCase)
+                || header.Equals("X-Email", StringComparison.OrdinalIgnoreCase)
+                || header.Equals("Forwarded", StringComparison.OrdinalIgnoreCase)
+                || httpContext.RequestServices.GetRequiredService<ManagerOptions>().ProxyIdentityHeaders.Contains(header, StringComparer.OrdinalIgnoreCase))
+                proxyRequest.Headers.Remove(header);
+        }
     }
 
     private static async Task ProxyAsync(HttpContext context, Guid runnerId, PathString path)
     {
         var services = context.RequestServices;
         var access = services.GetRequiredService<AccessControl>();
-        if (EditorPass.Parse(Unprotect(CookieProtector(context), context.Request.Cookies[DeploymentBoundary.IsLocal(context) ? CookieName : PublicCookieName])) is not { } pass || pass.RunnerId != runnerId
-            || await services.GetRequiredService<UserService>().ValidateAsync(pass.UserId, pass.SecurityStamp, context.RequestAborted) is not { MustChangePassword: false } user
-            || await services.GetRequiredService<SignInSessions>().ValidateAsync(pass.SessionId, pass.UserId, pass.SecurityStamp,
-                DeploymentBoundary.IsLocal(context), touch: true, ct: context.RequestAborted) is null
-            || await access.RunnerAsync(user, runnerId, context.RequestAborted) < RunnerAccess.Use)
+        if (await AuthorizeAsync(context, runnerId) is not var (user, pass))
         {
             await WriteAsync(context, Page(StatusCodes.Status401Unauthorized, "Open VS Code from the Manager (the Runner page, or an agent's terminal)."));
             return;
@@ -295,21 +434,7 @@ public static class EditorEndpoints
             // code-server accepts WebSockets only from the page it served itself (Origin must match Host).
             proxyRequest.Headers.Host = httpContext.Request.Host.Value;
             // The browser's cookies for this host include the Manager's login: none of them go to the Runner.
-            foreach (var header in proxyRequest.Headers.Select(h => h.Key).ToArray())
-            {
-                if (header.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
-                    || header.Equals("Proxy-Authorization", StringComparison.OrdinalIgnoreCase)
-                    || header.StartsWith("X-Auth", StringComparison.OrdinalIgnoreCase)
-                    || header.StartsWith("X-Forwarded", StringComparison.OrdinalIgnoreCase)
-                    || header.Equals("Remote-User", StringComparison.OrdinalIgnoreCase)
-                    || header.Equals("X-Remote-User", StringComparison.OrdinalIgnoreCase)
-                    || header.Equals("X-Remote-Email", StringComparison.OrdinalIgnoreCase)
-                    || header.Equals("X-User", StringComparison.OrdinalIgnoreCase)
-                    || header.Equals("X-Email", StringComparison.OrdinalIgnoreCase)
-                    || header.Equals("Forwarded", StringComparison.OrdinalIgnoreCase)
-                    || httpContext.RequestServices.GetRequiredService<ManagerOptions>().ProxyIdentityHeaders.Contains(header, StringComparer.OrdinalIgnoreCase))
-                    proxyRequest.Headers.Remove(header);
-            }
+            RemoveIdentityHeaders(httpContext, proxyRequest);
             proxyRequest.Headers.Remove(HeaderNames.Cookie);
             proxyRequest.Headers.TryAddWithoutValidation(HeaderNames.Cookie, sessionCookie);
         }

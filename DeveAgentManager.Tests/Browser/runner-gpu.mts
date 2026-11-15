@@ -84,9 +84,10 @@ try {
             // One card: its name and its command straight away.
             gpu = { state: 'not-attached', message: 'No GPU is passed into this Runner yet.', attachCommand: command, hostGpus: [discrete] };
             await panel.getByRole('button', { name: 'Refresh GPU status' }).click();
+            // The chosen card's name and command were on screen already: wait for the picker to go.
+            await panel.locator('.gpu-card').waitFor({ state: 'detached' });
             await panel.getByText('Intel Corporation Battlemage G21 [Intel Graphics] · 0b:00.0', { exact: true }).waitFor();
             await panel.getByText(discrete.attachCommand, { exact: true }).waitFor();
-            assert.equal(await panel.locator('.gpu-card').count(), 0);
 
             gpu = { state: 'drivers-missing', message: '/dev/dri/renderD128 is passed in. Set up GPU installs its drivers.', renderDevice: '/dev/dri/renderD128', attachCommand: command };
             await panel.getByRole('button', { name: 'Refresh GPU status' }).click();

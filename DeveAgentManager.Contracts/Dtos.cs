@@ -151,7 +151,8 @@ public sealed record RunnerDto(
     MachineStatus? Status,
     IReadOnlyList<AgentDto> Agents,
     RunnerUpdatesDto? Updates = null,
-    bool GpuPassthrough = false);
+    bool GpuPassthrough = false,
+    bool BrowserDesktop = false);
 
 /// <summary>
 /// A Runner's GPU as the Runner sees it right now. <paramref name="State"/>: <c>unavailable</c>, <c>not-attached</c>,

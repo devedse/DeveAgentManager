@@ -159,6 +159,83 @@ class DesktopTests(unittest.TestCase):
         with patch.object(desktop, "FOLDER", self.root), patch.object(desktop, "command", return_value=""):
             self.assertEqual(":4", desktop.environment_for(*args)["DISPLAY"])
 
+    def browser(self, display=":1"):
+        self.file("browser-desktop.json", json.dumps({"display": display, "port": 6901}))
+        self.file("x11/X1")
+        return self.root / "x11"
+
+    def test_browser_desktop_uses_its_display_and_this_boots_session_bus(self):
+        x11 = self.browser()
+        self.file("browser-desktop-session.json", json.dumps({"DISPLAY": ":1.0", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/dbus-test",
+                                                              "XDG_CURRENT_DESKTOP": "XFCE", "API_KEY": "secret", "boot": "this"}))
+        with patch.object(desktop, "FOLDER", self.root), patch.object(desktop, "boot_id", return_value="this"), \
+             patch.object(desktop, "command", return_value="") as run:
+            env = desktop.browser_environment(desktop.browser_config(), os.getuid(), self.root / "runtime", x11)
+        self.assertEqual(":1", env["DISPLAY"])
+        self.assertEqual("x11", env["XDG_SESSION_TYPE"])
+        self.assertEqual("unix:path=/tmp/dbus-test", env["DBUS_SESSION_BUS_ADDRESS"])
+        self.assertNotIn("API_KEY", env)
+        self.assertEqual(["xdpyinfo"], run.call_args.args[0])
+
+    def test_browser_desktop_ignores_a_session_from_an_earlier_boot(self):
+        x11 = self.browser()
+        self.file("browser-desktop-session.json", json.dumps({"DISPLAY": ":1", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/old", "boot": "old"}))
+        with patch.object(desktop, "FOLDER", self.root), patch.object(desktop, "boot_id", return_value="this"), \
+             patch.object(desktop, "command", return_value=""):
+            env = desktop.browser_environment(desktop.browser_config(), os.getuid(), self.root / "runtime", x11)
+        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", env)
+
+    def test_browser_desktop_that_is_down_or_not_answering_says_what_to_do(self):
+        self.file("browser-desktop.json", json.dumps({"display": ":1"}))
+        with patch.object(desktop, "FOLDER", self.root), self.assertRaisesRegex(desktop.DesktopError, "isn't running"):
+            desktop.browser_environment(desktop.browser_config(), os.getuid(), self.root / "runtime", self.root / "x11")
+        x11 = self.browser()
+        with patch.object(desktop, "FOLDER", self.root), patch.object(desktop, "command", side_effect=subprocess.CalledProcessError(1, "xdpyinfo")), \
+             self.assertRaisesRegex(desktop.DesktopError, "starting"):
+            desktop.browser_environment(desktop.browser_config(), os.getuid(), self.root / "runtime", x11)
+
+    def test_browser_config_must_be_this_accounts_and_name_a_local_display(self):
+        for display in ["localhost:1", ":1; id", "", 5]:
+            self.file("browser-desktop.json", json.dumps({"display": display}))
+            with patch.object(desktop, "FOLDER", self.root):
+                self.assertIsNone(desktop.browser_config(), display)
+        real = self.file("elsewhere.json", json.dumps({"display": ":1"}))
+        (self.root / "browser-desktop.json").unlink()
+        os.symlink(real, self.root / "browser-desktop.json")
+        with patch.object(desktop, "FOLDER", self.root):
+            self.assertIsNone(desktop.browser_config())
+
+    def test_desktop_environment_prefers_the_browser_desktop_over_logind(self):
+        self.browser()
+        with patch.object(desktop, "FOLDER", self.root), patch.object(desktop, "browser_environment", return_value={"DISPLAY": ":1"}) as browser, \
+             patch.object(desktop, "sessions") as sessions:
+            self.assertEqual({"DISPLAY": ":1"}, desktop.desktop_environment())
+        browser.assert_called_once()
+        sessions.assert_not_called()
+
+    def test_browser_login_is_recorded_without_a_logind_session_and_turns_compositing_off(self):
+        environment = {"DAM_BROWSER_DESKTOP": "1", "DISPLAY": ":1", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/dbus-test", "XDG_SESSION_TYPE": "x11"}
+        with patch.dict(os.environ, environment, clear=True), patch.object(desktop, "FOLDER", self.root), \
+             patch.object(desktop, "boot_id", return_value="this"), patch.object(desktop.shutil, "which", return_value="/usr/bin/tool"), \
+             patch.object(desktop, "command", return_value="") as run:
+            desktop.capture_session()
+        saved = json.loads((self.root / "browser-desktop-session.json").read_text())
+        self.assertEqual((":1", "this"), (saved["DISPLAY"], saved["boot"]))
+        self.assertFalse((self.root / "desktop-session.json").exists())
+        self.assertIn(["xfconf-query", "-c", "xfwm4", "-p", "/general/use_compositing", "-n", "-t", "bool", "-s", "false"],
+                      [call.args[0] for call in run.call_args_list])
+
+    def test_vm_login_still_needs_its_logind_session_and_keeps_its_compositor(self):
+        with patch.dict(os.environ, {"DISPLAY": ":0"}, clear=True), patch.object(desktop, "FOLDER", self.root), \
+             self.assertRaises(desktop.DesktopError):
+            desktop.capture_session()
+        with patch.dict(os.environ, {"DISPLAY": ":0", "XDG_SESSION_ID": "4"}, clear=True), patch.object(desktop, "FOLDER", self.root), \
+             patch.object(desktop, "boot_id", return_value="this"), patch.object(desktop.shutil, "which", return_value="/usr/bin/tool"), \
+             patch.object(desktop, "command", return_value="") as run:
+            desktop.capture_session()
+        self.assertTrue((self.root / "desktop-session.json").exists())
+        self.assertNotIn("xfwm4", [arg for call in run.call_args_list for arg in call.args[0]])
+
     def test_run_refreshes_environment_and_preserves_arguments(self):
         with patch.object(sys, "argv", ["dam-desktop", "run", "--", "app", "a b", "$(touch unwanted)"]), \
              patch.object(desktop, "desktop_environment", return_value={"DISPLAY": ":4", "XDG_SESSION_TYPE": "x11"}), \

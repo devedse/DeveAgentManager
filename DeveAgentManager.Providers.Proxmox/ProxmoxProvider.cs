@@ -22,6 +22,11 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
     /// <summary>The template id of container Runners, and the machine type stored in their provider data.</summary>
     public const string ContainerTemplateId = "container";
 
+    /// <summary>A container with a desktop in the browser (the Manager sets it up: containers have no screen).</summary>
+    public const string ContainerDesktopTemplateId = "container-desktop";
+
+    public static bool IsContainerTemplate(string? templateId) => templateId is ContainerTemplateId or ContainerDesktopTemplateId;
+
     private static readonly SemaphoreSlim AllocationLock = new(1, 1);
 
     private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(30);
@@ -58,6 +63,8 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
         {
             var source = container.Contains(':') ? container[(container.LastIndexOf('/') + 1)..] : $"the newest Debian template in {container}";
             templates.Add(new RunnerTemplate(ContainerTemplateId, "Container", RunnerKind.Headless, $"Debian container from {source}, no desktop; can use a GPU of the host"));
+            templates.Add(new RunnerTemplate(ContainerDesktopTemplateId, "Container desktop", RunnerKind.Desktop,
+                $"Debian container from {source} with a desktop in the browser; can use a GPU of the host", BrowserDesktop: true));
         }
 
         return templates;
@@ -115,7 +122,7 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
 
         checks.Add(await CheckPermissionsAsync(client));
 
-        foreach (var template in GetTemplates().Where(t => t.Id != ContainerTemplateId))
+        foreach (var template in GetTemplates().Where(t => !IsContainerTemplate(t.Id)))
         {
             checks.Add(await CheckTemplateAsync(client, vms, template));
         }
@@ -194,7 +201,7 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
 
     public async Task<MachineHandle> CreateMachineAsync(MachineCreateRequest request, Func<MachineHandle, Task> onAllocated, IRunnerLog log, CancellationToken cancellationToken)
     {
-        if (request.TemplateId == ContainerTemplateId)
+        if (IsContainerTemplate(request.TemplateId))
         {
             return await CreateContainerAsync(request, onAllocated, log, cancellationToken);
         }

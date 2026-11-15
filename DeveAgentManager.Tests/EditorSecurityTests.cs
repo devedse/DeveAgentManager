@@ -4,6 +4,7 @@
 using System.Net;
 using System.Text.Json;
 using DeveAgentManager.Api;
+using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Editor;
 using Microsoft.AspNetCore.Builder;
@@ -28,6 +29,7 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
 
     private readonly Manager _manager;
     private readonly Guid _runnerId = Guid.NewGuid();
+    private readonly Guid _desktopRunnerId = Guid.NewGuid();
     private WebApplication? _codeServer;
 
     public EditorSecurityTests(Manager manager) => _manager = manager;
@@ -37,6 +39,8 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
         private readonly string _data = Directory.CreateTempSubdirectory("dam-editor-").FullName;
 
         public FakeUpstreams Upstreams { get; } = new();
+
+        public FakeDesktops Desktops { get; } = new();
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -48,6 +52,7 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<IEditorUpstreams>(Upstreams);
+                services.AddSingleton<IDesktopUpstreams>(Desktops);
                 // The test server has no ports: a request says which port it came in on.
                 services.AddSingleton<IStartupFilter, LocalPortFromHeader>();
             });
@@ -99,6 +104,21 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
         public IDisposable Use(Guid runnerId) => new MemoryStream();
     }
 
+    /// <summary>Stands in for the desktop tunnels: KasmVNC is the same echoing server, with the desktop's own login.</summary>
+    public sealed class FakeDesktops : IDesktopUpstreams
+    {
+        public int Port { get; set; }
+
+        public Task<DesktopUpstream> GetAsync(Runner runner, CancellationToken cancellationToken) =>
+            Task.FromResult(new DesktopUpstream(Port, "Basic desktop-login"));
+
+        public void Forget(Guid runnerId)
+        {
+        }
+
+        public IDisposable Use(Guid runnerId) => new MemoryStream();
+    }
+
     public async ValueTask InitializeAsync()
     {
         // A fake code-server: echoes what it got, sets a cookie, and sends /login-please to its login page.
@@ -115,6 +135,7 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
             context.Response.Headers.SetCookie = "stolen=1; Path=/";
             context.Response.Headers["Clear-Site-Data"] = "\"cookies\"";
             context.Response.Headers["Service-Worker-Allowed"] = "/";
+            context.Response.Headers.WWWAuthenticate = "Basic realm=\"runner\"";
             return Results.Json(new
             {
                 path = context.Request.Path.Value,
@@ -128,12 +149,19 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
         });
         await _codeServer.StartAsync();
         _manager.Upstreams.Port = new Uri(_codeServer.Urls.First()).Port;
+        _manager.Desktops.Port = _manager.Upstreams.Port;
 
         await using var db = await _manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync();
         db.Runners.Add(new Runner
         {
             OwnerId = User.BootstrapId, Id = _runnerId, Name = $"editor-{_runnerId:N}"[..20], ProviderId = "existing", State = RunnerState.Ready, Host = "127.0.0.1",
             Username = "test", Tools = VsCodeTool.ToolId, HomeDirectory = "/home/test", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        db.Runners.Add(new Runner
+        {
+            OwnerId = User.BootstrapId, Id = _desktopRunnerId, Name = $"desktop-{_desktopRunnerId:N}"[..20], ProviderId = "existing", State = RunnerState.Ready,
+            Host = "127.0.0.1", Username = "test", Kind = RunnerKind.Desktop, BrowserDesktop = true, HomeDirectory = "/home/test",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
     }
@@ -181,6 +209,78 @@ public sealed class EditorSecurityTests : IClassFixture<EditorSecurityTests.Mana
         Assert.Contains($"path=/runners/{_runnerId}/", cookie);
         Assert.Contains("httponly", cookie);
         return cookie.Split(';')[0];
+    }
+
+    /// <summary>Goes through the Portal's Open desktop link and the sign-in on the editor origin; returns the cookie.</summary>
+    private async Task<string> DesktopCookieAsync(string managerCookie)
+    {
+        var portal = Client();
+        portal.DefaultRequestHeaders.Add("Cookie", managerCookie);
+        var link = await portal.GetAsync($"/editor/runners/{_desktopRunnerId}/desktop");
+        Assert.Equal(HttpStatusCode.Redirect, link.StatusCode);
+        var auth = link.Headers.Location!;
+        Assert.Equal($"/runners/{_desktopRunnerId}/auth", auth.AbsolutePath);
+        Assert.Contains("app=desktop", auth.Fragment);
+
+        var signIn = await Client(EditorPort).ExchangeEditorAsync(auth);
+        Assert.Equal(HttpStatusCode.Redirect, signIn.StatusCode);
+        // The viewer's WebSocket path is inside the Runner's prefix.
+        Assert.Equal($"/runners/{_desktopRunnerId}/desktop/?path=runners%2F{_desktopRunnerId}%2Fdesktop%2Fwebsockify", signIn.Headers.Location?.ToString());
+        return signIn.Headers.GetValues("Set-Cookie").Single().Split(';')[0];
+    }
+
+    [Fact]
+    public async Task Desktop_GetsOnlyItsOwnLogin_AndNothingOfTheBrowsers()
+    {
+        var managerCookie = await ManagerCookieAsync();
+        var client = Client(EditorPort);
+        client.DefaultRequestHeaders.Add("Cookie", $"{managerCookie}; {await DesktopCookieAsync(managerCookie)}");
+        client.DefaultRequestHeaders.Add("Authorization", "Basic browser-secret");
+        client.DefaultRequestHeaders.Add("Proxy-Authorization", "Basic proxy-secret");
+        client.DefaultRequestHeaders.Add("X-Auth-Request-User", "admin");
+
+        var response = await client.GetAsync($"/runners/{_desktopRunnerId}/desktop/assets/ui.js?v=1");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var upstream = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("/assets/ui.js", upstream.GetProperty("path").GetString());
+        Assert.Equal("?v=1", upstream.GetProperty("query").GetString());
+        Assert.Equal("Basic desktop-login", upstream.GetProperty("authorization").GetString());
+        Assert.Equal("", upstream.GetProperty("cookie").GetString());
+        Assert.Equal("", upstream.GetProperty("proxyAuthorization").GetString());
+        Assert.Equal("", upstream.GetProperty("identity").GetString());
+        Assert.False(response.Headers.Contains("Set-Cookie"));
+        Assert.False(response.Headers.Contains("Clear-Site-Data"));
+        Assert.False(response.Headers.Contains("WWW-Authenticate"));
+    }
+
+    [Fact]
+    public async Task Desktop_NeedsASignInForThatRunner()
+    {
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Client(EditorPort).GetAsync($"/runners/{_desktopRunnerId}/desktop/")).StatusCode);
+
+        // A sign-in for another Runner's VS Code doesn't open this desktop.
+        var managerCookie = await ManagerCookieAsync();
+        var client = Client(EditorPort);
+        client.DefaultRequestHeaders.Add("Cookie", await EditorCookieAsync(managerCookie));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync($"/runners/{_desktopRunnerId}/desktop/")).StatusCode);
+    }
+
+    [Fact]
+    public async Task DesktopLink_ForARunnerWithoutABrowserDesktop_SaysHowToAddOne()
+    {
+        var portal = Client();
+        portal.DefaultRequestHeaders.Add("Cookie", await ManagerCookieAsync());
+        var response = await portal.GetAsync($"/editor/runners/{_runnerId}/desktop");
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("has no desktop in the browser", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task DesktopPath_WithoutSlash_GetsIt()
+    {
+        var response = await Client(EditorPort).GetAsync($"/runners/{_desktopRunnerId}/desktop?path=x");
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal($"/runners/{_desktopRunnerId}/desktop/?path=x", response.Headers.Location?.ToString());
     }
 
     [Theory]

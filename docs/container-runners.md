@@ -20,7 +20,9 @@ the host's kernel. The Manager therefore only creates unprivileged containers.
 5. **Manager settings → Providers → Test connection** checks the template, the network and the storage. The storage
    must take containers on that node: **Datacenter → Storage → (storage) → Content** includes **Container**.
 
-**New Runner** then offers **Container** next to Headless and Desktop.
+**New Runner** then offers **Container** and **Container desktop** next to Headless and Desktop. A container desktop
+is a container with an XFCE desktop you open in the browser, on the GPU once one is passed in; see
+[Browser desktops](runner-desktop.md#browser-desktops). **Add desktop** under Operations gives an existing container one.
 
 ## What the Manager creates
 
@@ -71,5 +73,5 @@ skips it; Intel's compute runtime releases on GitHub provide it (and Level Zero)
 
 ## Limits
 
-- Headless only. A desktop container is not supported yet.
+- A container's desktop is a browser desktop (KasmVNC): containers have no screen of their own.
 - No Docker inside the Runner: that needs the `keyctl` feature, which also only `root@pam` may set.

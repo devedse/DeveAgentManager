@@ -1065,6 +1065,24 @@ public sealed partial class AgentService(
         + "Use `dam-tools run-job` only when your harness has no built-in background-job support. Long runtimes, restart survival and validation needs are not exceptions. "
         + "Run `dam-tools --help` for other tools.";
 
+    /// <summary>Added to <see cref="LaunchInstructions"/> on Runners with a desktop.</summary>
+    internal const string DesktopInstructions =
+        " This Runner has a desktop (X11) that the user can see: GUI apps you start from a shell appear on it. "
+        + "To see and operate it, use `dam-desktop screenshot <file.png>` (read the image), `dam-desktop windows`, "
+        + "`dam-desktop click <x> <y>`, `dam-desktop type <text>`, `dam-desktop key <keys>` and `dam-desktop batch <actions.json>` "
+        + "(other agents may share the desktop; a batch keeps your steps together). Never type passwords or other credentials, "
+        + "and don't sign in to the user's accounts: when something needs their login or their decision, ask the user to do it "
+        + "on the desktop, then continue.";
+
+    /// <summary>The browser desktop's own part: the user takes over in the Manager.</summary>
+    internal const string BrowserDesktopInstructions =
+        " The user opens it with Open desktop on the Runner page in DeveAgentManager.";
+
+    internal static string? InstructionsFor(Runner runner) =>
+        !(runner.SetupVersion >= Runners.RunnerSetupService.AgentToolsSetupVersion) ? null
+        : runner.Kind != RunnerKind.Desktop ? LaunchInstructions
+        : LaunchInstructions + DesktopInstructions + (runner.BrowserDesktop ? BrowserDesktopInstructions : "");
+
     /// <param name="transferred">The conversation was just converted from another harness (see <see cref="HarnessLaunch.Transferred"/>).</param>
     private async Task LaunchAsync(Runner runner, Agent agent, bool restart, CancellationToken cancellationToken, bool transferred = false, CurrentUser? loginActor = null)
     {
@@ -1104,7 +1122,7 @@ public sealed partial class AgentService(
         var managerConfig = (await settings.GetSetupProfileAsync(cancellationToken)).GetHarness(agent.HarnessId);
         var ownModel = userSettings is null ? null : (await userSettings.GetModelDefaultsAsync(agent.OwnerId, cancellationToken)).GetValueOrDefault(agent.HarnessId);
         var model = harness.ConfigSupport is null ? new Setup.EffectiveModel(null, null, null) : Setup.EffectiveModel.Resolve(managerConfig, ownModel);
-        var instructions = runner.SetupVersion >= Runners.RunnerSetupService.AgentToolsSetupVersion ? LaunchInstructions : null;
+        var instructions = InstructionsFor(runner);
 
         // The git identity's environment (the owner's unless switched: git config, GitHub token and variables), then the
         // harness login's, so e.g. a subscription wins over an API key meant for pi. A restart keeps the identity.

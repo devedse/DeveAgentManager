@@ -104,7 +104,8 @@ public sealed class DtoMapper(
                 .Where(a => a.Access >= AgentAccess.Listed).OrderByDescending(a => a.Agent.CreatedAt)
                 .Select(a => Agent(a.Agent, runner, a.Access, access, a.Agent.Shares.Any(s => s.UserId == user.Id))).ToList(),
             access >= RunnerAccess.Manage ? updates.Get(runner.Id) : null,
-            runners.FindProvider(runner.ProviderId)?.SupportsGpuPassthrough(runner.ToMachine()) == true);
+            runners.FindProvider(runner.ProviderId)?.SupportsGpuPassthrough(runner.ToMachine()) == true,
+            runner.Kind == RunnerKind.Desktop && runner.BrowserDesktop);
     }
 
     /// <summary>An agent loaded with its Runner (and the Runner's members), owner, shares and harness login.</summary>

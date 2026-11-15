@@ -13,7 +13,8 @@ public enum RunnerKind
     Desktop,
 }
 
-public sealed record RunnerTemplate(string Id, string DisplayName, RunnerKind Kind, string Description);
+/// <param name="BrowserDesktop">A desktop the Manager sets up and serves in the browser, for machines without a screen.</param>
+public sealed record RunnerTemplate(string Id, string DisplayName, RunnerKind Kind, string Description, bool BrowserDesktop = false);
 
 public sealed record ProviderSetting(string Name, string? Value, bool IsSecret = false);
 

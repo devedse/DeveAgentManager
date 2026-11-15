@@ -504,6 +504,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("BrowserDesktop")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Cores")
                         .HasColumnType("INTEGER");
 

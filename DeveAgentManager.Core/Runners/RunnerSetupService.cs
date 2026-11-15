@@ -258,10 +258,7 @@ public sealed partial class RunnerSetupService(
 
         if (runner.Kind == RunnerKind.Desktop)
         {
-            await shell.UploadAsync(runner, "~/.deveagentmanager/desktop.py", ReadResource("desktop.py"), "700", cancellationToken);
-            await shell.UploadAsync(runner, "~/.deveagentmanager/desktop-setup.sh", ReadResource("desktop-setup.sh"), "700", cancellationToken);
-            await shell.UploadAsync(runner, "~/.deveagentmanager/desktop-shell.sh", ReadResource("desktop-shell.sh"), "600", cancellationToken);
-            await RunScriptAsync(runner, log, "Desktop autologin and UI tools", "bash ~/.deveagentmanager/desktop-setup.sh", TimeSpan.FromMinutes(15), cancellationToken);
+            await SetUpDesktopAsync(runner, runner.BrowserDesktop, log, cancellationToken);
         }
 
         foreach (var file in profile.Files)
@@ -317,6 +314,37 @@ public sealed partial class RunnerSetupService(
         runner.SetupVersion = SetupVersion;
         runner.LastSetupAt = DateTime.UtcNow;
         log.Success($"Setup finished: {runner.InstalledVersions}");
+    }
+
+    /// <summary>
+    /// A desktop Runner's desktop: the machine's own screen (automatic login), or a browser desktop the Manager makes for
+    /// machines without one (XFCE on KasmVNC, as a user service). Leaves a running desktop running.
+    /// </summary>
+    private async Task SetUpDesktopAsync(Runner runner, bool browser, IRunnerLog log, CancellationToken cancellationToken)
+    {
+        await shell.UploadAsync(runner, "~/.deveagentmanager/desktop.py", ReadResource("desktop.py"), "700", cancellationToken);
+        await shell.UploadAsync(runner, "~/.deveagentmanager/desktop-setup.sh", ReadResource("desktop-setup.sh"), "700", cancellationToken);
+        await shell.UploadAsync(runner, "~/.deveagentmanager/desktop-shell.sh", ReadResource("desktop-shell.sh"), "600", cancellationToken);
+        if (browser)
+        {
+            await shell.UploadAsync(runner, "~/.deveagentmanager/browser-desktop.sh", ReadResource("browser-desktop.sh"), "700", cancellationToken);
+            await shell.UploadAsync(runner, "~/.deveagentmanager/browser-desktop-session.sh", ReadResource("browser-desktop-session.sh"), "700", cancellationToken);
+            await RunScriptAsync(runner, log, "Browser desktop (XFCE and KasmVNC)", "bash ~/.deveagentmanager/desktop-setup.sh browser", TimeSpan.FromMinutes(20), cancellationToken);
+        }
+        else
+        {
+            await RunScriptAsync(runner, log, "Desktop autologin and UI tools", "bash ~/.deveagentmanager/desktop-setup.sh", TimeSpan.FromMinutes(15), cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Gives a headless Runner a browser desktop, and its shells and agents the desktop's environment (apps they start
+    /// appear on it). The caller makes the Runner a desktop Runner once this succeeded.
+    /// </summary>
+    public async Task AddBrowserDesktopAsync(Runner runner, IRunnerLog log, CancellationToken cancellationToken)
+    {
+        await SetUpDesktopAsync(runner, browser: true, log, cancellationToken);
+        await shell.UploadAsync(runner, "~/.deveagentmanager/agent-env.sh", BuildAgentEnv(desktop: true), "600", cancellationToken);
     }
 
     /// <summary>

@@ -1,3 +1,4 @@
+using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -26,8 +27,11 @@ public class AccountSharingMigrationTests
                 VALUES({a},{User.BootstrapId},'claude','First','Subscription','encrypted-test-only',1,7,{now},{now},0),
                       ({b},{User.BootstrapId},'claude','Second','ApiKey','encrypted-test-only-2',0,2,{now},{now},0);
                 """, ct);
-            db.Runners.Add(new Runner { Id = runner, Name = "test-runner", OwnerId = User.BootstrapId, State = RunnerState.Stopped });
-            await db.SaveChangesAsync(ct);
+            // Runners as that migration had them: today's model has columns added later (e.g. BrowserDesktop).
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO Runners(Id,Name,OwnerId,ProviderId,Kind,State,SshPort,Username,KeysOnly,Cores,MemoryMb,DiskGb,Harnesses,Tools,CreatedAt,UpdatedAt)
+                VALUES({runner},'test-runner',{User.BootstrapId},'',{nameof(RunnerKind.Headless)},{nameof(RunnerState.Stopped)},22,'',0,0,0,0,'','',{now},{now});
+                """, ct);
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO Agents(Id,RunnerId,OwnerId,Name,HarnessId,WorkingDirectory,TmuxSession,HarnessSessionId,State,CreatedAt,UpdatedAt,AccountId,Working,SeenCompletionSequence)
                 VALUES({agent},{runner},{user.Id},'test-agent','claude','/work','test','session','Running',{now},{now},{a},0,0);

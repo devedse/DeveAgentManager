@@ -175,7 +175,9 @@ that's expected with Privilege Separation off.
 ### Template requirements
 
 Desktop VM autologin, connecting agents to the real display, and updating existing runners are described in
-[Desktop runners](docs/runner-desktop.md).
+[Desktop runners](docs/runner-desktop.md). Runners without a screen, such as containers, get a desktop in the browser
+instead: **Container desktop** in New Runner, or **Add desktop** under a Runner's Operations
+([Browser desktops](docs/runner-desktop.md#browser-desktops)).
 
 Runners are full clones of `TEMPLATE_HEADLESS_VMID` (and `TEMPLATE_DESKTOP_VMID`). The template needs:
 

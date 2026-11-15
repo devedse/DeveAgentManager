@@ -141,6 +141,7 @@ public sealed partial class RunnerService(
             ProviderId = provider.Id,
             TemplateId = template?.Id,
             Kind = template?.Kind ?? RunnerKind.Headless,
+            BrowserDesktop = template is { Kind: RunnerKind.Desktop, BrowserDesktop: true },
             State = RunnerState.Creating,
             StateMessage = "Queued",
             // Existing machines have whatever size they have.
@@ -280,6 +281,27 @@ public sealed partial class RunnerService(
         {
             RequireReady(op.Runner);
             await gpu.InstallAsync(op.Runner, op.Log, cancellation);
+        }, markFailed: false);
+
+    /// <summary>
+    /// Adds a desktop in the browser to a headless Runner (XFCE on KasmVNC; containers have no screen). Running agents
+    /// get its environment when they restart. Returns the error, or null.
+    /// </summary>
+    public Task<string?> AddDesktop(Guid runnerId) =>
+        StartOperation(runnerId, "Adding a desktop", async (op, cancellation) =>
+        {
+            RequireReady(op.Runner);
+            if (op.Runner.Kind == RunnerKind.Desktop)
+            {
+                throw new InvalidOperationException($"'{op.Runner.Name}' already has a desktop.");
+            }
+
+            op.Log.Step("Adding a desktop in the browser: XFCE on KasmVNC");
+            await setup.AddBrowserDesktopAsync(op.Runner, op.Log, cancellation);
+            op.Runner.Kind = RunnerKind.Desktop;
+            op.Runner.BrowserDesktop = true;
+            await op.SaveAsync();
+            op.Log.Success("Desktop ready: Open desktop on the Runner page. Restart running agents so the apps they start appear on it.");
         }, markFailed: false);
 
     /// <summary>Applies a harness's configuration from the Setup Profile (after it changed). Returns the error, or null.</summary>
