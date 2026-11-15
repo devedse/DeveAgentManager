@@ -50,8 +50,10 @@ commands refresh again after a desktop restart. An existing `BASH_ENV` hook is p
 processes directly without starting a shell retain their process's original environment; `dam-desktop run -- …`
 is available for that case. Missing or locked desktops clear stale graphical settings.
 
-No harness instructions are needed for the desktop. Re-run setup removes only our previously managed desktop
-blocks from `CLAUDE.md` and the other harness instruction files; custom content and account links remain intact.
+Agents on desktop Runners get a short paragraph in the launch instructions the Manager adds to their system prompt
+(never a file in a repository): GUI apps appear on the desktop, `dam-desktop` operates it, and logins are left to the
+user. Re-run setup removes only our previously managed desktop blocks from `CLAUDE.md` and the other harness
+instruction files; custom content and account links remain intact.
 
 The runner page reports **Desktop ready**, **Login required**, **Setup required** or **Desktop unavailable**.
 It refreshes with runner updates (at most once every 15 seconds) and has a manual refresh button. These are live
