@@ -256,8 +256,7 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
         var client = CreateClient();
         var guest = await LocateAsync(client, machine);
         var (node, vmId) = (guest.Node, guest.VmId);
-        var running = guest.IsContainer ? guest.IsRunning : (await client.Nodes[node].Qemu[vmId].Status.Current.GetAsync()).IsRunning;
-        if (running)
+        if ((await CurrentStatusAsync(client, guest)).Running)
         {
             log.Info($"{guest.Noun} {vmId} is already running");
             return;
@@ -302,7 +301,7 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
             throw new InvalidOperationException($"Refusing to delete {guest.Noun} {vmId}: this Runner was a {(guest.IsContainer ? "VM" : "container")}.");
         }
 
-        if (vm.IsRunning)
+        if ((await CurrentStatusAsync(client, guest)).Running)
         {
             log.Info($"Stopping {guest.Noun} {vmId}");
             var stopped = guest.IsContainer
@@ -331,9 +330,12 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
             return new MachineStatus(MachinePowerState.Missing);
         }
 
-        if (!vm.IsRunning)
+        // Not the cluster list's state: it lags a few seconds behind, and a Runner just stopped that still shows as
+        // running there would be taken as started outside the Manager, and so be started again.
+        var (running, status, uptime) = await CurrentStatusAsync(client, new Guest(vm));
+        if (!running)
         {
-            return new MachineStatus(MachinePowerState.Stopped, Detail: vm.Status);
+            return new MachineStatus(MachinePowerState.Stopped, Detail: status);
         }
 
         string? address = null;
@@ -347,7 +349,20 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
         }
 
         // CPU and memory are read inside the Runner (GuestUsage): Proxmox sees the VM from the host.
-        return new MachineStatus(MachinePowerState.Running, address, Uptime: TimeSpan.FromSeconds(vm.Uptime), Detail: vm.Node);
+        return new MachineStatus(MachinePowerState.Running, address, Uptime: TimeSpan.FromSeconds(uptime), Detail: vm.Node);
+    }
+
+    /// <summary>The guest's state right now, from its node (/cluster/resources lags a few seconds behind).</summary>
+    private static async Task<(bool Running, string? Status, long Uptime)> CurrentStatusAsync(PveClient client, Guest guest)
+    {
+        if (guest.IsContainer)
+        {
+            var container = await client.Nodes[guest.Node].Lxc[guest.VmId].Status.Current.GetAsync();
+            return (container.IsRunning, container.Status, container.Uptime);
+        }
+
+        var vm = await client.Nodes[guest.Node].Qemu[guest.VmId].Status.Current.GetAsync();
+        return (vm.IsRunning, vm.Status, vm.Uptime);
     }
 
     public async Task<string> WaitForAddressAsync(RunnerMachine machine, IRunnerLog log, CancellationToken cancellationToken)

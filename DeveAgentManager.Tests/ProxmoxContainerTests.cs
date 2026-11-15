@@ -94,6 +94,26 @@ public sealed class ProxmoxContainerTests
         Assert.DoesNotContain(api.Calls, c => c.Path.Contains("/qemu/30000"));
     }
 
+    [Theory]
+    [InlineData("lxc", """{"Node":"test-node","Type":"container"}""")]
+    [InlineData("qemu", """{"Node":"test-node"}""")]
+    public async Task ARunnerJustStoppedIsNotTakenAsRunningFromTheLaggingClusterList(string type, string data)
+    {
+        // Right after a shutdown, /cluster/resources still says running for a few seconds. The monitor would take that as
+        // started outside the Manager and start the Runner again; the guest's own node knows better.
+        using var api = new Api
+        {
+            Guests = [.. Api.Templates, new { type, vmid = 30000, node = "test-node", name = "test-runner", status = "running", tags = ProxmoxProvider.Tag }],
+            CurrentStatus = "stopped",
+        };
+        var provider = Provider(api);
+        var machine = Machine(data);
+
+        Assert.Equal(MachinePowerState.Stopped, (await provider.GetStatusAsync(machine, Ct)).PowerState);
+        await provider.StartMachineAsync(machine, NullRunnerLog.Instance, Ct);
+        Assert.Contains(api.Calls, c => c.Method == HttpMethod.Post && c.Path.EndsWith($"/{type}/30000/status/start"));
+    }
+
     [Fact]
     public async Task DeletesItsOwnContainerWithItsDisks()
     {
@@ -240,6 +260,9 @@ public sealed class ProxmoxContainerTests
 
         public object[] Guests { get; init; } = Templates;
 
+        /// <summary>What the guest's node says (status/current); null: the same as the cluster list.</summary>
+        public string? CurrentStatus { get; init; }
+
         public string[] TemplateVolumes { get; init; } =
         [
             "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst",
@@ -271,6 +294,12 @@ public sealed class ProxmoxContainerTests
                 agent = "1", net0 = "virtio=BC:24:11:00:00:01,bridge=vmbr0,firewall=1,tag=28",
                 scsi0 = "example-storage:base-10100-disk-0,size=32G", ide2 = "example-storage:cloudinit,media=cdrom", boot = "order=scsi0",
             };
+            else if (path.EndsWith("/status/current"))
+            {
+                var guest = JsonSerializer.SerializeToElement(Guests).EnumerateArray().First(g => path.Contains($"/{g.GetProperty("vmid").GetInt32()}/"));
+                var status = CurrentStatus ?? (guest.TryGetProperty("status", out var listed) ? listed.GetString() : "stopped");
+                data = new { status, uptime = status == "running" ? 60 : 0, vmid = guest.GetProperty("vmid").GetInt32() };
+            }
             else if (path.EndsWith("/lxc/30000/interfaces")) data = new object[]
             {
                 new { name = "lo", inet = "127.0.0.1/8", hwaddr = "00:00:00:00:00:00" },
