@@ -6,23 +6,27 @@ the host's kernel. The Manager therefore only creates unprivileged containers.
 
 ## Enable it
 
-1. Download a Debian standard template on the node that creates Runners: **node → local → CT Templates → Templates →
-   debian-13-standard**.
+1. Download a Debian standard template on the node that will run the containers: **node → local → CT Templates →
+   Templates → debian-13-standard**.
 2. Set `TEMPLATE_CONTAINER` in the compose file and restart the Manager:
    - a storage name, for example `local`: the Manager uses the newest Debian standard template in it, or
    - one template, for example `local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst`.
-3. Let the token read the templates on that storage:
+3. If the GPU is in another node than the template VMs, set `PROXMOX_CONTAINER_NODE` to that node. VM Runners keep
+   being created on `PROXMOX_NODE` (or the template's node).
+4. Let the token read the templates on that storage:
    ```bash
    pveum acl modify /storage/local --users deveagentmanager@pve --roles DeveAgentManager
    ```
-4. **Manager settings → Providers → Test connection** checks the template, the network and the storage.
+5. **Manager settings → Providers → Test connection** checks the template, the network and the storage. The storage
+   must take containers on that node: **Datacenter → Storage → (storage) → Content** includes **Container**.
 
 **New Runner** then offers **Container** next to Headless and Desktop.
 
 ## What the Manager creates
 
-- The same VMID range, pool, tag, naming and size as VM Runners. The root disk goes to `PROXMOX_STORAGE`, or else to
-  the storage of the headless template's disk.
+- The same VMID range, pool, tag, naming and size as VM Runners, on `PROXMOX_CONTAINER_NODE`, `PROXMOX_NODE` or the
+  template VMs' node (the first one set). The root disk goes to `PROXMOX_STORAGE`, or else to the storage of the
+  headless template's disk.
 - The network of the headless template VM: its bridge (or `PROXMOX_BRIDGE`), VLAN tag and firewall setting, with
   DHCP.
 - Unprivileged, with only the `nesting` feature, which an API token may set on unprivileged containers.

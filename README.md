@@ -217,6 +217,7 @@ Startup and connection settings use environment variables in the compose file.
 | `PROXMOX_FULL_CLONE` | `true` | `false` makes linked clones (faster, needs a template on storage that supports it). |
 | `TEMPLATE_HEADLESS_VMID` / `TEMPLATE_DESKTOP_VMID` | | Template VMIDs, e.g. `10100` and `10120`. |
 | `TEMPLATE_CONTAINER` | | Container Runners: a storage with Debian standard CT templates (e.g. `local`, the newest is used) or one template. See [container Runners](docs/container-runners.md). |
+| `PROXMOX_CONTAINER_NODE` | `PROXMOX_NODE` | Node for container Runners only, e.g. the one with the GPU. VM Runners keep `PROXMOX_NODE`. |
 | `RUNNER_USERNAME` | `remoteman` | Account created on new VMs by cloud-init. Each Runner gets a random password of its own, which whoever manages the Runner sees on its page. (`RUNNER_PASSWORD` is no longer used.) |
 | `RUNNER_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` | `4` / `8192` / `64` | Default size in the New Runner dialog. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |

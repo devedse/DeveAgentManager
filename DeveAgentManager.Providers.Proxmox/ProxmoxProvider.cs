@@ -78,6 +78,7 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
         new("TEMPLATE_HEADLESS_VMID", options.HeadlessTemplateVmId?.ToString()),
         new("TEMPLATE_DESKTOP_VMID", options.DesktopTemplateVmId?.ToString()),
         new("TEMPLATE_CONTAINER", options.ContainerTemplate),
+        new("PROXMOX_CONTAINER_NODE", options.ContainerNode ?? (options.ContainerTemplate is null ? null : options.Node ?? "(the template's node)")),
     ];
 
     public async Task<IReadOnlyList<ProviderCheck>> CheckAsync(CancellationToken cancellationToken)
@@ -547,9 +548,11 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
         }
     }
 
-    /// <summary>Containers are created where the template VMs are, unless PROXMOX_NODE says otherwise.</summary>
+    /// <summary>
+    /// PROXMOX_CONTAINER_NODE (where the GPU is), else PROXMOX_NODE, else where the template VMs are.
+    /// </summary>
     private string? ContainerNode(List<ClusterResource> guests) =>
-        options.Node ?? guests.FirstOrDefault(v => v.VmType == VmType.Qemu && v.VmId == (options.HeadlessTemplateVmId ?? options.DesktopTemplateVmId))?.Node;
+        options.ContainerNode ?? options.Node ?? guests.FirstOrDefault(v => v.VmType == VmType.Qemu && v.VmId == (options.HeadlessTemplateVmId ?? options.DesktopTemplateVmId))?.Node;
 
     /// <summary>The template VM's network and disk storage (PROXMOX_BRIDGE and PROXMOX_STORAGE win).</summary>
     private async Task<(string Network, string Storage)> ContainerPlacementAsync(PveClient client, List<ClusterResource> guests)
@@ -600,6 +603,14 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
         {
             var template = await ResolveContainerTemplateAsync(client, node);
             var (network, storage) = await ContainerPlacementAsync(client, guests);
+            // Lists only storages that are on this node, enabled and hold containers ("rootdir").
+            var accepts = await client.Nodes[node].Storage.GetAsync(content: "rootdir", storage: storage);
+            if (!accepts.Any(s => s.Storage == storage))
+            {
+                return new ProviderCheck(name, CheckStatus.Failed,
+                    $"Storage '{storage}' takes no containers on {node}. Datacenter → Storage → {storage}: add Container to its content, and {node} to its nodes if it lists any.");
+            }
+
             return new ProviderCheck(name, CheckStatus.Ok, $"{template[(template.LastIndexOf('/') + 1)..]} on {node}; disk on {storage}; network {network}.");
         }
         catch (Exception ex)

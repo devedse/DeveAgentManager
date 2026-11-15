@@ -147,6 +147,31 @@ public sealed class ProxmoxContainerTests
     }
 
     [Fact]
+    public async Task CreatesContainersOnTheContainerNodeWhereTheGpuIs()
+    {
+        // The template VMs are on test-node; the GPU is in gpu-node.
+        using var api = new Api();
+        var handle = await Provider(api, containerNode: "gpu-node").CreateMachineAsync(Request(), _ => Task.CompletedTask, NullRunnerLog.Instance, Ct);
+
+        Assert.Single(api.Calls, c => c.Method == HttpMethod.Post && c.Path.EndsWith("/nodes/gpu-node/lxc"));
+        Assert.Contains(api.Calls, c => c.Path.EndsWith("/nodes/gpu-node/storage/local/content"));
+        Assert.DoesNotContain(api.Calls, c => c.Method == HttpMethod.Post && c.Path.Contains("/nodes/test-node/"));
+        Assert.Contains("\"gpu-node\"", handle.ProviderData);
+    }
+
+    [Fact]
+    public async Task ConnectionTestSaysSoWhenTheStorageTakesNoContainers()
+    {
+        using var api = new Api { ContainerStorages = ["local"] };
+        var checks = await Provider(api, containerNode: "gpu-node").CheckAsync(Ct);
+
+        var container = Assert.Single(checks, c => c.Name == "Container template");
+        Assert.Equal(CheckStatus.Failed, container.Status);
+        Assert.Contains("'example-storage' takes no containers on gpu-node", container.Message);
+        Assert.Contains(api.Calls, c => c.Path.EndsWith("/nodes/gpu-node/storage") && c.Query.Contains("content=rootdir"));
+    }
+
+    [Fact]
     public void PicksTheNewestDebianStandardTemplate()
     {
         Assert.Equal("local:vztmpl/debian-13-standard_13.10-1_amd64.tar.zst", ProxmoxProvider.PickNewestDebianTemplate(
@@ -179,10 +204,10 @@ public sealed class ProxmoxContainerTests
             new VmLxcInterface { Name = "eth0", Inet = "192.0.2.10/24" },
         ]));
 
-    private static ProxmoxProvider Provider(Api api, string container = "local") => new(new ProxmoxOptions
+    private static ProxmoxProvider Provider(Api api, string container = "local", string? containerNode = null) => new(new ProxmoxOptions
     {
         Host = "proxmox.test", TokenId = "test@pve!manager", TokenSecret = "test-only-token", Pool = "test-runners",
-        HeadlessTemplateVmId = 10100, ContainerTemplate = container,
+        HeadlessTemplateVmId = 10100, ContainerTemplate = container, ContainerNode = containerNode,
     }, api, NullLogger<ProxmoxProvider>.Instance);
 
     private static MachineCreateRequest Request() => new("test-runner", ProxmoxProvider.ContainerTemplateId, 4, 8192, 32,
@@ -218,6 +243,9 @@ public sealed class ProxmoxContainerTests
             "local:vztmpl/debian-13-standard_13.10-1_amd64.tar.zst",
         ];
 
+        /// <summary>The storages whose content includes containers.</summary>
+        public string[] ContainerStorages { get; init; } = ["local", "example-storage"];
+
         public List<Call> Calls { get; } = [];
         public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
 
@@ -232,6 +260,7 @@ public sealed class ProxmoxContainerTests
             else if (path.EndsWith("/cluster/resources")) data = Guests;
             else if (path.EndsWith("/cluster/nextid")) data = 30000;
             else if (path.EndsWith("/pools")) data = new[] { new { poolid = "test-runners" } };
+            else if (path.EndsWith("/storage") && path.Contains("/nodes/")) data = ContainerStorages.Select(s => new { storage = s, content = "rootdir,images", enabled = 1, active = 1, type = "rbd" }).ToArray();
             else if (path.EndsWith("/storage/local/content")) data = TemplateVolumes.Select(v => new { volid = v, content = "vztmpl", format = "tzst", size = 1 }).ToArray();
             else if (path.EndsWith("/qemu/10100/config")) data = new
             {

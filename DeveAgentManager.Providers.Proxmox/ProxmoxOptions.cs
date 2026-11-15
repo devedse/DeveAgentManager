@@ -44,6 +44,12 @@ public sealed class ProxmoxOptions
     /// </summary>
     public string? ContainerTemplate { get; init; }
 
+    /// <summary>
+    /// Node for container Runners, e.g. the one with the GPU they should use. Empty: <see cref="Node"/>, else the
+    /// template VM's node. VM Runners are not affected.
+    /// </summary>
+    public string? ContainerNode { get; init; }
+
     public string ApiToken => $"{TokenId}={TokenSecret}";
 
     public bool IsConfigured =>
@@ -83,6 +89,7 @@ public sealed class ProxmoxOptions
             HeadlessTemplateVmId = int.TryParse(Value(configuration, "TEMPLATE_HEADLESS_VMID"), out var headless) ? headless : null,
             DesktopTemplateVmId = int.TryParse(Value(configuration, "TEMPLATE_DESKTOP_VMID"), out var desktop) ? desktop : null,
             ContainerTemplate = Value(configuration, "TEMPLATE_CONTAINER"),
+            ContainerNode = Value(configuration, "PROXMOX_CONTAINER_NODE"),
         };
     }
 
