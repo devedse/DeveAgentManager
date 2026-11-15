@@ -25,6 +25,12 @@ public class Runner
 
     public RunnerKind Kind { get; set; }
 
+    /// <summary>
+    /// A desktop the Manager made and serves in the browser (XFCE on KasmVNC), instead of the machine's own screen:
+    /// Runners without a screen, such as containers. Only with <see cref="RunnerKind.Desktop"/>.
+    /// </summary>
+    public bool BrowserDesktop { get; set; }
+
     /// <summary>The provider's id for the machine (the VMID on Proxmox, the host for an existing machine).</summary>
     public string? MachineId { get; set; }
 

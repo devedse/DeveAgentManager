@@ -131,6 +131,10 @@ internal static class RunnerEndpoints
 
     private static void MapDesktop(RouteGroupBuilder runners)
     {
+        // A desktop in the browser for a headless Runner (XFCE on KasmVNC).
+        runners.MapPost("/{runnerId:guid}/desktop/add", (Guid runnerId, RunnerService service, OperationNotifier notifier, CancellationToken ct) =>
+            ManagerApi.Track(runnerId, service, notifier, "desktop", () => service.AddDesktop(runnerId), ct)).RequireRunner(RunnerAccess.Manage);
+
         runners.MapGet("/{runnerId:guid}/desktop", async (Guid runnerId, RunnerService service, RunnerDesktop desktop, CancellationToken ct) =>
             await service.GetAsync(runnerId, ct) is { } runner ? Results.Ok(await desktop.ReadAsync(runner, ct)) : Results.NotFound())
             .RequireRunner(RunnerAccess.Use);

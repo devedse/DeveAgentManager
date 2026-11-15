@@ -136,6 +136,8 @@ public sealed partial class ManagerApi(HttpClient http, NavigationManager naviga
     /// <summary>Starts installing the GPU drivers; the result arrives as <see cref="LiveUpdates.OperationFinished"/>.</summary>
     public Task SetUpRunnerGpuAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/gpu/setup");
 
+    public Task AddRunnerDesktopAsync(Guid runnerId) => SendAsync(HttpMethod.Post, $"api/runners/{runnerId}/desktop/add");
+
     public Task<List<RunnerUsageSample>> GetRunnerUsageAsync(Guid runnerId, int minutes = 60) => GetAsync<List<RunnerUsageSample>>($"api/runners/{runnerId}/usage?minutes={minutes}");
 
     public Task<RunnerDto> CreateRunnerAsync(CreateRunnerRequest request) => SendAsync<RunnerDto>(HttpMethod.Post, "api/runners", request);
