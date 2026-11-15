@@ -29,7 +29,7 @@ public sealed partial class RunnerSetupService(
     IEnumerable<IRunnerTool> tools)
 {
     /// <summary>Bump when runner-setup.sh changes, so the Portal can show that a Runner's setup is outdated.</summary>
-    public const int SetupVersion = 5;
+    public const int SetupVersion = 6;
 
     /// <summary>The first setup version that installs dam-tools.</summary>
     public const int AgentToolsSetupVersion = 4;

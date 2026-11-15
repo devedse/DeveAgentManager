@@ -65,7 +65,9 @@ first GPU (`/dev/dri/renderD128`), and `ls -l /dev/dri/by-path/` on the host sho
 which card.
 
 Restart the Runner, then use **Set up GPU**. It installs the Mesa Vulkan and VA-API drivers, and the panel then names
-the GPU that Vulkan reports. Agents can use it right away: the Runner Account has been in the `render` group since the
+the GPU that Vulkan reports. On Debian, Mesa comes from Debian's own backports (on Debian 13: Mesa 26.1 instead of
+25.0), which recent GPUs need: an Intel Arc Pro B50 only has the 64-bit image atomics of Unreal's Nanite with it. Mesa
+then keeps updating from there with Update all. Agents can use it right away: the Runner Account has been in the `render` group since the
 container was created. Mesa covers Intel and AMD GPUs; NVIDIA's own driver is not installed.
 
 OpenCL comes from Intel's `intel-opencl-icd`, which Debian 12 packages but Debian 13 doesn't. On Debian 13, Set up GPU

@@ -33,8 +33,8 @@ public sealed class RunnerGpu(RunnerShell shell, IEnumerable<IRunnerProvider> pr
         """;
 
     /// <summary>
-    /// Mesa's Vulkan and VA-API for Intel (and AMD through Mesa), Intel's OpenCL where Debian packages it (Debian 12, not
-    /// Debian 13), and the render group for the account.
+    /// Mesa's Vulkan and VA-API for Intel (and AMD through Mesa), on Debian the newer Mesa from its backports, Intel's
+    /// OpenCL where Debian packages it (Debian 12, not Debian 13), and the render group for the account.
     /// </summary>
     internal const string InstallScript = """
         set -euo pipefail
@@ -44,8 +44,26 @@ public sealed class RunnerGpu(RunnerShell shell, IEnumerable<IRunnerProvider> pr
         user=$(id -un)
         getent group render >/dev/null || sudo -n groupadd --system render
         sudo -n usermod -aG render,video "$user"
+
+        # Debian's own newer Mesa (backports): recent GPUs need it, e.g. an Intel Arc Pro B50 for the 64-bit image atomics
+        # of Unreal's Nanite (Debian 13 itself has Mesa 25.0). Installed from backports, Mesa keeps updating from there.
+        backports=""
+        . /etc/os-release
+        if [ "${ID:-}" = debian ] && [ -n "${VERSION_CODENAME:-}" ] && [ -f /usr/share/keyrings/debian-archive-keyring.gpg ]; then
+          backports="$VERSION_CODENAME-backports"
+          if ! apt-cache policy | grep -q " $backports/main "; then
+            printf '%s\n' 'Types: deb' 'URIs: http://deb.debian.org/debian' "Suites: $backports" 'Components: main' \
+              'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' | sudo -n tee /etc/apt/sources.list.d/dam-backports.sources >/dev/null
+          fi
+        fi
         apt_get update
         apt_get install --no-install-recommends libvulkan1 mesa-vulkan-drivers vulkan-tools intel-media-va-driver vainfo clinfo
+        if [ -n "$backports" ]; then
+          # Every installed Mesa package (a desktop's OpenGL too), so they stay one version.
+          mesa=$(dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package} ${source:Package}\n' | awk '$1 == "ii" && $3 == "mesa" { print $2 }')
+          apt_get install --no-install-recommends -t "$backports" $mesa             || echo "Mesa from $backports could not be installed; Debian's own Mesa stays"
+        fi
+        echo "Mesa $(dpkg-query -W -f='${Version}' mesa-vulkan-drivers)"
         apt_get install --no-install-recommends intel-opencl-icd || echo "This Debian has no intel-opencl-icd (Debian 13 doesn't package it); OpenCL is skipped"
         echo "Vulkan devices:"
         sudo -n -u "$user" vulkaninfo --summary 2>/dev/null | sed -n 's/^[[:space:]]*deviceName[[:space:]]*=[[:space:]]*/  /p'
@@ -97,7 +115,7 @@ public sealed class RunnerGpu(RunnerShell shell, IEnumerable<IRunnerProvider> pr
     public async Task InstallAsync(Runner runner, IRunnerLog log, CancellationToken ct)
     {
         if (!Supports(runner)) throw new InvalidOperationException("This Runner can't get a GPU from its host.");
-        log.Step("Installing the GPU drivers (Mesa Vulkan, VA-API, and OpenCL where Debian has it) and adding the Runner Account to the render group");
+        log.Step("Installing the GPU drivers (Mesa Vulkan and VA-API, on Debian from its backports, and OpenCL where Debian has it) and adding the Runner Account to the render group");
         var exit = await shell.RunStreamingAsync(runner, InstallScript, log.Output, TimeSpan.FromMinutes(20), ct);
         if (exit != 0) throw new RunnerCommandException($"Setting up the GPU failed (exit code {exit}). See the setup log.");
         var gpu = await ReadAsync(runner, manage: false, ct);

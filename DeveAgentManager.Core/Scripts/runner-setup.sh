@@ -39,7 +39,7 @@ apt_get() {
 step "Installing base packages"
 apt_get update
 apt_get install --no-install-recommends \
-  ca-certificates curl wget gnupg git tmux ncurses-term jq ripgrep fd-find \
+  ca-certificates curl wget gnupg git git-lfs tmux ncurses-term jq ripgrep fd-find \
   unzip zip xz-utils less nano procps openssh-client locales
 
 node_ok() {
@@ -109,6 +109,9 @@ fi
 
 step "Configuring git"
 git config --global init.defaultBranch main
+# Large files in Git LFS (game and Unreal assets): fetched on clone and pull instead of left as pointer files. In the
+# system's config, so it applies with everyone's own git config (GIT_CONFIG_GLOBAL) too.
+$SUDO git lfs install --system --skip-repo >/dev/null
 # Everyone's git identity and GitHub token are their own (~/.deveagentmanager/users/<id>/gitconfig, through
 # GIT_CONFIG_GLOBAL). The shared settings have neither, so nobody commits or pushes as someone else.
 git config --global --unset-all user.name 2>/dev/null || true
