@@ -11,18 +11,25 @@ Containers have no screen. They get a **browser desktop** instead (see below).
 
 A container has no screen to log in on, so its desktop is created by the Manager: an XFCE desktop on
 [KasmVNC](https://github.com/kasmtech/KasmVNC), an X11 server with a web viewer. It renders on the Runner's GPU when
-one is passed in (KasmVNC's DRI3 mode on the render node) and in software otherwise.
+one is passed in (KasmVNC's DRI3 mode on the render node, Intel and AMD) and in software otherwise.
 
 - **New Runner → Container desktop** creates one; **Add desktop** under Operations adds it to an existing headless
-  Runner.
-- Setup installs XFCE and a pinned, checksum-verified KasmVNC package, and runs the desktop as a user service of the
-  Runner Account, so it survives restarts. KasmVNC listens on the Runner's loopback only, without TLS; XFCE's
-  compositor is off, which KasmVNC's GPU mode requires.
-- **Open desktop** on the Runner page opens KasmVNC's viewer in a new tab. The Manager reaches it through an SSH
-  tunnel and serves it on the Runner's editor origin, like VS Code, to everyone who may use the Runner's Shell. Its
-  game cursor mode (the ▸ tab at the left edge) sends relative mouse movement, for games and 3D viewports.
+  Runner, which then is a desktop Runner (the Manager can't remove it again). It needs Debian 12 or 13, or Ubuntu 22.04
+  or 24.04: KasmVNC's packages.
+- Setup (`desktop-setup.sh browser`) installs XFCE, Firefox ESR (on Debian) and KasmVNC 1.5.2, pinned and checked
+  against its SHA-256. The desktop is the Runner Account's user service `dam-browser-desktop` on display `:1`: it
+  starts with the Runner (lingering) and again after a crash or logging out of XFCE. KasmVNC listens on the Runner's
+  loopback only (port 6901, plain HTTP: the Manager's SSH tunnel protects it), with a login only the Manager uses.
+  Its configuration is written at every start, so a GPU passed in later is used from the next start on. XFCE's
+  compositor stays off, which KasmVNC's GPU mode needs. Update all leaves a running desktop running.
+- **Open desktop** on the Runner page opens KasmVNC's viewer in a new tab, for everyone who may use the Runner's
+  Shell. The Manager signs in on the Runner's editor origin as for VS Code, reaches KasmVNC through an SSH tunnel
+  (starting the desktop if it was stopped) and adds KasmVNC's login itself; the browser's cookies never reach the
+  Runner. The desktop keeps running when the tab closes.
+- KasmVNC's own panel is the tab at the left edge of the viewer. Its **Game Cursor Mode** sends relative mouse
+  movement, for games and 3D viewports; Escape turns it off. The stream is at most 60 frames per second.
 - Agents use the same `dam-desktop` tools as on VMs, and apps they start appear on the desktop. Their launch
-  instructions say so, and to ask the user for logins instead of typing credentials.
+  instructions say so, and to ask the user to do logins on the desktop instead of typing credentials.
 
 ## Existing runners
 
