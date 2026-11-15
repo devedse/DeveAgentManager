@@ -121,6 +121,24 @@ public sealed class RunnerPasswords(
         logger.LogInformation("Password of {Runner} changed", runner.Name);
     }
 
+    /// <summary>
+    /// Makes the SSH server read its configuration again. With socket activation as in Debian 13 (ssh.socket with
+    /// Accept=no), systemd holds the port and hands it to sshd, which can't open it again itself on a reload (SIGHUP):
+    /// it would exit with "Cannot bind any address". So that one is restarted: open sessions survive, and new
+    /// connections wait in the socket meanwhile. One that isn't running yet starts with the new configuration.
+    /// An sshd started per connection (Accept=yes) reads the configuration every time.
+    /// </summary>
+    internal const string ReloadSshScript = """
+        socket_accept() { systemctl is-active --quiet "$1.socket" && systemctl show -p Accept --value "$1.socket"; }
+        if [ "$(socket_accept ssh)" = no ]; then sudo -n systemctl try-restart ssh
+        elif [ "$(socket_accept sshd)" = no ]; then sudo -n systemctl try-restart sshd
+        elif systemctl is-active --quiet ssh; then sudo -n systemctl reload ssh
+        elif systemctl is-active --quiet sshd; then sudo -n systemctl reload sshd
+        elif [ -n "$(socket_accept ssh)$(socket_accept sshd)" ]; then :
+        else echo "Found no running SSH server to reload (ssh, sshd or ssh.socket)." >&2; exit 4
+        fi
+        """;
+
     private async Task ApplyKeysOnlyAsync(Runner runner, bool keysOnly, CancellationToken cancellationToken)
     {
         // A drop-in sorted before cloud-init's (50-cloud-init.conf): sshd takes the first value it reads.
@@ -134,7 +152,7 @@ public sealed class RunnerPasswords(
         (await shell.RunAsync(runner, $"""
             {script}
             sudo -n sshd -t
-            sudo -n systemctl reload ssh 2>/dev/null || sudo -n systemctl reload sshd
+            {ReloadSshScript}
             """, TimeSpan.FromSeconds(30), cancellationToken)).EnsureSuccess(keysOnly ? "Turning off SSH password logins" : "Allowing SSH password logins");
     }
 

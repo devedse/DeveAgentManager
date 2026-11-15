@@ -119,6 +119,8 @@ pveum acl modify /vms/10100                --users deveagentmanager@pve --roles 
 pveum acl modify /vms/10120                --users deveagentmanager@pve --roles DeveAgentManager  # desktop template
 pveum acl modify /storage/example-storage --users deveagentmanager@pve --roles DeveAgentManager  # disk storage
 pveum acl modify /sdn/zones/localnetwork   --users deveagentmanager@pve --roles DeveAgentManager  # network
+pveum acl modify /storage/local            --users deveagentmanager@pve --roles DeveAgentManager  # container templates (only with TEMPLATE_CONTAINER)
+pveum acl modify /                         --users deveagentmanager@pve --roles PVEAuditor --propagate 0  # optional: list a node's graphics cards for container GPUs
 ```
 
 Put the token in the compose file: `PROXMOX_TOKEN_ID=deveagentmanager@pve!manager` and `PROXMOX_TOKEN_SECRET=<secret>`.
@@ -194,6 +196,9 @@ Runners are full clones of `TEMPLATE_HEADLESS_VMID` (and `TEMPLATE_DESKTOP_VMID`
 **Manager settings → Providers → Test connection** checks the token, the templates (cloud-init drive, guest agent option),
 the pool, the storage and the VMID range.
 
+Runners can also be unprivileged Debian containers that can use a GPU of the host: see
+[container Runners](docs/container-runners.md).
+
 ## Configuration
 
 Startup and connection settings use environment variables in the compose file.
@@ -212,6 +217,8 @@ Startup and connection settings use environment variables in the compose file.
 | `PROXMOX_VMID_RANGE` | `30000-30999` | Runners only get VMIDs from this range. The Manager never deletes VMs outside it. |
 | `PROXMOX_FULL_CLONE` | `true` | `false` makes linked clones (faster, needs a template on storage that supports it). |
 | `TEMPLATE_HEADLESS_VMID` / `TEMPLATE_DESKTOP_VMID` | | Template VMIDs, e.g. `10100` and `10120`. |
+| `TEMPLATE_CONTAINER` | | Container Runners: a storage with Debian standard CT templates (e.g. `local`, the newest is used) or one template. See [container Runners](docs/container-runners.md). |
+| `PROXMOX_CONTAINER_NODE` | `PROXMOX_NODE` | Node for container Runners only, e.g. the one with the GPU. VM Runners keep `PROXMOX_NODE`. |
 | `RUNNER_USERNAME` | `remoteman` | Account created on new VMs by cloud-init. Each Runner gets a random password of its own, which whoever manages the Runner sees on its page. (`RUNNER_PASSWORD` is no longer used.) |
 | `RUNNER_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` | `4` / `8192` / `64` | Default size in the New Runner dialog. |
 | `DATA_DIR` | `/data` | Database, encryption keys and the Manager's SSH key. |

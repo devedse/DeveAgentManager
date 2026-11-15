@@ -112,7 +112,21 @@ internal static class RunnerEndpoints
         }).RequireRunner(RunnerAccess.Manage);
 
         MapDesktop(runners);
+        MapGpu(runners);
         MapAccess(runners);
+    }
+
+    private static void MapGpu(RouteGroupBuilder runners)
+    {
+        // The host command only goes to people who manage the Runner: they are the ones who can act on it.
+        runners.MapGet("/{runnerId:guid}/gpu", async (Guid runnerId, CurrentUser user, RunnerService service, RunnerGpu gpu, CancellationToken ct) =>
+            await service.GetAsync(runnerId, ct) is { } runner
+                ? Results.Ok(await gpu.ReadAsync(runner, AccessControl.ForRunner(user, runner.OwnerId, runner.Members) >= RunnerAccess.Manage, ct))
+                : Results.NotFound())
+            .RequireRunner(RunnerAccess.Use);
+
+        runners.MapPost("/{runnerId:guid}/gpu/setup", (Guid runnerId, RunnerService service, OperationNotifier notifier, CancellationToken ct) =>
+            ManagerApi.Track(runnerId, service, notifier, "install", () => service.SetUpGpu(runnerId), ct)).RequireRunner(RunnerAccess.Manage);
     }
 
     private static void MapDesktop(RouteGroupBuilder runners)

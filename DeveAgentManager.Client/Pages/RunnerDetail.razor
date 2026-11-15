@@ -50,7 +50,15 @@
             <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-4">
                 <div class="alert-title">Something went wrong</div>
                 <div>@_runner.StateMessage</div>
-                <div class="alert-hint">Check the setup log, then use <b>Update all</b> (or <b>Start</b>) to try again.</div>
+                @if (_runner.MachineId is null)
+                {
+                    @* Creating failed before the provider made anything: there is nothing to start or update. *@
+                    <div class="alert-hint">Nothing was created. Fix the cause, then delete this Runner and create it again.</div>
+                }
+                else
+                {
+                    <div class="alert-hint">Check the setup log, then use <b>Update all</b> (or <b>Start</b>) to try again.</div>
+                }
             </MudAlert>
         }
         else if (operation is not null || StateStyles.For(_runner.State).Busy)
@@ -129,6 +137,10 @@
                         }
                     </div>
                 }
+                @if (_runner.GpuPassthrough)
+                {
+                    <RunnerGpuPanel Runner="_runner" Ready="ready" Manage="manage" Started="GpuSetupStarted" />
+                }
                 @if (_user is not null)
                 {
                     <RunnerAccessPanel Runner="_runner" User="_user" />
@@ -172,7 +184,7 @@
                         @if (_runner.MachineId is not null && _runner.ProviderId != "existing")
                         {
                             <dt>Machine</dt>
-                            <dd class="mono">VM @_runner.MachineId</dd>
+                            <dd class="mono">@(_runner.TemplateId == "container" ? "CT" : "VM") @_runner.MachineId</dd>
                         }
                         @if (_runner.TemplateId is not null)
                         {
@@ -463,6 +475,13 @@
         await RunAsync(() => Api.InstallToolAsync(RunnerId, tool.Id, update));
     }
 
+    /// <summary>Set up GPU started from the GPU panel: report its result and show the setup log.</summary>
+    private void GpuSetupStarted()
+    {
+        _waitingFor.Add("install");
+        _tab = 1;
+    }
+
     private async Task InstallHarnessAsync(HarnessDto harness)
     {
         _waitingFor.Add("install");
@@ -502,10 +521,11 @@
     {
         var provider = _info?.Providers.FirstOrDefault(p => p.Id == _runner!.ProviderId);
         var destroys = provider?.Capabilities.CanDestroy == true && _runner!.MachineId is not null;
+        var machine = _runner!.TemplateId == "container" ? "container" : "VM";
         var message = destroys
-            ? $"This deletes VM {_runner!.MachineId} and its disks on {provider!.DisplayName}, including every agent and all work on it that was not pushed."
+            ? $"This deletes {machine} {_runner!.MachineId} and its disks on {provider!.DisplayName}, including every agent and all work on it that was not pushed."
             : "The Runner is removed from the Manager and its agents are stopped. The machine itself is left alone.";
-        var confirmed = await Dialogs.ShowMessageBoxAsync($"Delete '{_runner!.Name}'?", message, yesText: destroys ? "Delete VM" : "Remove", cancelText: "Cancel");
+        var confirmed = await Dialogs.ShowMessageBoxAsync($"Delete '{_runner!.Name}'?", message, yesText: destroys ? $"Delete {machine}" : "Remove", cancelText: "Cancel");
         if (confirmed != true)
         {
             return;

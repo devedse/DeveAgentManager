@@ -42,7 +42,32 @@ public interface IRunnerProvider
 
     /// <summary>Waits until the machine has an address the Manager can SSH to and returns it.</summary>
     Task<string> WaitForAddressAsync(RunnerMachine machine, IRunnerLog log, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The account the Manager logs in with once, with its own key, to create the Runner Account on machines the provider
+    /// couldn't give one (Proxmox containers have no cloud-init). Null: the Runner Account already exists.
+    /// </summary>
+    string? AccountBootstrapUser(RunnerMachine machine) => null;
+
+    /// <summary>True when someone with root on the host can pass a GPU render node into the machine.</summary>
+    bool SupportsGpuPassthrough(RunnerMachine machine) => false;
+
+    /// <summary>
+    /// The command to run as root on the host to pass a GPU into the machine, owned by the machine's group
+    /// <paramref name="renderGroupId"/>. <paramref name="device"/> is a render node (<c>/dev/dri/renderD128</c>) or the
+    /// PCI address of one of <see cref="GetHostGpusAsync"/>. Only called when <see cref="SupportsGpuPassthrough"/> is true.
+    /// </summary>
+    string GpuAttachCommand(RunnerMachine machine, string device, int renderGroupId) => throw new NotSupportedException();
+
+    /// <summary>
+    /// The graphics cards of the host the machine runs on, to choose the one to pass in. Throws with a message for people
+    /// when they can't be listed. Only called when <see cref="SupportsGpuPassthrough"/> is true.
+    /// </summary>
+    Task<IReadOnlyList<HostGpu>> GetHostGpusAsync(RunnerMachine machine, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
+
+/// <summary>A graphics card of a host: its PCI address (<c>0000:0b:00.0</c>) and what the host calls it.</summary>
+public sealed record HostGpu(string Address, string Name);
 
 /// <summary>The account that the provider should create on the machine (Proxmox injects it through cloud-init).</summary>
 public sealed record RunnerAccount(string Username, string Password, string SshPublicKey);
