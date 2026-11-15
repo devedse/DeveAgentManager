@@ -525,7 +525,8 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
                 // Only root exists. The Manager logs in once to create the Runner Account, then removes this key.
                 ssh_public_keys: request.Account.SshPublicKey.Trim() + "\n",
                 pool: options.Pool,
-                tags: Tag,
+                // No tags here: Proxmox checks them against /vms/<id> only, ignoring the pool, so a token is refused
+                // until the container exists in the pool. They are set right after.
                 description: "Runner managed by DeveAgentManager",
                 start: false);
             var upid = EnsureTask(create, $"Creating container {vmId}");
@@ -536,6 +537,7 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
             locked = false;
 
             await WaitForTaskAsync(client, upid, "Create container", CloneTimeout, log, cancellationToken);
+            EnsureSuccess(await client.Nodes[node].Lxc[vmId].Config.UpdateVm(tags: Tag), $"Tagging container {vmId}");
             log.Success($"Container {vmId} created");
             return handle;
         }

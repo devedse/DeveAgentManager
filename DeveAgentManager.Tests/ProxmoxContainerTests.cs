@@ -36,7 +36,11 @@ public sealed class ProxmoxContainerTests
         Assert.Equal("nesting=1", body["features"]);
         Assert.Equal("ssh-ed25519 test-only-key\n", body["ssh-public-keys"]);
         Assert.Equal("test-runners", body["pool"]);
-        Assert.Equal(ProxmoxProvider.Tag, body["tags"]);
+        // Tagged only once it exists: Proxmox checks tags at creation against /vms/<id> alone, where a token has no rights.
+        Assert.DoesNotContain("tags", body.Keys);
+        var tag = Assert.Single(api.Calls, c => c.Method == HttpMethod.Put && c.Path.EndsWith("/nodes/test-node/lxc/30000/config"));
+        Assert.Equal(ProxmoxProvider.Tag, Parameters(tag.Body)["tags"]);
+        Assert.True(api.Calls.IndexOf(tag) > api.Calls.FindIndex(c => c.Path.Contains("/tasks/")), "Tagged after the create task finished");
         // Nothing that only root@pam may set, and the Manager starts it itself after creating it.
         Assert.DoesNotContain(body.Keys, key => key.StartsWith("dev", StringComparison.Ordinal) || key == "password");
         Assert.Contains(body["start"], new[] { "0", "False", "false" });
@@ -273,6 +277,9 @@ public sealed class ProxmoxContainerTests
                 new { name = "eth0", inet = "192.0.2.10/24", hwaddr = "BC:24:11:00:00:02" },
             };
             else if (path.Contains("/tasks/")) data = new { status = "stopped", exitstatus = "OK" };
+            else if (request.Method == HttpMethod.Post && path.EndsWith("/lxc") && (await request.Content!.ReadAsStringAsync(cancellationToken)).Contains("tags"))
+                return new HttpResponseMessage(HttpStatusCode.Forbidden) { ReasonPhrase = "Permission check failed (/vms/30000, VM.Config.Options)" };
+            else if (request.Method == HttpMethod.Put && path.EndsWith("/config")) data = null;
             else if (request.Method == HttpMethod.Post || request.Method == HttpMethod.Delete) data = task;
             else throw new InvalidOperationException($"Unexpected test request: {request.Method} {path}");
             return new HttpResponseMessage(HttpStatusCode.OK)
