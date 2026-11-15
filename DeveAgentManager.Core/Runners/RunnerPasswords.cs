@@ -122,13 +122,19 @@ public sealed class RunnerPasswords(
     }
 
     /// <summary>
-    /// Makes the SSH server read its configuration again. A socket-activated one (as in Debian's container templates)
-    /// has no ssh.service running: it starts an sshd for every connection, which reads the configuration anyway.
+    /// Makes the SSH server read its configuration again. With socket activation as in Debian 13 (ssh.socket with
+    /// Accept=no), systemd holds the port and hands it to sshd, which can't open it again itself on a reload (SIGHUP):
+    /// it would exit with "Cannot bind any address". So that one is restarted: open sessions survive, and new
+    /// connections wait in the socket meanwhile. One that isn't running yet starts with the new configuration.
+    /// An sshd started per connection (Accept=yes) reads the configuration every time.
     /// </summary>
     internal const string ReloadSshScript = """
-        if systemctl is-active --quiet ssh; then sudo -n systemctl reload ssh
+        socket_accept() { systemctl is-active --quiet "$1.socket" && systemctl show -p Accept --value "$1.socket"; }
+        if [ "$(socket_accept ssh)" = no ]; then sudo -n systemctl try-restart ssh
+        elif [ "$(socket_accept sshd)" = no ]; then sudo -n systemctl try-restart sshd
+        elif systemctl is-active --quiet ssh; then sudo -n systemctl reload ssh
         elif systemctl is-active --quiet sshd; then sudo -n systemctl reload sshd
-        elif systemctl is-active --quiet ssh.socket || systemctl is-active --quiet sshd.socket; then :
+        elif [ -n "$(socket_accept ssh)$(socket_accept sshd)" ]; then :
         else echo "Found no running SSH server to reload (ssh, sshd or ssh.socket)." >&2; exit 4
         fi
         """;
