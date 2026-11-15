@@ -25,9 +25,11 @@ try {
         let gpu: any = null;
         let access = 'Owner';
         let passthrough = true;
+        let failed = false;
         const posts: string[] = [];
         const runner = () => ({ id, name: 'gpu-runner', ownerId: me.id, ownerName: 'Admin', access, providerId: 'proxmox', templateId: 'container',
-            kind: 'Headless', state: 'Ready', machineId: '30003', host: 'runner.test', username: 'runneruser', sshPort: 22, cores: 4, memoryMb: 8192,
+            kind: 'Headless', state: failed ? 'Error' : 'Ready', machineId: failed ? null : '30003',
+            stateMessage: failed ? 'The container templates on storage \'local\' of test-node can\'t be read.' : null, host: 'runner.test', username: 'runneruser', sshPort: 22, cores: 4, memoryMb: 8192,
             diskGb: 64, agents: [], harnessIds: ['claude'], toolIds: [], setupVersion: info.setupVersion, createdAt: at, updatedAt: at,
             status: { powerState: 'Running', detail: 'test-node' }, gpuPassthrough: passthrough });
         await context.route('**/api/**', route => {
@@ -91,11 +93,18 @@ try {
             await page.locator('.panel').first().waitFor();
             assert.equal(await page.locator('.runner-gpu').count(), 0);
             passthrough = true;
+
+            // Creating failed before Proxmox made anything: nothing to start or update, so it says to delete it.
+            failed = true;
+            await page.goto(base + `/runners/${id}`);
+            await page.getByText('Nothing was created. Fix the cause, then delete this Runner and create it again.').waitFor();
+            assert.equal(await page.getByText('to try again').count(), 0);
+            failed = false;
         }
         assert.deepEqual(errors, []);
         await context.close();
     }
-    console.log('Passed: GPU panel states, host command for managers only, Set up GPU, no panel on VMs, both themes and phone layouts.');
+    console.log('Passed: GPU panel states, host command for managers only, Set up GPU, no panel on VMs, never-created Runners, both themes and phone layouts.');
 } finally {
     await browser.close();
 }
