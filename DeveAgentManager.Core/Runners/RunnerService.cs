@@ -198,16 +198,22 @@ public sealed partial class RunnerService(
             op.Runner.MachineId = handle.MachineId;
             op.Runner.ProviderData = handle.ProviderData;
             await op.SaveAsync();
-            await BringOnlineAsync(op, provider, runSetup: true, cancellation);
+            await BringOnlineAsync(op, provider, runSetup: true, cancellation, updateSystem: CreatedByManager(provider));
         });
 
         return runner;
     }
 
+    /// <summary>
+    /// A machine the Manager made (a VM or container from a template, often months older than its packages): its first
+    /// setup updates the system packages too. An existing machine's packages are its owner's; Update all updates them.
+    /// </summary>
+    private static bool CreatedByManager(IRunnerProvider provider) => !provider.Capabilities.RequiresConnectionDetails;
+
     public void Start(Guid runnerId) => StartOperation(runnerId, "Starting", async (op, cancellation) =>
     {
         var provider = GetProvider(op.Runner);
-        await BringOnlineAsync(op, provider, runSetup: op.Runner.SetupVersion is null, cancellation);
+        await BringOnlineAsync(op, provider, runSetup: op.Runner.SetupVersion is null, cancellation, updateSystem: CreatedByManager(provider));
     });
 
     /// <summary>Update all: the system packages, then the whole setup again.</summary>
@@ -333,7 +339,7 @@ public sealed partial class RunnerService(
     {
         await ShutDownAsync(op, "restarted", cancellation);
         op.Log.Info("Runner stopped; starting it again");
-        await BringOnlineAsync(op, GetProvider(op.Runner), runSetup: op.Runner.SetupVersion is null, cancellation);
+        await BringOnlineAsync(op, GetProvider(op.Runner), runSetup: op.Runner.SetupVersion is null, cancellation, updateSystem: CreatedByManager(GetProvider(op.Runner)));
     });
 
     // The conversations are saved first: the shutdown ends every harness on the machine.

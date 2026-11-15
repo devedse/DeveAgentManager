@@ -55,7 +55,8 @@ when you close the tab.
   runs the whole setup again, **Update system packages** only updates the system packages, and **Update pi** only
   installs the latest pi, updates its packages and applies Manager settings → pi. Every step is idempotent, so all are
   safe to repeat. Running agents keep running and use the new versions after a restart. When an update needs the Runner
-  restarted, such as a new kernel, the setup log says so. A new Runner's first setup doesn't upgrade its packages.
+  restarted, such as a new kernel, the setup log says so. The first setup of a VM or container the Manager created
+  updates its system packages too (its template is often months older); an existing machine's are left to Update all.
 - **Restart** shows a **1** when a restart would load a newer installed kernel (unattended-upgrades often installs
   security kernels by itself) or the operating system reports that a restart is needed. Its hover shows the running
   kernel and the kernel a restart updates to, as does the Runner page's update status. Update all lists and installs

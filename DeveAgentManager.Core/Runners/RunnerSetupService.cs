@@ -227,7 +227,9 @@ public sealed partial class RunnerSetupService(
         fi
         """;
 
-    /// <param name="updateSystem">First update the system packages (Update all and Re-run setup; not a new Runner's first setup).</param>
+    /// <param name="updateSystem">
+    /// First update the system packages: Update all, Re-run setup, and the first setup of a machine the Manager created.
+    /// </param>
     public async Task RunAsync(Runner runner, IRunnerLog log, CancellationToken cancellationToken, bool updateSystem = false)
     {
         var profile = await settings.GetSetupProfileAsync(cancellationToken);
