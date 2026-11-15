@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Corsinvest.ProxmoxVE.Api.Shared.Models.Vm;
 using DeveAgentManager.Core.Abstractions;
+using DeveAgentManager.Core.Runners;
 using DeveAgentManager.Providers.Proxmox;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -65,8 +66,55 @@ public sealed class ProxmoxContainerTests
         }
     }
 
+    [Fact]
+    public void TheHostCommandFindsAChosenCardsRenderNodeOnTheHost() =>
+        Assert.Equal("pct set 30000 --dev0 \"$(readlink -e /dev/dri/by-path/pci-0000:0b:00.0-render)\",gid=993",
+            Provider(new Api()).GpuAttachCommand(Machine("""{"Node":"test-node","Type":"container"}"""), "0000:0b:00.0", 993));
+
+    [Fact]
+    public async Task ListsTheGraphicsCardsOfTheContainersNodeWithACommandEach()
+    {
+        using var api = new Api { Guests = [.. Api.Templates, Container] };
+        var provider = Provider(api);
+        var machine = Machine("""{"Node":"test-node","Type":"container"}""");
+
+        var cards = await provider.GetHostGpusAsync(machine, Ct);
+        Assert.Equal(["0000:00:02.0", "0000:0b:00.0", "0000:c1:00.0"], cards.Select(c => c.Address));
+        Assert.Equal("Intel Corporation Battlemage G21 [Intel Graphics]", cards[1].Name);
+        Assert.Equal("Advanced Micro Devices, Inc. [AMD/ATI] 0x7480", cards[2].Name);
+        Assert.Contains(api.Calls, c => c.Path.EndsWith("/nodes/test-node/hardware/pci"));
+
+        // What the GPU panel gets: every card with its own command, and the first GPU's command kept as the fallback.
+        var gpu = await RunnerGpu.WithHostGpusAsync(new("not-attached", "No GPU is passed into this Runner yet.", AttachCommand: "fallback"), provider, machine, 992, Ct);
+        Assert.Equal("fallback", gpu.AttachCommand);
+        Assert.Null(gpu.HostGpusProblem);
+        Assert.Equal("pct set 30000 --dev0 \"$(readlink -e /dev/dri/by-path/pci-0000:0b:00.0-render)\",gid=992",
+            Assert.Single(gpu.HostGpus!, c => c.Address == "0000:0b:00.0").AttachCommand);
+    }
+
+    [Fact]
+    public async Task SaysWhatTheTokenNeedsWhenItMayNotListTheCards()
+    {
+        using var api = new Api { Guests = [.. Api.Templates, Container], PciForbidden = true };
+        var provider = Provider(api);
+
+        var gpu = await RunnerGpu.WithHostGpusAsync(new("not-attached", "No GPU is passed into this Runner yet.", AttachCommand: "fallback"), provider,
+            Machine("""{"Node":"test-node","Type":"container"}"""), 992, Ct);
+        Assert.Null(gpu.HostGpus);
+        Assert.Equal("fallback", gpu.AttachCommand);
+        Assert.Contains("needs Sys.Audit on /", gpu.HostGpusProblem);
+
+        var check = Assert.Single(await provider.CheckAsync(Ct), c => c.Name == "Graphics cards");
+        Assert.Equal(CheckStatus.Warning, check.Status);
+        Assert.Contains("Sys.Audit on /", check.Message);
+    }
+
     [Theory]
     [InlineData("/dev/dri/renderD128; reboot", 993)]
+    [InlineData("0000:0b:00.0; reboot", 993)]
+    [InlineData("0000:0b:00.0-render", 993)]
+    [InlineData("0b:00.0", 993)]
+    [InlineData("0000:0b:00.0", 0)]
     [InlineData("/dev/dri/card0", 993)]
     [InlineData("/dev/dri/by-path/pci-0000:01:00.0-render", 993)]
     [InlineData("/dev/dri/renderD128", 0)]
@@ -166,6 +214,9 @@ public sealed class ProxmoxContainerTests
         Assert.Contains("debian-13-standard_13.10-1", container.Message);
         Assert.Contains("vmbr0", container.Message);
         Assert.Contains("example-storage", container.Message);
+        var cards = Assert.Single(checks, c => c.Name == "Graphics cards");
+        Assert.Equal(CheckStatus.Ok, cards.Status);
+        Assert.Contains("Battlemage G21 [Intel Graphics] (0000:0b:00.0)", cards.Message);
         // The container template is not mistaken for a template VM.
         Assert.DoesNotContain(checks, c => c.Name.StartsWith("Container template (", StringComparison.Ordinal));
     }
@@ -234,6 +285,8 @@ public sealed class ProxmoxContainerTests
         HeadlessTemplateVmId = 10100, ContainerTemplate = container, ContainerNode = containerNode,
     }, api, NullLogger<ProxmoxProvider>.Instance);
 
+    private static readonly object Container = new { type = "lxc", vmid = 30000, node = "test-node", name = "test-runner", status = "running", tags = ProxmoxProvider.Tag };
+
     private static MachineCreateRequest Request() => new("test-runner", ProxmoxProvider.ContainerTemplateId, 4, 8192, 32,
         new RunnerAccount("test-runner", "test-only-password", "ssh-ed25519 test-only-key"), null);
 
@@ -259,6 +312,9 @@ public sealed class ProxmoxContainerTests
         public static readonly object[] Templates = [new { type = "qemu", vmid = 10100, node = "test-node", name = "headless-template", template = 1 }];
 
         public object[] Guests { get; init; } = Templates;
+
+        /// <summary>The token lacks Sys.Audit on / (listing PCI devices).</summary>
+        public bool PciForbidden { get; init; }
 
         /// <summary>What the guest's node says (status/current); null: the same as the cluster list.</summary>
         public string? CurrentStatus { get; init; }
@@ -293,6 +349,16 @@ public sealed class ProxmoxContainerTests
             {
                 agent = "1", net0 = "virtio=BC:24:11:00:00:01,bridge=vmbr0,firewall=1,tag=28",
                 scsi0 = "example-storage:base-10100-disk-0,size=32G", ide2 = "example-storage:cloudinit,media=cdrom", boot = "order=scsi0",
+            };
+            else if (path.EndsWith("/hardware/pci") && PciForbidden)
+                return new HttpResponseMessage(HttpStatusCode.Forbidden) { ReasonPhrase = "Permission check failed (/, Sys.Audit|Sys.Modify)" };
+            else if (path.EndsWith("/hardware/pci")) data = new object[]
+            {
+                new { id = "0000:0b:00.0", @class = "0x030000", vendor = "0x8086", device = "0xe212", vendor_name = "Intel Corporation", device_name = "Battlemage G21 [Intel Graphics]", iommugroup = 20 },
+                new { id = "0000:00:02.0", @class = "0x030000", vendor = "0x8086", device = "0xa7a0", vendor_name = "Intel Corporation", device_name = "Raptor Lake-P [Iris Xe Graphics]", iommugroup = 2 },
+                new { id = "0000:c1:00.0", @class = "0x038000", vendor = "0x1002", device = "0x7480", vendor_name = "Advanced Micro Devices, Inc. [AMD/ATI]", device_name = "", iommugroup = 30 },
+                new { id = "0000:03:00.0", @class = "0x020000", vendor = "0x8086", device = "0x125c", vendor_name = "Intel Corporation", device_name = "Ethernet Controller I226-V", iommugroup = 15 },
+                new { id = "bad id", @class = "0x030000", vendor = "0x1234", device = "0x1111", vendor_name = "Bochs", device_name = "VGA", iommugroup = 1 },
             };
             else if (path.EndsWith("/status/current"))
             {

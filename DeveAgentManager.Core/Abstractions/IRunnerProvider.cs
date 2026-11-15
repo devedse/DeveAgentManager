@@ -53,11 +53,21 @@ public interface IRunnerProvider
     bool SupportsGpuPassthrough(RunnerMachine machine) => false;
 
     /// <summary>
-    /// The command to run as root on the host to pass <paramref name="renderDevice"/> into the machine, owned by the
-    /// machine's group <paramref name="renderGroupId"/>. Only called when <see cref="SupportsGpuPassthrough"/> is true.
+    /// The command to run as root on the host to pass a GPU into the machine, owned by the machine's group
+    /// <paramref name="renderGroupId"/>. <paramref name="device"/> is a render node (<c>/dev/dri/renderD128</c>) or the
+    /// PCI address of one of <see cref="GetHostGpusAsync"/>. Only called when <see cref="SupportsGpuPassthrough"/> is true.
     /// </summary>
-    string GpuAttachCommand(RunnerMachine machine, string renderDevice, int renderGroupId) => throw new NotSupportedException();
+    string GpuAttachCommand(RunnerMachine machine, string device, int renderGroupId) => throw new NotSupportedException();
+
+    /// <summary>
+    /// The graphics cards of the host the machine runs on, to choose the one to pass in. Throws with a message for people
+    /// when they can't be listed. Only called when <see cref="SupportsGpuPassthrough"/> is true.
+    /// </summary>
+    Task<IReadOnlyList<HostGpu>> GetHostGpusAsync(RunnerMachine machine, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
+
+/// <summary>A graphics card of a host: its PCI address (<c>0000:0b:00.0</c>) and what the host calls it.</summary>
+public sealed record HostGpu(string Address, string Name);
 
 /// <summary>The account that the provider should create on the machine (Proxmox injects it through cloud-init).</summary>
 public sealed record RunnerAccount(string Username, string Password, string SshPublicKey);

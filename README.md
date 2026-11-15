@@ -120,6 +120,7 @@ pveum acl modify /vms/10120                --users deveagentmanager@pve --roles 
 pveum acl modify /storage/example-storage --users deveagentmanager@pve --roles DeveAgentManager  # disk storage
 pveum acl modify /sdn/zones/localnetwork   --users deveagentmanager@pve --roles DeveAgentManager  # network
 pveum acl modify /storage/local            --users deveagentmanager@pve --roles DeveAgentManager  # container templates (only with TEMPLATE_CONTAINER)
+pveum acl modify /                         --users deveagentmanager@pve --roles PVEAuditor --propagate 0  # optional: list a node's graphics cards for container GPUs
 ```
 
 Put the token in the compose file: `PROXMOX_TOKEN_ID=deveagentmanager@pve!manager` and `PROXMOX_TOKEN_SECRET=<secret>`.

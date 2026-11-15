@@ -11,7 +11,7 @@ namespace DeveAgentManager.Core.Runners;
 /// </summary>
 public sealed class RunnerGpu(RunnerShell shell, IEnumerable<IRunnerProvider> providers)
 {
-    /// <summary>The render node of a host's first GPU; the help next to the command explains how to pick another.</summary>
+    /// <summary>The render node of a host's first GPU: the command when the host's cards can't be listed.</summary>
     public const string DefaultRenderDevice = "/dev/dri/renderD128";
 
     private readonly Dictionary<string, IRunnerProvider> _providers = providers.ToDictionary(p => p.Id);
@@ -64,11 +64,30 @@ public sealed class RunnerGpu(RunnerShell shell, IEnumerable<IRunnerProvider> pr
             var command = manage && seen.RenderGroup is { } group
                 ? _providers[runner.ProviderId].GpuAttachCommand(runner.ToMachine(), DefaultRenderDevice, group)
                 : null;
-            return Interpret(seen, command);
+            var gpu = Interpret(seen, command);
+            return command is not null && gpu.State is "not-attached" or "no-access"
+                ? await WithHostGpusAsync(gpu, _providers[runner.ProviderId], runner.ToMachine(), seen.RenderGroup!.Value, ct)
+                : gpu;
         }
         catch (Exception) when (!ct.IsCancellationRequested)
         {
             return new("unavailable", "The GPU couldn't be read. Check the Runner connection.");
+        }
+    }
+
+    /// <summary>The host's graphics cards to choose from, each with the command that passes it in.</summary>
+    internal static async Task<RunnerGpuDto> WithHostGpusAsync(RunnerGpuDto gpu, IRunnerProvider provider, RunnerMachine machine, int renderGroup, CancellationToken ct)
+    {
+        try
+        {
+            var cards = await provider.GetHostGpusAsync(machine, ct);
+            return cards.Count == 0
+                ? gpu with { HostGpusProblem = "The host lists no graphics card." }
+                : gpu with { HostGpus = [.. cards.Select(c => new HostGpuDto(c.Address, c.Name, provider.GpuAttachCommand(machine, c.Address, renderGroup)))] };
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            return gpu with { HostGpusProblem = ex is InvalidOperationException ? ex.Message : "The host's graphics cards can't be listed." };
         }
     }
 

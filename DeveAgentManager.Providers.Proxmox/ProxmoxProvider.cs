@@ -123,6 +123,10 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
         if (options.ContainerTemplate is not null)
         {
             checks.Add(await CheckContainerTemplateAsync(client, vms));
+            if (ContainerNode(vms) is { } gpuNode)
+            {
+                checks.Add(await CheckHostGpusAsync(client, gpuNode));
+            }
         }
 
         if (options.Pool is null)
@@ -415,19 +419,62 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
 
     public bool SupportsGpuPassthrough(RunnerMachine machine) => IsContainer(machine);
 
-    public string GpuAttachCommand(RunnerMachine machine, string renderDevice, int renderGroupId)
+    public string GpuAttachCommand(RunnerMachine machine, string device, int renderGroupId)
     {
-        // Shown to someone who runs it as root on the host: only ever a plain render node and a numeric group.
-        if (!RenderDevice().IsMatch(renderDevice) || renderGroupId is < 1 or > 65535)
+        // Shown to someone who runs it as root on the host: only ever a plain render node or PCI address, and a number.
+        if (renderGroupId is < 1 or > 65535 || !(RenderDevice().IsMatch(device) || PciAddress().IsMatch(device)))
         {
-            throw new ArgumentException("Not a render node and group this command can be built from.");
+            throw new ArgumentException("Not a render node or PCI address and group this command can be built from.");
         }
 
-        return $"pct set {ParseVmId(machine)} --dev0 {renderDevice},gid={renderGroupId}";
+        // A card's render node is only known on the host: its by-path link names it. The container needs the renderD
+        // node itself, since drivers only look for /dev/dri/renderD*.
+        var path = PciAddress().IsMatch(device) ? $"\"$(readlink -e /dev/dri/by-path/pci-{device}-render)\"" : device;
+        return $"pct set {ParseVmId(machine)} --dev0 {path},gid={renderGroupId}";
+    }
+
+    public async Task<IReadOnlyList<HostGpu>> GetHostGpusAsync(RunnerMachine machine, CancellationToken cancellationToken)
+    {
+        var client = CreateClient();
+        return await ListHostGpusAsync(client, (await LocateAsync(client, machine)).Node);
+    }
+
+    /// <summary>The display controllers (PCI class 03) of a node, by address.</summary>
+    private static async Task<IReadOnlyList<HostGpu>> ListHostGpusAsync(PveClient client, string node)
+    {
+        IEnumerable<Corsinvest.ProxmoxVE.Api.Shared.Models.Node.NodeHardwarePci> devices;
+        try
+        {
+            devices = await client.Nodes[node].Hardware.Pci.GetAsync();
+        }
+        catch (Exception ex) when (ex.Message.Contains("Permission check failed", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"The token may not list the graphics cards of {node}: that needs Sys.Audit on /.");
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"The graphics cards of {node} can't be listed ({ex.Message.Trim()}).");
+        }
+
+        return devices
+            .Where(d => (d.Class ?? "").StartsWith("0x03", StringComparison.OrdinalIgnoreCase) && PciAddress().IsMatch(d.Id ?? ""))
+            .OrderBy(d => d.Id, StringComparer.Ordinal)
+            .Select(d => new HostGpu(d.Id, GpuName(d.VendorName, d.DeviceName, d.Device)))
+            .ToList();
+    }
+
+    internal static string GpuName(string? vendor, string? device, string? deviceId)
+    {
+        var name = $"{vendor} {(string.IsNullOrWhiteSpace(device) ? deviceId : device)}".Trim();
+        name = string.IsNullOrEmpty(name) ? "Unknown graphics card" : name;
+        return name.Length > 120 ? name[..120] : name;
     }
 
     [System.Text.RegularExpressions.GeneratedRegex(@"^/dev/dri/renderD[0-9]{3}$")]
     private static partial System.Text.RegularExpressions.Regex RenderDevice();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$")]
+    private static partial System.Text.RegularExpressions.Regex PciAddress();
 
     private static bool IsContainer(RunnerMachine machine)
     {
@@ -633,6 +680,23 @@ public sealed partial class ProxmoxProvider(ProxmoxOptions options, IHttpClientF
         catch (Exception ex)
         {
             return new ProviderCheck(name, CheckStatus.Failed, ex.Message);
+        }
+    }
+
+    /// <summary>Optional: without it, the GPU panel can only offer the command for the host's first GPU.</summary>
+    private static async Task<ProviderCheck> CheckHostGpusAsync(PveClient client, string node)
+    {
+        const string name = "Graphics cards";
+        try
+        {
+            var cards = await ListHostGpusAsync(client, node);
+            return cards.Count == 0
+                ? new ProviderCheck(name, CheckStatus.Warning, $"{node} lists no graphics card to pass into a container.")
+                : new ProviderCheck(name, CheckStatus.Ok, $"{node}: {string.Join("; ", cards.Select(c => $"{c.Name} ({c.Address})"))}.");
+        }
+        catch (Exception ex)
+        {
+            return new ProviderCheck(name, CheckStatus.Warning, $"{ex.Message} Without it, a container's GPU panel only offers the host's first GPU.");
         }
     }
 

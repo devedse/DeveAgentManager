@@ -40,15 +40,27 @@ reads the container's IP from Proxmox, so it needs no guest agent.
 ## GPU
 
 Proxmox lets only `root@pam` pass devices into a container; no API token can, whatever its role. The Runner page's
-**GPU** panel shows the command to run once as root on the container's node, for example:
+**GPU** panel shows the command to run once as root on the container's node. It lists the node's graphics cards; with
+more than one, choose the card to pass in. The command names it by its PCI address and finds its render node on the
+host, for example:
 
 ```bash
-pct set 30003 --dev0 /dev/dri/renderD128,gid=993
+pct set 30003 --dev0 "$(readlink -e /dev/dri/by-path/pci-0000:0b:00.0-render)",gid=993
 ```
 
-The group ID is the container's `render` group, which the Manager reads from the container. With more than one GPU,
-`ls -l /dev/dri/by-path/` on the host shows which `renderD` node belongs to which card. Use the `renderD` node itself:
-the container sees a device under the same path as the host.
+The group ID is the container's `render` group, which the Manager reads from the container. The container gets the
+`renderD` node itself, under the same path as on the host, since drivers only look for `/dev/dri/renderD*`.
+
+Listing the cards needs `Sys.Audit` on `/`, which the token doesn't have from the setup in the README. To allow only
+that, without passing it on to anything below `/`:
+
+```bash
+pveum acl modify / --users deveagentmanager@pve --roles PVEAuditor --propagate 0
+```
+
+**Test connection** lists the cards it finds. Without that permission, the panel shows the command for the host's
+first GPU (`/dev/dri/renderD128`), and `ls -l /dev/dri/by-path/` on the host shows which `renderD` node belongs to
+which card.
 
 Restart the Runner, then use **Set up GPU**. It installs the Mesa Vulkan, VA-API and OpenCL drivers, and the panel
 then names the GPU that Vulkan reports. Agents can use it right away: the Runner Account has been in the `render` group

@@ -156,10 +156,15 @@ public sealed record RunnerDto(
 /// <summary>
 /// A Runner's GPU as the Runner sees it right now. <paramref name="State"/>: <c>unavailable</c>, <c>not-attached</c>,
 /// <c>no-access</c>, <c>drivers-missing</c>, <c>not-detected</c> or <c>ready</c>. <paramref name="AttachCommand"/> is
-/// what to run as root on the Runner's host to pass a render node in (only for people who manage the Runner).
+/// what to run as root on the Runner's host to pass its first GPU in (only for people who manage the Runner).
+/// <paramref name="HostGpus"/> are the host's graphics cards, each with its own command, while one still has to be
+/// passed in; when they can't be listed, <paramref name="HostGpusProblem"/> says why.
 /// </summary>
 public sealed record RunnerGpuDto(string State, string Message, string? DeviceName = null, string? RenderDevice = null,
-    string? AttachCommand = null);
+    string? AttachCommand = null, IReadOnlyList<HostGpuDto>? HostGpus = null, string? HostGpusProblem = null);
+
+/// <summary>A graphics card of a Runner's host (<paramref name="Address"/>: its PCI address) and the command that passes it in.</summary>
+public sealed record HostGpuDto(string Address, string Name, string AttachCommand);
 
 /// <summary>An operation that ran on a Runner. <paramref name="Outcome"/> is null while it runs.</summary>
 public sealed record RunnerActivityDto(long Id, string Name, DateTime StartedAt, DateTime? FinishedAt, RunnerActivityOutcome? Outcome, string? Error);
