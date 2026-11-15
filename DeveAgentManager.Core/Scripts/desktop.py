@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Connect to the runner account's real desktop; never create a virtual display."""
+"""Connect to the runner account's desktop: a VM's real screen, or the browser desktop setup made (KasmVNC)."""
 import argparse
 import configparser
 import contextlib
@@ -19,6 +19,10 @@ import time
 KEYS = ("DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
         "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "XDG_SESSION_ID")
 FOLDER = Path.home() / ".deveagentmanager"
+# Written by desktop-setup.sh browser: the browser desktop's display (Runners without a screen, such as containers).
+BROWSER = "browser-desktop.json"
+# Written by the browser desktop's own login (session-start): its D-Bus and desktop name.
+BROWSER_SESSION = "browser-desktop-session.json"
 BEGIN = "<!-- DeveAgentManager desktop -->"
 END = "<!-- /DeveAgentManager desktop -->"
 
@@ -112,7 +116,57 @@ def environment_for(session, uid, procroot=Path("/proc"), runtime_root=Path("/ru
     raise DesktopError("The desktop is logged in, but its display connection is unavailable. Re-run setup or log in again.")
 
 
+def boot_id():
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
+
+def own_json(path, uid):
+    """A JSON object from a file of this account (never a link someone else placed), or None."""
+    try:
+        if path.is_symlink() or path.lstat().st_uid != uid:
+            return None
+        value = json.loads(path.read_text())
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def browser_config(uid=None):
+    """The browser desktop's settings when setup made one, else None (the VM's own screen is used)."""
+    config = own_json(FOLDER / BROWSER, os.getuid() if uid is None else uid)
+    if config and isinstance(config.get("display"), str) and re.fullmatch(r":[0-9]+", config["display"]):
+        return config
+    return None
+
+
+def browser_environment(config, uid, runtime_root=Path("/run/user"), x11root=Path("/tmp/.X11-unix")):
+    """The browser desktop's X display, with its session's D-Bus once its login recorded it this boot."""
+    display = config["display"]
+    if not (x11root / ("X" + display[1:])).exists():
+        raise DesktopError("The browser desktop isn't running. It starts with the Runner; Update all starts it again.")
+    env = {"DISPLAY": display, "XDG_SESSION_TYPE": "x11"}
+    if (Path.home() / ".Xauthority").is_file():
+        env["XAUTHORITY"] = str(Path.home() / ".Xauthority")
+    saved = own_json(FOLDER / BROWSER_SESSION, uid)
+    # The session names its screen too (":1.0").
+    if saved and re.sub(r"\.[0-9]+$", "", str(saved.get("DISPLAY"))) == display and saved.get("boot") == boot_id():
+        for key in ("DBUS_SESSION_BUS_ADDRESS", "XDG_CURRENT_DESKTOP"):
+            if isinstance(saved.get(key), str) and saved[key]:
+                env[key] = saved[key]
+    runtime = runtime_root / str(uid)
+    if runtime.is_dir() and runtime.stat().st_uid == uid:
+        env["XDG_RUNTIME_DIR"] = str(runtime)
+    try:
+        command(["xdpyinfo"], env={**os.environ, **env}, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        raise DesktopError("The browser desktop is starting or doesn't answer. Try again in a moment; Update all restarts it.")
+    return env
+
+
 def desktop_environment():
+    config = browser_config()
+    if config:
+        return browser_environment(config, os.getuid())
     active = sessions(os.getuid())
     if not active:
         raise DesktopError("No local desktop is logged in as the runner account. Log in through the VM console; autologin applies on the next boot.", "login-required")
@@ -142,15 +196,17 @@ def status():
 
 def capture_session():
     values = {k: os.environ[k] for k in KEYS if os.environ.get(k)}
-    if not values.get("XDG_SESSION_ID"):
+    # The browser desktop (browser-desktop-session.sh) is no logind session: it has no XDG_SESSION_ID.
+    browser = os.environ.get("DAM_BROWSER_DESKTOP") == "1"
+    if not browser and not values.get("XDG_SESSION_ID"):
         raise DesktopError("Desktop login did not supply XDG_SESSION_ID.")
-    values["boot"] = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    values["boot"] = boot_id()
     FOLDER.mkdir(mode=0o700, exist_ok=True)
     temporary = FOLDER / f"desktop-session-{os.getpid()}.json"
     with temporary.open("x") as out:
         os.chmod(temporary, 0o600)
         json.dump(values, out)
-    temporary.replace(FOLDER / "desktop-session.json")
+    temporary.replace(FOLDER / (BROWSER_SESSION if browser else "desktop-session.json"))
     # Dedicated development desktops should stay visible for unattended UI tests.
     settings = [
         ["xset", "s", "off"], ["xset", "-dpms"],
@@ -158,8 +214,12 @@ def capture_session():
         ["gsettings", "set", "org.gnome.desktop.screensaver", "lock-enabled", "false"],
         ["gsettings", "set", "org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type", "nothing"],
     ]
-    for channel, name in [("xfce4-power-manager", "/xfce4-power-manager/dpms-enabled"),
-                          ("xfce4-screensaver", "/saver/enabled"), ("xfce4-screensaver", "/lock/enabled")]:
+    off = [("xfce4-power-manager", "/xfce4-power-manager/dpms-enabled"),
+           ("xfce4-screensaver", "/saver/enabled"), ("xfce4-screensaver", "/lock/enabled")]
+    if browser:
+        # KasmVNC's GPU mode (DRI3) doesn't support desktop compositing.
+        off.append(("xfwm4", "/general/use_compositing"))
+    for channel, name in off:
         settings.append(["xfconf-query", "-c", channel, "-p", name, "-n", "-t", "bool", "-s", "false"])
     for args in settings:
         if shutil.which(args[0]):
