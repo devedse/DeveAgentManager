@@ -5,6 +5,25 @@ selects an installed X11 desktop session and installs display discovery, screens
 login managers are LightDM, GDM/GDM3 and SDDM on Debian/Ubuntu. A desktop template must already contain a desktop
 and an X11 session; setup reports missing or unsupported components rather than creating a virtual display.
 
+Containers have no screen. They get a **browser desktop** instead (see below).
+
+## Browser desktops
+
+A container has no screen to log in on, so its desktop is created by the Manager: an XFCE desktop on
+[KasmVNC](https://github.com/kasmtech/KasmVNC), an X11 server with a web viewer. It renders on the Runner's GPU when
+one is passed in (KasmVNC's DRI3 mode on the render node) and in software otherwise.
+
+- **New Runner → Container desktop** creates one; **Add desktop** under Operations adds it to an existing headless
+  Runner.
+- Setup installs XFCE and a pinned, checksum-verified KasmVNC package, and runs the desktop as a user service of the
+  Runner Account, so it survives restarts. KasmVNC listens on the Runner's loopback only, without TLS; XFCE's
+  compositor is off, which KasmVNC's GPU mode requires.
+- **Open desktop** on the Runner page opens KasmVNC's viewer in a new tab. The Manager reaches it through an SSH
+  tunnel and serves it on the Runner's editor origin, like VS Code, to everyone who may use the Runner's Shell. Its
+  game cursor mode (the ▸ tab at the left edge) sends relative mouse movement, for games and 3D viewports.
+- Agents use the same `dam-desktop` tools as on VMs, and apps they start appear on the desktop. Their launch
+  instructions say so, and to ask the user for logins instead of typing credentials.
+
 ## Existing runners
 
 Update the Manager, then open the desktop runner and select **Operations → Re-run setup**. Setup version 3
