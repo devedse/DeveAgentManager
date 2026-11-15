@@ -1,0 +1,116 @@
+@inject ManagerApi Api
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+@* A GPU the host passes into a container Runner: its state, the host command and installing the drivers. *@
+<div class="panel mb-4 runner-gpu">
+    <div class="panel-header">
+        <div class="help-heading"><MudText Typo="Typo.h6">GPU</MudText>
+            <HelpTip Label="GPU">
+                <p>This container can use a GPU of its host. Proxmox only lets root on the host pass a device into a container, so the Manager shows the command instead of running it.</p>
+                <p>Run the command once as root on the host this Runner runs on, restart the Runner, then use Set up GPU. That installs the Mesa Vulkan, VA-API and OpenCL drivers and adds the Runner Account to the render group. Restart running agents afterwards so they get the group.</p>
+                <p>renderD128 is the host's first GPU. With more than one, <code>ls -l /dev/dri/by-path/</code> on the host shows which renderD node belongs to which card: put that one in the command.</p>
+            </HelpTip></div>
+        <MudIconButton Icon="@Icons.Material.Rounded.Refresh" Size="Size.Small" Disabled="@(_reading || !Ready)" OnClick="RefreshAsync" aria-label="Refresh GPU status" />
+    </div>
+    <LoadingSection Loaded="_loaded" Error="@_error" Retry="RefreshAsync" Label="Reading the GPU">
+        @if (_gpu is { } gpu)
+        {
+            <MudText Color="@(gpu.State == "ready" ? Color.Success : Color.Warning)">@Title(gpu.State)</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1">@(gpu.State == "ready" ? gpu.RenderDevice : gpu.Message)</MudText>
+            @if (gpu.AttachCommand is { } command && gpu.State is "not-attached" or "no-access")
+            {
+                <div class="gpu-command mt-2">
+                    <code>@command</code>
+                    <MudIconButton Icon="@Icons.Material.Rounded.ContentCopy" Size="Size.Small" OnClick="() => CopyAsync(command)" aria-label="Copy the command" />
+                </div>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">As root on @(Runner.Status?.Detail ?? "the host"), then restart the Runner.</MudText>
+            }
+            @if (Manage && gpu.State is "drivers-missing" or "not-detected" or "ready")
+            {
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Rounded.Memory" Class="mt-2"
+                           Disabled="@(!Ready || _starting)" OnClick="SetUpAsync">@(gpu.State == "ready" ? "Reinstall drivers" : "Set up GPU")</MudButton>
+            }
+        }
+    </LoadingSection>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public RunnerDto Runner { get; set; } = default!;
+
+    /// <summary>The Runner is ready and nothing else runs on it.</summary>
+    [Parameter] public bool Ready { get; set; }
+
+    [Parameter] public bool Manage { get; set; }
+
+    /// <summary>Called once Set up GPU started, so the page can show the setup log.</summary>
+    [Parameter] public EventCallback Started { get; set; }
+
+    private RunnerGpuDto? _gpu;
+    private bool _loaded, _reading, _starting;
+    private string? _error;
+    private DateTime _readAt;
+    private string? _lastOperation;
+    private RunnerState? _lastState;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Read again when the Runner became ready or an operation on it ended (such as Set up GPU), else at most every 15s.
+        var operationEnded = _lastOperation is not null && Runner.Operation is null;
+        var becameReady = _lastState is not null && _lastState != RunnerState.Ready && Runner.State == RunnerState.Ready;
+        _lastOperation = Runner.Operation;
+        _lastState = Runner.State;
+        if (!_loaded || operationEnded || becameReady || DateTime.UtcNow - _readAt >= TimeSpan.FromSeconds(15))
+        {
+            await RefreshAsync();
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_reading) return;
+        _reading = true;
+        try
+        {
+            _gpu = await Api.GetRunnerGpuAsync(Runner.Id);
+            _error = null;
+            _loaded = true;
+        }
+        catch (ApiException ex) { _error = ex.Message; }
+        catch (HttpRequestException) { _error = LoadingSection.Unreachable; }
+        finally { _readAt = DateTime.UtcNow; _reading = false; }
+    }
+
+    private async Task SetUpAsync()
+    {
+        _starting = true;
+        try
+        {
+            await Api.SetUpRunnerGpuAsync(Runner.Id);
+            await Started.InvokeAsync();
+        }
+        catch (ApiException ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
+        finally { _starting = false; }
+    }
+
+    private async Task CopyAsync(string text)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("damUi.copy", text);
+            Snackbar.Add("Command copied.", Severity.Success);
+        }
+        catch (JSException) { Snackbar.Add("Could not copy. Select the command and use your device's Copy menu.", Severity.Warning); }
+    }
+
+    private static string Title(string state) => state switch
+    {
+        "ready" => "GPU ready",
+        "not-attached" => "No GPU passed in",
+        "no-access" => "GPU not accessible",
+        "drivers-missing" => "Drivers needed",
+        "not-detected" => "GPU not detected",
+        _ => "GPU unavailable",
+    };
+}

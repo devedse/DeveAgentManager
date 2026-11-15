@@ -58,6 +58,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AgentQuickCommands>();
         services.AddSingleton<RunnerSetupService>();
         services.AddSingleton<RunnerDesktop>();
+        services.AddSingleton<RunnerGpu>();
         services.AddSingleton<AgentArtifacts>();
         services.AddSingleton<ArtifactTransfers>();
         services.AddSingleton<ArtifactTokens>();

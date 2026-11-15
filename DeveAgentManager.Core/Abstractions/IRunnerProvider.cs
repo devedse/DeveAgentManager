@@ -42,6 +42,21 @@ public interface IRunnerProvider
 
     /// <summary>Waits until the machine has an address the Manager can SSH to and returns it.</summary>
     Task<string> WaitForAddressAsync(RunnerMachine machine, IRunnerLog log, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The account the Manager logs in with once, with its own key, to create the Runner Account on machines the provider
+    /// couldn't give one (Proxmox containers have no cloud-init). Null: the Runner Account already exists.
+    /// </summary>
+    string? AccountBootstrapUser(RunnerMachine machine) => null;
+
+    /// <summary>True when someone with root on the host can pass a GPU render node into the machine.</summary>
+    bool SupportsGpuPassthrough(RunnerMachine machine) => false;
+
+    /// <summary>
+    /// The command to run as root on the host to pass <paramref name="renderDevice"/> into the machine, owned by the
+    /// machine's group <paramref name="renderGroupId"/>. Only called when <see cref="SupportsGpuPassthrough"/> is true.
+    /// </summary>
+    string GpuAttachCommand(RunnerMachine machine, string renderDevice, int renderGroupId) => throw new NotSupportedException();
 }
 
 /// <summary>The account that the provider should create on the machine (Proxmox injects it through cloud-init).</summary>

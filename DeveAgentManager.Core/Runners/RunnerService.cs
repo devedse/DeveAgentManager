@@ -35,7 +35,8 @@ public sealed partial class RunnerService(
     AuditLog audit,
     IHostApplicationLifetime lifetime,
     ILogger<RunnerService> logger,
-    RunnerUpdateCache updateCache)
+    RunnerUpdateCache updateCache,
+    RunnerGpu gpu)
 {
     private static readonly TimeSpan SshTimeout = TimeSpan.FromMinutes(5);
 
@@ -273,6 +274,14 @@ public sealed partial class RunnerService(
         }, markFailed: false, waitForUpdateCheck: true);
     }
 
+    /// <summary>Installs the drivers for a GPU the host passes into the Runner (<see cref="RunnerGpu"/>). Returns the error, or null.</summary>
+    public Task<string?> SetUpGpu(Guid runnerId) =>
+        StartOperation(runnerId, "Setting up the GPU", async (op, cancellation) =>
+        {
+            RequireReady(op.Runner);
+            await gpu.InstallAsync(op.Runner, op.Log, cancellation);
+        }, markFailed: false);
+
     /// <summary>Applies a harness's configuration from the Setup Profile (after it changed). Returns the error, or null.</summary>
     public Task<string?> ApplyHarnessConfig(Guid runnerId, string harnessId) =>
         StartOperation(runnerId, $"Configuring {setup.GetHarness(harnessId).DisplayName}", async (op, cancellation) =>
@@ -479,6 +488,13 @@ public sealed partial class RunnerService(
 
         op.Runner.Host = address;
         await op.SaveAsync();
+
+        // A container has no cloud-init: until the first setup succeeded, make sure the Runner Account exists.
+        if (runSetup && provider.AccountBootstrapUser(machine) is { } bootstrapUser)
+        {
+            await op.SetStateAsync(RunnerState.WaitingForNetwork, "Creating the Runner Account");
+            await setup.CreateRunnerAccountAsync(op.Runner, bootstrapUser, op.Log, SshTimeout, cancellationToken);
+        }
 
         await op.SetStateAsync(RunnerState.WaitingForNetwork, "Waiting for SSH");
         await setup.WaitForSshAsync(op.Runner, op.Log, SshTimeout, cancellationToken);

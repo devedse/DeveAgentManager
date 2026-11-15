@@ -150,7 +150,16 @@ public sealed record RunnerDto(
     string? Operation,
     MachineStatus? Status,
     IReadOnlyList<AgentDto> Agents,
-    RunnerUpdatesDto? Updates = null);
+    RunnerUpdatesDto? Updates = null,
+    bool GpuPassthrough = false);
+
+/// <summary>
+/// A Runner's GPU as the Runner sees it right now. <paramref name="State"/>: <c>unavailable</c>, <c>not-attached</c>,
+/// <c>no-access</c>, <c>drivers-missing</c>, <c>not-detected</c> or <c>ready</c>. <paramref name="AttachCommand"/> is
+/// what to run as root on the Runner's host to pass a render node in (only for people who manage the Runner).
+/// </summary>
+public sealed record RunnerGpuDto(string State, string Message, string? DeviceName = null, string? RenderDevice = null,
+    string? AttachCommand = null);
 
 /// <summary>An operation that ran on a Runner. <paramref name="Outcome"/> is null while it runs.</summary>
 public sealed record RunnerActivityDto(long Id, string Name, DateTime StartedAt, DateTime? FinishedAt, RunnerActivityOutcome? Outcome, string? Error);

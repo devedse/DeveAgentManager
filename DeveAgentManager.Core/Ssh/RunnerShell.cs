@@ -77,6 +77,30 @@ public sealed class RunnerShell(
     public Task<CommandResult> RunAsync(Runner runner, string script, TimeSpan? timeout = null, CancellationToken cancellationToken = default) =>
         ExecuteAsync(runner, script, timeout ?? DefaultTimeout, null, cancellationToken);
 
+    /// <summary>
+    /// Runs <paramref name="script"/> once as <paramref name="username"/> with the Manager's key (no password), on a
+    /// connection of its own that is never pooled or reused. For creating the Runner Account where only root has the
+    /// Manager's key. The host key is checked against, or learned for, the Runner as on every connection.
+    /// </summary>
+    public async Task<CommandResult> RunAsUserAsync(Runner runner, string username, string script, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
+        deadline.CancelAfter(timeout);
+        var target = CreateTarget(runner) with { Username = username, Password = null };
+        using var client = await connector.ConnectAsync(target, HostKeyLearner(runner), deadline.Token);
+        using var command = client.CreateCommand("bash -c " + ShellQuote.Quote(script.ReplaceLineEndings("\n")));
+        try
+        {
+            await command.ExecuteAsync(deadline.Token);
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested && !_shutdown.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Command as {username} on '{runner.Name}' timed out after {timeout.TotalSeconds:0}s. Its remote outcome may be unknown.");
+        }
+
+        return new CommandResult(command.ExitStatus ?? -1, command.Result, command.Error);
+    }
+
     /// <summary>Runs a command and reports every output line (stdout and stderr) as it arrives. Returns the exit code.</summary>
     public async Task<int> RunStreamingAsync(Runner runner, string script, Action<string> onLine, TimeSpan timeout, CancellationToken cancellationToken) =>
         (await ExecuteAsync(runner, "exec 2>&1\n" + script, timeout, onLine, cancellationToken)).ExitCode;

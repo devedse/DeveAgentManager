@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using DeveAgentManager.Core.Abstractions;
 using DeveAgentManager.Core.Data;
+using DeveAgentManager.Core.Security;
 using DeveAgentManager.Core.Setup;
 using DeveAgentManager.Core.Ssh;
 using Polly;
@@ -20,6 +21,7 @@ namespace DeveAgentManager.Core.Runners;
 public sealed partial class RunnerSetupService(
     RunnerShell shell,
     ManagerSshKey sshKey,
+    SecretProtector protector,
     SettingsStore settings,
     RunnerUsers users,
     RunnerPasswords passwords,
@@ -88,6 +90,142 @@ public sealed partial class RunnerSetupService(
 
         log.Success($"Connected (host key {runner.HostKeyFingerprint})");
     }
+
+    /// <summary>
+    /// For machines where only <paramref name="bootstrapUser"/> (root) has the Manager's key, such as Proxmox containers:
+    /// waits for SSH, logs in as root once to create the Runner Account (its password, the Manager's key, passwordless
+    /// sudo), checks that the Manager can log in as it, then removes the Manager's key from root. When the Runner Account
+    /// can already log in, only the last step runs, so this is safe to repeat (Start or Re-run setup after a failure).
+    /// </summary>
+    public async Task CreateRunnerAccountAsync(Runner runner, string bootstrapUser, IRunnerLog log, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        log.Step($"Creating the Runner Account '{runner.Username}' on {runner.Host}");
+        var started = DateTime.UtcNow;
+        var created = false;
+        var attempt = 0;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                (await shell.RunAsync(runner, "true", TimeSpan.FromSeconds(30), cancellationToken)).EnsureSuccess("SSH test");
+                log.Success(created ? $"Logged in as {runner.Username}" : $"The Runner Account '{runner.Username}' already exists");
+                break;
+            }
+            catch (SshAuthenticationException) when (!created)
+            {
+                // Not there yet: create it as root below.
+            }
+            catch (SshAuthenticationException)
+            {
+                throw new InvalidOperationException($"The Runner Account '{runner.Username}' was created, but the Manager can't log in as it. Check the setup log.");
+            }
+            catch (Exception ex) when (ex is not HostKeyMismatchException and not OperationCanceledException)
+            {
+                await WaitBeforeRetryAsync(ex);
+                continue;
+            }
+
+            try
+            {
+                log.Info($"Logging in as {bootstrapUser} to create it");
+                await RunScriptAsAsync(runner, bootstrapUser, log, BuildRunnerAccountScript(runner.Username, protector.Unprotect(runner.ProtectedPassword) ?? throw new InvalidOperationException("The Runner has no password to give its account."), sshKey.PublicKey), cancellationToken);
+                created = true;
+                shell.Invalidate(runner.Id);
+            }
+            catch (SshAuthenticationException)
+            {
+                throw new InvalidOperationException(
+                    $"Neither {runner.Username} nor {bootstrapUser} accepts the Manager's SSH key on {runner.Host}. If the account was removed, delete this Runner and create it again.");
+            }
+            catch (Exception ex) when (ex is not HostKeyMismatchException and not OperationCanceledException and not RunnerCommandException and not TimeoutException)
+            {
+                await WaitBeforeRetryAsync(ex);
+            }
+        }
+
+        log.Info($"Removing the Manager's key from {bootstrapUser}: the Runner Account has sudo");
+        (await shell.RunAsync(runner, BuildRemoveBootstrapKeyScript(bootstrapUser, sshKey.PublicKey), TimeSpan.FromSeconds(30), cancellationToken))
+            .EnsureSuccess($"Removing the Manager's key from {bootstrapUser}");
+
+        async Task WaitBeforeRetryAsync(Exception ex)
+        {
+            if (DateTime.UtcNow - started > timeout)
+            {
+                throw new TimeoutException($"SSH on {runner.Host}:{runner.SshPort} did not become available within {timeout.TotalMinutes:0} minutes. Does the template include openssh-server?");
+            }
+
+            if (++attempt % 3 == 1)
+            {
+                log.Info($"SSH not ready yet ({ex.Message}), retrying...");
+            }
+
+            shell.Invalidate(runner.Id);
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+        }
+    }
+
+    private async Task RunScriptAsAsync(Runner runner, string username, IRunnerLog log, string script, CancellationToken cancellationToken)
+    {
+        var result = await shell.RunAsUserAsync(runner, username, script, TimeSpan.FromMinutes(15), cancellationToken);
+        foreach (var line in result.Combined.Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(20))
+        {
+            log.Output(line);
+        }
+
+        result.EnsureSuccess($"Creating the Runner Account as {username}");
+    }
+
+    /// <summary>
+    /// Run as root on a fresh Debian container: installs sudo and python3 (setup and dam-tools need them), then creates
+    /// or updates the Runner Account with <paramref name="password"/>, the Manager's key and passwordless sudo, like
+    /// cloud-init does for VMs. Repeatable.
+    /// </summary>
+    internal static string BuildRunnerAccountScript(string username, string password, string publicKey) => $$"""
+        set -eu
+        user={{ShellQuote.Quote(username)}}
+        key={{ShellQuote.Quote(publicKey.Trim())}}
+        password={{ShellQuote.Quote(password)}}
+        export DEBIAN_FRONTEND=noninteractive
+        missing=""
+        command -v sudo >/dev/null 2>&1 || missing="$missing sudo"
+        command -v python3 >/dev/null 2>&1 || missing="$missing python3"
+        if [ -n "$missing" ]; then
+          echo "Installing$missing"
+          apt-get -q update
+          apt-get -q -y -o DPkg::Lock::Timeout=600 install --no-install-recommends $missing
+        fi
+        if ! id -u "$user" >/dev/null 2>&1; then
+          useradd --create-home --shell /bin/bash --groups sudo "$user"
+          echo "Created $user"
+        fi
+        # A GPU passed in later belongs to the render group: agents started from now on have it.
+        getent group render >/dev/null || groupadd --system render
+        usermod -aG render,video "$user"
+        printf '%s:%s\n' "$user" "$password" | chpasswd
+        sudoers=/etc/sudoers.d/90-deveagentmanager
+        printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$user" > "$sudoers.new"
+        chmod 0440 "$sudoers.new"
+        visudo -cqf "$sudoers.new"
+        mv -f "$sudoers.new" "$sudoers"
+        home=$(getent passwd "$user" | cut -d: -f6)
+        install -d -m 700 -o "$user" -g "$(id -gn "$user")" "$home/.ssh"
+        touch "$home/.ssh/authorized_keys"
+        grep -qxF -- "$key" "$home/.ssh/authorized_keys" || printf '%s\n' "$key" >> "$home/.ssh/authorized_keys"
+        chown "$user:$(id -gn "$user")" "$home/.ssh/authorized_keys"
+        chmod 600 "$home/.ssh/authorized_keys"
+        """;
+
+    /// <summary>Run as the Runner Account: removes exactly the Manager's key line from the bootstrap account, if it is there.</summary>
+    internal static string BuildRemoveBootstrapKeyScript(string bootstrapUser, string publicKey) => $$"""
+        set -eu
+        home=$(getent passwd {{ShellQuote.Quote(bootstrapUser)}} | cut -d: -f6)
+        [ -n "$home" ] || exit 0
+        file="$home/.ssh/authorized_keys"
+        if sudo -n test -f "$file"; then
+          sudo -n sh -c 'grep -vxF -- "$1" "$2" > "$2.dam" || true; cat "$2.dam" > "$2"; rm -f "$2.dam"' sh {{ShellQuote.Quote(publicKey.Trim())}} "$file"
+        fi
+        """;
 
     /// <param name="updateSystem">First update the system packages (Update all and Re-run setup; not a new Runner's first setup).</param>
     public async Task RunAsync(Runner runner, IRunnerLog log, CancellationToken cancellationToken, bool updateSystem = false)

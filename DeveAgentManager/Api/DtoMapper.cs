@@ -103,7 +103,8 @@ public sealed class DtoMapper(
             runner.Agents.Select(a => (Agent: a, Access: AccessControl.ForAgent(user, a.OwnerId, a.Shares, access)))
                 .Where(a => a.Access >= AgentAccess.Listed).OrderByDescending(a => a.Agent.CreatedAt)
                 .Select(a => Agent(a.Agent, runner, a.Access, access, a.Agent.Shares.Any(s => s.UserId == user.Id))).ToList(),
-            access >= RunnerAccess.Manage ? updates.Get(runner.Id) : null);
+            access >= RunnerAccess.Manage ? updates.Get(runner.Id) : null,
+            runners.FindProvider(runner.ProviderId)?.SupportsGpuPassthrough(runner.ToMachine()) == true);
     }
 
     /// <summary>An agent loaded with its Runner (and the Runner's members), owner, shares and harness login.</summary>

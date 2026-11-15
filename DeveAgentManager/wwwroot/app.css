@@ -1322,6 +1322,21 @@ a {
     max-width: 440px;
 }
 
+/* The host command in a Runner's GPU panel: wraps on phones, copy button beside it. */
+.gpu-command {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.gpu-command code {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 8px;
+    overflow-wrap: anywhere;
+    background: var(--dam-surface-2);
+}
+
 .empty-state-actions {
     margin-top: 14px;
     display: flex;
