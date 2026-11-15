@@ -8,7 +8,7 @@
         <div class="help-heading"><MudText Typo="Typo.h6">GPU</MudText>
             <HelpTip Label="GPU">
                 <p>This container can use a GPU of its host. Proxmox only lets root on the host pass a device into a container, so the Manager shows the command instead of running it.</p>
-                <p>Run the command once as root on the host this Runner runs on, restart the Runner, then use Set up GPU. That installs the Mesa Vulkan, VA-API and OpenCL drivers and adds the Runner Account to the render group. Restart running agents afterwards so they get the group.</p>
+                <p>Run the command once as root on the host this Runner runs on, restart the Runner, then use Set up GPU. That installs the Mesa Vulkan and VA-API drivers, Intel's OpenCL driver where Debian has it (Debian 13 doesn't), and adds the Runner Account to the render group. Restart running agents afterwards so they get the group.</p>
                 <p>With more than one graphics card in the host, choose the one to pass in: the command finds that card's render node on the host. Listing the cards needs Sys.Audit on / for the Manager's Proxmox token. Without it, the command passes in the host's first GPU (renderD128); <code>ls -l /dev/dri/by-path/</code> on the host shows which renderD node belongs to which card.</p>
             </HelpTip></div>
         <MudIconButton Icon="@Icons.Material.Rounded.Refresh" Size="Size.Small" Disabled="@(_reading || !Ready)" OnClick="RefreshAsync" aria-label="Refresh GPU status" />

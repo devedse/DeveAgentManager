@@ -32,7 +32,10 @@ public sealed class RunnerGpu(RunnerShell shell, IEnumerable<IRunnerProvider> pr
         true
         """;
 
-    /// <summary>Mesa's Vulkan, VA-API and OpenCL for Intel (and AMD through Mesa), and the render group for the account.</summary>
+    /// <summary>
+    /// Mesa's Vulkan and VA-API for Intel (and AMD through Mesa), Intel's OpenCL where Debian packages it (Debian 12, not
+    /// Debian 13), and the render group for the account.
+    /// </summary>
     internal const string InstallScript = """
         set -euo pipefail
         apt_get() {
@@ -43,7 +46,7 @@ public sealed class RunnerGpu(RunnerShell shell, IEnumerable<IRunnerProvider> pr
         sudo -n usermod -aG render,video "$user"
         apt_get update
         apt_get install --no-install-recommends libvulkan1 mesa-vulkan-drivers vulkan-tools intel-media-va-driver vainfo clinfo
-        apt_get install --no-install-recommends intel-opencl-icd || echo "intel-opencl-icd is not available here; OpenCL is skipped"
+        apt_get install --no-install-recommends intel-opencl-icd || echo "This Debian has no intel-opencl-icd (Debian 13 doesn't package it); OpenCL is skipped"
         echo "Vulkan devices:"
         sudo -n -u "$user" vulkaninfo --summary 2>/dev/null | sed -n 's/^[[:space:]]*deviceName[[:space:]]*=[[:space:]]*/  /p'
         """;
@@ -94,7 +97,7 @@ public sealed class RunnerGpu(RunnerShell shell, IEnumerable<IRunnerProvider> pr
     public async Task InstallAsync(Runner runner, IRunnerLog log, CancellationToken ct)
     {
         if (!Supports(runner)) throw new InvalidOperationException("This Runner can't get a GPU from its host.");
-        log.Step("Installing the GPU drivers (Mesa Vulkan, VA-API, OpenCL) and adding the Runner Account to the render group");
+        log.Step("Installing the GPU drivers (Mesa Vulkan, VA-API, and OpenCL where Debian has it) and adding the Runner Account to the render group");
         var exit = await shell.RunStreamingAsync(runner, InstallScript, log.Output, TimeSpan.FromMinutes(20), ct);
         if (exit != 0) throw new RunnerCommandException($"Setting up the GPU failed (exit code {exit}). See the setup log.");
         var gpu = await ReadAsync(runner, manage: false, ct);

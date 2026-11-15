@@ -62,9 +62,12 @@ pveum acl modify / --users deveagentmanager@pve --roles PVEAuditor --propagate 0
 first GPU (`/dev/dri/renderD128`), and `ls -l /dev/dri/by-path/` on the host shows which `renderD` node belongs to
 which card.
 
-Restart the Runner, then use **Set up GPU**. It installs the Mesa Vulkan, VA-API and OpenCL drivers, and the panel
-then names the GPU that Vulkan reports. Agents can use it right away: the Runner Account has been in the `render` group
-since the container was created. Mesa covers Intel and AMD GPUs; NVIDIA's own driver is not installed.
+Restart the Runner, then use **Set up GPU**. It installs the Mesa Vulkan and VA-API drivers, and the panel then names
+the GPU that Vulkan reports. Agents can use it right away: the Runner Account has been in the `render` group since the
+container was created. Mesa covers Intel and AMD GPUs; NVIDIA's own driver is not installed.
+
+OpenCL comes from Intel's `intel-opencl-icd`, which Debian 12 packages but Debian 13 doesn't. On Debian 13, Set up GPU
+skips it; Intel's compute runtime releases on GitHub provide it (and Level Zero) for compute workloads.
 
 ## Limits
 
