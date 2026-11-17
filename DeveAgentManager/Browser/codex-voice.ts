@@ -32,6 +32,7 @@ interface CodexVoiceState {
     transcriptFrame: number;
     followTranscript: boolean;
     timer: ReturnType<typeof setTimeout> | null;
+    disconnectTimer: ReturnType<typeof setTimeout> | null;
     key: (event: KeyboardEvent) => void;
     hidden: () => void;
     leaving: () => void;
@@ -49,7 +50,7 @@ async function report(state: CodexVoiceState, error: string | null = null) {
 
 export function initialize(host: HTMLElement, dotnet: DotNetReference, agent: string, terminalMode = false) {
     const state: CodexVoiceState = { host, dotnet, agent, generation: 0, phase: "idle", muted: false,
-        playbackBlocked: false, disposed: false, stream: null, peer: null, socket: null, listener: null, listenerReady: false, listenTimer: null, audio: null, timer: null,
+        playbackBlocked: false, disposed: false, stream: null, peer: null, socket: null, listener: null, listenerReady: false, listenTimer: null, audio: null, timer: null, disconnectTimer: null,
         terminalMode, speakerSource: null, speakerAnalyser: null, speakerSamples: null, lastLevelSent: 0, signalingStarted: false,
         sender: null, changingInput: false, inputContext: null, inputSource: null, inputAnalyser: null, inputFrame: 0,
         transcriptObserver: null, transcriptResizeObserver: null, transcriptScroll: null, transcriptFrame: 0, followTranscript: true,
@@ -273,8 +274,25 @@ export async function start(host: HTMLElement, terminalRequested = false) {
             void play(host);
         };
         peer.onconnectionstatechange = () => {
-            if (current() && (peer.connectionState === "failed" || peer.connectionState === "disconnected"))
+            if (!current()) return;
+            if (peer.connectionState === "failed") {
                 stop(host, "Voice disconnected. You can start it again.");
+            } else if (peer.connectionState === "connected") {
+                const recovering = state.disconnectTimer !== null;
+                clearTimeout(state.disconnectTimer);
+                state.disconnectTimer = null;
+                if (recovering) { state.phase = "connected"; void report(state); }
+            } else if (peer.connectionState === "disconnected" && state.phase === "connected" && state.disconnectTimer === null) {
+                // A disconnected ICE transport can recover. Keep this call alive briefly instead of ending it.
+                state.phase = "connecting";
+                void report(state);
+                state.disconnectTimer = setTimeout(() => {
+                    if (!current()) return;
+                    state.disconnectTimer = null;
+                    if (peer.connectionState !== "connected")
+                        stop(host, "Voice connection did not recover. Start voice to try again.");
+                }, 10000);
+            }
         };
         for (const track of stream.getAudioTracks()) state.sender = peer.addTrack(track, stream);
         const channel = peer.createDataChannel("oai-events");
@@ -420,6 +438,8 @@ export function stop(host: HTMLElement, error: string | null = null) {
     state.listenerReady = false;
     state.signalingStarted = false;
     clearTimeout(state.timer);
+    clearTimeout(state.disconnectTimer);
+    state.disconnectTimer = null;
     cancelAnimationFrame(state.inputFrame);
     state.speakerSource?.disconnect();
     state.speakerSource = null;

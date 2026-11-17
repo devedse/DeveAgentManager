@@ -360,7 +360,37 @@ try {
     await page.getByRole('button', { name: 'Start voice', exact: true }).click();
     await page.getByText('Voice connected', { exact: true }).waitFor();
     assert.equal(messages.filter(m => m.type === 'start').at(-1).mode, undefined, 'the next call reads a changed preference without reloading');
+    const startsBeforeDisconnect = messages.filter(m => m.type === 'start').length;
+    const stopsBeforeDisconnect = messages.filter(m => m.type === 'stop').length;
+    const connectionState = (value: string) => page.evaluate(value => {
+        const peer = window.codexVoiceTest.peers.at(-1);
+        peer.connectionState = value;
+        peer.onconnectionstatechange();
+    }, value);
+    await connectionState('disconnected');
+    await page.getByText('Connecting voice…', { exact: true }).waitFor();
+    assert.equal(await closedTracks(), false, 'a recoverable disconnection retains the existing microphone');
+    assert.equal(messages.filter(m => m.type === 'stop').length, stopsBeforeDisconnect, 'a brief disconnection does not stop the call');
+    await connectionState('connected');
+    await page.getByText('Voice connected', { exact: true }).waitFor();
+    await page.waitForTimeout(10500);
+    await page.getByText('Voice connected', { exact: true }).waitFor();
+    assert.equal(messages.filter(m => m.type === 'start').length, startsBeforeDisconnect, 'recovery never starts or replays another call');
+    assert.equal(messages.filter(m => m.type === 'stop').length, stopsBeforeDisconnect, 'recovery clears the disconnect deadline');
+    await connectionState('disconnected');
+    await page.getByText('Voice connection did not recover. Start voice to try again.', { exact: true }).waitFor({ timeout: 15000 });
+    assert.equal(await closedTracks(), true, 'a persistent disconnection eventually releases the microphone');
+    assert.equal(messages.filter(m => m.type === 'start').length, startsBeforeDisconnect, 'a persistent disconnection never redials automatically');
+    await page.getByRole('button', { name: 'Start voice', exact: true }).click();
+    await page.getByText('Voice connected', { exact: true }).waitFor();
+    await connectionState('failed');
+    await page.getByText('Voice disconnected. You can start it again.', { exact: true }).waitFor();
+    assert.equal(await closedTracks(), true, 'a failed transport immediately releases the microphone');
+    await page.getByRole('button', { name: 'Start voice', exact: true }).click();
+    await page.getByText('Voice connected', { exact: true }).waitFor();
+    await connectionState('disconnected');
     await page.getByRole('button', { name: 'End voice', exact: true }).click();
+    assert.equal(await closedTracks(), true, 'ending voice during recovery immediately releases the microphone');
     assert.deepEqual(errors, []);
-    console.log('PASS: four-line captions, close/reopen, streaming, safe scrolling, native mode preference and controls, next-call mode changes, microphone lifecycle, ownership and phone layouts');
+    console.log('PASS: captions, native mode, microphone lifecycle, ownership, phone layouts, transient disconnect recovery, bounded failure and explicit stop during recovery');
 } finally { await browser.close(); }

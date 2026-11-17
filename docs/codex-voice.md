@@ -4,6 +4,8 @@ Open a running Codex agent and choose **Start voice**, or press **F8**. Allow mi
 Use **Mute microphone** to pause input and **End voice** to finish the call. Ending voice leaves the agent running.
 Leaving the conversation page or hiding the tab ends the call and releases the microphone. A blocked audio player
 offers **Play audio**. Only one browser tab can own voice for an agent at a time.
+If the audio connection briefly disconnects, the call waits up to ten seconds for that connection to recover.
+It does not redial or replay a request. Ending voice still releases the microphone immediately.
 
 Browser transcripts show at most four visible text lines and scroll through earlier speech. **Close voice transcript**
 hides captions while audio continues; **Show transcript** restores them. New speech does not reopen a closed panel.
