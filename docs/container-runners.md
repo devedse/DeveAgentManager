@@ -31,7 +31,8 @@ is a container with an XFCE desktop you open in the browser, on the GPU once one
   headless template's disk.
 - The network of the headless template VM: its bridge (or `PROXMOX_BRIDGE`), VLAN tag and firewall setting, with
   DHCP.
-- Unprivileged, with only the `nesting` feature, which an API token may set on unprivileged containers.
+- Unprivileged, with only the `nesting` feature, which an API token may set on unprivileged containers. Docker needs
+  it (as does systemd), and nothing more: `keyctl` isn't needed, since Docker's runc works without it in a container.
 
 Containers have no cloud-init. Only root gets the Manager's SSH key when the container is created. The Manager logs in
 as root once, installs `sudo` and `python3`, creates the Runner Account (`RUNNER_USERNAME`) with its password,
@@ -76,4 +77,7 @@ skips it; Intel's compute runtime releases on GitHub provide it (and Level Zero)
 ## Limits
 
 - A container's desktop is a browser desktop (KasmVNC): containers have no screen of their own.
-- No Docker inside the Runner: that needs the `keyctl` feature, which also only `root@pam` may set.
+- Docker in a container Runner needs Proxmox VE with lxc-pve 6.0.5-2 or later (Proxmox VE 9.1, or 8.4.16): earlier
+  versions block the runc security update of November 2025 ("open sysctl net.ipv4.ip_unprivileged_port_start file:
+  ... permission denied"). An existing container without `nesting` gets Docker installed but not running, with a
+  warning in the setup log: turn on **Options → Features → Nesting** and restart it.

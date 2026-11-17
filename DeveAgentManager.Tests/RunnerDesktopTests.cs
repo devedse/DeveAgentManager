@@ -80,6 +80,7 @@ public class RunnerDesktopTests
 
     [Theory]
     [InlineData("runner-setup.sh")]
+    [InlineData("docker-setup.sh")]
     [InlineData("system-update.sh")]
     [InlineData("desktop-setup.sh")]
     [InlineData("desktop-shell.sh")]
@@ -125,6 +126,58 @@ public class RunnerDesktopTests
             const string options = "-q -y -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold";
             Assert.Equal([$"noninteractive l|{options} update", $"noninteractive l|{options} dist-upgrade"], File.ReadAllLines(calls));
             Assert.Contains("==> Upgrading the system packages", output);
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public void DockerSetup_LeavesAMachinesOwnDockerAloneAndGivesTheAccountDockerWhereAgentsGetIt(bool inGroup, bool agentsRunning)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var folder = Path.Combine(Path.GetTempPath(), "dam-docker-setup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var calls = Path.Combine(folder, "calls");
+            var log = $"echo \"$(basename \"$0\") $*\" >> '{calls}'\n";
+            foreach (var (name, body) in new[]
+            {
+                // What sudo runs as root is recorded rather than run (the restart flag lives in /var/run).
+                ("sudo", $"[ \"$1\" = -n ] && shift\nif [ \"$1\" = sh ]; then echo \"root $3\" >> '{calls}'; exit 0; fi\nexec \"$@\"\n"),
+                ("docker", "case \"$1\" in --version) echo 'Docker version 27.5.1, build abc' ;; info) if [ \"$2\" = --format ]; then echo 'Docker 27.5.1 is running (storage overlay2).'; fi ;; esac\n"),
+                ("id", $"if [ \"$1\" = -nG ]; then echo '{(inGroup ? "runner docker" : "runner")}'; else exec /usr/bin/id \"$@\"; fi\n"),
+                ("getent", "echo 'docker:x:991:'\n"),
+                ("tmux", agentsRunning ? "exit 0\n" : "exit 1\n"),
+                ("loginctl", "exit 0\n"),
+                ("systemctl", log + "case \"$*\" in *is-active*) exit 1 ;; esac\n"),
+                ("usermod", log), ("apt-get", log), ("curl", log + "exit 1\n"), ("tee", log + "cat >/dev/null\n"),
+            })
+            {
+                File.WriteAllText(Path.Combine(folder, name), "#!/bin/sh\n" + body);
+                File.SetUnixFileMode(Path.Combine(folder, name), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+
+            var start = new ProcessStartInfo("bash", ["-s"]) { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            start.Environment["PATH"] = folder + ":" + Environment.GetEnvironmentVariable("PATH");
+            using var process = Process.Start(start)!;
+            process.StandardInput.Write(RunnerSetupService.ReadResource("docker-setup.sh"));
+            process.StandardInput.Close();
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, output + error);
+            var made = File.Exists(calls) ? File.ReadAllLines(calls) : [];
+            Assert.Contains("Docker is already installed (Docker version 27.5.1, build abc): left as it is.", output);
+            Assert.Contains("Docker 27.5.1 is running", output);
+            // Its packages, repository and settings stay as they are.
+            Assert.DoesNotContain(made, c => c.StartsWith("apt-get", StringComparison.Ordinal) || c.StartsWith("curl", StringComparison.Ordinal) || c.StartsWith("tee", StringComparison.Ordinal));
+            Assert.Equal(!inGroup, made.Any(c => c.StartsWith("usermod -aG docker ", StringComparison.Ordinal)));
+            // With agents' tmux running, Restart's badge asks for a restart; otherwise only the idle systemd manager restarts.
+            Assert.Equal(!inGroup && agentsRunning, made.Contains("root touch /var/run/reboot-required && echo docker >> /var/run/reboot-required.pkgs"));
+            Assert.Equal(!inGroup && !agentsRunning, made.Any(c => c.StartsWith("systemctl try-restart user@", StringComparison.Ordinal)));
         }
         finally { Directory.Delete(folder, true); }
     }

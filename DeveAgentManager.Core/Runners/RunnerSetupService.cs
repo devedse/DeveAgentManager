@@ -29,12 +29,13 @@ public sealed partial class RunnerSetupService(
     IEnumerable<IRunnerTool> tools)
 {
     /// <summary>Bump when runner-setup.sh changes, so the Portal can show that a Runner's setup is outdated.</summary>
-    public const int SetupVersion = 6;
+    public const int SetupVersion = 7;
 
     /// <summary>The first setup version that installs dam-tools.</summary>
     public const int AgentToolsSetupVersion = 4;
 
     private static readonly Lazy<string> SetupScript = new(() => ReadResource("runner-setup.sh"));
+    private static readonly Lazy<string> DockerScript = new(() => ReadResource("docker-setup.sh"));
     private static readonly Lazy<string> SystemUpdateScript = new(() => ReadResource("system-update.sh"));
     private static readonly Lazy<string> RestartStatus = new(() => ReadResource("restart-status.sh"));
 
@@ -252,6 +253,10 @@ public sealed partial class RunnerSetupService(
         }
 
         await RunScriptAsync(runner, log, "Base setup", "bash ~/.deveagentmanager/runner-setup.sh", TimeSpan.FromMinutes(30), cancellationToken);
+        // Docker on every Runner (setup version 7). A machine's own Docker is left as it is; one that can't run (a container
+        // without Proxmox's nesting feature) is a warning in the log, not a failed setup.
+        await shell.UploadAsync(runner, "~/.deveagentmanager/docker-setup.sh", DockerScript.Value, "700", cancellationToken);
+        await RunScriptAsync(runner, log, "Docker", "bash ~/.deveagentmanager/docker-setup.sh", TimeSpan.FromMinutes(15), cancellationToken);
         await passwords.ApplyAtSetupAsync(runner, log, cancellationToken);
 
         // dam-tools: commands for agents, e.g. dam-tools share-image. dam-share was its earlier name.
@@ -472,6 +477,7 @@ public sealed partial class RunnerSetupService(
 
         commands.Add(("node", "node --version"));
         commands.Add(("tmux", "tmux -V | cut -d' ' -f2"));
+        commands.Add(("docker", "docker --version | cut -d' ' -f3 | tr -d ,"));
 
         var script = string.Join("\n", commands.Select(c => $"echo \"{c.Name}=$({c.Command} 2>/dev/null | head -n1)\""));
         var result = await shell.RunAsync(runner, script, cancellationToken: cancellationToken);

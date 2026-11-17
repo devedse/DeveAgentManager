@@ -57,6 +57,13 @@ when you close the tab.
   safe to repeat. Running agents keep running and use the new versions after a restart. When an update needs the Runner
   restarted, such as a new kernel, the setup log says so. The first setup of a VM or container the Manager created
   updates its system packages too (its template is often months older); an existing machine's are left to Update all.
+- Every Runner gets **Docker** (setup version 7): Docker Engine with `docker compose` and `buildx` from Docker's own
+  repository (its signing key checked; the distribution's Docker where Docker has no packages), and the Runner Account
+  in the `docker` group, so agents use it without sudo. Its settings are Docker's defaults, except that container logs
+  are rotated and containers keep running while Update all upgrades Docker. A machine that already has Docker keeps its
+  own. Agents and desktops that were already running get Docker after a restart (Restart's badge shows it). A container
+  Runner needs Proxmox's `nesting` feature, which the Manager sets on the containers it creates; where Docker can't run,
+  the setup log says so and setup finishes anyway.
 - **Restart** shows a **1** when a restart would load a newer installed kernel (unattended-upgrades often installs
   security kernels by itself) or the operating system reports that a restart is needed. Its hover shows the running
   kernel and the kernel a restart updates to, as does the Runner page's update status. Update all lists and installs
@@ -192,7 +199,7 @@ Runners are full clones of `TEMPLATE_HEADLESS_VMID` (and `TEMPLATE_DESKTOP_VMID`
   virt-customize -a debian-13-genericcloud-amd64.qcow2 --install qemu-guest-agent
   ```
   or start a clone once, run `sudo apt install qemu-guest-agent`, shut it down and turn that into the template.
-- **Debian or Ubuntu** with `apt`. Setup installs git, tmux, Node.js 24 and the harnesses itself. The cloud-init user
+- **Debian or Ubuntu** with `apt`. Setup installs git, tmux, Node.js 24, Docker and the harnesses itself. The cloud-init user
   gets passwordless sudo by default, which setup needs.
 - **DHCP** on the Runner's network.
 
@@ -308,7 +315,7 @@ file. Keep `/data` on a local disk; SQLite's write-ahead log doesn't work on net
 - **Providers** only create, start, stop and delete machines (`IRunnerProvider`). Proxmox and *Existing machine* are
   built in; Kubernetes, Azure or AWS can be added as another provider project.
 - **Setup** runs over SSH: an idempotent script installs packages, Node.js, tmux (with extended keys, so Shift+Enter
-  works in pi) and git config, then applies the Setup Profile and installs the harnesses. Output streams to the
+  works in pi) and git config, then Docker (`docker-setup.sh`), then applies the Setup Profile and installs the harnesses. Output streams to the
   setup log. Run it again any time with **Re-run setup**.
 - **Agents** run as `tmux` sessions named `dam-<name>` in `~/work/<username>/<name>`, with their owner's git identity,
   GitHub token and environment (from `~/.deveagentmanager/users/<id>/`, through `GIT_CONFIG_GLOBAL`). The harness is started with a fixed session
