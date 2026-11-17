@@ -1,0 +1,30 @@
+@* A shared video in the browser's own player. The browser reads the original file in byte ranges (seeking loads only
+   what it needs), through the same revocable preview link as PDFs. *@
+<div class="video-preview-stage">
+    <video @key="Url" class="video-preview-player" src="@Url" title="@Title" controls playsinline preload="metadata"
+           @onloadedmetadata="() => _loaded = true" @onerror="Failed" style="@(_loaded ? null : "visibility:hidden")"></video>
+    <LoadingSection Loaded="_loaded" Error="@_error" Retry="Reload" Label="Loading video" Class="video-preview-loading">
+        <Placeholder><SkeletonDetail /></Placeholder>
+        <ChildContent />
+    </LoadingSection>
+</div>
+@code {
+    [Parameter, EditorRequired] public string Url { get; set; } = "";
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public EventCallback Reload { get; set; }
+    private string? _previousUrl, _error;
+    private bool _loaded;
+
+    protected override void OnParametersSet()
+    {
+        if (_previousUrl == Url) return;
+        _previousUrl = Url; _loaded = false; _error = null;
+    }
+
+    // Also when the preview link expired (after two hours): Retry gets a new one.
+    private void Failed()
+    {
+        _loaded = false;
+        _error = "Couldn't play this video. This browser may not support its format: download it to play it in another player.";
+    }
+}

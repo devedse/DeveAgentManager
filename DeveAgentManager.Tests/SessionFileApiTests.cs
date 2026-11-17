@@ -73,6 +73,40 @@ public sealed class SessionFileApiTests(ApiSecurityTests.Manager manager) : ICla
     }
 
     [Fact]
+    public async Task VideoPreviewStreamsSeekableRangesOfTheOriginalWithItsVideoType()
+    {
+        var (owner, ownerId) = await SignedInAsNewUserAsync();
+        var session = Guid.NewGuid();
+        await using (var db = await manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync())
+        {
+            db.Sessions.Add(new StoredSession { Id = session, OwnerId = ownerId });
+            await db.SaveChangesAsync();
+        }
+        var data = RandomNumberGenerator.GetBytes(3 * 1024 * 1024);
+        var store = manager.Services.GetRequiredService<SessionFileStore>();
+        using var received = await store.ReceiveAsync(data.Length, Convert.ToHexStringLower(SHA256.HashData(data)), (s, ct) => s.WriteAsync(data, ct).AsTask(), default);
+        var file = await store.CommitAsync(session, Guid.NewGuid(), received, "storm night.MP4", "", default);
+        var response = await owner.GetAsync($"/api/sessions/{session}/files/{file.Id}/preview");
+        response.EnsureSuccessStatusCode();
+        Assert.True((await response.Content.ReadAsByteArrayAsync()).Length < 4096);
+        var preview = await response.Content.ReadFromJsonAsync<SessionFilePreview>(ApiJson.Options);
+        Assert.NotNull(preview!.VideoUrl);
+        Assert.Null(preview.Text); Assert.Null(preview.SourceUrl); Assert.Null(preview.HtmlUrl); Assert.Null(preview.PdfUrl); Assert.Null(preview.UnavailableReason);
+        // A video element seeks with range requests; it sends no Portal cookie to rely on.
+        var anonymous = manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var seek = await anonymous.SendAsync(new HttpRequestMessage(HttpMethod.Get, preview.VideoUrl) { Headers = { Range = new RangeHeaderValue(2_000_000, 2_000_063) } });
+        Assert.Equal(HttpStatusCode.PartialContent, seek.StatusCode);
+        Assert.Equal("video/mp4", seek.Content.Headers.ContentType!.MediaType);
+        Assert.Null(seek.Content.Headers.ContentDisposition);
+        Assert.Equal(data.Length, seek.Content.Headers.ContentRange!.Length);
+        Assert.Equal(data[2_000_000..2_000_064], await seek.Content.ReadAsByteArrayAsync());
+        Assert.True(seek.Headers.CacheControl!.NoStore);
+        Assert.Equal("nosniff", seek.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"/api/sessions/{session}/files/{file.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync(preview.VideoUrl)).StatusCode);
+    }
+
+    [Fact]
     public async Task HtmlStreamsWithScopedAssetsAndRevocationAndLargeTextHasNoPreviewCap()
     {
         var (owner, ownerId) = await SignedInAsNewUserAsync();

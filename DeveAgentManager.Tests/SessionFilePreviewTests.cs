@@ -20,6 +20,27 @@ public sealed class SessionFilePreviewTests
     }
 
     [Theory]
+    [InlineData("storm.mp4", "video/mp4")]
+    [InlineData("STORM.MP4", "video/mp4")]
+    [InlineData("clip.m4v", "video/mp4")]
+    [InlineData("clip.webm", "video/webm")]
+    [InlineData("clip.mov", "video/quicktime")]
+    [InlineData("clip.ogv", "video/ogg")]
+    public async Task VideoIsDescribedForDirectStreamingInsteadOfDecodedAsText(string name, string type)
+    {
+        var result = await PreviewAsync("\0\0\0\u0018ftypmp42\0\u00ff binary video data"u8.ToArray(), name);
+        Assert.Equal(type, SessionFilePreviewReader.VideoType(name));
+        Assert.Null(result.Text);
+        Assert.Null(result.UnavailableReason);
+    }
+
+    [Theory]
+    [InlineData("clip.mkv")]
+    [InlineData("clip.avi")]
+    [InlineData("notes.mp4.txt")]
+    public void OnlyFormatsBrowsersPlayAreVideos(string name) => Assert.False(SessionFilePreviewReader.IsVideo(name));
+
+    [Theory]
     [InlineData("utf8")]
     [InlineData("utf8-bom")]
     [InlineData("utf16-le")]
