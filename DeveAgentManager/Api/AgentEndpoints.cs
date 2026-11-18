@@ -229,12 +229,12 @@ internal static class AgentEndpoints
     private static void MapShares(RouteGroupBuilder agents)
     {
         agents.MapGet("/{agentId:guid}/shares", async (Guid agentId, Sharing sharing, CancellationToken ct) =>
-            (await sharing.ListAgentSharesAsync(agentId, ct)).Select(s => new AgentShareDto(s.UserId, s.User!.Username, s.User.DisplayName, s.Access, s.GrantedAt)).ToList())
+            (await sharing.ListAgentSharesAsync(agentId, ct)).Select(s => new AgentShareDto(s.UserId, s.User!.Username, s.User.DisplayName, s.Access, s.GrantedAt, s.ExpiresAt)).ToList())
             .RequireAgent(AgentAccess.Read);
 
         agents.MapPut("/{agentId:guid}/shares/{userId:guid}", async (Guid agentId, Guid userId, ShareAgentRequest request, CurrentUser user, Sharing sharing, CancellationToken ct) =>
         {
-            await sharing.ShareAgentAsync(user, agentId, userId, request.Access, ct);
+            await sharing.ShareAgentAsync(user, agentId, userId, request.Access, ct, request.Expiry);
             return Results.NoContent();
         }).RequireAgent(AgentAccess.Owner);
 

@@ -10,23 +10,25 @@
         <Help>
             <p>Use permits running agents, the shell, VS Code and the desktop. Manage also permits setup, power controls, passwords and access changes.</p>
             <p>Everyone uses the same account on the runner and can reach its files and credentials. Removing access removes that person's agents from this runner; their saved conversations remain.</p>
+            <p>Access can have a time limit: a duration, or until a date and time. It then ends by itself, as Remove access would.</p>
         </Help>
         <Actions Context="person">
             @if (person.Owner && CanChangeOwner)
             {
-                <AccessMenu Disabled="_busy" Label="Owner actions">
-                    <MudMenuItem Icon="@Icons.Material.Rounded.SwapHoriz" OnClick="ChangeOwnerAsync">Give to someone else…</MudMenuItem>
+                <AccessMenu Disabled="_busy" Label="Owner actions" Context="menu">
+                    <MudMenuItem Icon="@Icons.Material.Rounded.SwapHoriz" OnClick="() => menu.CloseThen(ChangeOwnerAsync)">Give to someone else…</MudMenuItem>
                 </AccessMenu>
             }
             else if (!person.Owner && (CanManage || person.Id == UserId))
             {
                 var member = _members.Single(m => m.UserId == person.Id);
-                <AccessMenu Disabled="_busy" Label="@($"Access for {person.Username}")">
+                <AccessMenu Disabled="_busy" Label="@($"Access for {person.Username}")" Context="menu">
                     @if (CanManage)
                     {
                         <MudMenuItem Icon="@Icons.Material.Rounded.Tune" OnClick="() => SetAsync(member.UserId, member.Access == RunnerAccess.Manage ? RunnerAccess.Use : RunnerAccess.Manage)">Change to @(member.Access == RunnerAccess.Manage ? "Use" : "Manage")</MudMenuItem>
+                        <MudMenuItem Icon="@Icons.Material.Rounded.Timer" OnClick="() => menu.CloseThen(() => TimeLimitAsync(member))">Time limit…</MudMenuItem>
                     }
-                    <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => RemoveAsync(member)">@(member.UserId == UserId ? "Leave access…" : "Remove access…")</MudMenuItem>
+                    <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => menu.CloseThen(() => RemoveAsync(member))">@(member.UserId == UserId ? "Leave access…" : "Remove access…")</MudMenuItem>
                 </AccessMenu>
             }
         </Actions>
@@ -136,7 +138,8 @@
     private bool _membersLoaded;
     private string? _membersError;
     private IReadOnlyList<AccessPerson> People => new[] { new AccessPerson(Runner.OwnerId, "", Runner.OwnerName, "Owner", Owner: true) }
-        .Concat(_members.Select(m => new AccessPerson(m.UserId, m.Username, m.DisplayName, m.Access.ToString(), GrantedAt: m.GrantedAt))).ToList();
+        .Concat(_members.Select(m => new AccessPerson(m.UserId, m.Username, m.DisplayName, m.Access.ToString(), GrantedAt: m.GrantedAt, ExpiresAt: m.ExpiresAt))).ToList();
+    private const string Ending = "Their agents on this Runner are removed (their conversations stay theirs), and so are their files and keys on it.";
     private bool _busy;
 
     [Parameter, EditorRequired]
@@ -202,15 +205,27 @@
             { d => d.Levels, Levels },
             { d => d.Level, (int)RunnerAccess.Use },
             { d => d.Confirm, "Add" },
+            { d => d.TimeLimit, true },
+            { d => d.TimeLimitEnding, Ending },
             { d => d.Warning, "Everyone with access uses the same account on the Runner and can reach everything on it: other people's agents, files, harness logins and GitHub tokens on it. Share it only with people you trust with your keys." },
         });
         if (await dialog.Result is { Canceled: false, Data: ChooseUserDialog.ChosenUser chosen })
         {
-            await SetAsync(chosen.UserId, (RunnerAccess)chosen.Level);
+            await SetAsync(chosen.UserId, (RunnerAccess)chosen.Level, chosen.Expiry);
         }
     }
 
-    private Task SetAsync(Guid userId, RunnerAccess access) => RunAsync(() => Api.SetRunnerAccessAsync(Runner.Id, userId, access));
+    private Task SetAsync(Guid userId, RunnerAccess access, AccessExpiry? expiry = null) => RunAsync(() => Api.SetRunnerAccessAsync(Runner.Id, userId, access, expiry));
+
+    private async Task TimeLimitAsync(RunnerMemberDto member)
+    {
+        if (_busy) return;
+        if (await AccessTimeLimitDialog.ShowAsync(Dialogs, $"Time limit for {member.DisplayName}", member.ExpiresAt, Ending,
+            expiry => Api.SetRunnerAccessAsync(Runner.Id, member.UserId, member.Access, expiry)))
+        {
+            await RunAsync(() => Task.CompletedTask);
+        }
+    }
 
     private async Task RemoveAsync(RunnerMemberDto member)
     {

@@ -287,6 +287,86 @@ public sealed class UserAccessTests(ApiSecurityTests.Manager manager) : IClassFi
     }
 
     [Fact]
+    public async Task TimedAccess_IsSetThroughTheApi_AndEndsByItselfAsRemovingItWould()
+    {
+        // Its own sign-ins, outside the shared fixture's authentication rate-limit window.
+        using var isolatedManager = new ApiSecurityTests.Manager();
+        await new UserAccessTests(isolatedManager).TimedAccessAsync();
+    }
+
+    private async Task TimedAccessAsync()
+    {
+        var (owner, ownerId) = await SignedInAsNewUserWithIdAsync();
+        var (ketty, kettyId) = await SignedInAsNewUserWithIdAsync();
+        var things = await SeedAsync(ownerId);
+        async Task Ok(Task<HttpResponseMessage> request)
+        {
+            using var response = await request;
+            Assert.True(response.StatusCode == HttpStatusCode.NoContent, await response.Content.ReadAsStringAsync());
+        }
+        async Task<DateTime?> AgentShareEnds() =>
+            (await owner.GetFromJsonAsync<List<AgentShareDto>>($"/api/agents/{things.AgentId}/shares", ApiJson.Options))!.Single().ExpiresAt;
+        var shares = $"/api/agents/{things.AgentId}/shares/{kettyId}";
+
+        // A duration counts on the Manager's clock.
+        var before = DateTime.UtcNow;
+        await Ok(owner.PutAsJsonAsync(shares, new ShareAgentRequest(AgentAccess.Read, new AccessExpiry(Minutes: 90)), ApiJson.Options));
+        var ends = await AgentShareEnds();
+        Assert.InRange(ends!.Value, before.AddMinutes(90), DateTime.UtcNow.AddMinutes(90));
+        // Changing how keeps it; none removes it; an end time replaces it; what can't be a time limit is refused.
+        await Ok(owner.PutAsJsonAsync(shares, new ShareAgentRequest(AgentAccess.Write), ApiJson.Options));
+        Assert.Equal(ends, await AgentShareEnds());
+        await Ok(owner.PutAsJsonAsync(shares, new ShareAgentRequest(AgentAccess.Write, new AccessExpiry()), ApiJson.Options));
+        Assert.Null(await AgentShareEnds());
+        var until = DateTime.UtcNow.AddHours(5);
+        until = new DateTime(until.Year, until.Month, until.Day, until.Hour, until.Minute, 0, DateTimeKind.Utc);
+        await Ok(owner.PutAsJsonAsync(shares, new ShareAgentRequest(AgentAccess.Write, new AccessExpiry(Until: until)), ApiJson.Options));
+        Assert.Equal(until, await AgentShareEnds());
+        foreach (var refused in new[] { new AccessExpiry(Until: DateTime.UtcNow.AddMinutes(-5)), new AccessExpiry(Minutes: 0), new AccessExpiry(Minutes: 367 * 24 * 60) })
+            Assert.Equal(HttpStatusCode.BadRequest, (await owner.PutAsJsonAsync(shares, new ShareAgentRequest(AgentAccess.Write, refused), ApiJson.Options)).StatusCode);
+        Assert.Equal(until, await AgentShareEnds());
+
+        // A conversation's time limit is optional: sharing without a body still works.
+        var sessionShares = $"/api/sessions/{things.ImportedSessionId}/shares";
+        await Ok(owner.PutAsync($"{sessionShares}/{kettyId}", null));
+        Assert.Null((await owner.GetFromJsonAsync<List<SessionShareDto>>(sessionShares, ApiJson.Options))!.Single().ExpiresAt);
+        await Ok(owner.PutAsJsonAsync($"{sessionShares}/{kettyId}", new ShareSessionRequest(new AccessExpiry(Minutes: 30)), ApiJson.Options));
+        Assert.NotNull((await owner.GetFromJsonAsync<List<SessionShareDto>>(sessionShares, ApiJson.Options))!.Single().ExpiresAt);
+
+        // Runner and login access.
+        await Ok(owner.PutAsJsonAsync($"/api/runners/{things.RunnerId}/members/{kettyId}", new RunnerAccessRequest(RunnerAccess.Use, new AccessExpiry(Minutes: 30)), ApiJson.Options));
+        Assert.NotNull((await owner.GetFromJsonAsync<List<RunnerMemberDto>>($"/api/runners/{things.RunnerId}/members", ApiJson.Options))!.Single().ExpiresAt);
+        await Ok(owner.PutAsJsonAsync($"/api/accounts/{things.AccountId}/grants/{kettyId}", new AccountGrantRequest(AccountAccess.Use, new AccessExpiry(Minutes: 30)), ApiJson.Options));
+        Assert.NotNull((await owner.GetFromJsonAsync<List<AccountGrantDto>>($"/api/accounts/{things.AccountId}/grants", ApiJson.Options))!.Single(g => g.UserId == kettyId).ExpiresAt);
+        Assert.Equal(AgentAccess.Write, (await AgentAsync(ketty, things.AgentId)).Access);
+        foreach (var path in new[] { $"/api/sessions/{things.ImportedSessionId}", $"/api/runners/{things.RunnerId}" })
+            Assert.Equal(HttpStatusCode.OK, (await ketty.GetAsync(path)).StatusCode);
+        Assert.Contains(things.AccountId.ToString(), await ketty.GetStringAsync("/api/accounts"));
+
+        // Time is up: one check ends it all, as removing it would, and the audit log says why.
+        await using (var db = await DbAsync())
+        {
+            var past = DateTime.UtcNow.AddSeconds(-1);
+            await db.AgentShares.Where(s => s.UserId == kettyId).ExecuteUpdateAsync(u => u.SetProperty(s => s.ExpiresAt, past));
+            await db.SessionShares.Where(s => s.UserId == kettyId).ExecuteUpdateAsync(u => u.SetProperty(s => s.ExpiresAt, past));
+            await db.RunnerMembers.Where(m => m.UserId == kettyId).ExecuteUpdateAsync(u => u.SetProperty(m => m.ExpiresAt, past));
+            await db.AccountGrants.Where(g => g.UserId == kettyId).ExecuteUpdateAsync(u => u.SetProperty(g => g.ExpiresAt, past));
+        }
+        await manager.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().OfType<AccessExpiryService>().Single().ExpireAsync(CancellationToken.None);
+        foreach (var path in new[] { $"/api/agents/{things.AgentId}", $"/api/sessions/{things.ImportedSessionId}", $"/api/runners/{things.RunnerId}" })
+            Assert.Equal(HttpStatusCode.NotFound, (await ketty.GetAsync(path)).StatusCode);
+        Assert.DoesNotContain(things.AccountId.ToString(), await ketty.GetStringAsync("/api/accounts"));
+        await using (var db = await DbAsync())
+        {
+            Assert.False(await db.AgentShares.AnyAsync(s => s.UserId == kettyId));
+            Assert.False(await db.SessionShares.AnyAsync(s => s.UserId == kettyId));
+            Assert.False(await db.RunnerMembers.AnyAsync(m => m.UserId == kettyId));
+            Assert.False(await db.AccountGrants.AnyAsync(g => g.UserId == kettyId));
+            Assert.Equal(4, await db.AuditEvents.CountAsync(e => e.ActorId == null && e.Detail!.EndsWith(": time limit ended")));
+        }
+    }
+
+    [Fact]
     public async Task GitIdentity_OnlyAnExplicitSwitchChangesIt_ToYourselfUnlessYouManageConversations()
     {
         // Its own sign-ins, outside the shared fixture's authentication rate-limit window.

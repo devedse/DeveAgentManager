@@ -41,7 +41,7 @@ public sealed class BrowserClock(IJSRuntime js) : IAsyncDisposable
         if (zone.IsInvalidTime(local))
             return new(null, "This local time does not exist, possibly because the clocks change. Choose another time or use a duration.");
         if (zone.IsAmbiguousTime(local))
-            return new(null, "This local time occurs twice because the clocks change. Use a duration to select an exact reset.");
+            return new(null, "This local time occurs twice because the clocks change. Use a duration to choose an exact time.");
         return new(TimeZoneInfo.ConvertTimeToUtc(local, zone).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture), null);
     }
 

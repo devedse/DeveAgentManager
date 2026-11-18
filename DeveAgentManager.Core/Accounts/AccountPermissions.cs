@@ -39,8 +39,9 @@ public sealed partial class AccountService
 
     internal static async Task RequireManagersRemainAsync(ManagerDbContext db, Guid userId, CancellationToken ct)
     {
+        // Managers with a time limit don't count: theirs runs out.
         var names = await db.Accounts.Where(a => a.Grants.Any(g => g.UserId == userId && g.Access == AccountAccess.Manage)
-            && !a.Grants.Any(g => g.UserId != userId && g.Access == AccountAccess.Manage && !g.User.Disabled)).Select(a => a.Name).ToListAsync(ct);
+            && !a.Grants.Any(g => g.UserId != userId && g.Access == AccountAccess.Manage && g.ExpiresAt == null && !g.User.Disabled)).Select(a => a.Name).ToListAsync(ct);
         if (names.Count > 0) throw new InvalidOperationException("Assign another manager or remove these harness logins before disabling or deleting this user: " + string.Join(", ", names));
     }
 
@@ -108,7 +109,7 @@ public sealed partial class AccountService
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var (a, _) = await RequireAsync(db, actor, id, AccountAccess.Manage, ct);
-        var rows = a.Grants.OrderBy(g => g.User.Username).Select(g => new AccountGrantDto(g.UserId, g.User.Username, g.User.DisplayName, g.Access, g.User.Disabled)).ToList();
+        var rows = a.Grants.OrderBy(g => g.User.Username).Select(g => new AccountGrantDto(g.UserId, g.User.Username, g.User.DisplayName, g.Access, g.User.Disabled, ExpiresAt: g.ExpiresAt)).ToList();
         rows.AddRange(await (from g in db.AgentLoginGrants
             join u in db.Users on g.OwnerId equals u.Id
             where g.AccountId == id
@@ -136,7 +137,11 @@ public sealed partial class AccountService
         return new(rows, manager ? await db.AccountCleanups.CountAsync(c => c.AccountId == id, ct) : 0);
     }
 
-    public async Task SetGrantAsync(CurrentUser actor, Guid id, Guid userId, AccountAccess? level, CancellationToken ct)
+    /// <summary>
+    /// Gives, changes or (<paramref name="level"/> null) removes someone's access. <paramref name="expiry"/> is its time
+    /// limit; left out, the access keeps the one it has.
+    /// </summary>
+    public async Task SetGrantAsync(CurrentUser actor, Guid id, Guid userId, AccountAccess? level, CancellationToken ct, AccessExpiry? expiry = null)
     {
         if (level is not (null or AccountAccess.Use or AccountAccess.Manage)) throw new ArgumentException("Choose Use or Manage.");
         using var lease = await AccountCoordination.LockAsync(ct);
@@ -153,24 +158,65 @@ public sealed partial class AccountService
         var target = await db.Users.SingleOrDefaultAsync(u => u.Id == userId && (!u.Disabled || level == null), ct)
             ?? throw new ArgumentException("Choose an enabled user.");
         var existing = a.Grants.FirstOrDefault(g => g.UserId == userId);
-        if (existing?.Access == level) return;
-        if (existing?.Access == AccountAccess.Manage && level != AccountAccess.Manage
-            && !a.Grants.Any(g => g.UserId != userId && g.Access == AccountAccess.Manage && !g.User.Disabled))
-            throw new InvalidOperationException("Add another enabled manager before removing the last manager.");
+        var expiresAt = level == null ? null : AccessTimeLimits.Resolve(expiry, existing?.ExpiresAt, DateTime.UtcNow);
+        if (existing?.Access == level && existing?.ExpiresAt == expiresAt) return;
+        // A login always keeps an enabled manager without a time limit, so it is never left without one when time runs out.
+        var otherLasting = a.Grants.Any(g => g.UserId != userId && g.Access == AccountAccess.Manage && g.ExpiresAt == null && !g.User.Disabled);
+        if (existing is { Access: AccountAccess.Manage, ExpiresAt: null } && !(level == AccountAccess.Manage && expiresAt == null) && !otherLasting)
+            throw new InvalidOperationException(level == AccountAccess.Manage
+                ? "Add another enabled manager without a time limit before giving this one a time limit."
+                : "Add another enabled manager before removing the last manager.");
+        if (level == AccountAccess.Manage && expiresAt != null && !otherLasting)
+            throw new InvalidOperationException("Manage access can only have a time limit while another enabled manager has none.");
         if (level == null)
         {
-            var affected = await RelevantAgents(db, id).Where(x => x.OwnerId == userId).ToListAsync(ct);
-            Block(affected);
-            if (existing is not null) db.AccountGrants.Remove(existing);
-            db.UserHarnessDefaults.RemoveRange(await db.UserHarnessDefaults.Where(p => p.AccountId == id && p.UserId == userId).ToListAsync(ct));
-            db.AgentLoginGrants.RemoveRange(await db.AgentLoginGrants.Where(g => g.AccountId == id && g.OwnerId == userId).ToListAsync(ct));
+            await RemoveGrantAsync(db, id, userId, existing, ct);
         }
-        else if (existing is not null) existing.Access = level.Value;
-        else a.Grants.Add(new() { UserId = userId, Access = level.Value, GrantedById = actor.Id, GrantedAt = DateTime.UtcNow });
+        else if (existing is not null) { existing.Access = level.Value; existing.ExpiresAt = expiresAt; }
+        else a.Grants.Add(new() { UserId = userId, Access = level.Value, GrantedById = actor.Id, GrantedAt = DateTime.UtcNow, ExpiresAt = expiresAt });
         a.AccessVersion++;
         await db.SaveChangesAsync(ct);
-        await ChangedAsync(actor, id, "LoginAccessChanged", target.Username + ": " + (level?.ToString() ?? "removed"), ct);
+        await ChangedAsync(actor, id, "LoginAccessChanged", target.Username + ": " + (level?.ToString() ?? "removed") + AccessTimeLimits.Describe(expiresAt), ct);
         await EnforceLockedAsync(ct);
+    }
+
+    /// <summary>Ends login access whose time limit is up, as Remove access does (every 10 seconds, AccessExpiryService).</summary>
+    public async Task ExpireGrantsAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        await using (var check = await dbFactory.CreateDbContextAsync(ct))
+        {
+            if (!await check.AccountGrants.AnyAsync(g => g.ExpiresAt != null && g.ExpiresAt <= now, ct)) return;
+        }
+
+        using var lease = await AccountCoordination.LockAsync(ct);
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var expired = await db.AccountGrants.Include(g => g.User).Include(g => g.Account)
+            .Where(g => g.ExpiresAt != null && g.ExpiresAt <= now).ToListAsync(ct);
+        if (expired.Count == 0) return;
+        foreach (var grant in expired)
+        {
+            await RemoveGrantAsync(db, grant.AccountId, grant.UserId, grant, ct);
+            grant.Account.AccessVersion++;
+        }
+        await db.SaveChangesAsync(ct);
+        foreach (var grant in expired)
+        {
+            if (audit is not null) await audit.RecordAsync(null, "LoginAccessChanged", "Harness login " + grant.AccountId, grant.User.Username + ": time limit ended", ct);
+            events.Publish(new(ManagerEventKind.AccessChanged, UserId: grant.UserId));
+        }
+        events.Publish(new(ManagerEventKind.SettingsChanged));
+        await EnforceLockedAsync(ct);
+    }
+
+    /// <summary>Removes someone's access: their agents using the login stop, and it is no longer their default.</summary>
+    private static async Task RemoveGrantAsync(ManagerDbContext db, Guid id, Guid userId, AccountGrant? existing, CancellationToken ct)
+    {
+        var affected = await RelevantAgents(db, id).Where(x => x.OwnerId == userId).ToListAsync(ct);
+        Block(affected);
+        if (existing is not null) db.AccountGrants.Remove(existing);
+        db.UserHarnessDefaults.RemoveRange(await db.UserHarnessDefaults.Where(p => p.AccountId == id && p.UserId == userId).ToListAsync(ct));
+        db.AgentLoginGrants.RemoveRange(await db.AgentLoginGrants.Where(g => g.AccountId == id && g.OwnerId == userId).ToListAsync(ct));
     }
 
     public async Task RemoveLegacyGrantAsync(CurrentUser actor, Guid id, Guid agentId, CancellationToken ct)

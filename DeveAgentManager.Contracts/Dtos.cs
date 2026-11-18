@@ -75,7 +75,7 @@ public sealed record ModelDefaultsDto(string HarnessId, string? ManagerProvider,
     List<string>? ManagerScopedModels = null, List<string>? ScopedModels = null, List<Guid>? PiAccountIds = null);
 
 /// <summary>Someone with access to a Runner besides its owner.</summary>
-public sealed record RunnerMemberDto(Guid UserId, string Username, string DisplayName, RunnerAccess Access, DateTime GrantedAt);
+public sealed record RunnerMemberDto(Guid UserId, string Username, string DisplayName, RunnerAccess Access, DateTime GrantedAt, DateTime? ExpiresAt = null);
 
 /// <summary>
 /// Someone without access to a Runner whom agents on it are shared with: through a read-write share they can still have
@@ -86,10 +86,19 @@ public sealed record RunnerAgentAccessDto(Guid UserId, string Username, string D
 public sealed record RunnerAgentShareDto(Guid AgentId, string AgentName, string OwnerName, AgentAccess Access);
 
 /// <summary>Someone an agent is shared with.</summary>
-public sealed record AgentShareDto(Guid UserId, string Username, string DisplayName, AgentAccess Access, DateTime GrantedAt);
+public sealed record AgentShareDto(Guid UserId, string Username, string DisplayName, AgentAccess Access, DateTime GrantedAt, DateTime? ExpiresAt = null);
 
 /// <summary>Someone a conversation is shared with (read-only).</summary>
-public sealed record SessionShareDto(Guid UserId, string Username, string DisplayName, DateTime GrantedAt);
+public sealed record SessionShareDto(Guid UserId, string Username, string DisplayName, DateTime GrantedAt, DateTime? ExpiresAt = null);
+
+/// <summary>
+/// A time limit for someone's access, when it is given or changed: ends <paramref name="Minutes"/> from now (the Manager's
+/// clock), or at <paramref name="Until"/> (UTC). Neither: no time limit. Leaving it out of a request keeps the access's
+/// current time limit. When it runs out, the Manager removes the access as Remove access would.
+/// </summary>
+public sealed record AccessExpiry(DateTime? Until = null, double? Minutes = null);
+
+public sealed record ShareSessionRequest(AccessExpiry? Expiry = null);
 
 /// <summary>Software a Runner can have besides the harnesses, e.g. VS Code.</summary>
 /// <param name="Icon">The logo: SVG content for a 24×24 view box.</param>
@@ -332,8 +341,8 @@ public sealed record AccountDto(
     int PeopleCount = 0,
     string? CreatedByUsername = null);
 
-public sealed record AccountGrantDto(Guid UserId, string Username, string DisplayName, AccountAccess Access, bool Disabled, Guid? AgentId = null);
-public sealed record AccountGrantRequest(AccountAccess Access);
+public sealed record AccountGrantDto(Guid UserId, string Username, string DisplayName, AccountAccess Access, bool Disabled, Guid? AgentId = null, DateTime? ExpiresAt = null);
+public sealed record AccountGrantRequest(AccountAccess Access, AccessExpiry? Expiry = null);
 public sealed record AgentProcessIdentity(int Pid, long StartTicks, string BootId);
 public sealed record AgentMoveProcessDto(AgentProcessIdentity Identity, string Name, string? WorkingDirectory);
 public sealed record MoveAgentRequest(Guid RunnerId, IReadOnlyList<AgentProcessIdentity>? StopProcesses = null);
@@ -367,7 +376,7 @@ public sealed record UpdateUserRequest(string? DisplayName, UserRoles Roles, boo
 
 public sealed record SetPasswordRequest(string Password);
 
-public sealed record RunnerAccessRequest(RunnerAccess Access);
+public sealed record RunnerAccessRequest(RunnerAccess Access, AccessExpiry? Expiry = null);
 
 public sealed record ChangeOwnerRequest(Guid UserId);
 
@@ -375,7 +384,7 @@ public sealed record KeysOnlyRequest(bool KeysOnly);
 
 public sealed record RunnerPasswordDto(string Password);
 
-public sealed record ShareAgentRequest(AgentAccess Access);
+public sealed record ShareAgentRequest(AgentAccess Access, AccessExpiry? Expiry = null);
 
 public sealed record ImportHarnessFilesRequest(Guid RunnerId, string HarnessId);
 

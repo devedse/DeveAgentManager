@@ -169,7 +169,7 @@ public sealed partial class AgentService
             StateMessage = reuse is null ? "Creating workspace…" : "Preparing the kept folder…", CreatedAt = now, UpdatedAt = now };
         // Sharing remains project-wide; Sharing updates every workspace together.
         agent.Shares = source.Shares.Select(s => new AgentShare { AgentId = id, UserId = s.UserId, Access = s.Access,
-            GrantedAt = s.GrantedAt, GrantedById = s.GrantedById }).ToList();
+            GrantedAt = s.GrantedAt, GrantedById = s.GrantedById, ExpiresAt = s.ExpiresAt }).ToList();
         await accounts.ResolveAsync(agent, ct);
         // Until it is done: the new agent is busy, its conversation is its own to prepare, and its Runner's maintenance waits.
         var claim = Guid.NewGuid();

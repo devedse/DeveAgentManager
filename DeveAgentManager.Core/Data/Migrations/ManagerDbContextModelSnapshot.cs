@@ -99,6 +99,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                     b.Property<int>("Access")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("GrantedAt")
                         .HasColumnType("TEXT");
 
@@ -390,6 +393,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("GrantedAt")
                         .HasColumnType("TEXT");
 
@@ -658,6 +664,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("GrantedAt")
                         .HasColumnType("TEXT");
 
@@ -677,6 +686,9 @@ namespace DeveAgentManager.Core.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ExpiresAt")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("GrantedAt")

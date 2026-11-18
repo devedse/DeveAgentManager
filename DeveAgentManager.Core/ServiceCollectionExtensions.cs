@@ -73,6 +73,7 @@ public static class ServiceCollectionExtensions
         services.AddHostedService(sp => sp.GetRequiredService<SessionFiles>());
         services.AddSingleton<Accounts.AccountService>();
         services.AddHostedService<Accounts.AccountEnforcement>();
+        services.AddHostedService<AccessExpiryService>();
         services.AddSingleton<AgentService>();
         services.AddSingleton<AgentTasks>();
         services.AddHostedService<Agents.AgentMoves>();

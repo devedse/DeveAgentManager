@@ -17,17 +17,22 @@
                     <p>Read-only permits reading the conversation and its images, exporting it, and continuing a copy in another agent.</p>
                 }
                 <p>The owner manages access. Removing access ends that person's share; other permissions remain unchanged.</p>
+                <p>A share can have a time limit: a duration, or until a date and time. It then ends by itself, as Remove access would.</p>
             </Help>
             <Actions Context="person">
                 @if (!person.Owner && (IsOwner || person.Id == Me.Id))
                 {
                     var share = _shares.Single(s => s.UserId == person.Id);
-                    <AccessMenu Disabled="_busy" Label="@($"Access for {person.Username}")">
+                    <AccessMenu Disabled="_busy" Label="@($"Access for {person.Username}")" Context="menu">
                         @if (IsOwner && Agent is not null)
                         {
                             <MudMenuItem Icon="@Icons.Material.Rounded.Tune" OnClick="() => ShareAsync(share.UserId, share.Access == AgentAccess.Write ? AgentAccess.Read : AgentAccess.Write)">Change to @(share.Access == AgentAccess.Write ? "Read-only" : "Read-write")</MudMenuItem>
                         }
-                        <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => RemoveAsync(share)">@(share.UserId == Me.Id ? "Leave access…" : "Remove access…")</MudMenuItem>
+                        @if (IsOwner)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Rounded.Timer" OnClick="() => menu.CloseThen(() => TimeLimitAsync(share))">Time limit…</MudMenuItem>
+                        }
+                        <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => menu.CloseThen(() => RemoveAsync(share))">@(share.UserId == Me.Id ? "Leave access…" : "Remove access…")</MudMenuItem>
                     </AccessMenu>
                 }
             </Actions>
@@ -43,7 +48,9 @@
     private bool _busy;
     private IReadOnlyList<AccessPerson> People => new[] { new AccessPerson(OwnerId, "", OwnerName, "Owner", Owner: true) }
         .Concat(_shares.Select(s => new AccessPerson(s.UserId, s.Username, s.DisplayName,
-            s.Access == AgentAccess.Write ? "Read-write" : "Read-only", GrantedAt: s.GrantedAt))).ToList();
+            s.Access == AgentAccess.Write ? "Read-write" : "Read-only", GrantedAt: s.GrantedAt, ExpiresAt: s.ExpiresAt))).ToList();
+
+    private string Ending => Agent is not null ? "They can no longer watch or prompt the project's agents." : "They can no longer read the conversation.";
 
     [CascadingParameter]
     private IMudDialogInstance MudDialog { get; set; } = default!;
@@ -84,8 +91,8 @@
     protected override async Task LoadAsync()
     {
         _shares = Agent is not null
-            ? (await Api.ListAgentSharesAsync(Agent.Id)).Select(s => new ShareRow(s.UserId, s.Username, s.DisplayName, s.Access, s.GrantedAt)).ToList()
-            : (await Api.ListSessionSharesAsync(Session!.Id)).Select(s => new ShareRow(s.UserId, s.Username, s.DisplayName, AgentAccess.Read, s.GrantedAt)).ToList();
+            ? (await Api.ListAgentSharesAsync(Agent.Id)).Select(s => new ShareRow(s.UserId, s.Username, s.DisplayName, s.Access, s.GrantedAt, s.ExpiresAt)).ToList()
+            : (await Api.ListSessionSharesAsync(Session!.Id)).Select(s => new ShareRow(s.UserId, s.Username, s.DisplayName, AgentAccess.Read, s.GrantedAt, s.ExpiresAt)).ToList();
     }
 
     private async Task AddAsync()
@@ -94,6 +101,8 @@
         {
             { d => d.Exclude, _shares.Select(s => s.UserId).Append(OwnerId).ToList() },
             { d => d.Confirm, "Add" },
+            { d => d.TimeLimit, true },
+            { d => d.TimeLimitEnding, Ending },
         };
         if (Agent is not null)
         {
@@ -108,12 +117,24 @@
         var dialog = await Dialogs.ShowAsync<ChooseUserDialog>($"Share {(Agent is not null ? Agent.Name : Session!.Title)}", parameters);
         if (await dialog.Result is { Canceled: false, Data: ChooseUserDialog.ChosenUser chosen })
         {
-            await ShareAsync(chosen.UserId, Agent is not null ? (AgentAccess)chosen.Level : AgentAccess.Read);
+            await ShareAsync(chosen.UserId, Agent is not null ? (AgentAccess)chosen.Level : AgentAccess.Read, chosen.Expiry);
         }
     }
 
-    private Task ShareAsync(Guid userId, AgentAccess access) =>
-        RunAsync(() => Agent is not null ? Api.ShareAgentAsync(Agent.Id, userId, access) : Api.ShareSessionAsync(Session!.Id, userId));
+    private Task ShareAsync(Guid userId, AgentAccess access, AccessExpiry? expiry = null) => RunAsync(() => SaveShareAsync(userId, access, expiry));
+
+    private Task SaveShareAsync(Guid userId, AgentAccess access, AccessExpiry? expiry) =>
+        Agent is not null ? Api.ShareAgentAsync(Agent.Id, userId, access, expiry) : Api.ShareSessionAsync(Session!.Id, userId, expiry);
+
+    private async Task TimeLimitAsync(ShareRow share)
+    {
+        if (_busy) return;
+        if (await AccessTimeLimitDialog.ShowAsync(Dialogs, $"Time limit for {share.DisplayName}", share.ExpiresAt, Ending,
+            expiry => SaveShareAsync(share.UserId, share.Access, expiry)))
+        {
+            await RunAsync(() => Task.CompletedTask);
+        }
+    }
 
     private async Task RemoveAsync(ShareRow share)
     {
@@ -151,5 +172,5 @@
         finally { _busy = false; }
     }
 
-    private sealed record ShareRow(Guid UserId, string Username, string DisplayName, AgentAccess Access, DateTime GrantedAt);
+    private sealed record ShareRow(Guid UserId, string Username, string DisplayName, AgentAccess Access, DateTime GrantedAt, DateTime? ExpiresAt);
 }

@@ -3,6 +3,7 @@ using DeveAgentManager.Contracts;
 using DeveAgentManager.Core.Data;
 using DeveAgentManager.Core.Sessions;
 using DeveAgentManager.Core.Users;
+using Microsoft.AspNetCore.Mvc;
 
 namespace DeveAgentManager.Api;
 
@@ -105,12 +106,13 @@ internal static class SessionEndpoints
             .RequireSession(SessionAccess.Owner);
 
         sessions.MapGet("/{sessionId:guid}/shares", async (Guid sessionId, Sharing sharing, CancellationToken ct) =>
-            (await sharing.ListSessionSharesAsync(sessionId, ct)).Select(s => new SessionShareDto(s.UserId, s.User!.Username, s.User.DisplayName, s.GrantedAt)).ToList())
+            (await sharing.ListSessionSharesAsync(sessionId, ct)).Select(s => new SessionShareDto(s.UserId, s.User!.Username, s.User.DisplayName, s.GrantedAt, s.ExpiresAt)).ToList())
             .RequireSession(SessionAccess.Read);
 
-        sessions.MapPut("/{sessionId:guid}/shares/{userId:guid}", async (Guid sessionId, Guid userId, CurrentUser user, Sharing sharing, CancellationToken ct) =>
+        // The body (a time limit) is optional.
+        sessions.MapPut("/{sessionId:guid}/shares/{userId:guid}", async (Guid sessionId, Guid userId, [FromBody] ShareSessionRequest? request, CurrentUser user, Sharing sharing, CancellationToken ct) =>
         {
-            await sharing.ShareSessionAsync(user, sessionId, userId, ct);
+            await sharing.ShareSessionAsync(user, sessionId, userId, ct, request?.Expiry);
             return Results.NoContent();
         }).RequireSession(SessionAccess.Owner);
 

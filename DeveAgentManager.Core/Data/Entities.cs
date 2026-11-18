@@ -423,6 +423,8 @@ public class AccountGrant
     public AccountAccess Access { get; set; }
     public Guid GrantedById { get; set; }
     public DateTime GrantedAt { get; set; }
+    /// <summary>When the access ends by itself (UTC), like Remove access; null for no time limit (AccessExpiry).</summary>
+    public DateTime? ExpiresAt { get; set; }
 }
 
 public class UserHarnessDefault
@@ -512,6 +514,9 @@ public class RunnerMember
     public Guid? GrantedById { get; set; }
 
     public DateTime GrantedAt { get; set; }
+
+    /// <summary>When the access ends by itself (UTC), like Remove access; null for no time limit (AccessExpiry).</summary>
+    public DateTime? ExpiresAt { get; set; }
 }
 
 /// <summary>An agent its owner shared with another user.</summary>
@@ -529,6 +534,9 @@ public class AgentShare
     public Guid? GrantedById { get; set; }
 
     public DateTime GrantedAt { get; set; }
+
+    /// <summary>When the access ends by itself (UTC), like Remove access; null for no time limit (AccessExpiry).</summary>
+    public DateTime? ExpiresAt { get; set; }
 }
 
 /// <summary>A conversation its owner shared, read-only, with another user.</summary>
@@ -543,6 +551,9 @@ public class SessionShare
     public Guid? GrantedById { get; set; }
 
     public DateTime GrantedAt { get; set; }
+
+    /// <summary>When the access ends by itself (UTC), like Remove access; null for no time limit (AccessExpiry).</summary>
+    public DateTime? ExpiresAt { get; set; }
 }
 
 /// <summary>A saved login actually forwarded to a running pi process. Retained until its next launch or verified enforcement stop.</summary>

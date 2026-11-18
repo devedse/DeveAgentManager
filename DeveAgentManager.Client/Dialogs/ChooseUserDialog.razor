@@ -1,7 +1,8 @@
 @inject ManagerApi Api
 @inject ISnackbar Snackbar
 
-@* Picks someone to share with or give access to, with what they get (when there is a choice). Returns a ChosenUser. *@
+@* Picks someone to share with or give access to, with what they get (when there is a choice) and for how long (with
+   TimeLimit). Returns a ChosenUser. *@
 <MudDialog>
     <DialogContent>
         @if (Intro is not null)
@@ -36,6 +37,10 @@
                     }
                 </MudRadioGroup>
             }
+            @if (TimeLimit)
+            {
+                <AccessTimeLimitFields @ref="_timeLimit" Ending="@TimeLimitEnding" />
+            }
         }
         </ChildContent>
         </LoadingSection>
@@ -55,6 +60,7 @@
     private Guid? _userId;
     private int _level;
     private string? _loadError;
+    private AccessTimeLimitFields? _timeLimit;
 
     [CascadingParameter]
     private IMudDialogInstance MudDialog { get; set; } = default!;
@@ -80,6 +86,14 @@
     [Parameter]
     public int Level { get; set; }
 
+    /// <summary>Offers a time limit for the access.</summary>
+    [Parameter]
+    public bool TimeLimit { get; set; }
+
+    /// <summary>What ending the access does, for the time limit's help (one sentence).</summary>
+    [Parameter]
+    public string? TimeLimitEnding { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
         _level = Levels.Count > 0 && Levels.All(l => l.Value != Level) ? Levels[0].Value : Level;
@@ -100,8 +114,13 @@
         catch (HttpRequestException) { _loadError = LoadingSection.Unreachable; }
     }
 
-    private void Choose() => MudDialog.Close(DialogResult.Ok(new ChosenUser(_userId!.Value, _level)));
+    private void Choose()
+    {
+        AccessExpiry? expiry = null;
+        if (_timeLimit is not null && !_timeLimit.TryGet(out expiry)) return;
+        MudDialog.Close(DialogResult.Ok(new ChosenUser(_userId!.Value, _level, expiry)));
+    }
 
-    /// <summary>The person, and the value of the level they get (0 without levels).</summary>
-    public sealed record ChosenUser(Guid UserId, int Level);
+    /// <summary>The person, the value of the level they get (0 without levels) and the time limit (with TimeLimit).</summary>
+    public sealed record ChosenUser(Guid UserId, int Level, AccessExpiry? Expiry = null);
 }

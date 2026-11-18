@@ -136,6 +136,50 @@ public sealed class AccountSharingTests : IClassFixture<ApiSecurityTests.Manager
     }
 
     [Fact]
+    public async Task TimedAccess_KeepsAManagerWithoutATimeLimit_AndEndsAsRemovingItWould()
+    {
+        var alice = await UserAsync(); var bob = await UserAsync();
+        var login = await LoginAsync(alice);
+        await using var db = await _factory.CreateDbContextAsync(Ct);
+        async Task<AccountGrant> Grant(Guid user) { db.ChangeTracker.Clear(); return await db.AccountGrants.SingleAsync(g => g.AccountId == login.Id && g.UserId == user, Ct); }
+
+        // Manage access may have a time limit only while another manager has none: the login is never left unmanaged.
+        await _accounts.SetGrantAsync(alice, login.Id, bob.Id, AccountAccess.Manage, Ct, new AccessExpiry(Minutes: 60));
+        var ends = (await Grant(bob.Id)).ExpiresAt;
+        Assert.InRange(ends!.Value, DateTime.UtcNow.AddMinutes(59), DateTime.UtcNow.AddMinutes(60));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _accounts.SetGrantAsync(alice, login.Id, alice.Id, AccountAccess.Manage, Ct, new AccessExpiry(Minutes: 60)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _accounts.SetGrantAsync(alice, login.Id, alice.Id, null, Ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _users.UpdateAsync(TestUsers.Admin, alice.Id, null, UserRoles.None, true, Ct));
+        Assert.Null((await Grant(alice.Id)).ExpiresAt);
+
+        // Changing the level keeps the time limit; none removes it; the past is refused.
+        await _accounts.SetGrantAsync(alice, login.Id, bob.Id, AccountAccess.Use, Ct);
+        Assert.Equal((AccountAccess.Use, ends), ((await Grant(bob.Id)).Access, (await Grant(bob.Id)).ExpiresAt));
+        Assert.Equal(ends, (await _accounts.GrantsAsync(alice, login.Id, Ct)).Single(g => g.UserId == bob.Id).ExpiresAt);
+        await _accounts.SetGrantAsync(alice, login.Id, bob.Id, AccountAccess.Use, Ct, new AccessExpiry());
+        Assert.Null((await Grant(bob.Id)).ExpiresAt);
+        await Assert.ThrowsAsync<ArgumentException>(() => _accounts.SetGrantAsync(alice, login.Id, bob.Id, AccountAccess.Use, Ct, new AccessExpiry(Until: DateTime.UtcNow.AddMinutes(-1))));
+        await _accounts.SetGrantAsync(alice, login.Id, bob.Id, AccountAccess.Use, Ct, new AccessExpiry(Minutes: 30));
+
+        // Time is up: bob's running agent on it stops and it is no longer his default, as Remove access does. Alice's stays.
+        await _accounts.SetDefaultAsync(bob, login.Id, Ct);
+        var runner = new Runner { Name = "r" + Guid.NewGuid().ToString("N"), OwnerId = User.BootstrapId, State = RunnerState.Stopped };
+        var bobs = new Agent { Id = Guid.NewGuid(), Runner = runner, OwnerId = bob.Id, Name = "bobs", HarnessId = "claude", State = AgentState.Running, RunningAccountId = login.Id };
+        var alices = new Agent { Id = Guid.NewGuid(), Runner = runner, OwnerId = alice.Id, Name = "alices", HarnessId = "claude", State = AgentState.Running, RunningAccountId = login.Id };
+        db.Agents.AddRange(bobs, alices);
+        await db.SaveChangesAsync(Ct);
+        await db.AccountGrants.Where(g => g.AccountId == login.Id && g.UserId == bob.Id)
+            .ExecuteUpdateAsync(u => u.SetProperty(g => g.ExpiresAt, DateTime.UtcNow.AddSeconds(-1)), Ct);
+        await _accounts.ExpireGrantsAsync(Ct);
+        db.ChangeTracker.Clear();
+        Assert.False(await db.AccountGrants.AnyAsync(g => g.AccountId == login.Id && g.UserId == bob.Id, Ct));
+        Assert.False(await db.UserHarnessDefaults.AnyAsync(p => p.UserId == bob.Id && p.AccountId == login.Id, Ct));
+        Assert.Equal((true, true), await db.Agents.Where(a => a.Id == bobs.Id).Select(a => ValueTuple.Create(a.LoginBlocked, a.LoginStopPending)).SingleAsync(Ct));
+        Assert.False((await db.Agents.SingleAsync(a => a.Id == alices.Id, Ct)).LoginBlocked);
+        Assert.True(await db.AuditEvents.AnyAsync(e => e.ActorId == null && e.Target == "Harness login " + login.Id && e.Detail == bob.Username + ": time limit ended", Ct));
+    }
+
+    [Fact]
     public async Task DisabledOrDeletedLoginPersistsCleanupAndBlockedBindings()
     {
         var alice = await UserAsync();

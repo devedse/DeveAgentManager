@@ -8,15 +8,17 @@
             <Help>
                 <p>Use permits choosing this login and making it a personal default. Manage also permits reconnecting, granting access and removing the login. At least one enabled manager must remain.</p>
                 <p>Removing Use stops affected agents. Permission to prompt another person's shared agent is separate.</p>
+                <p>Access can have a time limit: a duration, or until a date and time. It then ends by itself, as Remove access would. Manage access can have one only while another manager has none.</p>
             </Help>
             <Actions Context="person">
                 @{ var grant = _grants.Single(g => g.UserId == person.Id && g.AgentId?.ToString() == person.Key); }
-                <AccessMenu Disabled="_busy" Label="@($"Access for {person.Username}")">
+                <AccessMenu Disabled="_busy" Label="@($"Access for {person.Username}")" Context="menu">
                     @if (grant.AgentId is null)
                     {
                         <MudMenuItem Icon="@Icons.Material.Rounded.Tune" OnClick="() => SetAsync(grant.UserId, grant.Access == AccountAccess.Use ? AccountAccess.Manage : AccountAccess.Use)">Change to @(grant.Access == AccountAccess.Use ? "Manage" : "Use")</MudMenuItem>
+                        <MudMenuItem Icon="@Icons.Material.Rounded.Timer" OnClick="() => menu.CloseThen(() => TimeLimitAsync(grant))">Time limit…</MudMenuItem>
                     }
-                    <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => RemoveAsync(grant)">@(grant.UserId == _userId ? "Leave access…" : "Remove access…")</MudMenuItem>
+                    <MudMenuItem Icon="@Icons.Material.Rounded.PersonRemove" IconColor="Color.Error" OnClick="() => menu.CloseThen(() => RemoveAsync(grant))">@(grant.UserId == _userId ? "Leave access…" : "Remove access…")</MudMenuItem>
                 </AccessMenu>
             </Actions>
         </AccessList>
@@ -32,20 +34,28 @@
     private Guid _userId;
     private bool _busy;
     private IReadOnlyList<AccessPerson> People => _grants.Select(g => new AccessPerson(g.UserId, g.Username, g.DisplayName,
-        g.AgentId is null ? g.Access.ToString() : "Use · existing agent only", Disabled: g.Disabled, Key: g.AgentId?.ToString())).ToList();
+        g.AgentId is null ? g.Access.ToString() : "Use · existing agent only", Disabled: g.Disabled, Key: g.AgentId?.ToString(), ExpiresAt: g.ExpiresAt)).ToList();
+    private const string Ending = "Their agents that use this login stop, and it is no longer their default.";
     protected override async Task LoadAsync()
     {
         _userId = (await Me.GetAsync()).Id;
         _grants = await Api.ListAccountGrantsAsync(Account.Id);
     }
-    private async Task SetAsync(Guid userId, AccountAccess level)
+    private async Task SetAsync(Guid userId, AccountAccess level, AccessExpiry? expiry = null)
     {
         if (_busy) return;
         _busy = true;
-        try { await Api.SetAccountGrantAsync(Account.Id, userId, level); await ReloadAsync(); }
+        try { await Api.SetAccountGrantAsync(Account.Id, userId, level, expiry); await ReloadAsync(); }
         catch (ApiException e) { Snackbar.Add(e.Message, Severity.Error); }
         catch (HttpRequestException) { Snackbar.Add(LoadingSection.Unreachable, Severity.Error); }
         finally { _busy = false; }
+    }
+    private async Task TimeLimitAsync(AccountGrantDto grant)
+    {
+        if (_busy) return;
+        if (await AccessTimeLimitDialog.ShowAsync(Dialogs, $"Time limit for {grant.DisplayName}", grant.ExpiresAt, Ending,
+            expiry => Api.SetAccountGrantAsync(Account.Id, grant.UserId, grant.Access, expiry)))
+            await ReloadAsync();
     }
     private async Task RemoveAsync(AccountGrantDto grant)
     {
@@ -69,12 +79,14 @@
         {
             { d => d.Exclude, _grants.Where(g => g.AgentId is null).Select(g => g.UserId).ToList() },
             { d => d.Confirm, "Add" },
+            { d => d.TimeLimit, true },
+            { d => d.TimeLimitEnding, Ending },
             { d => d.Level, (int)AccountAccess.Use },
             { d => d.Levels, new List<(int, string, string)> {
                 ((int)AccountAccess.Use, "Use", "Run agents with this login."),
                 ((int)AccountAccess.Manage, "Manage", "Also reconnect, share, disable and remove it.") } }
         });
         if (await dialog.Result is { Canceled: false, Data: ChooseUserDialog.ChosenUser choice })
-            await SetAsync(choice.UserId, (AccountAccess)choice.Level);
+            await SetAsync(choice.UserId, (AccountAccess)choice.Level, choice.Expiry);
     }
 }

@@ -1,0 +1,64 @@
+@inject BrowserClock Clock
+
+@* Changes when someone's access ends: a new time limit, or none. Saves through Apply and stays open on an error. *@
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">@(_current is null ? Current is null ? "No time limit now." : "Loading…" : $"Ends {_current} now.")</MudText>
+        <AccessTimeLimitFields @ref="_fields" Current="Current" StartLimited="true" Ending="@Ending" Disabled="_busy" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="SaveAsync">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private AccessTimeLimitFields? _fields;
+    private string? _current;
+    private bool _busy;
+
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>When the access ends now (UTC); null for no time limit.</summary>
+    [Parameter] public DateTime? Current { get; set; }
+
+    /// <summary>What ending the access does, for the help (one sentence).</summary>
+    [Parameter] public string? Ending { get; set; }
+
+    [Parameter, EditorRequired] public Func<AccessExpiry, Task> Apply { get; set; } = default!;
+
+    /// <summary>Asks for the new time limit and saves it; true when it was saved.</summary>
+    public static async Task<bool> ShowAsync(IDialogService dialogs, string title, DateTime? current, string? ending, Func<AccessExpiry, Task> apply)
+    {
+        var dialog = await dialogs.ShowAsync<AccessTimeLimitDialog>(title, new DialogParameters<AccessTimeLimitDialog>
+        {
+            { d => d.Current, current },
+            { d => d.Ending, ending },
+            { d => d.Apply, apply },
+        }, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.ExtraSmall });
+        return await dialog.Result is { Canceled: false };
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Current is { } current)
+        {
+            try { _current = await Clock.DescribeAsync(current); }
+            catch (JSException) { _current = current.ToString("yyyy-MM-dd HH:mm") + " UTC"; }
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_busy || _fields is null || !_fields.TryGet(out var expiry)) return;
+        _busy = true;
+        try
+        {
+            await Apply(expiry);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (ApiException ex) { _fields.ShowError(ex.Message); }
+        catch (HttpRequestException) { _fields.ShowError(LoadingSection.Unreachable); }
+        finally { _busy = false; }
+    }
+}

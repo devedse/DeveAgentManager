@@ -1,12 +1,23 @@
-<MudMenu Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Disabled="Disabled">
+@* A person's access actions. Items that open a dialog run through CloseThen (Context="menu"): MudBlazor closes a menu
+   only after its item's click handler finishes, which for a dialog is when the dialog closes. *@
+<MudMenu @ref="_menu" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Disabled="Disabled">
     <ActivatorContent>
         <MudIconButton Icon="@Icons.Material.Rounded.MoreVert" Size="Size.Small" Disabled="Disabled" OnClick="@context.ToggleAsync" aria-label="@Label" />
     </ActivatorContent>
-    <ChildContent>@ChildContent</ChildContent>
+    <ChildContent>@ChildContent?.Invoke(this)</ChildContent>
 </MudMenu>
 
 @code {
+    private MudMenu? _menu;
+
     [Parameter, EditorRequired] public string Label { get; set; } = "Access actions";
     [Parameter] public bool Disabled { get; set; }
-    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public RenderFragment<AccessMenu>? ChildContent { get; set; }
+
+    /// <summary>Closes the menu, then runs the item's action, so a dialog it opens isn't covered by the menu.</summary>
+    public async Task CloseThen(Func<Task> action)
+    {
+        if (_menu is not null) await _menu.CloseAllMenusAsync();
+        await action();
+    }
 }

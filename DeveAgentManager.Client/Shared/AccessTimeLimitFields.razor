@@ -1,0 +1,167 @@
+@using System.Globalization
+@inject BrowserClock Clock
+
+@* A time limit for access being given or changed: for a duration, or until a date and time in the browser's timezone,
+   like Schedule continue. The Manager ends the access by itself when it runs out (AccessExpiryService). *@
+<div class="access-time-limit">
+    <div class="help-heading">
+        <MudSwitch T="bool" @bind-Value="_limited" Color="Color.Primary" Label="Time limit" Disabled="Disabled" />
+        <HelpTip Label="Time limit">
+            <p>The access ends by itself when the time is up, within seconds, as Remove access would. @Ending</p>
+            <p>Change or remove the time limit before then with Time limit… in the person's ⋮ menu. Dates and times are in your timezone.</p>
+        </HelpTip>
+    </div>
+    @if (_limited)
+    {
+        <MudSwitch T="bool" @bind-Value="_relative" Color="Color.Primary" Label="For a duration" Disabled="Disabled" />
+        @if (_relative)
+        {
+            <div class="limit-schedule-fields">
+                <MudNumericField T="double" @bind-Value="_amount" Label="Access for" Min="1" Variant="Variant.Outlined" Disabled="Disabled" />
+                <MudSelect T="int" @bind-Value="_unit" Label="Unit" Variant="Variant.Outlined" Disabled="Disabled">
+                    <MudSelectItem T="int" Value="1">Minutes</MudSelectItem>
+                    <MudSelectItem T="int" Value="60">Hours</MudSelectItem>
+                    <MudSelectItem T="int" Value="1440">Days</MudSelectItem>
+                </MudSelect>
+            </div>
+            @if (DurationEnd is { } end)
+            {
+                <MudText Typo="Typo.body2" Class="access-time-limit-end">Ends about @end.Date @end.Time (@end.Zone).</MudText>
+            }
+        }
+        else
+        {
+            <div class="limit-schedule-fields">
+                <MudDatePicker @bind-Date="_date" Label="End date" DateFormat="yyyy-MM-dd" Editable="true" PickerVariant="PickerVariant.Dialog" Variant="Variant.Outlined" Disabled="Disabled" />
+                <MudTimePicker @bind-Time="_time" Label="End time" Editable="true" AmPm="false" PickerVariant="PickerVariant.Dialog" Variant="Variant.Outlined" Disabled="Disabled" />
+            </div>
+            <MudText Typo="Typo.caption" Class="access-time-limit-zone">Your local timezone: @(_zone?.Id ?? "Loading…")</MudText>
+        }
+    }
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">@_error</MudAlert>
+    }
+</div>
+
+@code {
+    private bool _limited, _relative = true;
+    private double _amount = 5;
+    private int _unit = 60;
+    private DateTime? _date;
+    private TimeSpan? _time;
+    private TimeZoneInfo? _zone;
+    private string? _error;
+
+    /// <summary>When the access ends now (UTC), for changing it; null for none.</summary>
+    [Parameter] public DateTime? Current { get; set; }
+
+    /// <summary>Switched on from the start, e.g. when the time limit is what is being changed.</summary>
+    [Parameter] public bool StartLimited { get; set; }
+
+    /// <summary>What ending the access does, for the help (one sentence).</summary>
+    [Parameter] public string? Ending { get; set; }
+
+    [Parameter] public bool Disabled { get; set; }
+
+    private BrowserClock.LocalParts? DurationEnd =>
+        _zone is not null && double.IsFinite(_amount) && _amount * _unit is >= 1 and <= MaxMinutes
+            ? BrowserClock.Parts(DateTime.UtcNow.AddMinutes(_amount * _unit), _zone) : null;
+
+    // As AccessTimeLimits.MaxMinutes on the Manager.
+    private const double MaxMinutes = 366 * 24 * 60;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _limited = StartLimited || Current is not null;
+        // A time limit already set is shown as its date and time; a new one starts as a duration, its end as the date.
+        _relative = Current is null;
+        try
+        {
+            var start = Current ?? DateTime.UtcNow.AddMinutes(_amount * _unit);
+            if (Current is null)
+            {
+                // The next whole hour after the default duration.
+                start = new DateTime(start.Year, start.Month, start.Day, start.Hour, 0, 0, DateTimeKind.Utc).AddHours(1);
+            }
+            var parts = await Clock.LocalPartsAsync(start);
+            _zone = TimeZoneInfo.FindSystemTimeZoneById(parts.Zone);
+            _date = DateTime.ParseExact(parts.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+            _time = TimeSpan.Parse(parts.Time, CultureInfo.InvariantCulture);
+        }
+        catch (Exception ex) when (ex is JSException or TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            _error = "Could not read your local timezone. A duration still works; reopen this to choose a date and time.";
+        }
+    }
+
+    /// <summary>
+    /// The time limit chosen: a duration, an end time, or none (neither, when switched off). False when it isn't
+    /// valid; the reason is shown.
+    /// </summary>
+    public bool TryGet(out AccessExpiry expiry)
+    {
+        expiry = new AccessExpiry();
+        _error = null;
+        if (!_limited)
+        {
+            return true;
+        }
+
+        if (_relative)
+        {
+            var minutes = _amount * _unit;
+            if (!double.IsFinite(minutes) || minutes < 1 || minutes > MaxMinutes)
+            {
+                return Fail("Choose a duration from one minute up to 366 days.");
+            }
+
+            expiry = new AccessExpiry(Minutes: minutes);
+            return true;
+        }
+
+        if (_zone is null)
+        {
+            return Fail("Your timezone isn't known yet. Use a duration, or reopen this to try again.");
+        }
+
+        if (_date is not { } date || _time is not { } time)
+        {
+            return Fail("Choose the date and time the access ends.");
+        }
+
+        var result = BrowserClock.Convert(date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), time.ToString(@"hh\:mm", CultureInfo.InvariantCulture), _zone);
+        if (result.Error is { } error)
+        {
+            return Fail(error);
+        }
+
+        var until = DateTime.Parse(result.Utc!, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal);
+        if (until <= DateTime.UtcNow.AddMinutes(1))
+        {
+            return Fail("Choose a time in the future.");
+        }
+
+        if (until > DateTime.UtcNow.AddMinutes(MaxMinutes))
+        {
+            return Fail("Choose a time within 366 days.");
+        }
+
+        expiry = new AccessExpiry(Until: until);
+        return true;
+    }
+
+    /// <summary>Shows an error from the Manager, e.g. a rule about managers.</summary>
+    public void ShowError(string message)
+    {
+        _error = message;
+        StateHasChanged();
+    }
+
+    private bool Fail(string message)
+    {
+        _error = message;
+        StateHasChanged();
+        return false;
+    }
+}

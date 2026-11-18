@@ -163,7 +163,7 @@ internal static class RunnerEndpoints
     private static void MapAccess(RouteGroupBuilder runners)
     {
         runners.MapGet("/{runnerId:guid}/members", async (Guid runnerId, RunnerMembers members, CancellationToken ct) =>
-            (await members.ListAsync(runnerId, ct)).Select(m => new RunnerMemberDto(m.UserId, m.User!.Username, m.User.DisplayName, m.Access, m.GrantedAt)).ToList())
+            (await members.ListAsync(runnerId, ct)).Select(m => new RunnerMemberDto(m.UserId, m.User!.Username, m.User.DisplayName, m.Access, m.GrantedAt, m.ExpiresAt)).ToList())
             .RequireRunner(RunnerAccess.Use);
 
         // Who reaches the Runner through shared agents: other people's shares, so for those who manage it.
@@ -172,7 +172,7 @@ internal static class RunnerEndpoints
 
         runners.MapPut("/{runnerId:guid}/members/{userId:guid}", async (Guid runnerId, Guid userId, RunnerAccessRequest request, CurrentUser user, RunnerMembers members, CancellationToken ct) =>
         {
-            await members.SetAsync(user, runnerId, userId, request.Access, ct);
+            await members.SetAsync(user, runnerId, userId, request.Access, ct, request.Expiry);
             return Results.NoContent();
         }).RequireRunner(RunnerAccess.Manage);
 

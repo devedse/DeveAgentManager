@@ -171,8 +171,9 @@ public sealed partial class ManagerApi(HttpClient http, NavigationManager naviga
 
     public Task<List<RunnerAgentAccessDto>> ListRunnerAgentAccessAsync(Guid runnerId) => GetAsync<List<RunnerAgentAccessDto>>($"api/runners/{runnerId}/agent-access");
 
-    public Task SetRunnerAccessAsync(Guid runnerId, Guid userId, RunnerAccess access) =>
-        SendAsync(HttpMethod.Put, $"api/runners/{runnerId}/members/{userId}", new RunnerAccessRequest(access));
+    /// <summary>Gives or changes access; <paramref name="expiry"/> sets its time limit (left out, it keeps the one it has).</summary>
+    public Task SetRunnerAccessAsync(Guid runnerId, Guid userId, RunnerAccess access, AccessExpiry? expiry = null) =>
+        SendAsync(HttpMethod.Put, $"api/runners/{runnerId}/members/{userId}", new RunnerAccessRequest(access, expiry));
 
     /// <summary>Takes someone's access away, or (for yourself) leaves the Runner.</summary>
     public Task RemoveRunnerAccessAsync(Guid runnerId, Guid userId) => SendAsync(HttpMethod.Delete, $"api/runners/{runnerId}/members/{userId}");
@@ -278,8 +279,8 @@ public sealed partial class ManagerApi(HttpClient http, NavigationManager naviga
 
     public Task<List<AgentShareDto>> ListAgentSharesAsync(Guid agentId) => GetAsync<List<AgentShareDto>>($"api/agents/{agentId}/shares");
 
-    public Task ShareAgentAsync(Guid agentId, Guid userId, AgentAccess access) =>
-        SendAsync(HttpMethod.Put, $"api/agents/{agentId}/shares/{userId}", new ShareAgentRequest(access));
+    public Task ShareAgentAsync(Guid agentId, Guid userId, AgentAccess access, AccessExpiry? expiry = null) =>
+        SendAsync(HttpMethod.Put, $"api/agents/{agentId}/shares/{userId}", new ShareAgentRequest(access, expiry));
 
     /// <summary>Ends a share, or (for yourself) leaves it.</summary>
     public Task UnshareAgentAsync(Guid agentId, Guid userId) => SendAsync(HttpMethod.Delete, $"api/agents/{agentId}/shares/{userId}");
@@ -321,7 +322,8 @@ public sealed partial class ManagerApi(HttpClient http, NavigationManager naviga
 
     public Task<List<SessionShareDto>> ListSessionSharesAsync(Guid sessionId) => GetAsync<List<SessionShareDto>>($"api/sessions/{sessionId}/shares");
 
-    public Task ShareSessionAsync(Guid sessionId, Guid userId) => SendAsync(HttpMethod.Put, $"api/sessions/{sessionId}/shares/{userId}");
+    public Task ShareSessionAsync(Guid sessionId, Guid userId, AccessExpiry? expiry = null) =>
+        SendAsync(HttpMethod.Put, $"api/sessions/{sessionId}/shares/{userId}", new ShareSessionRequest(expiry));
 
     /// <summary>Ends a share, or (for yourself) leaves it.</summary>
     public Task UnshareSessionAsync(Guid sessionId, Guid userId) => SendAsync(HttpMethod.Delete, $"api/sessions/{sessionId}/shares/{userId}");
@@ -336,7 +338,8 @@ public sealed partial class ManagerApi(HttpClient http, NavigationManager naviga
     public Task<List<AccountDto>> ListAccountsAsync(bool all = false) => GetAsync<List<AccountDto>>(all ? "api/accounts/all" : "api/accounts");
     public Task<List<LoginCleanupDto>> PendingLoginCleanupAsync() => GetAsync<List<LoginCleanupDto>>("api/accounts/pending");
     public Task<List<AccountGrantDto>> ListAccountGrantsAsync(Guid id) => GetAsync<List<AccountGrantDto>>($"api/accounts/{id}/grants");
-    public Task SetAccountGrantAsync(Guid id, Guid userId, AccountAccess access) => SendAsync(HttpMethod.Put, $"api/accounts/{id}/grants/{userId}", new AccountGrantRequest(access));
+    public Task SetAccountGrantAsync(Guid id, Guid userId, AccountAccess access, AccessExpiry? expiry = null) =>
+        SendAsync(HttpMethod.Put, $"api/accounts/{id}/grants/{userId}", new AccountGrantRequest(access, expiry));
     public Task RemoveAccountGrantAsync(Guid id, Guid userId) => SendAsync(HttpMethod.Delete, $"api/accounts/{id}/grants/{userId}");
     public Task RemoveLegacyLoginGrantAsync(Guid id, Guid agentId) => SendAsync(HttpMethod.Delete, $"api/accounts/{id}/agent-grants/{agentId}");
     public Task SetAccountEnabledAsync(Guid id, bool enabled) => SendAsync(HttpMethod.Put, $"api/accounts/{id}/enabled", new AccountEnabledRequest(enabled));

@@ -17,7 +17,9 @@ when you close the tab.
   or *Manage* access, who share its Linux account (so they trust each other with what is on it). Agents can be shared
   read-only or read-write, conversations read-only. Conversation managers (including admins) can open, prompt and manage every agent
   and read, export, rename, share or delete every conversation. Existing admins receive
-  this role on upgrade and must sign in again. See [docs/users-plan.md](docs/users-plan.md).
+  this role on upgrade and must sign in again. See [docs/users-plan.md](docs/users-plan.md). Access to a login, Runner,
+  project or conversation can have a **time limit** (a duration, or until a date and time in your timezone), after
+  which it ends by itself as Remove access would ([timed access](docs/timed-access.md)).
 - **Account** (**My settings → Harness logins**): a Claude, ChatGPT or Grok login, or an API key, connected once in the
   Manager and used on the Runners where authorized agents run. Logins have **Use** and **Manage** grants rather than a permanent owner. Use **Manage access** on a login row to share it; each person chooses their own default. **Manage → Harness logins** administers all logins with the *Harness login manager* role. Claude logs in with `claude setup-token` (a token valid for a year). Codex logs in
   with `codex login --device-auth` (a code you enter on any device); the Manager renews that login itself and Runners

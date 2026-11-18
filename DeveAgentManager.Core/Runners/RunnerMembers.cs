@@ -53,8 +53,11 @@ public sealed class RunnerMembers(
             .OrderByDescending(p => p.Agents.Max(a => a.Access)).ThenBy(p => p.Username, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    /// <summary>Gives <paramref name="userId"/> Use or Manage access, or changes theirs.</summary>
-    public async Task SetAsync(CurrentUser actor, Guid runnerId, Guid userId, RunnerAccess access, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Gives <paramref name="userId"/> Use or Manage access, or changes theirs. <paramref name="expiry"/> is its time
+    /// limit; left out, the access keeps the one it has.
+    /// </summary>
+    public async Task SetAsync(CurrentUser actor, Guid runnerId, Guid userId, RunnerAccess access, CancellationToken cancellationToken = default, AccessExpiry? expiry = null)
     {
         if (access is not (RunnerAccess.Use or RunnerAccess.Manage))
         {
@@ -72,7 +75,8 @@ public sealed class RunnerMembers(
         }
 
         var member = runner.Members.FirstOrDefault(m => m.UserId == userId);
-        if (member?.Access == access)
+        var expiresAt = AccessTimeLimits.Resolve(expiry, member?.ExpiresAt, DateTime.UtcNow);
+        if (member?.Access == access && member.ExpiresAt == expiresAt)
         {
             return;
         }
@@ -84,10 +88,11 @@ public sealed class RunnerMembers(
         }
 
         member.Access = access;
+        member.ExpiresAt = expiresAt;
         member.GrantedById = actor.Id;
         member.GrantedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
-        await audit.RecordAsync(actor, AuditActions.RunnerAccessChanged, $"Runner {runner.Name}", $"{user.Username}: {access}", cancellationToken);
+        await audit.RecordAsync(actor, AuditActions.RunnerAccessChanged, $"Runner {runner.Name}", $"{user.Username}: {access}{AccessTimeLimits.Describe(expiresAt)}", cancellationToken);
         Changed(runner, userId);
     }
 
@@ -111,16 +116,59 @@ public sealed class RunnerMembers(
         }
 
         var member = runner.Members.FirstOrDefault(m => m.UserId == userId) ?? throw new KeyNotFoundException("This user has no access to the Runner.");
-        foreach (var agentId in await db.Agents.Where(a => a.RunnerId == runnerId && a.OwnerId == userId).Select(a => a.Id).ToListAsync(cancellationToken))
+        await RemoveMemberAsync(db, runner, member, cancellationToken);
+        await audit.RecordAsync(actor, AuditActions.RunnerAccessRemoved, $"Runner {runner.Name}",
+            userId == actor.Id ? $"{member.User?.Username} left" : member.User?.Username, cancellationToken);
+        Changed(runner, userId);
+    }
+
+    /// <summary>
+    /// Ends Runner access whose time limit is up, as Remove access does: their agents on it are removed (every 10
+    /// seconds, AccessExpiryService). A member whose agents can't be removed yet keeps trying.
+    /// </summary>
+    public async Task ExpireAsync(CancellationToken cancellationToken = default)
+    {
+        var now = DateTime.UtcNow;
+        List<(Guid RunnerId, Guid UserId)> expired;
+        await using (var check = await dbFactory.CreateDbContextAsync(cancellationToken))
+        {
+            expired = (await check.RunnerMembers.Where(m => m.ExpiresAt != null && m.ExpiresAt <= now)
+                .Select(m => new { m.RunnerId, m.UserId }).ToListAsync(cancellationToken)).Select(m => (m.RunnerId, m.UserId)).ToList();
+        }
+
+        foreach (var (runnerId, userId) in expired)
+        {
+            try
+            {
+                await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+                var runner = await db.Runners.Include(r => r.Members).ThenInclude(m => m.User).FirstOrDefaultAsync(r => r.Id == runnerId, cancellationToken);
+                // Changed or removed meanwhile.
+                if (runner?.Members.FirstOrDefault(m => m.UserId == userId) is not { ExpiresAt: { } at } member || at > now)
+                {
+                    continue;
+                }
+
+                await RemoveMemberAsync(db, runner, member, cancellationToken);
+                await audit.RecordAsync(null, AuditActions.RunnerAccessRemoved, $"Runner {runner.Name}", $"{member.User?.Username}: time limit ended", cancellationToken);
+                Changed(runner, userId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Could not end the timed access of {User} to Runner {Runner}; trying again", userId, runnerId);
+            }
+        }
+    }
+
+    /// <summary>Removes the member's agents from the Runner (their conversations stay theirs), then their access.</summary>
+    private async Task RemoveMemberAsync(ManagerDbContext db, Runner runner, RunnerMember member, CancellationToken cancellationToken)
+    {
+        foreach (var agentId in await db.Agents.Where(a => a.RunnerId == runner.Id && a.OwnerId == member.UserId).Select(a => a.Id).ToListAsync(cancellationToken))
         {
             await agents.DeleteAsync(agentId, cancellationToken);
         }
 
         db.RunnerMembers.Remove(member);
         await db.SaveChangesAsync(cancellationToken);
-        await audit.RecordAsync(actor, AuditActions.RunnerAccessRemoved, $"Runner {runner.Name}",
-            userId == actor.Id ? $"{member.User?.Username} left" : member.User?.Username, cancellationToken);
-        Changed(runner, userId);
     }
 
     /// <summary>Gives the Runner to someone else (runner managers). The previous owner keeps Manage access.</summary>

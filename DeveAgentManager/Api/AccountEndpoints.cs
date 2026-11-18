@@ -43,7 +43,7 @@ internal static class AccountEndpoints
             service.GrantsAsync(user, accountId, ct)).RequireAccount();
         accounts.MapPut("/{accountId:guid}/grants/{userId:guid}", async (Guid accountId, Guid userId, AccountGrantRequest request, CurrentUser user, AccountService service, CancellationToken ct) =>
         {
-            await service.SetGrantAsync(user, accountId, userId, request.Access, ct);
+            await service.SetGrantAsync(user, accountId, userId, request.Access, ct, request.Expiry);
             return Results.NoContent();
         }).RequireAccount();
         // A recipient may leave their own grant. The service enforces the target and last-manager rules.
