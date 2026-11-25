@@ -41,6 +41,33 @@ public sealed class SessionFilePreviewTests
     public void OnlyFormatsBrowsersPlayAreVideos(string name) => Assert.False(SessionFilePreviewReader.IsVideo(name));
 
     [Theory]
+    [InlineData("song.mp3", "audio/mpeg")]
+    [InlineData("SONG.MP3", "audio/mpeg")]
+    [InlineData("voice.ogg", "audio/ogg")]
+    [InlineData("voice.oga", "audio/ogg")]
+    [InlineData("voice.opus", "audio/ogg")]
+    [InlineData("take.wav", "audio/wav")]
+    [InlineData("take.flac", "audio/flac")]
+    [InlineData("memo.m4a", "audio/mp4")]
+    [InlineData("memo.aac", "audio/aac")]
+    [InlineData("memo.weba", "audio/webm")]
+    public async Task AudioIsDescribedForDirectStreamingInsteadOfDecodedAsText(string name, string type)
+    {
+        var result = await PreviewAsync("ID3\u0004\0\0\0\0\0\u00ff binary audio data"u8.ToArray(), name);
+        Assert.Equal(type, SessionFilePreviewReader.AudioType(name));
+        Assert.False(SessionFilePreviewReader.IsVideo(name));
+        Assert.Null(result.Text);
+        Assert.Null(result.UnavailableReason);
+    }
+
+    [Theory]
+    [InlineData("track.mid")]
+    [InlineData("track.wma")]
+    [InlineData("notes.mp3.txt")]
+    [InlineData("clip.ogv")]
+    public void OnlyFormatsBrowsersPlayAreAudio(string name) => Assert.False(SessionFilePreviewReader.IsAudio(name));
+
+    [Theory]
     [InlineData("utf8")]
     [InlineData("utf8-bom")]
     [InlineData("utf16-le")]

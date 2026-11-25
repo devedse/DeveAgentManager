@@ -30,7 +30,8 @@ try {
     });
     await context.route('**/api/**', async route => {
         const path = new URL(route.request().url()).pathname;
-        if (path === '/api/me' || path.startsWith('/api/me/')) return route.continue();
+        // The Manager's own state (build, CPU trace) comes from the test Manager: an empty list would break the Portal.
+        if (path === '/api/me' || path.startsWith('/api/me/') || path === '/api/build' || path === '/api/diagnostics/cpu') return route.continue();
         const file = files.find(file => path.startsWith(`/api/sessions/${id}/files/${file.id}`));
         // A new link each time, as the Manager gives (Retry gets one that hasn't expired).
         if (file && path.endsWith('/preview')) return route.fulfill({ json: { text: null, markdown: false, videoUrl: `/shared-preview/test-only-${++links}/view/${encodeURIComponent(file.fileName)}` } });
@@ -88,6 +89,7 @@ try {
     await dialog.locator('.video-preview-loading').waitFor({ state: 'detached' });
     assert.ok(links > before, 'Retry asked for a new preview link');
     assert.ok((await player.getAttribute('src')).includes(`test-only-${links}/`));
+    assert.equal(await page.getByText('Something went wrong in the Portal').isVisible(), false, 'no Portal error');
     assert.deepEqual(errors, []);
     console.log(`Passed (${engine}): video playback in the browser's player, loading state, unplayable video with Retry for a new link, original download, 320px phone and both themes.`);
 } finally { await browser.close(); }

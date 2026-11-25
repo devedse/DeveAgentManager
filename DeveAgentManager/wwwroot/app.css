@@ -3521,6 +3521,11 @@ body:has(.terminal-layout) .agent-attention-popover {
 .video-preview-stage { position: relative; min-height: 180px; border: 1px solid var(--dam-border); border-radius: 10px; overflow: hidden; background: var(--dam-surface-2); }
 .video-preview-player { display: block; width: 100%; max-height: 65dvh; }
 .video-preview-loading { position: absolute; inset: 0; padding: 16px; overflow: hidden; background: var(--dam-surface-2); }
+.audio-preview-stage { position: relative; min-height: 72px; border: 1px solid var(--dam-border); border-radius: 10px; overflow: hidden; background: var(--dam-surface-2); }
+.audio-preview-player { display: flex; align-items: center; gap: 12px; padding: 16px; }
+.audio-preview-player audio { flex: 1 1 auto; min-width: 0; width: 100%; }
+.audio-preview-icon { flex: 0 0 auto; color: var(--dam-muted); }
+.audio-preview-loading { position: absolute; inset: 0; padding: 16px; overflow: hidden; background: var(--dam-surface-2); }
 .pdf-preview-toolbar, .pdf-preview-control-group { display: flex; align-items: center; gap: 6px; }
 .pdf-preview-toolbar { flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 .pdf-page-number { width: 4rem; border: 1px solid var(--dam-border-strong); border-radius: 6px; padding: 5px; font: inherit; color: var(--dam-text); background: var(--dam-surface); }

@@ -107,6 +107,35 @@ public sealed class SessionFileApiTests(ApiSecurityTests.Manager manager) : ICla
     }
 
     [Fact]
+    public async Task AudioPreviewStreamsSeekableRangesOfTheOriginalWithItsAudioType()
+    {
+        var (owner, ownerId) = await SignedInAsNewUserAsync();
+        var session = Guid.NewGuid();
+        await using (var db = await manager.Services.GetRequiredService<IDbContextFactory<ManagerDbContext>>().CreateDbContextAsync())
+        {
+            db.Sessions.Add(new StoredSession { Id = session, OwnerId = ownerId });
+            await db.SaveChangesAsync();
+        }
+        var data = RandomNumberGenerator.GetBytes(1024 * 1024);
+        var store = manager.Services.GetRequiredService<SessionFileStore>();
+        using var received = await store.ReceiveAsync(data.Length, Convert.ToHexStringLower(SHA256.HashData(data)), (s, ct) => s.WriteAsync(data, ct).AsTask(), default);
+        var file = await store.CommitAsync(session, Guid.NewGuid(), received, "voice memo.ogg", "", default);
+        var preview = await owner.GetFromJsonAsync<SessionFilePreview>($"/api/sessions/{session}/files/{file.Id}/preview", ApiJson.Options);
+        Assert.NotNull(preview!.AudioUrl);
+        Assert.Null(preview.VideoUrl); Assert.Null(preview.Text); Assert.Null(preview.SourceUrl); Assert.Null(preview.HtmlUrl); Assert.Null(preview.PdfUrl); Assert.Null(preview.UnavailableReason);
+        // An audio element seeks with range requests too, without the Portal cookie.
+        var anonymous = manager.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var seek = await anonymous.SendAsync(new HttpRequestMessage(HttpMethod.Get, preview.AudioUrl) { Headers = { Range = new RangeHeaderValue(500_000, 500_031) } });
+        Assert.Equal(HttpStatusCode.PartialContent, seek.StatusCode);
+        Assert.Equal("audio/ogg", seek.Content.Headers.ContentType!.MediaType);
+        Assert.Null(seek.Content.Headers.ContentDisposition);
+        Assert.Equal(data[500_000..500_032], await seek.Content.ReadAsByteArrayAsync());
+        Assert.Equal("nosniff", seek.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"/api/sessions/{session}/files/{file.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync(preview.AudioUrl)).StatusCode);
+    }
+
+    [Fact]
     public async Task HtmlStreamsWithScopedAssetsAndRevocationAndLargeTextHasNoPreviewCap()
     {
         var (owner, ownerId) = await SignedInAsNewUserAsync();

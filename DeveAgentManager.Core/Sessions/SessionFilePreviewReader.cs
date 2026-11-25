@@ -10,6 +10,7 @@ public static class SessionFilePreviewReader
     public static bool IsHtml(string name) => Path.GetExtension(name).ToLowerInvariant() is ".html" or ".htm";
     public static bool IsPdf(string name) => Path.GetExtension(name).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
     public static bool IsVideo(string name) => VideoType(name) is not null;
+    public static bool IsAudio(string name) => AudioType(name) is not null;
 
     /// <summary>Videos browsers play in a video element (whether a codec plays is up to the browser), or null.</summary>
     public static string? VideoType(string name) => Path.GetExtension(name).ToLowerInvariant() switch
@@ -20,12 +21,25 @@ public static class SessionFilePreviewReader
         ".ogv" => "video/ogg",
         _ => null
     };
+
+    /// <summary>Audio browsers play in an audio element (whether a codec plays is up to the browser), or null.</summary>
+    public static string? AudioType(string name) => Path.GetExtension(name).ToLowerInvariant() switch
+    {
+        ".mp3" => "audio/mpeg",
+        ".ogg" or ".oga" or ".opus" => "audio/ogg",
+        ".wav" => "audio/wav",
+        ".flac" => "audio/flac",
+        ".m4a" => "audio/mp4",
+        ".aac" => "audio/aac",
+        ".weba" => "audio/webm",
+        _ => null
+    };
     public static string Charset(ReadOnlySpan<byte> data) => data.StartsWith(new byte[] { 0xff, 0xfe }) ? "utf-16"
         : data.StartsWith(new byte[] { 0xfe, 0xff }) ? "utf-16BE" : "utf-8";
 
     public static async Task<SessionFilePreview> ReadAsync(string path, string name, CancellationToken ct)
     {
-        if (IsPdf(name) || IsVideo(name)) return new(null, false, null);
+        if (IsPdf(name) || IsVideo(name) || IsAudio(name)) return new(null, false, null);
         var markdown = Path.GetExtension(name).ToLowerInvariant() is ".md" or ".markdown" or ".mdown" or ".mkd";
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
             4096, FileOptions.Asynchronous | FileOptions.SequentialScan);

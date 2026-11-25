@@ -28,10 +28,11 @@ public sealed class SharedFilePreviews(IDataProtectionProvider protection, UserS
         var prefix = $"{context.Request.PathBase}/shared-preview/{token}";
         return preview with
         {
-            SourceUrl = SessionFilePreviewReader.IsPdf(name) || SessionFilePreviewReader.IsVideo(name) ? null : $"{prefix}/text/{Uri.EscapeDataString(name)}",
+            SourceUrl = SessionFilePreviewReader.IsPdf(name) || SessionFilePreviewReader.IsVideo(name) || SessionFilePreviewReader.IsAudio(name) ? null : $"{prefix}/text/{Uri.EscapeDataString(name)}",
             HtmlUrl = SessionFilePreviewReader.IsHtml(name) ? $"{prefix}/view/{Uri.EscapeDataString(name)}" : null,
             PdfUrl = SessionFilePreviewReader.IsPdf(name) ? $"{prefix}/view/{Uri.EscapeDataString(name)}" : null,
-            VideoUrl = SessionFilePreviewReader.IsVideo(name) ? $"{prefix}/view/{Uri.EscapeDataString(name)}" : null
+            VideoUrl = SessionFilePreviewReader.IsVideo(name) ? $"{prefix}/view/{Uri.EscapeDataString(name)}" : null,
+            AudioUrl = SessionFilePreviewReader.IsAudio(name) ? $"{prefix}/view/{Uri.EscapeDataString(name)}" : null
         };
     }
 
@@ -108,6 +109,7 @@ public sealed class SharedFilePreviews(IDataProtectionProvider protection, UserS
             var mime = text ? $"text/plain; charset={SessionFilePreviewReader.Charset(start)}"
                 : SessionFilePreviewReader.IsHtml(name) ? "text/html"
                 : SessionFilePreviewReader.VideoType(name) is { } video ? video
+                : SessionFilePreviewReader.AudioType(name) is { } audio ? audio
                 : Types.TryGetContentType(name, out var type) ? type : "application/octet-stream";
             return Results.Stream(stream, mime, enableRangeProcessing: true);
         }
