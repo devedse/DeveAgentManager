@@ -140,6 +140,23 @@
     private bool _scrolled;
     private string? _tooLarge;
     private (DateTime UpdatedAt, DateTime? LastSyncedAt, int MessageCount, string HarnessId)? _contentVersion;
+    private static readonly TimeSpan MaxContentPause = TimeSpan.FromMinutes(1);
+    private DateTime _contentLoadedAt;
+    private TimeSpan _contentPause;
+    private bool _contentReloadScheduled;
+
+    private void ReloadContentLater(TimeSpan wait)
+    {
+        if (_contentReloadScheduled) return;
+        _contentReloadScheduled = true;
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(wait, Disposing); }
+            catch (OperationCanceledException) { return; }
+            _contentReloadScheduled = false;
+            await ReloadAsync();
+        });
+    }
 
     protected override bool IsRelevant(ManagerEvent managerEvent) =>
         managerEvent.SessionId == SessionId || (managerEvent.AgentId is not null && managerEvent.AgentId == _stored?.AgentId);
@@ -156,9 +173,18 @@
         // fetched again only when it changed.
         var version = (_stored.UpdatedAt, _stored.LastSyncedAt, _stored.MessageCount, _stored.HarnessId);
         if (version == _contentVersion) return;
+        // While its agent works, a long conversation would be downloaded again after every sync and keep the page busy:
+        // the next download waits ten times as long as the last one took (up to a minute).
+        if (_contentVersion is not null && _contentLoadedAt + _contentPause - DateTime.UtcNow is { Ticks: > 0 } wait)
+        {
+            ReloadContentLater(wait);
+            return;
+        }
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            _session = await Api.GetSessionContentAsync(SessionId);
+            // Stops when the page is left (Back): a long conversation takes a while to download and read.
+            _session = await Api.GetSessionContentAsync(SessionId, Disposing);
             _tooLarge = null;
         }
         catch (ApiException ex) when (ex.Status == System.Net.HttpStatusCode.RequestEntityTooLarge)
@@ -168,6 +194,8 @@
         }
 
         _contentVersion = version;
+        _contentLoadedAt = DateTime.UtcNow;
+        _contentPause = TimeSpan.FromTicks(Math.Min(System.Diagnostics.Stopwatch.GetElapsedTime(started).Ticks * 10, MaxContentPause.Ticks));
         var messages = _session.Entries.Where(e => e.Kind == DeveEntryKind.Message).ToList();
         _toolCalls = messages.Where(e => e.Content is not null).Sum(e => e.Content!.Count(b => b.Type == "toolCall"));
         _branches = _session.OtherBranchCount();

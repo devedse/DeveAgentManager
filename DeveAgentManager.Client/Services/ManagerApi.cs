@@ -292,12 +292,12 @@ public sealed partial class ManagerApi(HttpClient http, NavigationManager naviga
     public Task<SessionDto?> GetSessionAsync(Guid sessionId) => FindAsync<SessionDto>($"api/sessions/{sessionId}");
 
     /// <summary>The whole conversation; a conversation too large to show throws <see cref="ApiException"/> with status 413.</summary>
-    public async Task<DeveSession> GetSessionContentAsync(Guid sessionId)
+    public async Task<DeveSession> GetSessionContentAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
-        using var response = await http.GetAsync($"api/sessions/{sessionId}/content", HttpCompletionOption.ResponseHeadersRead);
+        using var response = await http.GetAsync($"api/sessions/{sessionId}/content", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         await EnsureSuccessAsync(response);
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        return await DeveSession.ReadAsync(stream);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        return await DeveSession.ReadAsync(stream, cancellationToken);
     }
 
     /// <summary>Where the browser downloads an export (the login cookie authorizes it).</summary>

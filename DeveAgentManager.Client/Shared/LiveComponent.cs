@@ -21,6 +21,14 @@ public abstract class LiveComponent : ComponentBase, IDisposable
     private bool _disposed;
     private readonly CancellationTokenSource _refreshStop = new();
 
+    // One load at a time: a reload asked for while one runs waits for it, then one more covers every such request. Loads
+    // of a large page (a long conversation) would otherwise pile up, each with its own copy of the data.
+    private Task? _loading;
+    private Task? _queued;
+
+    /// <summary>Cancelled when the component is disposed (the page was left): pass it to slow loads so they stop.</summary>
+    protected CancellationToken Disposing => _refreshStop.Token;
+
     protected virtual TimeSpan? RefreshInterval => null;
 
     [Inject]
@@ -50,7 +58,8 @@ public abstract class LiveComponent : ComponentBase, IDisposable
     /// <summary>Why the data couldn't be loaded yet; a section shows it with Retry instead of looking empty.</summary>
     protected string? LoadError { get; private set; }
 
-    protected Task RetryAsync() => ReloadAsync();
+    /// <summary>Retry tries again at once, even while an automatic reload still waits for an answer.</summary>
+    protected Task RetryAsync() => InvokeAsync(() => _disposed ? Task.CompletedTask : _loading = LoadOnceAsync(render: true));
 
     protected abstract Task LoadAsync();
 
@@ -62,7 +71,7 @@ public abstract class LiveComponent : ComponentBase, IDisposable
         Live.Changed += OnManagerEvent;
         Live.Reconnected += OnReconnected;
         Visibility.Shown += OnShown;
-        await SafeLoadAsync();
+        await (_loading = LoadOnceAsync(render: false));
         if (RefreshInterval is { } interval) _ = RefreshPeriodicallyAsync(interval);
     }
 
@@ -80,11 +89,30 @@ public abstract class LiveComponent : ComponentBase, IDisposable
         catch (OperationCanceledException) when (_refreshStop.IsCancellationRequested) { }
     }
 
-    protected Task ReloadAsync() => InvokeAsync(async () =>
+    /// <summary>Loads the data again and renders it; completes once data loaded after this call is shown.</summary>
+    protected Task ReloadAsync() => InvokeAsync(() =>
+    {
+        if (_disposed) return Task.CompletedTask;
+        if (_loading is not { IsCompleted: false }) return _loading = LoadOnceAsync(render: true);
+        return _queued ??= AfterCurrentAsync(_loading);
+    });
+
+    private async Task AfterCurrentAsync(Task current)
+    {
+        try { await current; }
+        catch { /* Its caller saw that; this load runs anyway. */ }
+        finally { _queued = null; }
+        if (_disposed) return;
+        // A load that started after the requests this one covers serves them too.
+        if (_loading is not { IsCompleted: false }) _loading = LoadOnceAsync(render: true);
+        await _loading;
+    }
+
+    private async Task LoadOnceAsync(bool render)
     {
         await SafeLoadAsync();
-        StateHasChanged();
-    });
+        if (render && !_disposed) StateHasChanged();
+    }
 
     private async Task SafeLoadAsync()
     {
@@ -93,6 +121,10 @@ public abstract class LiveComponent : ComponentBase, IDisposable
             await LoadAsync();
             Loaded = true;
             LoadError = null;
+        }
+        catch (OperationCanceledException) when (_disposed)
+        {
+            // The page was left while it loaded.
         }
         catch (ApiException ex)
         {

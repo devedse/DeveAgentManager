@@ -20,6 +20,27 @@ page open and reloaded it after every restart, so the Manager was killed repeate
 - **Fewer reloads.** The conversation page refreshes its facts on every change of its agent (status, activity), but
   fetches the conversation again only when the conversation changed (its sync time, message count, harness or update
   time).
+
+## The conversation page in the browser
+
+The browser pays for a conversation too. A 12,000-message conversation (8 MB) of an agent that kept syncing was
+downloaded and drawn again for every change of its agent: about a million page elements, all its Markdown converted
+again each time, several downloads overlapping and continuing after the page was left. The tab froze for more than
+10 seconds at a time, Back took 9 seconds, and then the browser's .NET runtime crashed. Now:
+
+- **Latest messages first.** A conversation opens at its latest 200 messages (the user's and the agent's, as Messages
+  counts them), scrolled to the end. *Show 200* and *Show all* add earlier ones above, keeping what is on screen in
+  place; messages that arrive while the page is open are added below. Exports always have the whole conversation.
+- **Drawn only when it changed.** Agent events refresh the facts without drawing the conversation again, and Markdown
+  that was already converted is reused when it is.
+- **One download at a time.** Live pages (`LiveComponent`) load one copy of their data at a time: a reload asked for
+  meanwhile waits and one more covers every such request. After a download of the conversation, the next one waits ten
+  times as long as it took (at most a minute), so a long conversation of a working agent doesn't keep the page busy.
+- **Leaving stops it.** Back (or any navigation) cancels a download in progress.
+
+The same conversation now freezes the page for at most about 0.4 s, Back takes 0.1 s, and the page has about 16,000
+elements. `DeveAgentManager.Tests/Browser/long-conversation.mts` checks this with a 6,000-message conversation that
+keeps syncing.
 - **Exports** load the conversation once and write the result to a temporary file in `tmp/sessions` (line by line for
   Claude, Codex and pi), never as one string; it is streamed from there and deleted once sent.
 - **Harness switches** never load the whole conversation from Claude Code, Codex or pi. The conversion reads the saved

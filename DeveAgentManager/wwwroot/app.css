@@ -3084,6 +3084,19 @@ html:has(.terminal-layout) body {
     margin-top: 20px;
 }
 
+.conv-earlier {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px;
+    border: 1px dashed var(--dam-border);
+    border-radius: 10px;
+    color: var(--dam-muted);
+    font-size: 0.875rem;
+}
+
 .markdown {
     line-height: 1.6;
     word-break: break-word;

@@ -1158,6 +1158,15 @@
             window.scrollTo(0, document.body.scrollHeight);
         },
 
+        // Keeps what is on the page in place while earlier content is added above it (e.g. a conversation's earlier messages).
+        pageDistanceFromBottom(): number {
+            return document.documentElement.scrollHeight - window.scrollY;
+        },
+
+        scrollPageFromBottom(distance: number) {
+            window.scrollTo(0, document.documentElement.scrollHeight - distance);
+        },
+
         // Whether the browser can reach a URL on another origin (e.g. the Manager's VS Code port). The answer can't be
         // read across origins, but a request that fails at all means the port isn't reachable.
         async canReach(url) {
