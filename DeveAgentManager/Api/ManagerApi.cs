@@ -87,6 +87,7 @@ public static class ManagerApi
         api.MapSettingsEndpoints();
         api.MapPetEndpoints();
         api.MapCpuTraceEndpoints();
+        api.MapPortalFreezeEndpoints();
     }
 
     /// <summary>Starts a Runner operation whose result is reported through <see cref="OperationNotifier"/>.</summary>

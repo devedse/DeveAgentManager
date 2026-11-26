@@ -35,5 +35,6 @@ builder.Services.AddMudServices(config =>
 });
 
 var host = builder.Build();
+FreezeWatch.Start(host.Services.GetRequiredService<Microsoft.JSInterop.IJSRuntime>());
 _ = host.Services.GetRequiredService<LiveUpdates>().StartAsync();
 await host.RunAsync();

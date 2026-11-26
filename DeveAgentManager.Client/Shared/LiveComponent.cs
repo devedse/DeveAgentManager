@@ -110,8 +110,12 @@ public abstract class LiveComponent : ComponentBase, IDisposable
 
     private async Task LoadOnceAsync(bool render)
     {
+        // A report of a frozen Portal says which sections were loading (docs/portal-freezes.md).
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        FreezeWatch.Note("load", GetType().Name);
         await SafeLoadAsync();
         if (render && !_disposed) StateHasChanged();
+        FreezeWatch.Note("loaded", $"{GetType().Name} in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms");
     }
 
     private async Task SafeLoadAsync()
@@ -186,6 +190,7 @@ public abstract class LiveComponent : ComponentBase, IDisposable
     public virtual void Dispose()
     {
         _disposed = true;
+        FreezeWatch.Note("left", GetType().Name);
         _refreshStop.Cancel();
         Live.Changed -= OnManagerEvent;
         Live.Reconnected -= OnReconnected;

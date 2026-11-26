@@ -26,6 +26,8 @@
             <img src="favicon.svg" alt="" width="48" height="48" />
             <div class="app-loading-bar"><div></div></div>
         </div>
+        @* Notes what the Portal does and reports to the Manager's log if it stops responding (docs/portal-freezes.md). *@
+        <script src="@Assets["js/freeze-watch.js"]"></script>
     }
     <DeveAgentManager.Client.Routes @rendermode="PageRenderMode" />
     <script src="@Assets["lib/xterm/addon-fit.js"]"></script>

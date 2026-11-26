@@ -7,6 +7,7 @@ interface Window {
     damTheme: any;
     damUi: any;
     damAttention: any;
+    damFreezeWatch: { note(kind: string, detail?: string): void };
 }
 declare const XtermBlazor: any;
 declare const FitAddon: any;

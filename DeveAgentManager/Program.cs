@@ -35,6 +35,7 @@ builder.Services.AddSingleton<SharedFilePreviews>();
 builder.Services.AddSingleton<DeveAgentManager.Diagnostics.NativeCpuProfiler>();
 builder.Services.AddSingleton<DeveAgentManager.Diagnostics.ICpuTraceRecorder, DeveAgentManager.Diagnostics.CpuTraceRecorder>();
 builder.Services.AddSingleton<DeveAgentManager.Diagnostics.ManagerCpuTraces>();
+builder.Services.AddSingleton<DeveAgentManager.Diagnostics.PortalFreezeLog>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DeveAgentManager.Diagnostics.ManagerCpuTraces>());
 builder.Services.AddSingleton<OperationNotifier>();
 builder.Services.AddHttpForwarder();

@@ -399,6 +399,9 @@ The Manager keeps up to 5,000 entries in memory and two log files of about 5 MiB
 masked; logs can still contain deployment details and user activity, so review downloads before sharing.
 Runner setup logs and the audit log remain on their existing pages.
 
+When the Portal stops responding in someone's browser for 10 seconds, the browser reports what it was doing just
+before. The report is a warning in this log: search for `stopped responding`. See [Portal freeze reports](docs/portal-freezes.md).
+
 ## Development
 
 Requires the .NET 10 SDK, Node 22+ and npm.
