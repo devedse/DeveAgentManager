@@ -81,8 +81,10 @@ try {
     const close = async () => {
         await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
         await dialog.waitFor({ state: 'hidden' });
-        for (let i = 0; i < 50 && page.workers().length; i++) await new Promise(resolve => setTimeout(resolve, 100));
-        assert.equal(page.workers().length, 0, 'closing a PDF releases its parser worker');
+        // The Portal's own freeze watch (freeze-watch.ts) keeps a worker for as long as the page is open.
+        const pdfWorkers = () => page.workers().filter(worker => !new URL(worker.url()).pathname.includes('/freeze-watch-worker'));
+        for (let i = 0; i < 50 && pdfWorkers().length; i++) await new Promise(resolve => setTimeout(resolve, 100));
+        assert.equal(pdfWorkers().length, 0, 'closing a PDF releases its parser worker');
     };
     for (const theme of ['dark', 'light'] as const) {
         await page.emulateMedia({ colorScheme: theme });
